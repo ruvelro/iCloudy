@@ -267,6 +267,35 @@ final class TransferTests: XCTestCase {
         XCTAssertEqual(queue.items.first?.status, "En pausa · Reanudar para continuar")
     }
 
+    func testCrossCloudTransferStagesEachFileAndRebuildsTheTreeOnTheOtherAccount() async throws {
+        let (root, demoA, queue) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let demoB = try DemoStore(directory: root.appendingPathComponent("cloudB")); demoB.latency = .milliseconds(1)
+        let other = Account(id: "demo:other", cloud: .microsoft, name: "B", email: "b@example.com", clientID: "", clientSecret: nil)
+        queue.client = { id in id == Account.demo.id ? CloudAPI(account: .demo, demo: demoA) : CloudAPI(account: other, demo: demoB) }
+        queue.scratchRoot = root.appendingPathComponent("scratch")
+        let folder = try demoA.add(name: "Viaje", parent: "root", folder: true)
+        _ = try demoA.add(name: "foto.bin", parent: folder, content: Data(repeating: 3, count: 300_000))
+        let nested = try demoA.add(name: "Notas", parent: folder, folder: true)
+        _ = try demoA.add(name: "dia1.txt", parent: nested, content: Data("hola".utf8))
+        let source = try XCTUnwrap(demoA.list("root").first { $0.id == folder })
+        var job = Transfer(batchID: UUID(), name: source.name, destination: "B", accountID: Account.demo.id, direction: .transfer, localURL: URL(fileURLWithPath: "/"), parent: "root", file: source)
+        job.localURL = queue.scratchDirectory(for: job.id); job.targetAccountID = other.id
+        try queue.add([job])
+        XCTAssertTrue(queue.hasActive(accountID: other.id), "The destination account is busy too")
+        try await wait { !queue.isWorking }
+        XCTAssertEqual(queue.items.first?.state, .completed, queue.items.first?.detail ?? "")
+        let copied = try XCTUnwrap(demoB.list("root").first { $0.name == "Viaje" })
+        let photo = try XCTUnwrap(demoB.list(copied.id).first { $0.name == "foto.bin" })
+        XCTAssertEqual(try Data(contentsOf: demoB.directory.appendingPathComponent(photo.id)), Data(repeating: 3, count: 300_000))
+        let notes = try XCTUnwrap(demoB.list(copied.id).first { $0.name == "Notas" })
+        XCTAssertEqual(try demoB.list(notes.id).map(\.name), ["dia1.txt"])
+        XCTAssertTrue(try demoA.list(folder).contains { $0.name == "foto.bin" }, "The source is untouched")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: job.localURL.path), "Staging folder removed after completion")
+        XCTAssertEqual(queue.items.first?.verifiedFiles, 2)
+        XCTAssertFalse(queue.hasActive(accountID: other.id))
+    }
+
     func testRecoveryPausesRunningJobsAndCorruptionIsNotOverwritten() throws {
         let (root, _, queue) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }

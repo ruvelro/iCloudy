@@ -6,6 +6,8 @@ struct HistoryEntry: Identifiable, Codable {
     var id = UUID()
     let name: String
     let accountID: String
+    /// Destination account of a cross-cloud transfer.
+    let targetAccountID: String?
     let direction: TransferDirection
     /// Human-readable destination: remote path for uploads, local folder for downloads.
     let destination: String
@@ -20,7 +22,7 @@ struct HistoryEntry: Identifiable, Codable {
     let summary: String
 
     init(transfer: Transfer, finishedAt: Date = Date()) {
-        name = transfer.name; accountID = transfer.accountID; direction = transfer.direction
+        name = transfer.name; accountID = transfer.accountID; targetAccountID = transfer.targetAccountID; direction = transfer.direction
         destination = transfer.destination; parent = transfer.parent
         if transfer.direction == .download {
             localURL = transfer.localURL.appendingPathComponent(transfer.names["."] ?? FileNames.safe(transfer.name))
@@ -31,12 +33,13 @@ struct HistoryEntry: Identifiable, Codable {
 }
 
 extension HistoryEntry {
-    enum CodingKeys: String, CodingKey { case id, name, accountID, direction, destination, parent, localURL, bookmark, bytes, finishedAt, summary }
+    enum CodingKeys: String, CodingKey { case id, name, accountID, targetAccountID, direction, destination, parent, localURL, bookmark, bytes, finishedAt, summary }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         name = try values.decodeIfPresent(String.self, forKey: .name) ?? "Transferencia"
         accountID = try values.decode(String.self, forKey: .accountID)
+        targetAccountID = try values.decodeIfPresent(String.self, forKey: .targetAccountID)
         direction = try values.decode(TransferDirection.self, forKey: .direction)
         destination = try values.decodeIfPresent(String.self, forKey: .destination) ?? ""
         parent = try values.decodeIfPresent(String.self, forKey: .parent) ?? "root"

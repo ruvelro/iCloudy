@@ -34,6 +34,16 @@ struct CloudFile: Identifiable, Hashable, Codable {
     let webURL: URL?
     let isFolder: Bool
     var isGoogleDocument: Bool { mime.hasPrefix("application/vnd.google-apps.") && !isFolder }
+    /// What a Google document becomes when it leaves Drive: an Office file it can round-trip, or PDF for drawings.
+    var crossCloudExport: (mime: String, ext: String)? {
+        switch mime {
+        case "application/vnd.google-apps.document": return ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx")
+        case "application/vnd.google-apps.spreadsheet": return ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx")
+        case "application/vnd.google-apps.presentation": return ("application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx")
+        case "application/vnd.google-apps.drawing": return ("application/pdf", "pdf")
+        default: return nil
+        }
+    }
     var exportOptions: [(title: String, mime: String, ext: String)] {
         switch mime {
         case "application/vnd.google-apps.document": return [("PDF", "application/pdf", "pdf"), ("Word", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx")]
@@ -53,7 +63,11 @@ struct CloudFile: Identifiable, Hashable, Codable {
 
 enum ConflictChoice: String, Codable { case skip, copy, replace }
 enum TransferState: String, Codable { case queued, running, paused, failed, cancelled, completed }
-enum TransferDirection: String, Codable { case upload, download }
+enum TransferDirection: String, Codable {
+    case upload, download
+    /// From one connected account to another: bytes are staged in a scratch folder, never kept.
+    case transfer
+}
 struct UploadCheckpoint: Codable {
     var url: URL?
     var offset: Int64 = 0
@@ -90,6 +104,8 @@ struct Transfer: Identifiable, Codable {
     /// Files whose provider checksum matched the bytes sent, and files that could not be checked (resumed, or no hash).
     var verifiedFiles = 0
     var unverifiedFiles = 0
+    /// Destination account of a cross-cloud transfer; `accountID` is then the source.
+    var targetAccountID: String?
     var finished: Bool { [.completed, .cancelled, .failed].contains(state) }
     var failed: Bool { state == .failed }
     var progress: Double { state == .completed ? 1 : (total > 0 ? min(1, Double(bytes) / Double(total)) : 0) }
@@ -304,7 +320,7 @@ extension Transfer {
     enum CodingKeys: String, CodingKey {
         case id, batchID, name, destination, accountID, direction, localURL, bookmark, parent, file, exportMime, exportExtension
         case state, detail, bytes, total, bytesPerSecond, attempts, batchChoice, completedPaths, folders, uncertainFolders, names, replacements, uploads
-        case verifiedFiles, unverifiedFiles
+        case verifiedFiles, unverifiedFiles, targetAccountID
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -336,7 +352,8 @@ extension Transfer {
                   replacements: try values.decodeIfPresent([String: String].self, forKey: .replacements) ?? [:],
                   uploads: try values.decodeIfPresent([String: UploadCheckpoint].self, forKey: .uploads) ?? [:],
                   verifiedFiles: try values.decodeIfPresent(Int.self, forKey: .verifiedFiles) ?? 0,
-                  unverifiedFiles: try values.decodeIfPresent(Int.self, forKey: .unverifiedFiles) ?? 0)
+                  unverifiedFiles: try values.decodeIfPresent(Int.self, forKey: .unverifiedFiles) ?? 0,
+                  targetAccountID: try values.decodeIfPresent(String.self, forKey: .targetAccountID))
     }
 }
 

@@ -65,7 +65,17 @@ final class TransferQueue: ObservableObject {
     }
     var hasActive: Bool { items.contains { [.queued, .running].contains($0.state) } }
     func hasActive(accountID: String) -> Bool {
-        items.contains { $0.accountID == accountID && ([.queued, .running].contains($0.state) || $0.id == activeID) }
+        items.contains { ($0.accountID == accountID || $0.targetAccountID == accountID) && ([.queued, .running].contains($0.state) || $0.id == activeID) }
+    }
+    /// Where cross-cloud transfers stage their bytes. One folder per job, removed when the job completes or is cancelled.
+    var scratchRoot = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("iCloudy/Transfers", isDirectory: true)
+    func scratchDirectory(for id: UUID) -> URL { scratchRoot.appendingPathComponent(id.uuidString, isDirectory: true) }
+    /// Drops staging folders that no unfinished transfer can still use, e.g. after a crash.
+    func cleanScratch() {
+        let live = Set(items.filter { $0.direction == .transfer && !$0.finished }.map { $0.id.uuidString })
+        for child in (try? FileManager.default.contentsOfDirectory(at: scratchRoot, includingPropertiesForKeys: nil)) ?? [] where !live.contains(child.lastPathComponent) {
+            try? FileManager.default.removeItem(at: child)
+        }
     }
 
     /// Coalesced writes batch the per-block checkpoints into one file write every `flushDelay`. The server is the
@@ -127,6 +137,7 @@ final class TransferQueue: ObservableObject {
         items[index].state = pause ? .paused : .cancelled; items[index].bytesPerSecond = 0; items[index].detail = ""
         // Session URLs are pre-authenticated capabilities; a cancelled job will not resume them, so drop them from disk.
         if !pause { items[index].uploads = [:] }
+        if !pause, items[index].direction == .transfer { try? FileManager.default.removeItem(at: items[index].localURL) }
         if activeID == id {
             task?.cancel()
             conflictContinuation?.resume(throwing: CancellationError()); conflictContinuation = nil; conflict = nil
@@ -292,12 +303,101 @@ final class TransferQueue: ObservableObject {
             var done: Int64 = 0
             var siblings: [String: [CloudFile]] = [:]
             try await uploadTree(id, api: api, local: source, parent: current.parent, key: ".", done: &done, siblings: &siblings)
+        } else if current.direction == .transfer, let file = current.file {
+            guard let targetID = current.targetAccountID else { throw CloudError.message("Falta la cuenta de destino de esta transferencia.") }
+            let target = try client(targetID)
+            try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try edit(id) { $0.bytes = 0; $0.total = file.isFolder ? 0 : (file.size ?? 0) }
+            var done: Int64 = 0
+            var siblings: [String: [CloudFile]] = [:]
+            try await transferTree(id, source: api, target: target, file: file, parent: current.parent, scratch: source, key: ".", done: &done, siblings: &siblings)
+            try? FileManager.default.removeItem(at: source)
         } else if let file = current.file {
             // Folder totals grow as each remote folder is listed; a single file's size is known up front.
             try edit(id) { $0.bytes = 0; $0.total = file.isFolder ? 0 : (file.size ?? 0) }
             var done: Int64 = 0
             try await downloadTree(id, api: api, file: file, folder: source, key: ".", done: &done)
         }
+    }
+    /// Copies a remote tree from one account into a folder of another. Each file is staged in `scratch`, uploaded with
+    /// the usual checkpoints, then deleted. Google documents leave Drive as Office files or PDF.
+    private func transferTree(_ id: UUID, source: CloudAPI, target: CloudAPI, file: CloudFile, parent: String, scratch: URL, key: String, done: inout Int64, siblings: inout [String: [CloudFile]]) async throws {
+        try Task.checkCancellation()
+        if try job(id).completedPaths.contains(key) { done += file.size ?? 0; mark(id, done: done); return }
+        var current = try job(id)
+        let export = file.isGoogleDocument ? file.crossCloudExport : nil
+        if file.isGoogleDocument && export == nil {
+            // Forms, sites and shortcuts have nothing exportable; note it and move on instead of failing the whole tree.
+            try edit(id, coalesce: true) { $0.completedPaths.insert(key); $0.unverifiedFiles += 1 }
+            return
+        }
+        let localName = export.map { file.name + "." + $0.ext } ?? file.name
+        if let problem = FileNames.problem(with: localName, for: target.account.cloud) { throw CloudError.message("No se puede enviar «\(localName)»: \(problem)") }
+        if current.uncertainFolders.contains(key) {
+            try edit(id) { $0.names[key] = nil; $0.replacements[key] = nil; $0.uncertainFolders.remove(key) }
+            siblings[parent] = nil
+            current = try job(id)
+        }
+        if current.names[key] == nil {
+            if siblings[parent] == nil { siblings[parent] = try await target.list(parent: parent) }
+            let existing = siblings[parent] ?? []
+            let matches = existing.filter { $0.name.localizedCaseInsensitiveCompare(localName) == .orderedSame }
+            var name = localName
+            var replacing: String?
+            if let match = matches.first {
+                let choice = try await choose(id, name: name, replace: matches.count == 1 && match.isFolder == file.isFolder && !match.isGoogleDocument, folder: file.isFolder)
+                if choice == .skip { try edit(id) { $0.completedPaths.insert(key) }; done += file.size ?? 0; mark(id, done: done); return }
+                if choice == .copy { name = Self.unique(name, existing: existing.map(\.name)) }
+                if choice == .replace { replacing = match.id }
+            }
+            try edit(id, coalesce: true) { $0.names[key] = name; $0.replacements[key] = replacing }
+            current = try job(id)
+        }
+        let name = current.names[key]!
+        if file.isFolder {
+            let remote: String
+            if let known = current.folders[key] ?? current.replacements[key] { remote = known }
+            else {
+                try edit(id) { $0.uncertainFolders.insert(key) }
+                do { remote = try await target.createFolder(name: name, parent: parent) }
+                catch { throw CloudError.message("No se confirmó la creación de \(name) en el destino. Revisa antes de reintentar. \(error.localizedDescription)") }
+                try edit(id) { $0.folders[key] = remote; $0.uncertainFolders.remove(key) }
+                siblings[parent, default: []].append(CloudFile(id: remote, name: name, mime: "application/vnd.google-apps.folder", size: nil, modified: nil, webURL: nil, isFolder: true))
+                siblings[remote] = []
+            }
+            let children = try await source.list(parent: file.id)
+            let known = children.reduce(Int64(0)) { $0 + ($1.size ?? 0) }
+            if known > 0 { try edit(id, coalesce: true) { $0.total += known } }
+            for child in children {
+                try await transferTree(id, source: source, target: target, file: child, parent: remote, scratch: scratch, key: key + "/" + child.id, done: &done, siblings: &siblings)
+            }
+        } else {
+            let staged = scratch.appendingPathComponent(Self.stagedName(key, name))
+            var checkpoint = current.uploads[key]
+            if !FileManager.default.fileExists(atPath: staged.path) {
+                // No staged copy (first run, or scratch cleaned): the upload session, if any, is worthless now.
+                checkpoint = nil
+                try edit(id, coalesce: true) { $0.uploads[key] = nil; $0.detail = "Descargando «\(file.name)» de \(source.account.cloud.title)…" }
+                try await source.download(file: file, to: staged, exportMime: export?.mime)
+            }
+            let base = done
+            try edit(id, coalesce: true) { $0.detail = "Subiendo «\(name)» a \(target.account.cloud.title)…" }
+            let receipt = try await target.resumableUpload(local: staged, parent: parent, name: name, replacing: current.replacements[key], checkpoint: checkpoint, save: { checkpoint in
+                try self.edit(id, coalesce: checkpoint.offset > 0 && !checkpoint.complete) { $0.uploads[key] = checkpoint }
+            }, progress: { bytes, total in self.report(id, base: base, bytes: bytes, total: total) })
+            try edit(id, coalesce: true) { if receipt.verification == .verified { $0.verifiedFiles += 1 } else { $0.unverifiedFiles += 1 } }
+            try? FileManager.default.removeItem(at: staged)
+            done += file.size ?? 0
+            mark(id, done: done)
+            if current.replacements[key] == nil {
+                siblings[parent, default: []].append(CloudFile(id: "", name: name, mime: "application/octet-stream", size: file.size, modified: nil, webURL: nil, isFolder: false))
+            }
+        }
+        try edit(id, coalesce: true) { $0.completedPaths.insert(key) }
+    }
+    /// Flat, collision-free staging name: keys are paths, and the digest keeps them out of nested directories.
+    nonisolated private static func stagedName(_ key: String, _ name: String) -> String {
+        String(key.utf8.reduce(UInt64(1469598103934665603)) { ($0 ^ UInt64($1)) &* 1099511628211 }, radix: 16) + "-" + FileNames.safe(name)
     }
     /// Walks the tree synchronously; callers run it through `blockingIO` because large folders take a while.
     nonisolated private static func localSize(_ url: URL) throws -> Int64 {

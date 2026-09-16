@@ -210,6 +210,7 @@ struct ExplorerView: View {
             }.padding(24).frame(width: 390)
         }
         .sheet(item: $model.relocation) { request in FolderPickerView(model: model, request: request) }
+        .sheet(item: $model.crossCloud) { request in CloudTargetPicker(model: model, request: request) }
         .sheet(item: Binding(get: { model.queue.conflict }, set: { _ in })) { request in
             ConflictView(queue: model.queue, request: request)
         }
@@ -336,6 +337,7 @@ struct ExplorerView: View {
                 Button("Descargar \(ids.count) elementos…") { Task { await model.saveMany(model.files.filter { ids.contains($0.id) }) } }
                 Button("Mover \(ids.count) elementos a…") { model.requestRelocation(model.files.filter { ids.contains($0.id) }, copy: false) }
                 Button("Copiar \(ids.count) elementos a…") { model.requestRelocation(model.files.filter { ids.contains($0.id) }, copy: true) }
+                if model.accounts.count > 1 { Button("Enviar \(ids.count) elementos a otra nube…") { model.requestCrossCloud(model.files.filter { ids.contains($0.id) }) } }
                 Divider()
                 Button("Enviar \(ids.count) elementos a la papelera…", role: .destructive) { model.requestTrash(model.files.filter { ids.contains($0.id) }) }
             } else if let id = ids.first, let file = model.files.first(where: { $0.id == id }) { fileActions(file) }
@@ -414,6 +416,7 @@ struct ExplorerView: View {
         Button("Mover a…") { model.requestRelocation([file], copy: false) }
         Button("Copiar a…") { model.requestRelocation([file], copy: true) }
             .disabled(file.isFolder && model.account?.cloud == .google)
+        if model.accounts.count > 1 { Button("Enviar a otra nube…") { model.requestCrossCloud([file]) } }
         Divider()
         if file.isFolder {
             Button("Abrir carpeta") { model.navigate(file) }
@@ -455,7 +458,7 @@ struct TransferPanel: View {
             List {
                 ForEach(queue.items) { transfer in
                     HStack(alignment: .top) {
-                        Image(systemName: transfer.failed ? "exclamationmark.circle.fill" : (transfer.finished ? "checkmark.circle.fill" : "arrow.up.arrow.down.circle"))
+                        Image(systemName: transfer.failed ? "exclamationmark.circle.fill" : (transfer.finished ? "checkmark.circle.fill" : (transfer.direction == .transfer ? "cloud.fill" : "arrow.up.arrow.down.circle")))
                             .foregroundStyle(transfer.failed ? .red : (transfer.finished ? .green : .secondary))
                         VStack(alignment: .leading, spacing: 3) {
                             Text(transfer.name).fontWeight(.medium)
@@ -579,7 +582,7 @@ struct TransferHistoryView: View {
             Text("Se conservan las \(history.limit) transferencias completadas más recientes, aunque se limpien del panel. No incluye las canceladas ni las fallidas.").font(.caption).foregroundStyle(.secondary)
             List(history.entries) { entry in
                 HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: entry.direction == .upload ? "arrow.up.circle" : "arrow.down.circle").foregroundStyle(.secondary)
+                    Image(systemName: entry.direction == .download ? "arrow.down.circle" : (entry.direction == .transfer ? "cloud" : "arrow.up.circle")).foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(entry.name).fontWeight(.medium)
                         Text(entry.destination).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
@@ -590,7 +593,7 @@ struct TransferHistoryView: View {
                     if entry.direction == .download {
                         Button("Mostrar en el Finder") { model.reveal(entry) }
                     } else {
-                        Button("Ir a la carpeta") { model.openFolder(accountID: entry.accountID, folderID: entry.parent); dismiss() }
+                        Button("Ir a la carpeta") { model.openFolder(accountID: entry.targetAccountID ?? entry.accountID, folderID: entry.parent); dismiss() }
                     }
                 }.padding(.vertical, 2)
             }

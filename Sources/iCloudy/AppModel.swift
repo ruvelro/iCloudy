@@ -20,6 +20,8 @@ final class AppModel: ObservableObject {
     @Published var pendingTrash: [CloudFile]?
     /// Move or copy in progress of being targeted; drives the folder picker sheet.
     @Published var relocation: Relocation?
+    /// Cross-cloud transfer waiting for its destination account.
+    @Published var crossCloud: CrossCloudRequest?
     @Published var connecting = false
     @Published var connectionError: String?
     @Published var showConnect = false
@@ -111,6 +113,7 @@ final class AppModel: ObservableObject {
         // Only structural queue changes reach the explorer; progress ticks re-render the transfer panel alone.
         subscription = queue.stateChanges.sink { [weak self] _ in self?.objectWillChange.send() }
         if let message = queue.persistenceError { error = message }
+        queue.cleanScratch()
         if account != nil { reload() }
         for account in accounts where account.id != selectedAccountID { refreshStorage(account) }
         preview.download = { [weak self] file, account in
@@ -303,10 +306,31 @@ final class AppModel: ObservableObject {
         if copy, account.cloud == .google, files.contains(where: \.isFolder) {
             error = "Google Drive no permite copiar carpetas. Copia los archivos que contiene."; return
         }
-        relocation = Relocation(files: files, copy: copy, account: account, origin: path.isEmpty && collection != .files ? nil : folderID)
+        relocation = Relocation(files: files, kind: copy ? .copy : .move, account: account, origin: path.isEmpty && collection != .files ? nil : folderID)
+    }
+    func requestCrossCloud(_ files: [CloudFile]) {
+        guard let account, !files.isEmpty else { return }
+        guard accounts.count > 1 else { error = "Conecta otra cuenta para poder enviar archivos entre nubes."; return }
+        crossCloud = CrossCloudRequest(files: files, source: account)
+    }
+    /// Queues one job per item; the queue stages each file locally and uploads it with checkpoints and verification.
+    func enqueueCrossCloud(_ files: [CloudFile], from source: Account, to target: Account, parent: String, destinationPath: [CloudFile]) {
+        let label = ([target.email] + destinationPath.map(\.name)).joined(separator: " / ")
+        let batch = UUID()
+        let jobs = files.map { file -> Transfer in
+            var job = Transfer(batchID: batch, name: file.name, destination: label, accountID: source.id, direction: .transfer, localURL: URL(fileURLWithPath: "/"), parent: parent, file: file)
+            job.localURL = queue.scratchDirectory(for: job.id)
+            job.targetAccountID = target.id
+            return job
+        }
+        do { try queue.add(jobs); info = "\(jobs.count == 1 ? "«\(files[0].name)»" : "\(jobs.count) elementos") en cola hacia \(accountTitle(target)). Sigue el progreso en Transferencias." }
+        catch { self.error = error.localizedDescription }
     }
     /// Checks cycles and name clashes first, then processes item by item and stops at the first failure.
     func relocate(_ request: Relocation, to destination: String, destinationPath: [CloudFile]) async {
+        if case .transfer(let source) = request.kind {
+            enqueueCrossCloud(request.files, from: source, to: request.account, parent: destination, destinationPath: destinationPath); return
+        }
         let ids = Set(request.files.map(\.id))
         guard !ids.contains(destination), !destinationPath.contains(where: { ids.contains($0.id) }) else {
             error = "Una carpeta no puede moverse ni copiarse dentro de sí misma."; return
@@ -320,18 +344,18 @@ final class AppModel: ObservableObject {
                 throw CloudError.message("En la carpeta de destino ya existe " + clashes.map { "«\($0.name)»" }.joined(separator: ", ") + ". Renombra antes de mover o copiar.")
             }
             for file in request.files {
-                if request.copy { try await api.copy(file: file, to: destination) } else { try await api.move(file: file, to: destination) }
+                if request.isMove { try await api.move(file: file, to: destination) } else { try await api.copy(file: file, to: destination) }
                 done += 1
-                if !request.copy {
+                if request.isMove {
                     for i in favorites.indices where favorites[i].accountID == request.account.id && favorites[i].file.id == file.id {
                         favorites[i].path = destinationPath; favorites[i].collection = .files
                     }
                 }
             }
-            if !request.copy { try LocalStore.save(favorites, to: favoritesURL) }
+            if request.isMove { try LocalStore.save(favorites, to: favoritesURL) }
             let target = destinationPath.last?.name ?? "Mis archivos"
-            let verb = request.copy ? (done == 1 ? "copiado" : "copiados") : (done == 1 ? "movido" : "movidos")
-            info = "\(done == 1 ? "«\(request.files[0].name)»" : "\(done) elementos") \(verb) a «\(target)»." + (request.copy && request.account.cloud == .microsoft ? " OneDrive puede tardar unos segundos en mostrar la copia." : "")
+            let verb = request.isMove ? (done == 1 ? "movido" : "movidos") : (done == 1 ? "copiado" : "copiados")
+            info = "\(done == 1 ? "«\(request.files[0].name)»" : "\(done) elementos") \(verb) a «\(target)»." + (!request.isMove && request.account.cloud == .microsoft ? " OneDrive puede tardar unos segundos en mostrar la copia." : "")
         } catch {
             self.error = (done > 0 ? "Se completaron \(done) de \(request.files.count). " : "") + error.localizedDescription
         }
