@@ -86,6 +86,7 @@ enum Layout {
     static let sidebarInner: CGFloat = 12
     /// Difference between a Table's built-in cell inset and `margin`, measured on screen.
     static let tableCorrection: CGFloat = 4
+    static let footerHeight: CGFloat = 38
 }
 
 struct ExplorerView: View {
@@ -96,10 +97,12 @@ struct ExplorerView: View {
     @State private var confirmDisconnect = false
     @State private var disconnectTarget: Account?
     @State private var previewFollow: Task<Void, Never>?
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @FocusState private var gridFocused: Bool
 
-    var body: some View {
-        NavigationSplitView {
+    private var navigation: some View {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 16) {
                 Label("iCloudy", systemImage: "cloud.fill")
                     .font(.system(size: 24, weight: .semibold)).padding(.horizontal, Layout.sidebarInner).padding(.top, 20)
@@ -164,11 +167,18 @@ struct ExplorerView: View {
                 Spacer(minLength: 0)
                 Button { model.showConnect = true } label: { Label("Añadir cuenta", systemImage: "plus.circle") }.buttonStyle(.plain).padding(Layout.sidebarInner)
                 Button { model.enableDemo() } label: { Label("Probar demo local", systemImage: "play.circle") }.buttonStyle(.plain).padding(.horizontal, Layout.sidebarInner)
+                SettingsLink { Label("Configuración", systemImage: "gearshape") }
+                    .buttonStyle(.plain).padding(.horizontal, Layout.sidebarInner)
+                    .help("Abrir Configuración (⌘,)")
+            }.padding(.horizontal, Layout.sidebarOuter).padding(.bottom, 16)
                 Divider()
                 Label(model.isOnline ? L("Solo se descarga lo que eliges") : L("Sin conexión"), systemImage: model.isOnline ? "internaldrive" : "wifi.slash")
-                    .font(.caption).foregroundStyle(.secondary).padding(.horizontal, Layout.sidebarInner).padding(.bottom, 12)
-            }.padding(.horizontal, Layout.sidebarOuter)
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .padding(.horizontal, Layout.margin)
+                    .frame(maxWidth: .infinity, alignment: .leading).frame(height: Layout.footerHeight)
+            }
             .navigationSplitViewColumnWidth(min: 230, ideal: 260, max: 320)
+            .toolbar(removing: .sidebarToggle)
         } detail: {
             if model.showGlobalSearch {
                 GlobalSearchView(model: model, search: model.globalSearch)
@@ -224,32 +234,42 @@ struct ExplorerView: View {
                     Spacer()
                     if model.canWrite { Text("Arrastra aquí para subir una copia") }
                     else if model.account != nil { Text("Lista de solo lectura · abre una carpeta para subir") }
-                }.font(.caption).foregroundStyle(.secondary).padding(.horizontal, Layout.margin).padding(.vertical, 12)
+                }.font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .padding(.horizontal, Layout.margin).frame(height: Layout.footerHeight)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .navigationTitle(model.account.map { model.accountTitle($0) } ?? "iCloudy")
-            .toolbar {
-                ToolbarItemGroup {
-                    Button { model.reload(fresh: true) } label: { Image(systemName: "arrow.clockwise") }.help("Actualizar carpeta").disabled(model.account == nil || model.loading)
-                    Button { Task { await model.pickUpload() } } label: { Label("Subir", systemImage: "square.and.arrow.up") }.disabled(!model.canWrite)
-                    Button { model.promptName() } label: { Label("Nueva carpeta", systemImage: "folder.badge.plus") }.disabled(!model.canWrite)
-                    Button { Task { await model.saveMany(model.files.filter { selected.contains($0.id) }) } } label: { Label("Descargar selección", systemImage: "square.and.arrow.down") }.disabled(selected.isEmpty)
-                    Button { previewSelection() } label: { Image(systemName: "eye") }.help("Vista previa (Espacio)").disabled(selected.count != 1)
-                    Picker("Vista", selection: $model.viewMode) {
-                        Image(systemName: "list.bullet").tag("list")
-                        Image(systemName: "square.grid.2x2").tag("grid")
-                    }.pickerStyle(.segmented).frame(width: 80)
-                    Button { showTransfers.toggle() } label: { Image(systemName: "arrow.up.arrow.down.circle") }.help("Transferencias")
-                    Menu {
-                        Button("Personalizar nube…") { model.appearanceAccount = model.account }.disabled(model.account == nil)
-                        Button("Desconectar cuenta…", role: .destructive) {
-                            disconnectTarget = model.account; confirmDisconnect = true
-                        }.disabled(model.account.map { !model.canDisconnect($0) } ?? true)
-                    } label: { Image(systemName: "ellipsis.circle") }
-                }
-            }
+            .toolbar { explorerToolbar }
             }
         }
+        // Keep the detail beside the sidebar, never temporarily overlaid during expansion.
+        .navigationSplitViewStyle(.balanced)
+        // A single toolbar surface avoids the native material boundary being offset from the split divider.
+        .toolbarBackground(Color(nsColor: .windowBackgroundColor), for: .windowToolbar)
+        .toolbarBackground(.visible, for: .windowToolbar)
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    // SwiftUI's default animated toggle reflows the table and wraps the sidebar at intermediate widths.
+                    // One nonanimated layout transaction also keeps the toolbar divider in step with the content.
+                    var transaction = Transaction(animation: nil)
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+                    }
+                } label: { Label("Barra lateral", systemImage: "sidebar.left") }
+                .help(columnVisibility == .detailOnly ? "Mostrar barra lateral" : "Ocultar barra lateral")
+                .keyboardShortcut("s", modifiers: [.command, .control])
+            }
+            ToolbarItem(placement: .automatic) {
+                SettingsLink { Label("Configuración", systemImage: "gearshape") }
+                    .help("Abrir Configuración (⌘,)")
+            }
+        }
+    }
+
+    var body: some View {
+        navigation
         .sheet(isPresented: $model.showConnect) { ConnectView(model: model) }
         .sheet(item: $model.appearanceAccount) { account in AccountAppearanceEditor(model: model, account: account) }
         .sheet(isPresented: $model.showNameDialog) {
@@ -310,6 +330,27 @@ struct ExplorerView: View {
             Button("Cancelar", role: .cancel) {}
         } message: { account in
             Text("\(account.cloud.title) · \(account.email)\nSe eliminará la sesión local, sin borrar archivos de la nube ni descargas. Los favoritos y las transferencias pausadas se conservan para cuando vuelvas a conectar esta cuenta. No se revoca el permiso en el proveedor.")
+        }
+    }
+
+    @ToolbarContentBuilder private var explorerToolbar: some ToolbarContent {
+        ToolbarItemGroup {
+            Button { model.reload(fresh: true) } label: { Image(systemName: "arrow.clockwise") }.help("Actualizar carpeta").disabled(model.account == nil || model.loading)
+            Button { Task { await model.pickUpload() } } label: { Label("Subir", systemImage: "square.and.arrow.up") }.disabled(!model.canWrite)
+            Button { model.promptName() } label: { Label("Nueva carpeta", systemImage: "folder.badge.plus") }.disabled(!model.canWrite)
+            Button { Task { await model.saveMany(model.files.filter { selected.contains($0.id) }) } } label: { Label("Descargar selección", systemImage: "square.and.arrow.down") }.disabled(selected.isEmpty)
+            Button { previewSelection() } label: { Image(systemName: "eye") }.help("Vista previa (Espacio)").disabled(selected.count != 1)
+            Picker("Vista", selection: $model.viewMode) {
+                Image(systemName: "list.bullet").tag("list")
+                Image(systemName: "square.grid.2x2").tag("grid")
+            }.pickerStyle(.segmented).frame(width: 80)
+            Button { showTransfers.toggle() } label: { Image(systemName: "arrow.up.arrow.down.circle") }.help("Transferencias")
+            Menu {
+                Button("Personalizar nube…") { model.appearanceAccount = model.account }.disabled(model.account == nil)
+                Button("Desconectar cuenta…", role: .destructive) {
+                    disconnectTarget = model.account; confirmDisconnect = true
+                }.disabled(model.account.map { !model.canDisconnect($0) } ?? true)
+            } label: { Image(systemName: "ellipsis.circle") }
         }
     }
 

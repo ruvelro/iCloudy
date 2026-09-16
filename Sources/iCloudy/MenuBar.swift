@@ -43,6 +43,7 @@ struct MenuBarContent: View {
             Text(model.accountTitle(account) + " · " + storage(account))
         }
         Divider()
+        SettingsLink { Label("Configuración…", systemImage: "gearshape") }
         Button("Salir de iCloudy") { NSApp.terminate(nil) }
     }
     private func storage(_ account: Account) -> String {
