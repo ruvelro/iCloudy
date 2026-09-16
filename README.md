@@ -29,6 +29,7 @@ También puedes abrir `Package.swift` en Xcode o ejecutar `swift run iCloudy` pa
 - Subida recursiva de carpetas y archivos por bloques de 5 MiB, sin cargar todo el archivo en memoria.
 - Descarga explícita a una carpeta elegida, incluyendo carpetas recursivas. Ningún listado descarga contenidos automáticamente.
 - Google Docs: PDF/Word; Sheets: Excel/PDF; Slides: PowerPoint/PDF. Exportación individual.
+- «Enviar a la papelera…» desde el menú contextual, la selección múltiple o la tecla Suprimir, siempre con confirmación. Drive marca `trashed`, OneDrive mueve a la papelera de reciclaje; las carpetas van con su contenido y los favoritos afectados se retiran. Nada se borra de forma definitiva.
 - «Copiar enlace» pone en el portapapeles el enlace web del proveedor, que solo abre quien ya tiene acceso. «Crear enlace público de solo lectura…» pide confirmación, concede acceso de lectura a cualquiera con el enlace (permiso `anyone/reader` en Drive, `createLink` anónimo en OneDrive) y lo copia; revocarlo se hace desde la web del proveedor. Disponible en el explorador y en la búsqueda global.
 - Vista previa con Espacio, botón de ojo o menú contextual, en lista y cuadrícula: PDF, imágenes y texto/código en solo lectura. Descarga temporal cancelable, limpieza al cerrar y al arrancar, consentimiento por encima de 100 MB o tamaño desconocido, y «Guardar copia…». Detalles y límites en [Vista previa](docs/PREVIEW.md).
 - Cola secuencial con estados, progreso por bloques en subidas y por elementos en carpetas; descarga individual con indicador de actividad.
@@ -56,7 +57,7 @@ La configuración local queda fuera de Git y se incorpora al `.app` al compilar.
 - Al descargar, los nombres se adaptan al sistema local y las colisiones usan sufijos. No se reemplazan archivos existentes. Una carpeta descargada puede quedar parcial si falla una operación.
 - Al descargar una carpeta, los documentos de Google y elementos remotos se guardan como `.webloc`; exporta cada documento individualmente si necesitas contenido editable o PDF.
 - Google shortcuts y elementos compartidos remotos de Microsoft se abren por web. No hay Shared Drives, bibliotecas SharePoint ni Teams; «Compartido conmigo» de OneDrive muestra los elementos como enlaces.
-- No hay montaje en Finder, placeholders del sistema, sincronización bidireccional, borrado remoto ni edición de permisos.
+- No hay montaje en Finder, placeholders del sistema ni sincronización bidireccional. El único borrado es «Enviar a la papelera», reversible desde la web del proveedor; no hay vaciado de papelera ni borrado definitivo.
 - La búsqueda global carga lotes de hasta tres páginas de 100 elementos por cuenta. Los filtros se aplican a los resultados recibidos; usa «Cargar más resultados» para continuar. Las fechas/tamaños ausentes no se inventan. La cobertura y actualidad dependen del índice de cada proveedor; no se incluyen bibliotecas SharePoint ni unidades compartidas de Google.
 - Los enlaces simbólicos se rechazan. Se suben archivos ocultos y el contenido de paquetes como carpetas; no se conservan ACL, permisos POSIX, atributos extendidos ni resource forks.
 - Los archivos de origen deben permanecer disponibles y sin editar mientras se suben. El progreso de carpetas se pondera por elementos, no por bytes.

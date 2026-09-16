@@ -16,6 +16,8 @@ final class AppModel: ObservableObject {
     @Published var info: String?
     /// File awaiting confirmation before a public link is created for it.
     @Published var pendingShare: (file: CloudFile, account: Account)?
+    /// Items awaiting confirmation before being sent to the provider's trash.
+    @Published var pendingTrash: [CloudFile]?
     @Published var connecting = false
     @Published var connectionError: String?
     @Published var showConnect = false
@@ -267,6 +269,28 @@ final class AppModel: ObservableObject {
             NSPasteboard.general.setString(link.absoluteString, forType: .string)
             info = "Enlace público copiado. Cualquiera que lo tenga podrá ver «\(file.name)». Para revocarlo, usa la web del proveedor."
         } catch { self.error = error.localizedDescription }
+    }
+    func requestTrash(_ files: [CloudFile]) {
+        guard account != nil, !files.isEmpty else { return }
+        pendingTrash = files
+    }
+    /// Sends the items to the trash one by one and stops at the first failure so the user sees exactly what remains.
+    func trash(_ files: [CloudFile]) async {
+        guard let account else { return }
+        var moved = 0
+        do {
+            let api = try client(account)
+            for file in files {
+                try await api.trash(file: file)
+                moved += 1
+                favorites.removeAll { $0.accountID == account.id && ($0.file.id == file.id || $0.path.contains { $0.id == file.id }) }
+            }
+            try LocalStore.save(favorites, to: favoritesURL)
+            info = moved == 1 ? "«\(files[0].name)» está en la papelera de \(account.cloud.title). Puedes restaurarlo desde su web." : "\(moved) elementos enviados a la papelera de \(account.cloud.title)."
+        } catch {
+            self.error = (moved > 0 ? "Se enviaron \(moved) de \(files.count) elementos. " : "") + error.localizedDescription
+        }
+        reload()
     }
     func openBrowser(_ file: CloudFile) {
         guard let url = file.webURL, ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { error = "No hay un enlace web disponible."; return }

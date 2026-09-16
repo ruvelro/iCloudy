@@ -16,6 +16,19 @@ extension CloudAPI {
         _ = try await json(URL(string: base + Self.segment(file.id))!, method: "PATCH", body: ["name": name])
     }
 
+    /// Moves the item to the provider's trash or recycle bin, which the user can undo on the web. Never a hard delete.
+    func trash(file: CloudFile) async throws {
+        if let demo { try demo.trash(file.id); return }
+        if account.cloud == .google {
+            _ = try await json(URL(string: "https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))")!, method: "PATCH", body: ["trashed": true])
+        } else {
+            // Graph's DELETE on a driveItem is a recycle-bin move and answers 204 without a body.
+            var request = try await request(URL(string: "https://graph.microsoft.com/v1.0/me/drive/items/\(Self.segment(file.id))")!, method: "DELETE")
+            let (data, response) = try await send(&request)
+            try HTTP.validate(response, data: data)
+        }
+    }
+
     /// Grants read-only access to anyone holding the link and returns it. Both providers keep the permission until the
     /// owner removes it on the web, so the caller must confirm with the user first.
     func publicLink(for file: CloudFile) async throws -> URL {

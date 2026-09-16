@@ -231,6 +231,15 @@ struct ExplorerView: View {
         } message: {
             Text("Cualquier persona con el enlace podrá ver «\(model.pendingShare?.file.name ?? "")» sin iniciar sesión. El permiso queda en \(model.pendingShare?.account.cloud.title ?? "la nube") hasta que lo revoques desde su web.")
         }
+        .confirmationDialog(trashTitle, isPresented: Binding(get: { model.pendingTrash != nil }, set: { if !$0 { model.pendingTrash = nil } }), titleVisibility: .visible) {
+            Button("Enviar a la papelera", role: .destructive) {
+                if let files = model.pendingTrash { Task { await model.trash(files) } }
+                model.pendingTrash = nil
+            }
+            Button("Cancelar", role: .cancel) { model.pendingTrash = nil }
+        } message: {
+            Text("Los elementos van a la papelera de \(model.account?.cloud.title ?? "la nube") y se pueden restaurar desde su web. Las carpetas se envían con todo su contenido. iCloudy no borra nada de forma definitiva.")
+        }
         .confirmationDialog("¿Desconectar esta cuenta?", isPresented: $confirmDisconnect, titleVisibility: .visible, presenting: disconnectTarget) { account in
             Button("Desconectar", role: .destructive) { model.disconnect(account) }
             Button("Cancelar", role: .cancel) {}
@@ -269,6 +278,10 @@ struct ExplorerView: View {
         }.padding(22)
     }
 
+    private var trashTitle: String {
+        guard let files = model.pendingTrash else { return "" }
+        return files.count == 1 ? "¿Enviar «\(files[0].name)» a la papelera?" : "¿Enviar \(files.count) elementos a la papelera?"
+    }
     private var emptyTitle: String {
         if !model.search.isEmpty { return "Sin resultados" }
         if model.path.isEmpty {
@@ -305,9 +318,12 @@ struct ExplorerView: View {
                 } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).frame(width: 25)
             }.width(35)
         }
+        .onDeleteCommand { model.requestTrash(model.files.filter { selected.contains($0.id) }) }
         .contextMenu(forSelectionType: CloudFile.ID.self) { ids in
             if ids.count > 1 {
                 Button("Descargar \(ids.count) elementos…") { Task { await model.saveMany(model.files.filter { ids.contains($0.id) }) } }
+                Divider()
+                Button("Enviar \(ids.count) elementos a la papelera…", role: .destructive) { model.requestTrash(model.files.filter { ids.contains($0.id) }) }
             } else if let id = ids.first, let file = model.files.first(where: { $0.id == id }) { fileActions(file) }
         } primaryAction: { ids in
             guard let id = ids.first, let file = model.files.first(where: { $0.id == id }) else { return }
@@ -395,6 +411,8 @@ struct ExplorerView: View {
         Divider()
         if file.webURL != nil { Button("Copiar enlace") { model.copyLink(file) } }
         if let account = model.account { Button("Crear enlace público de solo lectura…") { model.pendingShare = (file, account) } }
+        Divider()
+        Button("Enviar a la papelera…", role: .destructive) { model.requestTrash([file]) }
     }
 
 }

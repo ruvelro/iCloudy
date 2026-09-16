@@ -234,6 +234,36 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(microsoft.absoluteString, "https://1drv.ms/x/abc")
     }
 
+    @MainActor func testTrashIsAReversibleProviderOperationNeverAHardDelete() async throws {
+        let file = CloudFile(id: "f1", name: "Viejo.txt", mime: "text/plain", size: 1, modified: nil, webURL: nil, isFolder: false)
+        StubProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "PATCH")
+            XCTAssertEqual(request.url?.path, "/drive/v3/files/f1")
+            XCTAssertTrue(requestBody(request).contains(#""trashed":true"#))
+            return (200, [:], Data(#"{"id":"f1","trashed":true}"#.utf8))
+        }
+        try await makeClient(.google).trash(file: file)
+        StubProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "DELETE")
+            XCTAssertEqual(request.url?.path, "/v1.0/me/drive/items/f1")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
+            return (204, [:], Data())
+        }
+        try await makeClient(.microsoft).trash(file: file)
+    }
+
+    @MainActor func testDemoTrashRemovesFoldersRecursively() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let demo = try DemoStore(directory: root)
+        let folder = try demo.add(name: "Borrar", parent: "root", folder: true)
+        let nested = try demo.add(name: "dentro.txt", parent: folder, content: Data("x".utf8))
+        try demo.trash(folder)
+        XCTAssertFalse(try demo.list("root").contains { $0.id == folder })
+        XCTAssertThrowsError(try demo.rename(nested, name: "y"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(nested).path))
+    }
+
     func testOneDriveNameRulesAreStricterThanDrive() {
         XCTAssertNil(FileNames.problem(with: "Informe: final?", for: .google))
         XCTAssertNotNil(FileNames.problem(with: "Informe: final?", for: .microsoft))

@@ -75,6 +75,18 @@ final class DemoStore {
         entries[id] = Entry(file: CloudFile(id: id, name: name, mime: entry.file.mime, size: entry.file.size, modified: Date(), webURL: nil, isFolder: entry.file.isFolder), parent: entry.parent)
         try persist()
     }
+    /// Removes the entry and its descendants; the demo has no recycle bin to restore from.
+    func trash(_ id: String) throws {
+        try check()
+        guard entries[id] != nil else { throw CloudError.message("El archivo demo ya no existe.") }
+        var pending = [id]
+        while let current = pending.popLast() {
+            pending += entries.values.filter { $0.parent == current }.map(\.file.id)
+            entries[current] = nil
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(current))
+        }
+        try persist()
+    }
     func publicLink(_ id: String) throws -> URL {
         try check()
         guard entries[id] != nil else { throw CloudError.message("El archivo demo ya no existe.") }
