@@ -23,6 +23,7 @@ struct iCloudyApp: App {
                 }
         }
         .defaultSize(width: 1120, height: 740)
+        .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
@@ -97,16 +98,18 @@ struct ExplorerView: View {
     @State private var confirmDisconnect = false
     @State private var disconnectTarget: Account?
     @State private var previewFollow: Task<Void, Never>?
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var sidebarVisible = true
     @FocusState private var gridFocused: Bool
 
     private var navigation: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        // The toolbar belongs to the window, not a navigation column. An ordinary split view keeps its
+        // leading controls anchored to the traffic lights when the sidebar is resized or hidden.
+        HSplitView {
             VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 16) {
                 Label("iCloudy", systemImage: "cloud.fill")
-                    .font(.system(size: 24, weight: .semibold)).padding(.horizontal, Layout.sidebarInner).padding(.top, 20)
-                Text("TUS NUBES").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, Layout.sidebarInner)
+                    .font(.system(size: 24, weight: .semibold))
+                    .frame(maxWidth: .infinity, alignment: .center).padding(.top, 20)
                 Button { model.preview.close(); model.showGlobalSearch = true } label: {
                     Label("Buscar en todas las nubes", systemImage: "magnifyingglass").frame(maxWidth: .infinity, alignment: .leading).padding(Layout.sidebarInner)
                         .background(model.showGlobalSearch ? Color.accentColor.opacity(0.13) : .clear, in: RoundedRectangle(cornerRadius: 9))
@@ -177,9 +180,13 @@ struct ExplorerView: View {
                     .padding(.horizontal, Layout.margin)
                     .frame(maxWidth: .infinity, alignment: .leading).frame(height: Layout.footerHeight)
             }
-            .navigationSplitViewColumnWidth(min: 230, ideal: 260, max: 320)
-            .toolbar(removing: .sidebarToggle)
-        } detail: {
+            // Keep both panes alive when collapsed: changing the split's children would recreate the
+            // detail view, losing table scroll position or cancelling an in-flight global search.
+            .frame(minWidth: sidebarVisible ? 230 : 0, idealWidth: sidebarVisible ? 260 : 0,
+                   maxWidth: sidebarVisible ? 320 : 0, maxHeight: .infinity)
+            .clipped().opacity(sidebarVisible ? 1 : 0)
+            .accessibilityHidden(!sidebarVisible).allowsHitTesting(sidebarVisible)
+            Group {
             if model.showGlobalSearch {
                 GlobalSearchView(model: model, search: model.globalSearch)
             } else {
@@ -241,27 +248,27 @@ struct ExplorerView: View {
             .navigationTitle(model.account.map { model.accountTitle($0) } ?? "iCloudy")
             .toolbar { explorerToolbar }
             }
+            }
+            .frame(minWidth: 580, maxWidth: .infinity, maxHeight: .infinity)
         }
-        // Keep the detail beside the sidebar, never temporarily overlaid during expansion.
-        .navigationSplitViewStyle(.balanced)
-        // A single toolbar surface avoids the native material boundary being offset from the split divider.
-        .toolbarBackground(Color(nsColor: .windowBackgroundColor), for: .windowToolbar)
-        .toolbarBackground(.visible, for: .windowToolbar)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .background(ExplorerWindowChrome())
+        .toolbarBackground(.hidden, for: .windowToolbar)
         .toolbar {
-            ToolbarItem(placement: .navigation) {
+            ToolbarItemGroup(placement: .navigation) {
                 Button {
-                    // SwiftUI's default animated toggle reflows the table and wraps the sidebar at intermediate widths.
-                    // One nonanimated layout transaction also keeps the toolbar divider in step with the content.
                     var transaction = Transaction(animation: nil)
                     transaction.disablesAnimations = true
-                    withTransaction(transaction) {
-                        columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
-                    }
+                    withTransaction(transaction) { sidebarVisible.toggle() }
                 } label: { Label("Barra lateral", systemImage: "sidebar.left") }
-                .help(columnVisibility == .detailOnly ? "Mostrar barra lateral" : "Ocultar barra lateral")
+                .help(sidebarVisible ? "Ocultar barra lateral" : "Mostrar barra lateral")
                 .keyboardShortcut("s", modifiers: [.command, .control])
+                Text(model.account.map { model.accountTitle($0) } ?? "iCloudy")
+                    .font(.headline).lineLimit(1).truncationMode(.tail)
+                    .frame(maxWidth: 220, alignment: .leading)
+                    .help(model.account.map { model.accountTitle($0) } ?? "iCloudy")
             }
-            ToolbarItem(placement: .automatic) {
+            ToolbarItem(placement: .primaryAction) {
                 SettingsLink { Label("Configuración", systemImage: "gearshape") }
                     .help("Abrir Configuración (⌘,)")
             }
@@ -334,7 +341,7 @@ struct ExplorerView: View {
     }
 
     @ToolbarContentBuilder private var explorerToolbar: some ToolbarContent {
-        ToolbarItemGroup {
+        ToolbarItemGroup(placement: .primaryAction) {
             Button { model.reload(fresh: true) } label: { Image(systemName: "arrow.clockwise") }.help("Actualizar carpeta").disabled(model.account == nil || model.loading)
             Button { Task { await model.pickUpload() } } label: { Label("Subir", systemImage: "square.and.arrow.up") }.disabled(!model.canWrite)
             Button { model.promptName() } label: { Label("Nueva carpeta", systemImage: "folder.badge.plus") }.disabled(!model.canWrite)
