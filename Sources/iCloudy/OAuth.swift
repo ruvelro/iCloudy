@@ -16,10 +16,22 @@ enum HTTP {
     static func validate(_ response: URLResponse, data: Data = Data()) throws {
         guard let response = response as? HTTPURLResponse else { throw CloudError.message("Respuesta HTTP no válida.") }
         guard (200..<300).contains(response.statusCode) else {
-            let object = try? json(data)
-            let detail = (object?["error"] as? [String: Any])?["message"] as? String
-            throw ServiceError(status: response.statusCode, detail: detail ?? "El servicio devolvió HTTP \(response.statusCode). \(response.statusCode == 401 ? "Vuelve a conectar la cuenta." : "Inténtalo de nuevo más tarde.")")
+            let (code, message) = errorDetails(data)
+            let fallback = "El servicio devolvió HTTP \(response.statusCode). \(response.statusCode == 401 ? "Vuelve a conectar la cuenta." : "Inténtalo de nuevo más tarde.")"
+            throw ServiceError(status: response.statusCode, detail: message ?? fallback, code: code)
         }
+    }
+    /// Drive and Graph nest the error as an object; the OAuth token endpoints follow RFC 6749 with `error` and `error_description` strings.
+    static func errorDetails(_ data: Data) -> (code: String?, message: String?) {
+        guard let object = try? json(data) else { return (nil, nil) }
+        if let error = object["error"] as? [String: Any] {
+            let code = (error["code"] as? String) ?? (error["status"] as? String)
+            return (code, error["message"] as? String)
+        }
+        if let code = object["error"] as? String {
+            return (code, (object["error_description"] as? String) ?? code)
+        }
+        return (nil, nil)
     }
     static func token(cloud: Cloud, values: [String: String]) async throws -> [String: Any] {
         var request = URLRequest(url: URL(string: cloud.tokenURL)!)
@@ -41,6 +53,8 @@ final class OAuth {
     private var expectedState = ""
     private var connections: [NWConnection] = []
     private var cancelled = false
+    /// Account picker, consent screen and a second factor can easily take several minutes.
+    static let loginTimeout: Duration = .seconds(600)
 
     static func random() -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
@@ -87,8 +101,8 @@ final class OAuth {
         let code: String = try await withCheckedThrowingContinuation { continuation in
             callback = continuation
             timeout = Task { [weak self] in
-                do { try await Task.sleep(for: .seconds(180)) } catch { return }
-                self?.finish(.failure(CloudError.message("Se agotó el tiempo de inicio de sesión. Vuelve a intentarlo.")))
+                do { try await Task.sleep(for: Self.loginTimeout) } catch { return }
+                self?.finish(.failure(CloudError.message("No llegó la respuesta del navegador en 10 minutos y se ha cancelado el inicio de sesión. Si aún estás en la página del proveedor, ciérrala y vuelve a pulsar «Continuar» para empezar de nuevo.")))
             }
             if !NSWorkspace.shared.open(url) { finish(.failure(CloudError.message("No se pudo abrir el navegador."))) }
         }

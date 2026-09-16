@@ -73,12 +73,19 @@ struct ExplorerView: View {
                                         Text(account.email).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                                         if !model.appearance(for: account).alias.isEmpty { Text(account.cloud.title).font(.caption2).foregroundStyle(.secondary) }
                                         StorageUsageView(account: account, state: model.storageQuotas[account.id]).padding(.top, 3)
+                                        if model.isExpired(account) {
+                                            Label("Sesión caducada · Vuelve a conectar", systemImage: "exclamationmark.triangle.fill").font(.caption2).foregroundStyle(.orange)
+                                        }
                                     }
                                     Spacer(minLength: 0)
                                 }.padding(10).contentShape(Rectangle())
                                     .background(model.selectedAccountID == account.id && !model.showGlobalSearch ? model.appearance(for: account).tint.color.opacity(0.13) : .clear, in: RoundedRectangle(cornerRadius: 9))
                             }.buttonStyle(.plain)
                                 .contextMenu {
+                                    if model.isExpired(account) {
+                                        Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.connecting)
+                                        Divider()
+                                    }
                                     Button("Personalizar nube…") { model.appearanceAccount = account }
                                     Button("Actualizar espacio") { model.refreshStorage(account) }
                                     Divider()
@@ -134,9 +141,18 @@ struct ExplorerView: View {
                             Button("Simular corte") { model.failNextDemoTransfer() }.help("La siguiente operación fallará una vez para probar el reintento")
                         }.padding(10).background(Color.orange.opacity(0.12))
                     }
+                    if let account = model.account, model.isExpired(account) {
+                        HStack {
+                            Label("La sesión de esta cuenta ha caducado o se ha revocado. Los archivos no se pueden consultar hasta volver a conectarla.", systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption).fixedSize(horizontal: false, vertical: true)
+                            Spacer()
+                            Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.connecting)
+                        }.padding(10).background(Color.orange.opacity(0.12))
+                    }
                     fileBrowser
                 }
-                if showTransfers && !model.transfers.isEmpty { transferList }
+                // Keep the panel visible while the saved queue is unreadable, otherwise the recovery button would never appear.
+                if showTransfers && (!model.transfers.isEmpty || model.queue.persistenceError != nil) { transferList }
                 Divider()
                 HStack {
                     Text("\(model.visibleFiles.count) elementos")
@@ -373,7 +389,16 @@ struct ExplorerView: View {
                     }
                 }
             }.frame(maxHeight: 180)
-            if let message = model.queue.persistenceError { Text(message).foregroundStyle(.red).font(.caption) }
+            if let message = model.queue.persistenceError {
+                HStack(alignment: .top) {
+                    Text(message).foregroundStyle(.red).font(.caption).fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    if model.queue.canDiscardSavedQueue {
+                        Button("Descartar cola guardada") { model.queue.discardSavedQueue() }.font(.caption)
+                            .help("Aparta el archivo dañado con una copia junto al original y permite crear transferencias nuevas.")
+                    }
+                }
+            }
         }.padding(16).background(.quaternary.opacity(0.4))
     }
 }

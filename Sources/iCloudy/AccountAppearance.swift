@@ -184,3 +184,15 @@ struct AccountAppearanceEditor: View {
         catch { self.error = error.localizedDescription }
     }
 }
+
+extension AccountAppearance {
+    enum CodingKeys: String, CodingKey { case alias, tint, icon, customPNG }
+    /// Missing keys fall back to defaults so a new property never discards existing customisations.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(alias: try values.decodeIfPresent(String.self, forKey: .alias) ?? "",
+                  tint: try values.decodeIfPresent(String.self, forKey: .tint).flatMap(AccountTint.init(rawValue:)) ?? .blue,
+                  icon: try values.decodeIfPresent(String.self, forKey: .icon) ?? "automatic",
+                  customPNG: try values.decodeIfPresent(Data.self, forKey: .customPNG))
+    }
+}

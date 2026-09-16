@@ -33,6 +33,20 @@ final class TransferQueue: ObservableObject {
             for index in items.indices where [.running, .queued].contains(items[index].state) { items[index].state = .paused; items[index].bytesPerSecond = 0 }
         } catch { writable = false; persistenceError = "No se pudo recuperar la cola. Se conserva el archivo original: \(error.localizedDescription)" }
     }
+    /// True when the saved queue could not be read: nothing can be added until the user sets that file aside.
+    var canDiscardSavedQueue: Bool { !writable }
+    /// Moves the unreadable store next to itself with a `.corrupt-<timestamp>` suffix and starts an empty, writable queue.
+    /// The original bytes are preserved so nothing is lost if a future version can read them.
+    func discardSavedQueue() {
+        guard !writable else { return }
+        do {
+            if FileManager.default.fileExists(atPath: storeURL.path) {
+                let backup = storeURL.appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970))")
+                try FileManager.default.moveItem(at: storeURL, to: backup)
+            }
+            items = []; writable = true; persistenceError = nil
+        } catch { persistenceError = "No se pudo apartar la cola dañada: \(error.localizedDescription)" }
+    }
     var hasActive: Bool { items.contains { [.queued, .running].contains($0.state) } }
     func hasActive(accountID: String) -> Bool {
         items.contains { $0.accountID == accountID && ([.queued, .running].contains($0.state) || $0.id == activeID) }

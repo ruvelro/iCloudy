@@ -3,6 +3,8 @@ import Foundation
 struct ServiceError: LocalizedError {
     let status: Int
     var detail: String? = nil
+    /// Machine-readable code when the body carried one: RFC 6749 `error` (e.g. `invalid_grant`) or the Graph/Drive `error.code`.
+    var code: String? = nil
     var errorDescription: String? { detail ?? "El servicio devolvió HTTP \(status)." }
     var retryable: Bool { [408, 429, 500, 502, 503, 504].contains(status) }
 }
@@ -51,14 +53,14 @@ extension CloudAPI {
                 var initial = try await request(URL(string: "https://www.googleapis.com/upload/drive/v3/files\(suffix)?uploadType=resumable")!, method: replacing == nil ? "POST" : "PATCH", body: metadata)
                 initial.setValue("application/octet-stream", forHTTPHeaderField: "X-Upload-Content-Type")
                 initial.setValue(String(total), forHTTPHeaderField: "X-Upload-Content-Length")
-                let (data, response) = try await session.data(for: initial)
+                let (data, response) = try await send(&initial)
                 try HTTP.validate(response, data: data)
                 cursor.url = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Location").flatMap(URL.init(string:))
             } else if total == 0 {
                 let route = replacing.map { "items/" + Self.segment($0) + "/content" } ?? (graphItem(parent) + ":/" + Self.segment(name) + ":/content?@microsoft.graph.conflictBehavior=fail")
                 var empty = try await request(URL(string: "https://graph.microsoft.com/v1.0/me/drive/" + route)!, method: "PUT")
                 empty.httpBody = Data(); empty.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-                let (data, response) = try await session.data(for: empty)
+                let (data, response) = try await send(&empty)
                 try HTTP.validate(response, data: data)
                 cursor.complete = true; try save(cursor); progress(0, 0); return
             } else {

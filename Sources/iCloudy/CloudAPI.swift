@@ -8,6 +8,9 @@ final class CloudAPI {
     private let tokenProvider: (() async throws -> String)?
     private var refreshTask: Task<String, Error>?
     private var invalidated = false
+    /// Set once the provider rejects the stored credential. Only reconnecting the account, which replaces this client, clears it.
+    private(set) var sessionExpired = false
+    var sessionDidExpire: (() -> Void)?
     func invalidate() {
         invalidated = true
         refreshTask?.cancel()
@@ -16,17 +19,32 @@ final class CloudAPI {
         self.demo = demo
         self.account = account; self.session = session; self.tokenProvider = tokenProvider
     }
+    func expireSession() {
+        guard !sessionExpired else { return }
+        sessionExpired = true
+        sessionDidExpire?()
+    }
 
-    func token() async throws -> String {
+    /// `force` renews even when the local clock still considers the token valid, e.g. after a 401.
+    func token(force: Bool = false) async throws -> String {
         guard !invalidated else { throw CancellationError() }
         if let tokenProvider { return try await tokenProvider() }
+        guard !sessionExpired else { throw CloudError.sessionExpired(nil) }
         if let refreshTask { return try await refreshTask.value }
-        guard let credential = try Vault.read(Credential.self, key: account.id) else { throw CloudError.message("Conecta de nuevo esta cuenta.") }
-        if credential.expires.timeIntervalSinceNow > 90 { return credential.accessToken }
+        guard let credential = try Vault.read(Credential.self, key: account.id) else { expireSession(); throw CloudError.sessionExpired(nil) }
+        if !force, credential.expires.timeIntervalSinceNow > 90 { return credential.accessToken }
         let task = Task { () throws -> String in
             var fields = ["client_id": account.clientID, "refresh_token": credential.refreshToken, "grant_type": "refresh_token"]
             if let secret = account.clientSecret { fields["client_secret"] = secret }
-            let result = try await HTTP.token(cloud: account.cloud, values: fields)
+            let result: [String: Any]
+            do { result = try await HTTP.token(cloud: account.cloud, values: fields) }
+            catch let error as ServiceError where (400..<500).contains(error.status) && !error.retryable {
+                // invalid_grant, revoked consent or a deleted client: retrying cannot fix it, only a new sign-in.
+                try Task.checkCancellation()
+                guard !self.invalidated else { throw CancellationError() }
+                self.expireSession()
+                throw CloudError.sessionExpired(error.code == nil ? nil : error.detail)
+            }
             try Task.checkCancellation()
             guard !self.invalidated else { throw CancellationError() }
             guard let access = result["access_token"] as? String else { throw CloudError.message("No se pudo renovar la sesión. Vuelve a conectar la cuenta.") }
@@ -51,11 +69,22 @@ final class CloudAPI {
         return request
     }
 
+    /// Sends an authenticated request. A first 401 renews the token and retries once; a second 401 means the provider
+    /// no longer honours this account, so the session is marked as expired instead of failing silently on every call.
+    func send(_ request: inout URLRequest) async throws -> (Data, URLResponse) {
+        let (data, response) = try await session.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 401, tokenProvider == nil else { return (data, response) }
+        request.setValue("Bearer \(try await token(force: true))", forHTTPHeaderField: "Authorization")
+        let (retriedData, retriedResponse) = try await session.data(for: request)
+        if (retriedResponse as? HTTPURLResponse)?.statusCode == 401 { expireSession(); throw CloudError.sessionExpired(nil) }
+        return (retriedData, retriedResponse)
+    }
+
     func json(_ url: URL, method: String = "GET", body: [String: Any]? = nil) async throws -> [String: Any] {
-        let request = try await request(url, method: method, body: body)
+        var request = try await request(url, method: method, body: body)
         for attempt in 0..<4 {
             try Task.checkCancellation()
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await send(&request)
             if method == "GET", let http = response as? HTTPURLResponse, [429, 500, 502, 503, 504].contains(http.statusCode), attempt < 3 {
                 let delay = min(Double(http.value(forHTTPHeaderField: "Retry-After") ?? "") ?? pow(2, Double(attempt)), 30)
                 try await Task.sleep(for: .seconds(max(1, delay)))
@@ -144,7 +173,7 @@ final class CloudAPI {
             var initial = try await request(URL(string: "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable")!, method: "POST", body: ["name": local.lastPathComponent, "parents": [parent]])
             initial.setValue("application/octet-stream", forHTTPHeaderField: "X-Upload-Content-Type")
             initial.setValue(String(total), forHTTPHeaderField: "X-Upload-Content-Length")
-            let (data, response) = try await session.data(for: initial)
+            let (data, response) = try await send(&initial)
             try HTTP.validate(response, data: data)
             guard let location = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Location"), let url = URL(string: location), url.scheme == "https" else { throw CloudError.message("No se pudo iniciar la subida.") }
             sessionURL = url
@@ -154,7 +183,7 @@ final class CloudAPI {
             var empty = try await request(URL(string: "https://graph.microsoft.com/v1.0/me/drive/\(graphItem(parent)):/\(Self.segment(name)):/content")!, method: "PUT")
             empty.httpBody = Data()
             empty.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-            let (data, response) = try await session.data(for: empty)
+            let (data, response) = try await send(&empty)
             try HTTP.validate(response, data: data)
             progress(1); return
         } else {
@@ -202,14 +231,23 @@ final class CloudAPI {
             url = parts.url!
         } else { url = URL(string: "https://graph.microsoft.com/v1.0/me/drive/items/\(Self.segment(file.id))/content")! }
         let delegate = DownloadProgress(maxBytes: maxBytes) { bytes, total in Task { @MainActor in progress(bytes, total) } }
-        let temporary: URL, response: URLResponse
-        do { (temporary, response) = try await session.download(for: request(url), delegate: delegate) }
-        catch {
+        var request = try await request(url)
+        var temporary: URL, response: URLResponse
+        do {
+            (temporary, response) = try await session.download(for: request, delegate: delegate)
+            if (response as? HTTPURLResponse)?.statusCode == 401, tokenProvider == nil {
+                // Same policy as `send`: renew once, then treat a repeated 401 as a revoked session.
+                try? FileManager.default.removeItem(at: temporary)
+                request.setValue("Bearer \(try await token(force: true))", forHTTPHeaderField: "Authorization")
+                (temporary, response) = try await session.download(for: request, delegate: delegate)
+            }
+        } catch {
             if delegate.exceededLimit { throw CloudError.message("La vista previa supera el límite de descarga autorizado.") }
             throw error
         }
         defer { try? FileManager.default.removeItem(at: temporary) }
         try Task.checkCancellation()
+        if (response as? HTTPURLResponse)?.statusCode == 401, tokenProvider == nil { expireSession(); throw CloudError.sessionExpired(nil) }
         try HTTP.validate(response)
         if let maxBytes {
             let actual = try temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0

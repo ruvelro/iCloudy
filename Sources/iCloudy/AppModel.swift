@@ -19,6 +19,8 @@ final class AppModel: ObservableObject {
     @Published var appearanceAccount: Account?
     @Published private(set) var appearances: [String: AccountAppearance] = [:]
     @Published private(set) var storageQuotas: [String: StorageQuotaState] = [:]
+    /// Accounts whose provider rejected the stored credential. Shown in the sidebar until the user reconnects.
+    @Published private(set) var expiredAccountIDs: Set<String> = []
     @Published var viewMode = UserDefaults.standard.string(forKey: "viewMode") ?? "list" { didSet { UserDefaults.standard.set(viewMode, forKey: "viewMode") } }
     @Published var sortMode = "name"
     @Published var showNameDialog = false
@@ -84,8 +86,15 @@ final class AppModel: ObservableObject {
         if let client = clients[account.id] { return client }
         if account.isDemo && demo == nil { demo = try DemoStore() }
         let client = CloudAPI(account: account, demo: account.isDemo ? demo : nil)
+        client.sessionDidExpire = { [weak self] in self?.expiredAccountIDs.insert(account.id) }
         clients[account.id] = client
         return client
+    }
+    func isExpired(_ account: Account) -> Bool { expiredAccountIDs.contains(account.id) }
+    /// Starts the provider's sign-in for the same cloud; signing in with the same identity replaces the expired session.
+    func reconnect(_ account: Account) async {
+        await connect(cloud: account.cloud)
+        if let message = connectionError, !showConnect { error = message; connectionError = nil }
     }
     func enableDemo(select shouldSelect: Bool = true) {
         do {
@@ -116,6 +125,7 @@ final class AppModel: ObservableObject {
             var updated = accounts.filter { $0.id != account.id }; updated.append(account)
             try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
             accounts = updated; clients[account.id]?.invalidate(); clients[account.id] = nil
+            expiredAccountIDs.remove(account.id)
             select(account.id); showConnect = false
         } catch is CancellationError {} catch { connectionError = error.localizedDescription }
     }
@@ -135,6 +145,7 @@ final class AppModel: ObservableObject {
             quotaTasks.removeValue(forKey: account.id)?.cancel()
             quotaRequestIDs[account.id] = nil; storageQuotas[account.id] = nil
             clients[account.id]?.invalidate(); clients[account.id] = nil
+            expiredAccountIDs.remove(account.id)
             accounts = updated
             globalSearch.removeAccount(account.id)
             if selectedAccountID == account.id { select(accounts.first?.id) }
@@ -204,6 +215,8 @@ final class AppModel: ObservableObject {
             } catch {
                 guard navigationID == requestID else { return }
                 loading = false
+                // An expired session already shows a banner with a reconnect button; an extra alert would only repeat it.
+                if (error as? CloudError)?.isSessionExpired == true { return }
                 if !(error is CancellationError), (error as NSError).code != NSURLErrorCancelled { self.error = error.localizedDescription }
             }
         }

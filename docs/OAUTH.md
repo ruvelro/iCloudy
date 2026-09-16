@@ -66,6 +66,18 @@ El archivo se copia a `Contents/Resources/OAuth.plist` antes de firmar. Se puede
 - Los forks que distribuyan su propia aplicación deben registrar sus propios clientes y políticas de privacidad. Los usuarios del binario oficial usan el registro de iCloudy.
 - El repositorio ignora la configuración local, certificados y perfiles. No contiene tokens ni IDs ficticios habilitados.
 
+## Firma local para desarrollo
+
+Los elementos del Llavero quedan ligados a la identidad que firmó la app. Una firma ad hoc (`-`) cambia en cada compilación, así que tras cada `build-app.sh` macOS pedía permiso para las cuentas guardadas o directamente negaba el acceso. El script ahora busca una identidad de firma de código estable en el Llavero y solo recurre a ad hoc, con un aviso, si no encuentra ninguna.
+
+Si no tienes cuenta de desarrollador, crea un certificado local una sola vez:
+
+1. Abre **Acceso a Llaveros → Asistente para Certificados → Crear un certificado…**
+2. Nombre `iCloudy Development`, tipo de identidad **Raíz autofirmada**, tipo de certificado **Firma de código**.
+3. Compila con `bash scripts/build-app.sh`; el script lo detecta por el nombre. También puedes forzar otra identidad con `ICLOUDY_SIGNING_IDENTITY="Nombre exacto"` o volver a ad hoc con `ICLOUDY_SIGNING_IDENTITY=-`.
+
+Los certificados autofirmados no admiten sello de tiempo de Apple, por eso el script firma con `--timestamp=none`. Sirven para desarrollo; la distribución sigue requiriendo Developer ID o Mac App Store.
+
 ## Mac App Store
 
 Se incluye `Resources/iCloudy.entitlements` y el script lo usa al firmar: **App Sandbox**, red de salida, red de entrada para el callback exclusivo de loopback y acceso de lectura/escritura a archivos elegidos por el usuario. Los tests con respuestas simuladas no certifican el funcionamiento real en el sandbox. [App Sandbox de Apple](https://developer.apple.com/documentation/xcode/configuring-the-macos-app-sandbox).

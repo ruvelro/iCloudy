@@ -12,7 +12,7 @@ bash scripts/build-app.sh
 open dist/iCloudy.app
 ```
 
-También puedes abrir `Package.swift` en Xcode o ejecutar `swift run iCloudy` para desarrollar la interfaz. Para OAuth usa el paquete `.app`, que incorpora la configuración. La firma local ad hoc sirve para desarrollo; GitHub y Mac App Store tienen procesos de firma distintos, detallados en la guía OAuth.
+También puedes abrir `Package.swift` en Xcode o ejecutar `swift run iCloudy` para desarrollar la interfaz. Para OAuth usa el paquete `.app`, que incorpora la configuración. El script firma con la primera identidad de firma de código que encuentre en el Llavero y avisa si tiene que recurrir a ad hoc, porque esa firma cambia en cada compilación y obliga a reautorizar el acceso al Llavero. La guía OAuth explica cómo crear un certificado local y los procesos de GitHub y Mac App Store.
 
 ## Funciones
 
@@ -29,7 +29,9 @@ También puedes abrir `Package.swift` en Xcode o ejecutar `swift run iCloudy` pa
 - Google Docs: PDF/Word; Sheets: Excel/PDF; Slides: PowerPoint/PDF. Exportación individual.
 - Vista previa con Espacio, botón de ojo o menú contextual, en lista y cuadrícula: PDF, imágenes y texto/código en solo lectura. Descarga temporal cancelable, limpieza al cerrar y al arrancar, consentimiento por encima de 100 MB o tamaño desconocido, y «Guardar copia…». Detalles y límites en [Vista previa](docs/PREVIEW.md).
 - Cola secuencial con estados, progreso por bloques en subidas y por elementos en carpetas; descarga individual con indicador de actividad.
-- Botones «Continuar con Google» y «Continuar con Microsoft», sin campos técnicos para el usuario. OAuth con navegador externo, PKCE y validación de state. Tokens y cuentas en el Llavero; configuración del desarrollador incorporada al paquete.
+- Botones «Continuar con Google» y «Continuar con Microsoft», sin campos técnicos para el usuario. OAuth con navegador externo, PKCE y validación de state, con hasta diez minutos para completar el inicio de sesión. Tokens y cuentas en el Llavero; configuración del desarrollador incorporada al paquete.
+- Sesiones caducadas o revocadas: un 401 fuerza una renovación del token y, si el proveedor sigue rechazando la cuenta o el refresh token ya no vale, la cuenta se marca en la barra lateral con «Sesión caducada» y un botón «Volver a conectar…». Los errores del endpoint de tokens (`invalid_grant` y similares) se muestran con el detalle del proveedor en lugar de un mensaje genérico.
+- Los archivos guardados en Application Support y el Llavero toleran propiedades nuevas: al añadir un campo a los modelos, los datos anteriores siguen leyéndose con valores por defecto. Si la cola guardada no se puede leer, el panel de transferencias ofrece «Descartar cola guardada», que aparta el archivo con una copia `.corrupt-<fecha>` y vuelve a permitir transferencias.
 
 ## Configuración real de cuentas
 
