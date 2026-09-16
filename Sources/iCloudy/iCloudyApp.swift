@@ -1,34 +1,60 @@
 import SwiftUI
 import AppKit
+import CoreSpotlight
 import UniformTypeIdentifiers
 
 @main
 struct iCloudyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var model = AppModel()
+    @AppStorage("menuBarEnabled") private var menuBarEnabled = true
     var body: some Scene {
         // A single window: every window of a WindowGroup would mirror the same account, folder and selection.
         Window("iCloudy", id: "explorer") {
             ExplorerView(model: model)
                 .frame(minWidth: 900, minHeight: 600)
                 .onAppear { delegate.model = model }
+                // Opening a Spotlight result brings the app forward on the indexed item.
+                .onContinueUserActivity(CSSearchableItemActionType) { activity in
+                    guard let id = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String else { return }
+                    model.openSpotlightItem(identifier: id)
+                }
         }
         .defaultSize(width: 1120, height: 740)
         .commands {
             CommandGroup(after: .newItem) {
                 Button("Añadir cuenta…") { model.showConnect = true }.keyboardShortcut("n", modifiers: [.command, .shift])
                 Button("Subir archivos…") { Task { await model.pickUpload() } }.disabled(!model.canWrite)
+                Button("Subir el portapapeles") { model.uploadFromPasteboard() }.disabled(!model.canWrite)
                 Button("Buscar en todas las nubes") { model.preview.close(); model.showGlobalSearch = true }.keyboardShortcut("f", modifiers: [.command, .shift])
             }
+            CommandGroup(after: .toolbar) {
+                Toggle("Mostrar iCloudy en la barra de menús", isOn: $menuBarEnabled)
+            }
+        }
+        MenuBarExtra("iCloudy", systemImage: "cloud.fill", isInserted: $menuBarEnabled) {
+            MenuBarContent(model: model, queue: model.queue)
         }
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    var model: AppModel?
+    var model: AppModel? { didSet { services.model = model } }
+    private let services = ServicesProvider()
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        // "Subir a iCloudy" in any app's Services menu, declared in Info.plist and handled in this process.
+        services.model = model
+        NSApp.servicesProvider = services
+        NSUpdateDynamicServices()
+    }
+    /// Files dropped on the Dock icon, or opened with "Abrir con", go to the folder currently shown.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        let files = urls.filter(\.isFileURL)
+        guard !files.isEmpty, let model else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        Task { @MainActor in model.enqueueUploads(files) }
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard model?.hasActiveTransfers == true else { return .terminateNow }

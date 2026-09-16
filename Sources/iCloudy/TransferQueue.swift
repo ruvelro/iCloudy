@@ -173,6 +173,12 @@ final class TransferQueue: ObservableObject {
     func cancelBatch(_ batchID: UUID) {
         for id in items.filter({ $0.batchID == batchID && [.running, .queued].contains($0.state) }).map(\.id) { cancel(id) }
     }
+    /// Re-queues everything the user (or the network) left paused, plus what failed. Returns how many were revived.
+    @discardableResult func resumeAll() -> Int {
+        let ids = items.filter { [.paused, .failed].contains($0.state) }.map(\.id)
+        for id in ids { retry(id) }
+        return ids.count
+    }
     func pauseAll() {
         for id in items.filter({ [.running, .queued].contains($0.state) }).map(\.id) { cancel(id, pause: true) }
     }

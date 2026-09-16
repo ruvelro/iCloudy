@@ -45,6 +45,9 @@ final class AppModel: ObservableObject {
     let history = TransferHistory()
     let connectivity = Connectivity()
     let mirrors = MirrorManager()
+    let spotlight = SpotlightIndex()
+    /// The running model, so App Intents and the Services menu can reach it. Intents run inside the app process.
+    @MainActor static private(set) weak var shared: AppModel?
     let listings = ListingCache()
     @Published private(set) var isOnline = true
     /// True while the table shows the last known listing instead of a fresh answer from the provider.
@@ -124,6 +127,78 @@ final class AppModel: ObservableObject {
             Task { await self?.saveMany([file], targetAccount: account) }
         }
         preview.openBrowser = { [weak self] file in self?.openBrowser(file) }
+        spotlight.refreshFavorites(favorites) { [weak self] id in self?.accounts.first { $0.id == id }.map { self?.accountTitle($0) ?? $0.email } ?? id }
+        Self.shared = self
+    }
+
+    // MARK: - System integration
+
+    /// Queues the given local files; returns false when the current view cannot receive uploads.
+    @discardableResult func uploadFromPasteboard() -> Bool {
+        let pasteboard = NSPasteboard.general
+        let urls = (pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL] ?? []).filter(\.isFileURL)
+        if !urls.isEmpty { return enqueueUploads(urls) }
+        guard let text = pasteboard.string(forType: .string), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            error = L("El portapapeles no contiene archivos ni texto.")
+            return false
+        }
+        return uploadText(text)
+    }
+    /// Writes clipboard text to a temporary .txt and queues it. The temporary file lives in iCloudy's own cache.
+    @discardableResult func uploadText(_ text: String) -> Bool {
+        guard canWrite else { error = L("Abre una carpeta de «Mis archivos» para subir aquí. Recientes y Compartido conmigo son listas, no carpetas."); return false }
+        do {
+            let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("iCloudy/Pasteboard", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            let stamp = Date().formatted(.iso8601.year().month().day().dateSeparator(.dash).time(includingFractionalSeconds: false).timeSeparator(.omitted))
+            let url = FileNames.available(in: folder, name: "Portapapeles \(stamp).txt")
+            try Data(text.utf8).write(to: url, options: .atomic)
+            return enqueueUploads([url])
+        } catch { self.error = error.localizedDescription; return false }
+    }
+    func syncAllMirrors() -> Int {
+        for mirror in mirrors.mirrors { mirrors.syncNow(mirror.id) }
+        return mirrors.mirrors.count
+    }
+    func storageSummary() -> String {
+        guard !accounts.isEmpty else { return L("No hay ninguna cuenta conectada en iCloudy.") }
+        return accounts.map { account in
+            switch storageQuotas[account.id] {
+            case .available(let quota): return accountTitle(account) + " (" + account.email + "): " + quota.summary
+            case .unavailable(let message): return accountTitle(account) + " (" + account.email + "): " + message
+            default: return accountTitle(account) + " (" + account.email + "): " + L("consultando…")
+            }
+        }.joined(separator: "\n")
+    }
+    /// Shared by the search view, the menu bar and the Shortcuts action.
+    func startGlobalSearch(_ term: String) {
+        preview.close()
+        showGlobalSearch = true
+        globalSearch.query = String(term.prefix(256))
+        globalSearch.start(accounts: accounts) { [weak self] account, query, cursor in
+            guard let self else { throw CancellationError() }
+            return try await self.client(account).searchPage(term: query, cursor: cursor, filters: self.globalSearch.filters)
+        }
+    }
+    /// Handles a Spotlight result: folders open in place, files open their preview, because only the item itself was indexed.
+    func openSpotlightItem(identifier: String) {
+        guard let decoded = SpotlightIndex.decode(identifier: identifier),
+              let entry = spotlight.items.first(where: { $0.accountID == decoded.accountID && $0.file.id == decoded.fileID }),
+              let account = accounts.first(where: { $0.id == decoded.accountID }) else {
+            error = L("Ese resultado ya no está disponible en iCloudy. Vuelve a conectar la cuenta o búscalo de nuevo.")
+            return
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        if entry.file.isFolder { openFolder(accountID: account.id, folderID: entry.file.id) }
+        else {
+            showGlobalSearch = false
+            selectedAccountID = account.id
+            do { preview.show(file: entry.file, account: account, client: try client(account)) }
+            catch { self.error = error.localizedDescription }
+        }
+    }
+    private func noteForSpotlight(_ file: CloudFile, account: Account) {
+        spotlight.note(file, accountID: account.id, path: path, accountLabel: accountTitle(account))
     }
     func client(_ account: Account) throws -> CloudAPI {
         if let client = clients[account.id] { return client }
@@ -191,6 +266,7 @@ final class AppModel: ObservableObject {
             expiredAccountIDs.remove(account.id)
             listings.removeAll(accountID: account.id)
             mirrors.removeAll(accountID: account.id)
+            spotlight.removeAccount(account.id)
             accounts = updated
             globalSearch.removeAccount(account.id)
             if selectedAccountID == account.id { select(accounts.first?.id) }
@@ -254,10 +330,15 @@ final class AppModel: ObservableObject {
     }
     func showPreview(_ file: CloudFile) {
         guard let account else { return }
+        noteForSpotlight(file, account: account)
         do { preview.show(file: file, account: account, client: try client(account)) }
         catch { self.error = error.localizedDescription }
     }
-    func navigate(_ file: CloudFile) { guard file.isFolder else { return }; preview.close(); path.append(file); search = ""; files = []; reload() }
+    func navigate(_ file: CloudFile) {
+        guard file.isFolder, let account else { return }
+        noteForSpotlight(file, account: account)
+        preview.close(); path.append(file); search = ""; files = []; reload()
+    }
     func back(to count: Int) { preview.close(); path = Array(path.prefix(count)); search = ""; files = []; reload() }
     /// `fresh` skips the cached copy, e.g. right after a write the cache cannot know about yet.
     func reload(fresh: Bool = false) {
@@ -425,10 +506,10 @@ final class AppModel: ObservableObject {
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = true; panel.allowsMultipleSelection = true; panel.prompt = "Subir"
         if await panel.begin() == .OK { enqueueUploads(panel.urls, target: (account, parent, destination)) }
     }
-    func enqueueUploads(_ urls: [URL], target: (Account, String, String)? = nil) {
+    @discardableResult func enqueueUploads(_ urls: [URL], target: (Account, String, String)? = nil) -> Bool {
         guard let account = target?.0 ?? account, target != nil || canWrite else {
             if !canWrite { error = L("Abre una carpeta de «Mis archivos» para subir aquí. Recientes y Compartido conmigo son listas, no carpetas.") }
-            return
+            return false
         }
         let batch = UUID()
         do {
@@ -438,7 +519,8 @@ final class AppModel: ObservableObject {
                 return Transfer(batchID: batch, name: url.lastPathComponent, destination: target?.2 ?? location, accountID: account.id, direction: .upload, localURL: url, bookmark: try TransferQueue.bookmark(url), parent: target?.1 ?? folderID)
             }
             try queue.add(jobs)
-        } catch { self.error = error.localizedDescription }
+            return true
+        } catch { self.error = error.localizedDescription; return false }
     }
     func save(_ file: CloudFile, export: (mime: String, ext: String)? = nil) async { await saveMany([file], export: export) }
     func saveMany(_ files: [CloudFile], export: (mime: String, ext: String)? = nil, targetAccount: Account? = nil) async {
@@ -481,6 +563,7 @@ final class AppModel: ObservableObject {
         if isFavorite(file) { favorites.removeAll { $0.accountID == account.id && $0.file.id == file.id } }
         else { favorites.append(Favorite(accountID: account.id, file: file, path: path, collection: collection)) }
         do { try LocalStore.save(favorites, to: favoritesURL) } catch { self.error = error.localizedDescription }
+        spotlight.refreshFavorites(favorites) { [weak self] id in self?.accounts.first { $0.id == id }.map { self?.accountTitle($0) ?? $0.email } ?? id }
     }
     func openFavorite(_ favorite: Favorite) {
         guard accounts.contains(where: { $0.id == favorite.accountID }) else { error = L("Conecta la cuenta de este favorito."); return }

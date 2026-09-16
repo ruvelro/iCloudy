@@ -18,5 +18,19 @@
     <key>ITSAppUsesNonExemptEncryption</key><false/>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
+    <!-- "Subir a iCloudy" in every app's Services menu. Handled in-process: no app extension, no App Group. -->
+    <key>NSServices</key>
+    <array>
+        <dict>
+            <key>NSMenuItem</key><dict><key>default</key><string>Subir a iCloudy</string></dict>
+            <key>NSMessage</key><string>uploadToICloudy</string>
+            <key>NSPortName</key><string>iCloudy</string>
+            <key>NSSendTypes</key>
+            <array>
+                <string>public.file-url</string>
+                <string>NSStringPboardType</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>

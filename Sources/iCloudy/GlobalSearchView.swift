@@ -98,11 +98,8 @@ struct GlobalSearchView: View {
     }
     private func run() {
         guard search.query.count <= 256 else { model.error = L("Usa una búsqueda de hasta 256 caracteres."); return }
-        selected = []; model.preview.close()
-        search.start(accounts: model.accounts) { [weak model] account, term, cursor in
-            guard let model else { throw CancellationError() }
-            return try await model.client(account).searchPage(term: term, cursor: cursor, filters: search.filters)
-        }
+        selected = []
+        model.startGlobalSearch(search.query)
     }
     @ViewBuilder private func actions(_ hit: SearchHit) -> some View {
         Button("Vista previa") { model.previewSearchHit(hit) }
