@@ -16,6 +16,45 @@ extension CloudAPI {
         _ = try await json(URL(string: base + Self.segment(file.id))!, method: "PATCH", body: ["name": name])
     }
 
+    func rootID() async throws -> String {
+        if demo != nil { return "root" }
+        if let rootIDCache { return rootIDCache }
+        let endpoint = account.cloud == .google ? "https://www.googleapis.com/drive/v3/files/root?fields=id" : "https://graph.microsoft.com/v1.0/me/drive/root?$select=id"
+        guard let id = try await json(URL(string: endpoint)!)["id"] as? String else { throw CloudError.message("No se pudo identificar la carpeta raíz.") }
+        rootIDCache = id
+        return id
+    }
+
+    /// Moves an item to another folder of the same account. The caller checks name clashes and cycles beforehand.
+    func move(file: CloudFile, to destination: String) async throws {
+        if let demo { try demo.move(file.id, to: destination); return }
+        let target = destination == "root" ? try await rootID() : destination
+        if account.cloud == .google {
+            // Drive items can have several parents; moving means replacing all of them with the destination.
+            let current = try await json(URL(string: "https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))?fields=parents")!)
+            let parents = (current["parents"] as? [String] ?? []).filter { $0 != target }
+            var url = URLComponents(string: "https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))")!
+            url.queryItems = [URLQueryItem(name: "addParents", value: target), URLQueryItem(name: "removeParents", value: parents.joined(separator: ",")), URLQueryItem(name: "fields", value: "id,parents")]
+            _ = try await json(url.url!, method: "PATCH", body: [:])
+        } else {
+            _ = try await json(URL(string: "https://graph.microsoft.com/v1.0/me/drive/items/\(Self.segment(file.id))")!, method: "PATCH", body: ["parentReference": ["id": target]])
+        }
+    }
+
+    /// Copies an item into another folder. Drive cannot copy folders; Graph copies asynchronously and answers 202.
+    func copy(file: CloudFile, to destination: String) async throws {
+        if let demo { _ = try demo.copy(file.id, to: destination); return }
+        let target = destination == "root" ? try await rootID() : destination
+        if account.cloud == .google {
+            guard !file.isFolder else { throw CloudError.message("Google Drive no permite copiar carpetas. Copia los archivos que contiene.") }
+            _ = try await json(URL(string: "https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))/copy")!, method: "POST", body: ["parents": [target], "name": file.name])
+        } else {
+            var request = try await request(URL(string: "https://graph.microsoft.com/v1.0/me/drive/items/\(Self.segment(file.id))/copy")!, method: "POST", body: ["parentReference": ["id": target]])
+            let (data, response) = try await send(&request)
+            try HTTP.validate(response, data: data)
+        }
+    }
+
     /// Moves the item to the provider's trash or recycle bin, which the user can undo on the web. Never a hard delete.
     func trash(file: CloudFile) async throws {
         if let demo { try demo.trash(file.id); return }

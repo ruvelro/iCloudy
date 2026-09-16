@@ -75,6 +75,22 @@ final class DemoStore {
         entries[id] = Entry(file: CloudFile(id: id, name: name, mime: entry.file.mime, size: entry.file.size, modified: Date(), webURL: nil, isFolder: entry.file.isFolder), parent: entry.parent)
         try persist()
     }
+    func move(_ id: String, to parent: String) throws {
+        try check()
+        guard var entry = entries[id] else { throw CloudError.message("El archivo demo ya no existe.") }
+        entry.parent = parent; entries[id] = entry
+        try persist()
+    }
+    @discardableResult func copy(_ id: String, to parent: String) throws -> String {
+        try check()
+        guard let entry = entries[id] else { throw CloudError.message("El archivo demo ya no existe.") }
+        let copyID = UUID().uuidString
+        if !entry.file.isFolder { try FileManager.default.copyItem(at: directory.appendingPathComponent(id), to: directory.appendingPathComponent(copyID)) }
+        entries[copyID] = Entry(file: CloudFile(id: copyID, name: entry.file.name, mime: entry.file.mime, size: entry.file.size, modified: Date(), webURL: nil, isFolder: entry.file.isFolder), parent: parent)
+        for child in entries.values.filter({ $0.parent == id }) { try copy(child.file.id, to: copyID) }
+        try persist()
+        return copyID
+    }
     /// Removes the entry and its descendants; the demo has no recycle bin to restore from.
     func trash(_ id: String) throws {
         try check()

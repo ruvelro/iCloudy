@@ -18,6 +18,8 @@ final class AppModel: ObservableObject {
     @Published var pendingShare: (file: CloudFile, account: Account)?
     /// Items awaiting confirmation before being sent to the provider's trash.
     @Published var pendingTrash: [CloudFile]?
+    /// Move or copy in progress of being targeted; drives the folder picker sheet.
+    @Published var relocation: Relocation?
     @Published var connecting = false
     @Published var connectionError: String?
     @Published var showConnect = false
@@ -269,6 +271,45 @@ final class AppModel: ObservableObject {
             NSPasteboard.general.setString(link.absoluteString, forType: .string)
             info = "Enlace público copiado. Cualquiera que lo tenga podrá ver «\(file.name)». Para revocarlo, usa la web del proveedor."
         } catch { self.error = error.localizedDescription }
+    }
+    func requestRelocation(_ files: [CloudFile], copy: Bool) {
+        guard let account, !files.isEmpty else { return }
+        if copy, account.cloud == .google, files.contains(where: \.isFolder) {
+            error = "Google Drive no permite copiar carpetas. Copia los archivos que contiene."; return
+        }
+        relocation = Relocation(files: files, copy: copy, account: account, origin: path.isEmpty && collection != .files ? nil : folderID)
+    }
+    /// Checks cycles and name clashes first, then processes item by item and stops at the first failure.
+    func relocate(_ request: Relocation, to destination: String, destinationPath: [CloudFile]) async {
+        let ids = Set(request.files.map(\.id))
+        guard !ids.contains(destination), !destinationPath.contains(where: { ids.contains($0.id) }) else {
+            error = "Una carpeta no puede moverse ni copiarse dentro de sí misma."; return
+        }
+        var done = 0
+        do {
+            let api = try client(request.account)
+            let siblings = try await api.list(parent: destination)
+            let clashes = request.files.filter { file in siblings.contains { $0.id != file.id && $0.name.localizedCaseInsensitiveCompare(file.name) == .orderedSame } }
+            guard clashes.isEmpty else {
+                throw CloudError.message("En la carpeta de destino ya existe " + clashes.map { "«\($0.name)»" }.joined(separator: ", ") + ". Renombra antes de mover o copiar.")
+            }
+            for file in request.files {
+                if request.copy { try await api.copy(file: file, to: destination) } else { try await api.move(file: file, to: destination) }
+                done += 1
+                if !request.copy {
+                    for i in favorites.indices where favorites[i].accountID == request.account.id && favorites[i].file.id == file.id {
+                        favorites[i].path = destinationPath; favorites[i].collection = .files
+                    }
+                }
+            }
+            if !request.copy { try LocalStore.save(favorites, to: favoritesURL) }
+            let target = destinationPath.last?.name ?? "Mis archivos"
+            let verb = request.copy ? (done == 1 ? "copiado" : "copiados") : (done == 1 ? "movido" : "movidos")
+            info = "\(done == 1 ? "«\(request.files[0].name)»" : "\(done) elementos") \(verb) a «\(target)»." + (request.copy && request.account.cloud == .microsoft ? " OneDrive puede tardar unos segundos en mostrar la copia." : "")
+        } catch {
+            self.error = (done > 0 ? "Se completaron \(done) de \(request.files.count). " : "") + error.localizedDescription
+        }
+        reload()
     }
     func requestTrash(_ files: [CloudFile]) {
         guard account != nil, !files.isEmpty else { return }

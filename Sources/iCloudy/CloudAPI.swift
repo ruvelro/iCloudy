@@ -14,6 +14,8 @@ final class CloudAPI {
     var sessionDidExpire: (() -> Void)?
     /// Keychain reads are synchronous and comparatively slow; the credential is read once per client and kept current here.
     private var cachedCredential: Credential?
+    /// Real id behind the "root" alias, needed where the providers reject the alias (parents, parentReference).
+    var rootIDCache: String?
     func invalidate() {
         invalidated = true
         refreshTask?.cancel()

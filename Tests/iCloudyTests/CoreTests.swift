@@ -264,6 +264,72 @@ final class CoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(nested).path))
     }
 
+    @MainActor func testMoveReplacesAllDriveParentsAndUsesGraphParentReference() async throws {
+        let file = CloudFile(id: "f1", name: "Doc.pdf", mime: "application/pdf", size: 1, modified: nil, webURL: nil, isFolder: false)
+        var calls: [String] = []
+        StubProtocol.handler = { request in
+            calls.append("\(request.httpMethod ?? "") \(request.url!.path)?\(request.url!.query ?? "")")
+            if request.url!.path == "/drive/v3/files/root" { return (200, [:], Data(#"{"id":"ROOT"}"#.utf8)) }
+            if request.httpMethod == "GET" { return (200, [:], Data(#"{"parents":["old1","old2"]}"#.utf8)) }
+            return (200, [:], Data(#"{"id":"f1","parents":["ROOT"]}"#.utf8))
+        }
+        try await makeClient(.google).move(file: file, to: "root")
+        XCTAssertEqual(calls.count, 3)
+        XCTAssertTrue(calls[0].hasPrefix("GET /drive/v3/files/root"), "root alias resolved to a real id")
+        XCTAssertTrue(calls[1].hasPrefix("GET /drive/v3/files/f1?fields=parents"))
+        XCTAssertTrue(calls[2].hasPrefix("PATCH /drive/v3/files/f1?"))
+        XCTAssertTrue(calls[2].contains("addParents=ROOT") && calls[2].contains("removeParents=old1,old2"), calls[2])
+
+        StubProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "PATCH")
+            XCTAssertEqual(request.url?.path, "/v1.0/me/drive/items/f1")
+            XCTAssertTrue(requestBody(request).contains(#""parentReference":{"id":"dest""#))
+            return (200, [:], Data(#"{"id":"f1"}"#.utf8))
+        }
+        try await makeClient(.microsoft).move(file: file, to: "dest")
+    }
+
+    @MainActor func testCopyRejectsDriveFoldersAndAcceptsGraphAsyncAnswer() async throws {
+        let folder = CloudFile(id: "d1", name: "Carpeta", mime: "application/vnd.google-apps.folder", size: nil, modified: nil, webURL: nil, isFolder: true)
+        let file = CloudFile(id: "f1", name: "Doc.pdf", mime: "application/pdf", size: 1, modified: nil, webURL: nil, isFolder: false)
+        StubProtocol.handler = { request in
+            if request.url!.path.hasSuffix("/copy") {
+                XCTAssertEqual(request.httpMethod, "POST")
+                XCTAssertTrue(requestBody(request).contains(#""parents":["dest"]"#))
+                return (200, [:], Data(#"{"id":"copy1"}"#.utf8))
+            }
+            XCTFail("Unexpected request \(request.url!)"); return (500, [:], Data())
+        }
+        let google = try await makeClient(.google)
+        do { try await google.copy(file: folder, to: "dest"); XCTFail("Drive cannot copy folders") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("carpetas")) }
+        try await google.copy(file: file, to: "dest")
+
+        StubProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/v1.0/me/drive/items/d1/copy")
+            XCTAssertTrue(requestBody(request).contains(#""parentReference":{"id":"dest""#))
+            return (202, ["Location": "https://graph.microsoft.com/monitor/1"], Data())
+        }
+        try await makeClient(.microsoft).copy(file: folder, to: "dest")
+    }
+
+    @MainActor func testDemoMoveAndCopyKeepContentAndRecurse() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let demo = try DemoStore(directory: root)
+        let source = try demo.add(name: "Origen", parent: "root", folder: true)
+        let target = try demo.add(name: "Destino", parent: "root", folder: true)
+        let file = try demo.add(name: "a.txt", parent: source, content: Data("hola".utf8))
+        try demo.move(file, to: target)
+        XCTAssertTrue(try demo.list(target).contains { $0.id == file })
+        XCTAssertFalse(try demo.list(source).contains { $0.id == file })
+        let copyID = try demo.copy(target, to: source)
+        let copied = try XCTUnwrap(try demo.list(copyID).first)
+        XCTAssertEqual(copied.name, "a.txt")
+        XCTAssertNotEqual(copied.id, file)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent(copied.id)), Data("hola".utf8))
+    }
+
     func testOneDriveNameRulesAreStricterThanDrive() {
         XCTAssertNil(FileNames.problem(with: "Informe: final?", for: .google))
         XCTAssertNotNil(FileNames.problem(with: "Informe: final?", for: .microsoft))

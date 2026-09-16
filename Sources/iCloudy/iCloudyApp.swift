@@ -202,6 +202,7 @@ struct ExplorerView: View {
                 }
             }.padding(24).frame(width: 390)
         }
+        .sheet(item: $model.relocation) { request in FolderPickerView(model: model, request: request) }
         .sheet(item: Binding(get: { model.queue.conflict }, set: { _ in })) { request in
             ConflictView(queue: model.queue, request: request)
         }
@@ -322,6 +323,8 @@ struct ExplorerView: View {
         .contextMenu(forSelectionType: CloudFile.ID.self) { ids in
             if ids.count > 1 {
                 Button("Descargar \(ids.count) elementos…") { Task { await model.saveMany(model.files.filter { ids.contains($0.id) }) } }
+                Button("Mover \(ids.count) elementos a…") { model.requestRelocation(model.files.filter { ids.contains($0.id) }, copy: false) }
+                Button("Copiar \(ids.count) elementos a…") { model.requestRelocation(model.files.filter { ids.contains($0.id) }, copy: true) }
                 Divider()
                 Button("Enviar \(ids.count) elementos a la papelera…", role: .destructive) { model.requestTrash(model.files.filter { ids.contains($0.id) }) }
             } else if let id = ids.first, let file = model.files.first(where: { $0.id == id }) { fileActions(file) }
@@ -397,6 +400,9 @@ struct ExplorerView: View {
         Divider()
         Button(model.isFavorite(file) ? "Quitar de favoritos" : "Añadir a favoritos") { model.toggleFavorite(file) }
         Button("Renombrar…") { model.promptName(file) }
+        Button("Mover a…") { model.requestRelocation([file], copy: false) }
+        Button("Copiar a…") { model.requestRelocation([file], copy: true) }
+            .disabled(file.isFolder && model.account?.cloud == .google)
         Divider()
         if file.isFolder {
             Button("Abrir carpeta") { model.navigate(file) }
