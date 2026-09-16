@@ -44,6 +44,7 @@ final class AppModel: ObservableObject {
     let queue = TransferQueue()
     let history = TransferHistory()
     let connectivity = Connectivity()
+    let mirrors = MirrorManager()
     let listings = ListingCache()
     @Published private(set) var isOnline = true
     /// True while the table shows the last known listing instead of a fresh answer from the provider.
@@ -97,7 +98,7 @@ final class AppModel: ObservableObject {
             guard let self, let account = self.accounts.first(where: { $0.id == id }) else { throw CloudError.message("Vuelve a conectar la cuenta de esta transferencia.") }
             return try self.client(account)
         }
-        queue.didFinish = { [weak self] transfer in self?.history.record(transfer) }
+        queue.didFinish = { [weak self] transfer in self?.history.record(transfer); self?.mirrors.handleFinished(transfer) }
         connectivity.onChange = { [weak self] online in
             guard let self else { return }
             isOnline = online
@@ -114,6 +115,9 @@ final class AppModel: ObservableObject {
         subscription = queue.stateChanges.sink { [weak self] _ in self?.objectWillChange.send() }
         if let message = queue.persistenceError { error = message }
         queue.cleanScratch()
+        mirrors.queue = queue
+        mirrors.accountLookup = { [weak self] id in self?.accounts.first { $0.id == id } }
+        mirrors.start()
         if account != nil { reload() }
         for account in accounts where account.id != selectedAccountID { refreshStorage(account) }
         preview.download = { [weak self] file, account in
@@ -186,6 +190,7 @@ final class AppModel: ObservableObject {
             clients[account.id]?.invalidate(); clients[account.id] = nil
             expiredAccountIDs.remove(account.id)
             listings.removeAll(accountID: account.id)
+            mirrors.removeAll(accountID: account.id)
             accounts = updated
             globalSearch.removeAccount(account.id)
             if selectedAccountID == account.id { select(accounts.first?.id) }
@@ -361,6 +366,19 @@ final class AppModel: ObservableObject {
         }
         reload(fresh: true)
     }
+    /// Asks for a local folder and mirrors it, one way, into the given remote folder of the current account.
+    func pickMirrorSource(for folder: CloudFile) async {
+        guard let account, folder.isFolder else { return }
+        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
+        panel.prompt = "Reflejar"
+        panel.message = "Los archivos de la carpeta elegida se subirán a «\(folder.name)» y se mantendrán al día. Solo en un sentido: iCloudy nunca borra ni modifica lo local, y no elimina en la nube lo que borres aquí."
+        guard await panel.begin() == .OK, let local = panel.url else { return }
+        do {
+            try mirrors.add(local: local, account: account, folder: folder, path: path)
+            info = "«\(local.lastPathComponent)» se refleja en «\(folder.name)». La primera sincronización está en cola."
+        } catch { self.error = error.localizedDescription }
+    }
+    func revealLocal(_ mirror: FolderMirror) { NSWorkspace.shared.activateFileViewerSelecting([mirror.localURL]) }
     func requestTrash(_ files: [CloudFile]) {
         guard account != nil, !files.isEmpty else { return }
         pendingTrash = files
