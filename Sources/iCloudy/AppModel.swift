@@ -40,6 +40,7 @@ final class AppModel: ObservableObject {
     @Published var editingFile: CloudFile?
     @Published var demoOffline = false { didSet { demo?.offline = demoOffline } }
     let queue = TransferQueue()
+    let history = TransferHistory()
     let oauth = OAuth()
     let preview = PreviewWindow()
     let globalSearch = GlobalSearch()
@@ -89,6 +90,7 @@ final class AppModel: ObservableObject {
             guard let self, let account = self.accounts.first(where: { $0.id == id }) else { throw CloudError.message("Vuelve a conectar la cuenta de esta transferencia.") }
             return try self.client(account)
         }
+        queue.didFinish = { [weak self] transfer in self?.history.record(transfer) }
         queue.didComplete = { [weak self] id in
             guard let self else { return }
             if self.selectedAccountID == id { self.reload() }
@@ -208,7 +210,12 @@ final class AppModel: ObservableObject {
         catch { self.error = error.localizedDescription }
     }
     func openSearchLocation(_ hit: SearchHit) {
-        guard let account = accounts.first(where: { $0.id == hit.accountID }), let target = hit.file.isFolder ? hit.file.id : hit.parentID else { return }
+        guard let target = hit.file.isFolder ? hit.file.id : hit.parentID else { return }
+        openFolder(accountID: hit.accountID, folderID: target)
+    }
+    /// Jumps to a remote folder of any connected account, rebuilding the breadcrumbs from the provider.
+    func openFolder(accountID: String, folderID target: String) {
+        guard let account = accounts.first(where: { $0.id == accountID }) else { error = "Conecta la cuenta de esta transferencia para abrir su carpeta."; return }
         navigationTask?.cancel(); let request = UUID(); navigationID = request; loading = true
         navigationTask = Task {
             do {
@@ -332,6 +339,20 @@ final class AppModel: ObservableObject {
             self.error = (moved > 0 ? "Se enviaron \(moved) de \(files.count) elementos. " : "") + error.localizedDescription
         }
         reload()
+    }
+    /// Shows a downloaded item in the Finder, going through its security-scoped bookmark under the sandbox.
+    func reveal(_ entry: HistoryEntry) {
+        guard let target = entry.localURL else { return }
+        var folder = target.deletingLastPathComponent()
+        if let bookmark = entry.bookmark {
+            var stale = false
+            if let resolved = try? URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale) { folder = resolved }
+        }
+        let scoped = folder.startAccessingSecurityScopedResource()
+        defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
+        let item = folder.appendingPathComponent(target.lastPathComponent)
+        guard FileManager.default.fileExists(atPath: item.path) else { error = "«\(target.lastPathComponent)» ya no está en \(folder.path)."; return }
+        NSWorkspace.shared.activateFileViewerSelecting([item])
     }
     func openBrowser(_ file: CloudFile) {
         guard let url = file.webURL, ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { error = "No hay un enlace web disponible."; return }

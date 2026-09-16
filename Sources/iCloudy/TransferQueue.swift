@@ -19,6 +19,8 @@ final class TransferQueue: ObservableObject {
     let stateChanges = PassthroughSubject<Void, Never>()
     var client: ((String) throws -> CloudAPI)?
     var didComplete: ((String) -> Void)?
+    /// Receives the completed job itself, for the persistent history.
+    var didFinish: ((Transfer) -> Void)?
     var retryDelay: Double = 1
     /// Minimum interval between two progress updates; URLSession can report dozens of times per second.
     var reportInterval: TimeInterval = 0.1
@@ -199,6 +201,7 @@ final class TransferQueue: ObservableObject {
                         $0.detail = Self.completionSummary(verified: $0.verifiedFiles, unverified: $0.unverifiedFiles)
                     }
                 }
+                if let finished = items.first(where: { $0.id == id && $0.state == .completed }) { didFinish?(finished) }
                 didComplete?(next.accountID)
             } catch {
                 if let index = index(id), items[index].state == .running {

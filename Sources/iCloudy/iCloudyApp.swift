@@ -157,7 +157,7 @@ struct ExplorerView: View {
                     fileBrowser
                 }
                 // Keep the panel visible while the saved queue is unreadable, otherwise the recovery button would never appear.
-                if showTransfers && (!model.transfers.isEmpty || model.queue.persistenceError != nil) { TransferPanel(queue: model.queue) }
+                if showTransfers && (!model.transfers.isEmpty || model.queue.persistenceError != nil) { TransferPanel(model: model, queue: model.queue, history: model.history) }
                 Divider()
                 HStack {
                     Text("\(model.visibleFiles.count) elementos")
@@ -425,15 +425,21 @@ struct ExplorerView: View {
 
 /// Observes the queue directly: progress ticks re-render this panel only, not the whole explorer.
 struct TransferPanel: View {
+    let model: AppModel
     @ObservedObject var queue: TransferQueue
+    @ObservedObject var history: TransferHistory
+    @State private var showHistory = false
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Transferencias").font(.headline)
                 Spacer()
+                Button("Historial (\(history.entries.count))") { showHistory = true }.buttonStyle(.link).font(.caption)
                 Button("Pausar todas") { queue.pauseAll() }.buttonStyle(.link).font(.caption)
                 Button("Limpiar completadas") { queue.clearCompleted() }.buttonStyle(.link).font(.caption)
+                    .help("Quita las completadas del panel; el historial las conserva")
             }
+            .sheet(isPresented: $showHistory) { TransferHistoryView(model: model, history: history) }
             // Queue order, oldest first: the running job sits on top and waiting jobs can be dragged to re-prioritise.
             List {
                 ForEach(queue.items) { transfer in
@@ -543,5 +549,43 @@ struct ConflictView: View {
                 Button(request.folder ? "Combinar" : "Reemplazar") { queue.resolve(.replace, applyToBatch: applyToBatch) }.disabled(!request.canReplace)
             }
         }.padding(24).frame(width: 620).interactiveDismissDisabled()
+    }
+}
+
+
+/// Finished transfers, newest first, with a way back to where each one landed.
+struct TransferHistoryView: View {
+    let model: AppModel
+    @ObservedObject var history: TransferHistory
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Historial de transferencias").font(.title2)
+                Spacer()
+                Button("Vaciar historial") { history.clear() }.disabled(history.entries.isEmpty)
+            }
+            Text("Se conservan las \(history.limit) transferencias completadas más recientes, aunque se limpien del panel. No incluye las canceladas ni las fallidas.").font(.caption).foregroundStyle(.secondary)
+            List(history.entries) { entry in
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: entry.direction == .upload ? "arrow.up.circle" : "arrow.down.circle").foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(entry.name).fontWeight(.medium)
+                        Text(entry.destination).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                        Text(entry.finishedAt.formatted(date: .abbreviated, time: .shortened) + " · " + ByteCountFormatter.string(fromByteCount: entry.bytes, countStyle: .file) + (entry.summary.isEmpty ? "" : " · " + entry.summary))
+                            .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                    Spacer()
+                    if entry.direction == .download {
+                        Button("Mostrar en el Finder") { model.reveal(entry) }
+                    } else {
+                        Button("Ir a la carpeta") { model.openFolder(accountID: entry.accountID, folderID: entry.parent); dismiss() }
+                    }
+                }.padding(.vertical, 2)
+            }
+            .overlay { if history.entries.isEmpty { Text("Todavía no hay transferencias completadas.").foregroundStyle(.secondary) } }
+            if let message = history.persistenceError { Text(message).font(.caption).foregroundStyle(.red) }
+            HStack { Spacer(); Button("Cerrar") { dismiss() }.keyboardShortcut(.cancelAction) }
+        }.padding(24).frame(width: 640, height: 460)
     }
 }

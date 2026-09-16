@@ -203,6 +203,33 @@ final class TransferTests: XCTestCase {
         XCTAssertEqual(queue.items.map(\.state), [.cancelled, .cancelled, .completed, .cancelled])
     }
 
+    func testHistoryKeepsCompletedTransfersAcrossClearAndRestart() async throws {
+        let (root, demo, queue) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let history = TransferHistory(storeURL: root.appendingPathComponent("history.json"))
+        history.limit = 2
+        queue.didFinish = { history.record($0) }
+        let source = root.appendingPathComponent("hist.dat"); try Data(repeating: 9, count: 2048).write(to: source)
+        try queue.add([upload(source)])
+        try await wait { !queue.isWorking }
+        let file = try XCTUnwrap(demo.list("root").first { $0.name == "hist.dat" })
+        let output = root.appendingPathComponent("out"); try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        try queue.add([Transfer(name: file.name, destination: output.path, accountID: Account.demo.id, direction: .download, localURL: output, file: file)])
+        try await wait { !queue.isWorking }
+        let second = root.appendingPathComponent("hist2.dat"); try Data(repeating: 8, count: 1024).write(to: second)
+        try queue.add([upload(second)])
+        try await wait { !queue.isWorking }
+        XCTAssertEqual(history.entries.count, 2, "The limit trims the oldest entry")
+        XCTAssertEqual(history.entries.first?.direction, .upload, "Newest first")
+        let download = try XCTUnwrap(history.entries.first { $0.direction == .download })
+        XCTAssertEqual(download.localURL?.lastPathComponent, "hist.dat")
+        XCTAssertEqual(download.bytes, 2048)
+        queue.clearCompleted()
+        XCTAssertTrue(queue.items.isEmpty)
+        XCTAssertEqual(TransferHistory(storeURL: history.storeURL).entries.map(\.id), history.entries.map(\.id), "Persisted independently of the queue")
+        XCTAssertTrue(history.entries.allSatisfy { !$0.summary.isEmpty || $0.direction == .download })
+    }
+
     func testRecoveryPausesRunningJobsAndCorruptionIsNotOverwritten() throws {
         let (root, _, queue) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
