@@ -31,7 +31,7 @@ enum SearchFileType: String, CaseIterable, Identifiable {
 enum SearchAge: Int, CaseIterable, Identifiable {
     case any = 0, week = 7, month = 30, year = 365
     var id: Int { rawValue }
-    var title: String { self == .any ? "Cualquier fecha" : "Últimos \(rawValue) días" }
+    var title: String { self == .any ? L("Cualquier fecha") : L("Últimos \(rawValue) días") }
 }
 enum SearchSize: String, CaseIterable, Identifiable {
     case any = "Cualquier tamaño", small = "Menos de 10 MB", medium = "10–100 MB", large = "100 MB o más"
@@ -111,7 +111,7 @@ final class GlobalSearch: ObservableObject {
                     cursors[id] = page.next
                     guard let next = page.next else { break }
                     guard seenCursors[id, default: []].insert(next).inserted else {
-                        cursors[id] = nil; throw CloudError.message("El proveedor repitió una página. Se conservan los resultados recibidos; vuelve a buscar para actualizar.")
+                        cursors[id] = nil; throw CloudError.message(L("El proveedor repitió una página. Se conservan los resultados recibidos; vuelve a buscar para actualizar."))
                     }
                 }
             } catch {
@@ -178,7 +178,7 @@ extension CloudAPI {
         let encoded = Self.segment(term.replacingOccurrences(of: "'", with: "''"))
         guard let url = URL(string: cursor ?? "https://graph.microsoft.com/v1.0/me/drive/root/search(q='\(encoded)')?$top=100&$select=id,name,size,folder,file,remoteItem,webUrl,lastModifiedDateTime,parentReference"),
               url.scheme == "https", url.host == "graph.microsoft.com", url.user == nil, url.password == nil, url.port == nil || url.port == 443 else {
-            throw CloudError.message("Paginación de búsqueda no válida.")
+            throw CloudError.message(L("Paginación de búsqueda no válida."))
         }
         let response = try await json(url)
         let hits = (response["value"] as? [[String: Any]] ?? []).compactMap { value -> SearchHit? in
@@ -197,7 +197,7 @@ extension CloudAPI {
         } else { googleRoot = nil }
         while let folderID = current, folderID != "root", folderID != googleRoot {
             try Task.checkCancellation()
-            guard seen.insert(folderID).inserted, seen.count <= 64 else { throw CloudError.message("No se pudo resolver la ruta de la carpeta.") }
+            guard seen.insert(folderID).inserted, seen.count <= 64 else { throw CloudError.message(L("No se pudo resolver la ruta de la carpeta.")) }
             let value: [String: Any]
             let file: CloudFile?
             if account.cloud == .google {
@@ -208,7 +208,7 @@ extension CloudAPI {
                 if value["root"] != nil { break }
                 file = Self.microsoftFile(value); current = (value["parentReference"] as? [String: Any])?["id"] as? String
             }
-            guard let file, file.isFolder else { throw CloudError.message("La carpeta del resultado ya no está disponible.") }
+            guard let file, file.isFolder else { throw CloudError.message(L("La carpeta del resultado ya no está disponible.")) }
             result.insert(file, at: 0)
         }
         return result

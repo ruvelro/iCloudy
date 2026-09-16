@@ -46,7 +46,7 @@ final class TransferQueue: ObservableObject {
         do {
             items = try LocalStore.read([Transfer].self, from: storeURL) ?? []
             for index in items.indices where [.running, .queued].contains(items[index].state) { items[index].state = .paused; items[index].bytesPerSecond = 0 }
-        } catch { writable = false; persistenceError = "No se pudo recuperar la cola. Se conserva el archivo original: \(error.localizedDescription)" }
+        } catch { writable = false; persistenceError = L("No se pudo recuperar la cola. Se conserva el archivo original: \(error.localizedDescription)") }
     }
     /// True when the saved queue could not be read: nothing can be added until the user sets that file aside.
     var canDiscardSavedQueue: Bool { !writable }
@@ -61,7 +61,7 @@ final class TransferQueue: ObservableObject {
             }
             items = []; writable = true; persistenceError = nil
             stateChanges.send()
-        } catch { persistenceError = "No se pudo apartar la cola dañada: \(error.localizedDescription)" }
+        } catch { persistenceError = L("No se pudo apartar la cola dañada: \(error.localizedDescription)") }
     }
     var hasActive: Bool { items.contains { [.queued, .running].contains($0.state) } }
     func hasActive(accountID: String) -> Bool {
@@ -85,7 +85,7 @@ final class TransferQueue: ObservableObject {
         if coalesce { dirty = true; scheduleFlush(); return }
         flushTask?.cancel(); flushTask = nil; dirty = false
         do { try LocalStore.save(items, to: storeURL) }
-        catch { persistenceError = "No se pudo guardar la cola: \(error.localizedDescription)"; throw error }
+        catch { persistenceError = L("No se pudo guardar la cola: \(error.localizedDescription)"); throw error }
     }
     private func scheduleFlush() {
         guard flushTask == nil else { return }
@@ -114,7 +114,7 @@ final class TransferQueue: ObservableObject {
             for id in items.filter({ [.running, .queued].contains($0.state) }).map(\.id) {
                 pausedByNetwork.insert(id)
                 cancel(id, pause: true)
-                if let index = index(id) { items[index].detail = "Sin conexión · se reanudará automáticamente al volver la red" }
+                if let index = index(id) { items[index].detail = L("Sin conexión · se reanudará automáticamente al volver la red") }
             }
         }
         stateChanges.send()
@@ -213,7 +213,7 @@ final class TransferQueue: ObservableObject {
             // A pause or cancel can land between scheduling and this first line; never overwrite what the user chose.
             guard (try? job(id))?.state == .queued else { activeID = nil; task = nil; kick(); return }
             do {
-                try edit(id) { $0.state = .running; $0.detail = "Preparando…" }
+                try edit(id) { $0.state = .running; $0.detail = L("Preparando…") }
                 started = Date(); startBytes = next.bytes
                 while true {
                     do { try await run(id); break }
@@ -222,7 +222,7 @@ final class TransferQueue: ObservableObject {
                         let current = try job(id)
                         let transient = (error as? ServiceError)?.retryable == true || [.timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost].contains((error as? URLError)?.code)
                         guard transient, current.attempts < 3 else { throw error }
-                        try edit(id) { $0.attempts += 1; $0.detail = "Conexión interrumpida. Reintento \($0.attempts)/3…" }
+                        try edit(id) { $0.attempts += 1; $0.detail = L("Conexión interrumpida. Reintento \($0.attempts)/3…") }
                         try await Task.sleep(for: .seconds(retryDelay * pow(2, Double(current.attempts))))
                     }
                 }
@@ -251,8 +251,8 @@ final class TransferQueue: ObservableObject {
     static func completionSummary(verified: Int, unverified: Int) -> String {
         guard verified + unverified > 0 else { return "" }
         var parts = ["Completada"]
-        if verified > 0 { parts.append("\(verified) \(verified == 1 ? "archivo verificado" : "archivos verificados") con la suma del proveedor") }
-        if unverified > 0 { parts.append("\(unverified) sin verificar (reanudados o sin suma del proveedor)") }
+        if verified > 0 { parts.append(L("\(verified) \(verified == 1 ? L("archivo verificado") : L("archivos verificados")) con la suma del proveedor")) }
+        if unverified > 0 { parts.append(L("\(unverified) sin verificar (reanudados o sin suma del proveedor)")) }
         return parts.joined(separator: " · ")
     }
     private func choose(_ id: UUID, name: String, replace: Bool, folder: Bool) async throws -> ConflictChoice {
@@ -272,7 +272,7 @@ final class TransferQueue: ObservableObject {
         items[index].bytes = base + bytes
         items[index].total = max(items[index].total, base + total)
         items[index].bytesPerSecond = Double(max(0, items[index].bytes - startBytes)) / max(0.1, Date().timeIntervalSince(started))
-        items[index].detail = "Transfiriendo…"
+        items[index].detail = L("Transfiriendo…")
     }
     /// Advances the byte count when an already completed item is skipped, so a retry does not show progress falling to zero.
     private func mark(_ id: UUID, done: Int64) {
@@ -281,7 +281,7 @@ final class TransferQueue: ObservableObject {
     }
     private func run(_ id: UUID) async throws {
         let current = try job(id)
-        guard let client else { throw CloudError.message("Conecta la cuenta de esta transferencia.") }
+        guard let client else { throw CloudError.message(L("Conecta la cuenta de esta transferencia.")) }
         let api = try client(current.accountID)
         var url = current.localURL
         if let bookmark = current.bookmark {
@@ -304,7 +304,7 @@ final class TransferQueue: ObservableObject {
             var siblings: [String: [CloudFile]] = [:]
             try await uploadTree(id, api: api, local: source, parent: current.parent, key: ".", done: &done, siblings: &siblings)
         } else if current.direction == .transfer, let file = current.file {
-            guard let targetID = current.targetAccountID else { throw CloudError.message("Falta la cuenta de destino de esta transferencia.") }
+            guard let targetID = current.targetAccountID else { throw CloudError.message(L("Falta la cuenta de destino de esta transferencia.")) }
             let target = try client(targetID)
             try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             try edit(id) { $0.bytes = 0; $0.total = file.isFolder ? 0 : (file.size ?? 0) }
@@ -332,7 +332,7 @@ final class TransferQueue: ObservableObject {
             return
         }
         let localName = export.map { file.name + "." + $0.ext } ?? file.name
-        if let problem = FileNames.problem(with: localName, for: target.account.cloud) { throw CloudError.message("No se puede enviar «\(localName)»: \(problem)") }
+        if let problem = FileNames.problem(with: localName, for: target.account.cloud) { throw CloudError.message(L("No se puede enviar «\(localName)»: \(problem)")) }
         if current.uncertainFolders.contains(key) {
             try edit(id) { $0.names[key] = nil; $0.replacements[key] = nil; $0.uncertainFolders.remove(key) }
             siblings[parent] = nil
@@ -360,7 +360,7 @@ final class TransferQueue: ObservableObject {
             else {
                 try edit(id) { $0.uncertainFolders.insert(key) }
                 do { remote = try await target.createFolder(name: name, parent: parent) }
-                catch { throw CloudError.message("No se confirmó la creación de \(name) en el destino. Revisa antes de reintentar. \(error.localizedDescription)") }
+                catch { throw CloudError.message(L("No se confirmó la creación de \(name) en el destino. Revisa antes de reintentar. \(error.localizedDescription)")) }
                 try edit(id) { $0.folders[key] = remote; $0.uncertainFolders.remove(key) }
                 siblings[parent, default: []].append(CloudFile(id: remote, name: name, mime: "application/vnd.google-apps.folder", size: nil, modified: nil, webURL: nil, isFolder: true))
                 siblings[remote] = []
@@ -377,11 +377,11 @@ final class TransferQueue: ObservableObject {
             if !FileManager.default.fileExists(atPath: staged.path) {
                 // No staged copy (first run, or scratch cleaned): the upload session, if any, is worthless now.
                 checkpoint = nil
-                try edit(id, coalesce: true) { $0.uploads[key] = nil; $0.detail = "Descargando «\(file.name)» de \(source.account.cloud.title)…" }
+                try edit(id, coalesce: true) { $0.uploads[key] = nil; $0.detail = L("Descargando «\(file.name)» de \(source.account.cloud.title)…") }
                 try await source.download(file: file, to: staged, exportMime: export?.mime)
             }
             let base = done
-            try edit(id, coalesce: true) { $0.detail = "Subiendo «\(name)» a \(target.account.cloud.title)…" }
+            try edit(id, coalesce: true) { $0.detail = L("Subiendo «\(name)» a \(target.account.cloud.title)…") }
             let receipt = try await target.resumableUpload(local: staged, parent: parent, name: name, replacing: current.replacements[key], checkpoint: checkpoint, save: { checkpoint in
                 try self.edit(id, coalesce: checkpoint.offset > 0 && !checkpoint.complete) { $0.uploads[key] = checkpoint }
             }, progress: { bytes, total in self.report(id, base: base, bytes: bytes, total: total) })
@@ -402,7 +402,7 @@ final class TransferQueue: ObservableObject {
     /// Walks the tree synchronously; callers run it through `blockingIO` because large folders take a while.
     nonisolated private static func localSize(_ url: URL) throws -> Int64 {
         let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey])
-        guard values.isSymbolicLink != true else { throw CloudError.message("No se admiten enlaces simbólicos: \(url.lastPathComponent)") }
+        guard values.isSymbolicLink != true else { throw CloudError.message(L("No se admiten enlaces simbólicos: \(url.lastPathComponent)")) }
         if values.isDirectory == true { return try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil).reduce(0) { try $0 + localSize($1) } }
         return Int64(values.fileSize ?? 0)
     }
@@ -411,11 +411,11 @@ final class TransferQueue: ObservableObject {
     private func uploadTree(_ id: UUID, api: CloudAPI, local: URL, parent: String, key: String, done: inout Int64, siblings: inout [String: [CloudFile]]) async throws {
         try Task.checkCancellation()
         let values = try local.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey])
-        guard values.isSymbolicLink != true else { throw CloudError.message("No se admiten enlaces simbólicos.") }
+        guard values.isSymbolicLink != true else { throw CloudError.message(L("No se admiten enlaces simbólicos.")) }
         let folder = values.isDirectory == true
         if try job(id).completedPaths.contains(key) { done += try await blockingIO { try Self.localSize(local) }; mark(id, done: done); return }
         if let problem = FileNames.problem(with: local.lastPathComponent, for: api.account.cloud) {
-            throw CloudError.message("No se puede subir «\(local.lastPathComponent)»: \(problem)")
+            throw CloudError.message(L("No se puede subir «\(local.lastPathComponent)»: \(problem)"))
         }
         var current = try job(id)
         if current.uncertainFolders.contains(key) {
@@ -447,7 +447,7 @@ final class TransferQueue: ObservableObject {
                 // The marker must be on disk before the POST, so it is never coalesced.
                 try edit(id) { $0.uncertainFolders.insert(key) }
                 do { remote = try await api.createFolder(name: name, parent: parent) }
-                catch { throw CloudError.message("No se confirmó la creación de \(name). Revisa el destino antes de reintentar. \(error.localizedDescription)") }
+                catch { throw CloudError.message(L("No se confirmó la creación de \(name). Revisa el destino antes de reintentar. \(error.localizedDescription)")) }
                 try edit(id) { $0.folders[key] = remote; $0.uncertainFolders.remove(key) }
                 siblings[parent, default: []].append(CloudFile(id: remote, name: name, mime: "application/vnd.google-apps.folder", size: nil, modified: nil, webURL: nil, isFolder: true))
                 // A folder created a moment ago is empty: its children need no listing at all.
@@ -503,7 +503,7 @@ final class TransferQueue: ObservableObject {
             current = try job(id)
         }
         // Never follow an externally substituted symlink, including on recovery.
-        if FileManager.default.fileExists(atPath: target.path), try target.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink == true { throw CloudError.message("El destino es un enlace simbólico. Elige otra carpeta.") }
+        if FileManager.default.fileExists(atPath: target.path), try target.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink == true { throw CloudError.message(L("El destino es un enlace simbólico. Elige otra carpeta.")) }
         if file.isFolder {
             try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
             let children = try await api.list(parent: file.id)
@@ -514,7 +514,7 @@ final class TransferQueue: ObservableObject {
             let temporary = folder.appendingPathComponent(".icloudy-" + UUID().uuidString + ".part")
             defer { try? FileManager.default.removeItem(at: temporary) }
             if file.isGoogleDocument && !exporting {
-                guard let url = file.webURL else { throw CloudError.message("No hay enlace web para este documento.") }
+                guard let url = file.webURL else { throw CloudError.message(L("No hay enlace web para este documento.")) }
                 let link = try PropertyListSerialization.data(fromPropertyList: ["URL": url.absoluteString], format: .xml, options: 0)
                 try await blockingIO { try link.write(to: temporary) }
             } else {

@@ -60,7 +60,7 @@ final class PreviewStore {
         self.root = root
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let values = try root.resourceValues(forKeys: [.isSymbolicLinkKey])
-        guard values.isSymbolicLink != true else { throw CloudError.message("La carpeta temporal no es segura.") }
+        guard values.isSymbolicLink != true else { throw CloudError.message(L("La carpeta temporal no es segura.")) }
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
         for child in try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) where owns(child) {
             try FileManager.default.removeItem(at: child)
@@ -77,13 +77,13 @@ final class PreviewStore {
         return directory
     }
     func remove(_ directory: URL) throws {
-        guard owns(directory) else { throw CloudError.message("Se rechazó eliminar un directorio ajeno a la vista previa.") }
+        guard owns(directory) else { throw CloudError.message(L("Se rechazó eliminar un directorio ajeno a la vista previa.")) }
         if FileManager.default.fileExists(atPath: directory.path) { try FileManager.default.removeItem(at: directory) }
     }
     func capacity() throws -> Int64 {
         let values = try root.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey])
         guard let capacity = values.volumeAvailableCapacityForImportantUsage ?? values.volumeAvailableCapacity.map(Int64.init) else {
-            throw CloudError.message("No se pudo comprobar el espacio libre para la vista previa.")
+            throw CloudError.message(L("No se pudo comprobar el espacio libre para la vista previa."))
         }
         return capacity
     }
@@ -121,7 +121,7 @@ final class PreviewModel: ObservableObject {
     var authorizedLimit: Int64 { max(Self.automaticLimit, file?.size ?? 0) }
     var confirmationText: String {
         let size = file?.size.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .decimal) } ?? "tamaño desconocido"
-        return "Este archivo tiene \(size). Se descargará temporalmente, con un máximo de \(ByteCountFormatter.string(fromByteCount: authorizedLimit, countStyle: .decimal)). ¿Continuar?"
+        return L("Este archivo tiene \(size). Se descargará temporalmente, con un máximo de \(ByteCountFormatter.string(fromByteCount: authorizedLimit, countStyle: .decimal)). ¿Continuar?")
     }
     func open(file: CloudFile, account: Account, client: CloudAPI) {
         if self.file == file, self.account?.id == account.id, phase == .ready || phase == .loading { return }
@@ -140,7 +140,7 @@ final class PreviewModel: ObservableObject {
         do {
             let free = try availableCapacity?() ?? store.capacity()
             // Reserve enough for the allowed download plus some filesystem headroom.
-            guard free >= 20_000_000, limit <= free - 20_000_000 else { throw CloudError.message("No hay espacio libre suficiente para esta vista previa.") }
+            guard free >= 20_000_000, limit <= free - 20_000_000 else { throw CloudError.message(L("No hay espacio libre suficiente para esta vista previa.")) }
             let folder = try store.create(); directory = folder
             let destination = folder.appendingPathComponent("contenido." + kind.localExtension)
             phase = .loading; received = 0; total = max(0, file.size ?? 0)
@@ -167,22 +167,22 @@ final class PreviewModel: ObservableObject {
                         textTruncated = data.count > Self.textLimit
                         let prefix = Data(data.prefix(Self.textLimit))
                         if prefix.starts(with: [0xff, 0xfe]) || prefix.starts(with: [0xfe, 0xff]) {
-                            guard let value = String(data: prefix, encoding: .utf16) else { throw CloudError.message("Codificación de texto no compatible.") }
+                            guard let value = String(data: prefix, encoding: .utf16) else { throw CloudError.message(L("Codificación de texto no compatible.")) }
                             text = value
                         } else {
-                            guard !prefix.contains(0) else { throw CloudError.message("Este archivo contiene datos binarios, no texto plano.") }
+                            guard !prefix.contains(0) else { throw CloudError.message(L("Este archivo contiene datos binarios, no texto plano.")) }
                             text = String(decoding: prefix, as: UTF8.self)
                         }
                     case .pdf, .exportedPDF:
-                        guard PDFDocument(url: destination) != nil else { throw CloudError.message("El archivo no es un PDF válido.") }
+                        guard PDFDocument(url: destination) != nil else { throw CloudError.message(L("El archivo no es un PDF válido.")) }
                     case .media:
                         let asset = AVURLAsset(url: destination)
-                        guard try await asset.load(.isPlayable) else { throw CloudError.message("Este archivo de audio o vídeo no se puede reproducir en este Mac.") }
+                        guard try await asset.load(.isPlayable) else { throw CloudError.message(L("Este archivo de audio o vídeo no se puede reproducir en este Mac.")) }
                     case .office:
-                        guard PreviewKind.looksValid(kind, at: destination) else { throw CloudError.message("El contenido no corresponde a un documento de Office válido.") }
+                        guard PreviewKind.looksValid(kind, at: destination) else { throw CloudError.message(L("El contenido no corresponde a un documento de Office válido.")) }
                     case .image:
                         guard let source = CGImageSourceCreateWithURL(destination as CFURL, nil), CGImageSourceGetCount(source) > 0 else {
-                            throw CloudError.message("El archivo no es una imagen compatible.")
+                            throw CloudError.message(L("El archivo no es una imagen compatible."))
                         }
                     }
                     localURL = destination; phase = .ready; retained = true
@@ -194,7 +194,7 @@ final class PreviewModel: ObservableObject {
         } catch { phase = .failed(error.localizedDescription) }
     }
     func saveCopy(to destination: URL) throws {
-        guard phase == .ready, let localURL else { throw CloudError.message("La vista previa todavía no está lista.") }
+        guard phase == .ready, let localURL else { throw CloudError.message(L("La vista previa todavía no está lista.")) }
         // No overwrite: preserve existing local files, even if the save panel approved replacement.
         try FileManager.default.copyItem(at: localURL, to: destination)
     }
@@ -203,7 +203,7 @@ final class PreviewModel: ObservableObject {
         generation = UUID(); task?.cancel(); task = nil
         localURL = nil; text = nil; textTruncated = false
         if let directory {
-            do { try store?.remove(directory) } catch { saveError = "No se pudo limpiar el temporal; se reintentará al arrancar: \(error.localizedDescription)" }
+            do { try store?.remove(directory) } catch { saveError = L("No se pudo limpiar el temporal; se reintentará al arrancar: \(error.localizedDescription)") }
         }
         directory = nil; client = nil; file = nil; account = nil; phase = .idle
     }

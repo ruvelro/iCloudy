@@ -40,7 +40,7 @@ final class DemoStore {
     func searchPage(term: String, cursor: String?, accountID: String) throws -> SearchPage {
         try check()
         let offset = cursor.flatMap(Int.init) ?? 0
-        guard offset >= 0 else { throw CloudError.message("Página no válida.") }
+        guard offset >= 0 else { throw CloudError.message(L("Página no válida.")) }
         let words = term.split(whereSeparator: \.isWhitespace).map(String.init)
         let matches = entries.values.filter { entry in words.allSatisfy { entry.file.name.localizedCaseInsensitiveContains($0) } }.sorted { $0.file.id < $1.file.id }
         let page = matches.dropFirst(offset).prefix(100).map { SearchHit(accountID: accountID, file: $0.file, parentID: $0.parent) }
@@ -50,7 +50,7 @@ final class DemoStore {
         try check()
         var result: [CloudFile] = [], current = id, seen: Set<String> = []
         while current != "root" {
-            guard seen.insert(current).inserted, let entry = entries[current], entry.file.isFolder else { throw CloudError.message("Carpeta no encontrada.") }
+            guard seen.insert(current).inserted, let entry = entries[current], entry.file.isFolder else { throw CloudError.message(L("Carpeta no encontrada.")) }
             result.insert(entry.file, at: 0); current = entry.parent
         }
         return result
@@ -71,19 +71,19 @@ final class DemoStore {
     }
     func rename(_ id: String, name: String) throws {
         try check()
-        guard let entry = entries[id] else { throw CloudError.message("El archivo demo ya no existe.") }
+        guard let entry = entries[id] else { throw CloudError.message(L("El archivo demo ya no existe.")) }
         entries[id] = Entry(file: CloudFile(id: id, name: name, mime: entry.file.mime, size: entry.file.size, modified: Date(), webURL: nil, isFolder: entry.file.isFolder), parent: entry.parent)
         try persist()
     }
     func move(_ id: String, to parent: String) throws {
         try check()
-        guard var entry = entries[id] else { throw CloudError.message("El archivo demo ya no existe.") }
+        guard var entry = entries[id] else { throw CloudError.message(L("El archivo demo ya no existe.")) }
         entry.parent = parent; entries[id] = entry
         try persist()
     }
     @discardableResult func copy(_ id: String, to parent: String) throws -> String {
         try check()
-        guard let entry = entries[id] else { throw CloudError.message("El archivo demo ya no existe.") }
+        guard let entry = entries[id] else { throw CloudError.message(L("El archivo demo ya no existe.")) }
         let copyID = UUID().uuidString
         if !entry.file.isFolder { try FileManager.default.copyItem(at: directory.appendingPathComponent(id), to: directory.appendingPathComponent(copyID)) }
         entries[copyID] = Entry(file: CloudFile(id: copyID, name: entry.file.name, mime: entry.file.mime, size: entry.file.size, modified: Date(), webURL: nil, isFolder: entry.file.isFolder), parent: parent)
@@ -94,7 +94,7 @@ final class DemoStore {
     /// Removes the entry and its descendants; the demo has no recycle bin to restore from.
     func trash(_ id: String) throws {
         try check()
-        guard entries[id] != nil else { throw CloudError.message("El archivo demo ya no existe.") }
+        guard entries[id] != nil else { throw CloudError.message(L("El archivo demo ya no existe.")) }
         var pending = [id]
         while let current = pending.popLast() {
             pending += entries.values.filter { $0.parent == current }.map(\.file.id)
@@ -105,7 +105,7 @@ final class DemoStore {
     }
     func publicLink(_ id: String) throws -> URL {
         try check()
-        guard entries[id] != nil else { throw CloudError.message("El archivo demo ya no existe.") }
+        guard entries[id] != nil else { throw CloudError.message(L("El archivo demo ya no existe.")) }
         return URL(string: "https://demo.icloudy.invalid/share/\(id)")!
     }
     private func persist() throws { try LocalStore.save(entries, to: indexURL) }
@@ -115,11 +115,11 @@ final class DemoStore {
         let attributes = try local.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         let total = Int64(attributes.fileSize ?? 0)
         var cursor = checkpoint ?? UploadCheckpoint(total: total, modified: attributes.contentModificationDate)
-        guard cursor.total == total, cursor.modified == attributes.contentModificationDate else { throw CloudError.message("El archivo de origen ha cambiado. Inicia otra subida.") }
+        guard cursor.total == total, cursor.modified == attributes.contentModificationDate else { throw CloudError.message(L("El archivo de origen ha cambiado. Inicia otra subida.")) }
         if cursor.complete { progress(total, total); return }
         if cursor.url == nil { cursor.url = directory.appendingPathComponent(UUID().uuidString + ".part"); try save(cursor) }
         let temporary = cursor.url!
-        guard temporary.deletingLastPathComponent().standardizedFileURL.path == directory.standardizedFileURL.path else { throw CloudError.message("Sesión demo no válida.") }
+        guard temporary.deletingLastPathComponent().standardizedFileURL.path == directory.standardizedFileURL.path else { throw CloudError.message(L("Sesión demo no válida.")) }
         if !FileManager.default.fileExists(atPath: temporary.path) { FileManager.default.createFile(atPath: temporary.path, contents: nil) }
         let output = try FileHandle(forWritingTo: temporary)
         let input = try FileHandle(forReadingFrom: local)
@@ -132,7 +132,7 @@ final class DemoStore {
             try await Task.sleep(for: latency)
             try check()
             let data = try input.read(upToCount: 256 * 1024) ?? Data()
-            guard !data.isEmpty else { throw CloudError.message("El archivo de origen cambió.") }
+            guard !data.isEmpty else { throw CloudError.message(L("El archivo de origen cambió.")) }
             try output.write(contentsOf: data)
             try output.synchronize()
             cursor.offset += Int64(data.count)
@@ -152,7 +152,7 @@ final class DemoStore {
         let source = directory.appendingPathComponent(file.id)
         let input = try FileHandle(forReadingFrom: source)
         defer { try? input.close() }
-        guard !FileManager.default.fileExists(atPath: target.path) else { throw CloudError.message("El destino ya existe.") }
+        guard !FileManager.default.fileExists(atPath: target.path) else { throw CloudError.message(L("El destino ya existe.")) }
         FileManager.default.createFile(atPath: target.path, contents: nil)
         let output = try FileHandle(forWritingTo: target)
         defer { try? output.close() }
@@ -162,7 +162,7 @@ final class DemoStore {
             try check()
             let data = try input.read(upToCount: 256 * 1024) ?? Data()
             if data.isEmpty { break }
-            if let maxBytes, bytes + Int64(data.count) > maxBytes { throw CloudError.message("La vista previa supera el límite de descarga autorizado.") }
+            if let maxBytes, bytes + Int64(data.count) > maxBytes { throw CloudError.message(L("La vista previa supera el límite de descarga autorizado.")) }
             try output.write(contentsOf: data)
             bytes += Int64(data.count); progress(bytes, file.size ?? bytes)
         }

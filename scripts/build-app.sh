@@ -35,6 +35,8 @@ if [[ ! -f Resources/AppIcon.icns ]]; then
 fi
 cp Resources/AppIcon.icns "$app_dir/Contents/Resources/AppIcon.icns"
 cp "$oauth_config" "$app_dir/Contents/Resources/OAuth.plist"
+# Localizations live in Bundle.main so both SwiftUI's LocalizedStringKey and String(localized:) find them.
+for lproj in Resources/*.lproj; do [[ -d "$lproj" ]] && cp -R "$lproj" "$app_dir/Contents/Resources/"; done
 # Self-signed certificates cannot be timestamped by Apple; Developer ID builds get a timestamp automatically.
 codesign --force --options runtime --timestamp=none --entitlements Resources/iCloudy.entitlements --sign "$identity" "$app_dir"
 echo "Aplicación creada: $app_dir (firma: ${identity})"

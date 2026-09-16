@@ -4,7 +4,7 @@ import Security
 enum Cloud: String, Codable, CaseIterable, Identifiable {
     case google, microsoft
     var id: String { rawValue }
-    var title: String { self == .google ? "Google Drive" : "OneDrive" }
+    var title: String { self == .google ? L("Google Drive") : L("OneDrive") }
     var tokenURL: String { self == .google ? "https://oauth2.googleapis.com/token" : "https://login.microsoftonline.com/common/oauth2/v2.0/token" }
 }
 
@@ -111,11 +111,11 @@ struct Transfer: Identifiable, Codable {
     var progress: Double { state == .completed ? 1 : (total > 0 ? min(1, Double(bytes) / Double(total)) : 0) }
     var status: String {
         switch state {
-        case .queued: return "En cola"
+        case .queued: return L("En cola")
         case .running: return detail.isEmpty ? "Transfiriendo…" : detail
         case .paused: return detail.isEmpty ? "En pausa · Reanudar para continuar" : detail
         case .failed: return detail
-        case .cancelled: return "Cancelada · Los elementos completados se conservan"
+        case .cancelled: return L("Cancelada · Los elementos completados se conservan")
         case .completed: return detail.isEmpty ? "Completada" : detail
         }
     }
@@ -124,7 +124,7 @@ struct Transfer: Identifiable, Codable {
         let size = total > 0 ? " / " + ByteCountFormatter.string(fromByteCount: total, countStyle: .file) : ""
         guard state == .running, bytesPerSecond > 0 else { return done + size }
         let speed = ByteCountFormatter.string(fromByteCount: Int64(bytesPerSecond), countStyle: .file) + "/s"
-        let eta = total > bytes ? " · ~\(Int(Double(total - bytes) / bytesPerSecond)) s" : ""
+        let eta = total > bytes ? " · ~\(Int(Double(total - bytes) / bytesPerSecond)) s" : L("")
         return done + size + " · " + speed + eta
     }
 }
@@ -133,7 +133,7 @@ enum Collection: String, Codable, CaseIterable, Identifiable {
     case files, recent, shared
     var id: String { rawValue }
     var title: String {
-        switch self { case .files: return "Mis archivos"; case .recent: return "Recientes"; case .shared: return "Compartido conmigo" }
+        switch self { case .files: return L("Mis archivos"); case .recent: return "Recientes"; case .shared: return L("Compartido conmigo") }
     }
     var icon: String {
         switch self { case .files: return "folder"; case .recent: return "clock"; case .shared: return "person.2" }
@@ -197,20 +197,20 @@ enum Vault {
             insert[kSecValueData as String] = data
             insert[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
             let result = SecItemAdd(insert as CFDictionary, nil)
-            guard result == errSecSuccess else { throw CloudError.message("No se pudo guardar en el Llavero (\(result)).") }
-        } else if status != errSecSuccess { throw CloudError.message("No se pudo actualizar el Llavero (\(status)).") }
+            guard result == errSecSuccess else { throw CloudError.message(L("No se pudo guardar en el Llavero (\(result)).")) }
+        } else if status != errSecSuccess { throw CloudError.message(L("No se pudo actualizar el Llavero (\(status)).")) }
     }
     static func read<T: Decodable>(_ type: T.Type, key: String) throws -> T? {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "dev.icloudy.credentials", kSecAttrAccount as String: key, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = result as? Data else { throw CloudError.message("No se pudo leer el Llavero (\(status)).") }
+        guard status == errSecSuccess, let data = result as? Data else { throw CloudError.message(L("No se pudo leer el Llavero (\(status)).")) }
         return try JSONDecoder().decode(type, from: data)
     }
     static func delete(key: String) throws {
         let result = SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "dev.icloudy.credentials", kSecAttrAccount as String: key] as CFDictionary)
-        guard result == errSecSuccess || result == errSecItemNotFound else { throw CloudError.message("No se pudo eliminar la credencial (\(result)).") }
+        guard result == errSecSuccess || result == errSecItemNotFound else { throw CloudError.message(L("No se pudo eliminar la credencial (\(result)).")) }
     }
 }
 
@@ -230,16 +230,16 @@ enum FileNames {
     /// Returns a user-facing problem, or nil when the provider will accept the name. OneDrive is far stricter than Drive.
     /// Reference: https://support.microsoft.com/office/invalid-file-names-and-file-types-in-onedrive-and-sharepoint
     static func problem(with name: String, for cloud: Cloud) -> String? {
-        if name.isEmpty || name == "." || name == ".." { return "Introduce un nombre válido." }
-        if name.contains("/") || name.contains("\0") { return "El nombre no puede contener barras." }
+        if name.isEmpty || name == "." || name == ".." { return L("Introduce un nombre válido.") }
+        if name.contains("/") || name.contains("\0") { return L("El nombre no puede contener barras.") }
         guard cloud == .microsoft else { return nil }
-        if name.unicodeScalars.contains(where: { oneDriveForbidden.contains($0) }) { return "OneDrive no admite los caracteres \" * : < > ? / \\ | en los nombres." }
-        if name.hasPrefix(" ") || name.hasSuffix(" ") { return "OneDrive no admite espacios al principio o al final del nombre." }
-        if name.hasSuffix(".") { return "OneDrive no admite nombres que terminen en punto." }
-        if name.hasPrefix("~$") || name.contains("_vti_") { return "OneDrive reserva los nombres que empiezan por ~$ o contienen _vti_." }
+        if name.unicodeScalars.contains(where: { oneDriveForbidden.contains($0) }) { return L("OneDrive no admite los caracteres \" * : < > ? / \\ | en los nombres.") }
+        if name.hasPrefix(" ") || name.hasSuffix(" ") { return L("OneDrive no admite espacios al principio o al final del nombre.") }
+        if name.hasSuffix(".") { return L("OneDrive no admite nombres que terminen en punto.") }
+        if name.hasPrefix("~$") || name.contains("_vti_") { return L("OneDrive reserva los nombres que empiezan por ~$ o contienen _vti_.") }
         let stem = (name as NSString).deletingPathExtension.uppercased()
-        if oneDriveReserved.contains(name.uppercased()) || oneDriveReserved.contains(stem) { return "«\(name)» es un nombre reservado por OneDrive." }
-        if name.count > 255 { return "OneDrive limita los nombres a 255 caracteres." }
+        if oneDriveReserved.contains(name.uppercased()) || oneDriveReserved.contains(stem) { return L("«\(name)» es un nombre reservado por OneDrive.") }
+        if name.count > 255 { return L("OneDrive limita los nombres a 255 caracteres.") }
         return nil
     }
     static func safe(_ name: String) -> String {
@@ -367,3 +367,7 @@ extension Favorite {
                   collection: try values.decodeIfPresent(String.self, forKey: .collection).flatMap(Collection.init(rawValue:)) ?? .files)
     }
 }
+
+/// Localizes a model-layer message. Keys are the Spanish source strings, so a missing translation shows Spanish.
+/// SwiftUI views get the same behaviour for free through `LocalizedStringKey`.
+func L(_ key: String.LocalizationValue) -> String { String(localized: key) }

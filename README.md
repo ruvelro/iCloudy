@@ -73,7 +73,7 @@ La configuración local queda fuera de Git y se incorpora al `.app` al compilar.
 - Las descargas requieren espacio para el contenido y el temporal de URLSession. No existe una caché persistente de contenidos administrada por la app.
 - La exportación con Google `files.export` tiene el límite de 10 MB documentado para ese endpoint. Las cuotas y políticas de proveedores siguen aplicándose.
 - No hay integración de pruebas con cuentas reales sin aportar los IDs OAuth y completar el consentimiento. Las pruebas locales usan respuestas HTTP simuladas, incluidas la renovación de tokens con un Llavero en memoria y el flujo loopback completo con un navegador simulado por TCP.
-- Una sola ventana. La interfaz está en castellano con `defaultLocalization: es`; las vistas SwiftUI ya reciben claves localizables, pero los mensajes del modelo siguen en código y una traducción requiere extraerlos.
+- Una sola ventana. Interfaz localizable: el castellano es el idioma de desarrollo y las claves son las propias frases, las vistas SwiftUI usan `LocalizedStringKey` y los mensajes del modelo pasan por `L()` (`String(localized:)`). Se incluye una traducción completa al inglés en `Resources/en.lproj`, que el script copia al paquete; una frase sin traducción se muestra en castellano. Para otro idioma basta añadir su `.lproj`.
 - Con la vista previa abierta, la selección se sigue tras una pausa de 350 ms para que recorrer la lista con las flechas no descargue cada archivo intermedio.
 
 ## Estructura

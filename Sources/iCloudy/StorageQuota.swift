@@ -29,15 +29,15 @@ struct StorageQuota: Equatable {
     }
     var summary: String {
         let usedText = ByteCountFormatter.string(fromByteCount: used, countStyle: .decimal)
-        guard let total else { return "\(usedText) usados · total no disponible" }
-        return "\(usedText) de \(ByteCountFormatter.string(fromByteCount: total, countStyle: .decimal))"
+        guard let total else { return L("\(usedText) usados · total no disponible") }
+        return L("\(usedText) de \(ByteCountFormatter.string(fromByteCount: total, countStyle: .decimal))")
     }
     /// One line per known component, for the tooltip.
     var breakdown: String {
         var lines: [String] = []
-        if let files { lines.append("Archivos: " + ByteCountFormatter.string(fromByteCount: max(0, files - (trash ?? 0)), countStyle: .decimal)) }
-        if let trash { lines.append("Papelera: " + ByteCountFormatter.string(fromByteCount: trash, countStyle: .decimal)) }
-        if let files, used > files { lines.append("Otros servicios: " + ByteCountFormatter.string(fromByteCount: used - files, countStyle: .decimal)) }
+        if let files { lines.append(L("Archivos: ") + ByteCountFormatter.string(fromByteCount: max(0, files - (trash ?? 0)), countStyle: .decimal)) }
+        if let trash { lines.append(L("Papelera: ") + ByteCountFormatter.string(fromByteCount: trash, countStyle: .decimal)) }
+        if let files, used > files { lines.append(L("Otros servicios: ") + ByteCountFormatter.string(fromByteCount: used - files, countStyle: .decimal)) }
         return lines.joined(separator: " · ")
     }
     static func parse(_ response: [String: Any], cloud: Cloud) throws -> StorageQuota {
@@ -56,7 +56,7 @@ struct StorageQuota: Equatable {
         if used == nil, cloud == .microsoft, let total, let remaining = bytes("remaining"), remaining <= total {
             used = total - remaining
         }
-        guard let used else { throw CloudError.message("El proveedor no ha informado del espacio utilizado.") }
+        guard let used else { throw CloudError.message(L("El proveedor no ha informado del espacio utilizado.")) }
         return StorageQuota(used: used, total: total, trash: bytes(cloud == .google ? "usageInDriveTrash" : "deleted"), files: cloud == .google ? bytes("usageInDrive") : nil)
     }
 }
@@ -96,11 +96,11 @@ struct StorageUsageView: View {
     let state: StorageQuotaState?
 
     private var explanation: String {
-        if account.isDemo { return "Demo local: capacidad simulada de 5 GB; no es el espacio del Mac." }
+        if account.isDemo { return L("Demo local: capacidad simulada de 5 GB; no es el espacio del Mac.") }
         if account.cloud == .google {
-            return "Almacenamiento de Google en todos sus servicios (Drive, Gmail, Fotos…). En organizaciones con almacenamiento compartido, puede corresponder a toda la organización."
+            return L("Almacenamiento de Google en todos sus servicios (Drive, Gmail, Fotos…). En organizaciones con almacenamiento compartido, puede corresponder a toda la organización.")
         }
-        return "Cuota comunicada por Microsoft. En OneDrive personal puede incluir almacenamiento compartido entre varios servicios."
+        return L("Cuota comunicada por Microsoft. En OneDrive personal puede incluir almacenamiento compartido entre varios servicios.")
     }
     private func cumulative(_ segments: [(kind: StorageQuota.Segment, fraction: Double)]) -> [(kind: StorageQuota.Segment, start: Double, end: Double)] {
         var position = 0.0

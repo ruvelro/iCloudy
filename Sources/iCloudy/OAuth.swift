@@ -10,14 +10,14 @@ enum HTTP {
         }.joined(separator: "&").data(using: .utf8)!
     }
     static func json(_ data: Data) throws -> [String: Any] {
-        guard let result = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw CloudError.message("Respuesta no válida del servicio.") }
+        guard let result = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw CloudError.message(L("Respuesta no válida del servicio.")) }
         return result
     }
     static func validate(_ response: URLResponse, data: Data = Data()) throws {
-        guard let response = response as? HTTPURLResponse else { throw CloudError.message("Respuesta HTTP no válida.") }
+        guard let response = response as? HTTPURLResponse else { throw CloudError.message(L("Respuesta HTTP no válida.")) }
         guard (200..<300).contains(response.statusCode) else {
             let (code, message) = errorDetails(data)
-            let fallback = "El servicio devolvió HTTP \(response.statusCode). \(response.statusCode == 401 ? "Vuelve a conectar la cuenta." : "Inténtalo de nuevo más tarde.")"
+            let fallback = "El servicio devolvió HTTP \(response.statusCode). \(response.statusCode == 401 ? L("Vuelve a conectar la cuenta.") : L("Inténtalo de nuevo más tarde."))"
             throw ServiceError(status: response.statusCode, detail: message ?? fallback, code: code)
         }
     }
@@ -84,7 +84,7 @@ final class OAuth {
         let port: UInt16
         do { port = try await listen(on: OAuthRequest.defaultPort) }
         catch {
-            guard cloud == .google else { throw CloudError.message("No se pudo preparar el inicio de sesión: el puerto \(OAuthRequest.defaultPort) está ocupado. Cierra otras instancias de iCloudy y vuelve a intentarlo.") }
+            guard cloud == .google else { throw CloudError.message(L("No se pudo preparar el inicio de sesión: el puerto \(OAuthRequest.defaultPort) está ocupado. Cierra otras instancias de iCloudy y vuelve a intentarlo.")) }
             port = try await listen(on: 0)
         }
         let redirect = OAuthRequest.redirectURI(port: port)
@@ -93,22 +93,22 @@ final class OAuth {
             callback = continuation
             timeout = Task { [weak self] in
                 do { try await Task.sleep(for: Self.loginTimeout) } catch { return }
-                self?.finish(.failure(CloudError.message("No llegó la respuesta del navegador en 10 minutos y se ha cancelado el inicio de sesión. Si aún estás en la página del proveedor, ciérrala y vuelve a pulsar «Continuar» para empezar de nuevo.")))
+                self?.finish(.failure(CloudError.message(L("No llegó la respuesta del navegador en 10 minutos y se ha cancelado el inicio de sesión. Si aún estás en la página del proveedor, ciérrala y vuelve a pulsar «Continuar» para empezar de nuevo."))))
             }
-            if !openURL(url) { finish(.failure(CloudError.message("No se pudo abrir el navegador."))) }
+            if !openURL(url) { finish(.failure(CloudError.message(L("No se pudo abrir el navegador.")))) }
         }
         var fields = ["client_id": clientID, "code": code, "redirect_uri": redirect, "grant_type": "authorization_code", "code_verifier": verifier]
         if cloud == .google && !clientSecret.isEmpty { fields["client_secret"] = clientSecret }
         let tokens = try await HTTP.token(cloud: cloud, values: fields, session: session)
         guard !cancelled else { throw CancellationError() }
-        guard let access = tokens["access_token"] as? String, let refresh = tokens["refresh_token"] as? String else { throw CloudError.message("El proveedor no devolvió acceso permanente. Repite el consentimiento.") }
+        guard let access = tokens["access_token"] as? String, let refresh = tokens["refresh_token"] as? String else { throw CloudError.message(L("El proveedor no devolvió acceso permanente. Repite el consentimiento.")) }
         var request = URLRequest(url: URL(string: cloud == .google ? "https://openidconnect.googleapis.com/v1/userinfo" : "https://graph.microsoft.com/v1.0/me?$select=id,displayName,mail,userPrincipalName")!)
         request.setValue("Bearer \(access)", forHTTPHeaderField: "Authorization")
         let (data, response) = try await session.data(for: request)
         guard !cancelled else { throw CancellationError() }
         try HTTP.validate(response, data: data)
         let profile = try HTTP.json(data)
-        guard let identity = profile[cloud == .google ? "sub" : "id"] as? String else { throw CloudError.message("No se pudo identificar la cuenta.") }
+        guard let identity = profile[cloud == .google ? "sub" : "id"] as? String else { throw CloudError.message(L("No se pudo identificar la cuenta.")) }
         let email = profile["email"] as? String ?? profile["mail"] as? String ?? profile["userPrincipalName"] as? String ?? identity
         let account = Account(id: cloud.rawValue + ":" + identity, cloud: cloud, name: profile["name"] as? String ?? profile["displayName"] as? String ?? email, email: email, clientID: clientID, clientSecret: cloud == .google && !clientSecret.isEmpty ? clientSecret : nil)
         return (account, Credential(accessToken: access, refreshToken: refresh, expires: Date().addingTimeInterval(tokens["expires_in"] as? Double ?? 3600)))
@@ -144,7 +144,7 @@ final class OAuth {
             server.cancel(); listener = nil
             throw error
         }
-        guard let port = server.port?.rawValue else { throw CloudError.message("No se pudo preparar el inicio de sesión.") }
+        guard let port = server.port?.rawValue else { throw CloudError.message(L("No se pudo preparar el inicio de sesión.")) }
         return port
     }
 

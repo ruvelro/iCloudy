@@ -34,12 +34,12 @@ struct AccountAppearance: Codable, Equatable {
     func validated() throws -> Self {
         var value = self
         value.alias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard value.alias.count <= 60 else { throw CloudError.message("El alias admite hasta 60 caracteres.") }
-        guard !value.alias.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw CloudError.message("El alias no puede contener saltos de línea ni caracteres de control.") }
+        guard value.alias.count <= 60 else { throw CloudError.message(L("El alias admite hasta 60 caracteres.")) }
+        guard !value.alias.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw CloudError.message(L("El alias no puede contener saltos de línea ni caracteres de control.")) }
         if icon == "custom" {
-            guard let customPNG, customPNG.count <= 2_000_000, NSImage(data: customPNG) != nil else { throw CloudError.message("Elige una imagen válida para el icono.") }
+            guard let customPNG, customPNG.count <= 2_000_000, NSImage(data: customPNG) != nil else { throw CloudError.message(L("Elige una imagen válida para el icono.")) }
         } else {
-            guard ["automatic", "drive", "onedrive"].contains(icon) || NSImage(systemSymbolName: icon, accessibilityDescription: nil) != nil else { throw CloudError.message("Ese símbolo de macOS no existe. Elige un predefinido o una imagen.") }
+            guard ["automatic", "drive", "onedrive"].contains(icon) || NSImage(systemSymbolName: icon, accessibilityDescription: nil) != nil else { throw CloudError.message(L("Ese símbolo de macOS no existe. Elige un predefinido o una imagen.")) }
             value.customPNG = nil
         }
         return value
@@ -48,14 +48,14 @@ struct AccountAppearance: Codable, Equatable {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         let attributes = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-        guard attributes.isRegularFile == true, (attributes.fileSize ?? Int.max) <= 10_000_000 else { throw CloudError.message("Elige una imagen de hasta 10 MB.") }
+        guard attributes.isRegularFile == true, (attributes.fileSize ?? Int.max) <= 10_000_000 else { throw CloudError.message(L("Elige una imagen de hasta 10 MB.")) }
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
               let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                 kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 256,
                 kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceShouldCacheImmediately: true
-              ] as CFDictionary) else { throw CloudError.message("Formato no compatible. Prueba PNG, JPEG, HEIC, GIF o TIFF.") }
+              ] as CFDictionary) else { throw CloudError.message(L("Formato no compatible. Prueba PNG, JPEG, HEIC, GIF o TIFF.")) }
         let bitmap = NSBitmapImageRep(cgImage: thumbnail)
-        guard let png = bitmap.representation(using: .png, properties: [:]) else { throw CloudError.message("No se pudo preparar el icono.") }
+        guard let png = bitmap.representation(using: .png, properties: [:]) else { throw CloudError.message(L("No se pudo preparar el icono.")) }
         return png
     }
 }
@@ -145,7 +145,7 @@ struct AccountAppearanceEditor: View {
                     Button { draft.icon = preset.id } label: {
                         VStack(spacing: 5) {
                             AccountIcon(account: account, appearance: AccountAppearance(tint: draft.tint, icon: preset.id))
-                            Text(preset.title).font(.caption2)
+                            Text(LocalizedStringKey(preset.title)).font(.caption2)
                         }.frame(maxWidth: .infinity).padding(8)
                             .background(draft.icon == preset.id ? draft.tint.color.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
                     }.buttonStyle(.plain).accessibilityLabel(preset.title)
@@ -156,7 +156,7 @@ struct AccountAppearanceEditor: View {
                 Button("Usar símbolo") {
                     let name = symbol.trimmingCharacters(in: .whitespacesAndNewlines)
                     if NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil { draft.icon = name; error = nil }
-                    else { error = "Símbolo no encontrado. Puedes usar un predefinido o elegir una imagen." }
+                    else { error = L("Símbolo no encontrado. Puedes usar un predefinido o elegir una imagen.") }
                 }
             }
             HStack {
@@ -178,7 +178,7 @@ struct AccountAppearanceEditor: View {
     }
     private func pickImage() async {
         let panel = NSOpenPanel(); panel.allowedContentTypes = [.image]; panel.allowsMultipleSelection = false; panel.canChooseDirectories = false
-        panel.prompt = "Usar como icono"
+        panel.prompt = L("Usar como icono")
         guard await panel.begin() == .OK, let url = panel.url else { return }
         do { draft.customPNG = try AccountAppearance.importIcon(from: url); draft.icon = "custom"; error = nil }
         catch { self.error = error.localizedDescription }

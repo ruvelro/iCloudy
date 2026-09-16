@@ -21,7 +21,7 @@ extension CloudAPI {
         if demo != nil { return "root" }
         if let rootIDCache { return rootIDCache }
         let endpoint = account.cloud == .google ? "https://www.googleapis.com/drive/v3/files/root?fields=id" : "https://graph.microsoft.com/v1.0/me/drive/root?$select=id"
-        guard let id = try await json(URL(string: endpoint)!)["id"] as? String else { throw CloudError.message("No se pudo identificar la carpeta raíz.") }
+        guard let id = try await json(URL(string: endpoint)!)["id"] as? String else { throw CloudError.message(L("No se pudo identificar la carpeta raíz.")) }
         rootIDCache = id
         return id
     }
@@ -47,7 +47,7 @@ extension CloudAPI {
         if let demo { _ = try demo.copy(file.id, to: destination); return }
         let target = destination == "root" ? try await rootID() : destination
         if account.cloud == .google {
-            guard !file.isFolder else { throw CloudError.message("Google Drive no permite copiar carpetas. Copia los archivos que contiene.") }
+            guard !file.isFolder else { throw CloudError.message(L("Google Drive no permite copiar carpetas. Copia los archivos que contiene.")) }
             _ = try await json(URL(string: "https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))/copy")!, method: "POST", body: ["parents": [target], "name": file.name])
         } else {
             var request = try await request(URL(string: "https://graph.microsoft.com/v1.0/me/drive/items/\(Self.segment(file.id))/copy")!, method: "POST", body: ["parentReference": ["id": target]])
@@ -76,11 +76,11 @@ extension CloudAPI {
         if account.cloud == .google {
             _ = try await json(URL(string: "https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))/permissions")!, method: "POST", body: ["role": "reader", "type": "anyone"])
             let metadata = try await json(URL(string: "https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))?fields=webViewLink")!)
-            guard let link = (metadata["webViewLink"] as? String).flatMap(URL.init(string:)) ?? file.webURL else { throw CloudError.message("Google no devolvió un enlace para este elemento.") }
+            guard let link = (metadata["webViewLink"] as? String).flatMap(URL.init(string:)) ?? file.webURL else { throw CloudError.message(L("Google no devolvió un enlace para este elemento.")) }
             return link
         }
         let result = try await json(URL(string: "https://graph.microsoft.com/v1.0/me/drive/items/\(Self.segment(file.id))/createLink")!, method: "POST", body: ["type": "view", "scope": "anonymous"])
-        guard let link = ((result["link"] as? [String: Any])?["webUrl"] as? String).flatMap(URL.init(string:)) else { throw CloudError.message("OneDrive no devolvió el enlace. La organización puede no permitir enlaces anónimos.") }
+        guard let link = ((result["link"] as? [String: Any])?["webUrl"] as? String).flatMap(URL.init(string:)) else { throw CloudError.message(L("OneDrive no devolvió el enlace. La organización puede no permitir enlaces anónimos.")) }
         return link
     }
 
@@ -93,10 +93,10 @@ extension CloudAPI {
             return UploadReceipt(remoteID: nil, verification: .verified)
         }
         let attributes = try local.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey, .isSymbolicLinkKey])
-        guard attributes.isRegularFile == true, attributes.isSymbolicLink != true else { throw CloudError.message("Solo se admiten archivos regulares, sin enlaces simbólicos.") }
+        guard attributes.isRegularFile == true, attributes.isSymbolicLink != true else { throw CloudError.message(L("Solo se admiten archivos regulares, sin enlaces simbólicos.")) }
         let total = Int64(attributes.fileSize ?? 0)
         var cursor = checkpoint ?? UploadCheckpoint(total: total, modified: attributes.contentModificationDate)
-        guard cursor.total == total, cursor.modified == attributes.contentModificationDate else { throw CloudError.message("El origen ha cambiado. Cancela esta operación y vuelve a subirlo.") }
+        guard cursor.total == total, cursor.modified == attributes.contentModificationDate else { throw CloudError.message(L("El origen ha cambiado. Cancela esta operación y vuelve a subirlo.")) }
         if cursor.complete { progress(total, total); return UploadReceipt(remoteID: nil, verification: .unavailable) }
         if let url = cursor.url {
             var probe = URLRequest(url: url)
@@ -110,14 +110,14 @@ extension CloudAPI {
             }
             if [404, 410].contains(status) {
                 // Do not blindly recreate: a lost final response can look like an expired session.
-                throw CloudError.message("La sesión de subida ha caducado o ya terminó. Comprueba el destino antes de iniciar otra subida; esta operación no se repetirá automáticamente.")
+                throw CloudError.message(L("La sesión de subida ha caducado o ya terminó. Comprueba el destino antes de iniciar otra subida; esta operación no se repetirá automáticamente."))
             }
             if account.cloud == .google, status == 308 {
                 cursor.offset = Self.googleOffset(response)
             } else if account.cloud == .microsoft, status == 200 {
                 cursor.offset = try Self.microsoftOffset(data)
             } else { throw ServiceError(status: status) }
-            guard cursor.offset >= 0, cursor.offset <= total else { throw CloudError.message("El servidor devolvió un avance no válido.") }
+            guard cursor.offset >= 0, cursor.offset <= total else { throw CloudError.message(L("El servidor devolvió un avance no válido.")) }
             try save(cursor)
         } else {
             if account.cloud == .google {
@@ -144,10 +144,10 @@ extension CloudAPI {
                 let result = try await json(URL(string: "https://graph.microsoft.com/v1.0/me/drive/\(route)/createUploadSession")!, method: "POST", body: ["item": ["@microsoft.graph.conflictBehavior": replacing == nil ? "fail" : "replace", "name": name]])
                 cursor.url = (result["uploadUrl"] as? String).flatMap(URL.init(string:))
             }
-            guard cursor.url?.scheme == "https" else { throw CloudError.message("No se pudo iniciar la sesión de subida.") }
+            guard cursor.url?.scheme == "https" else { throw CloudError.message(L("No se pudo iniciar la sesión de subida.")) }
             try save(cursor)
         }
-        guard let url = cursor.url else { throw CloudError.message("No hay sesión de subida.") }
+        guard let url = cursor.url else { throw CloudError.message(L("No hay sesión de subida.")) }
         let handle = try FileHandle(forReadingFrom: local)
         defer { try? handle.close() }
         try handle.seek(toOffset: UInt64(cursor.offset))
@@ -158,10 +158,10 @@ extension CloudAPI {
         repeat {
             try Task.checkCancellation()
             let current = try local.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-            guard current.fileSize == attributes.fileSize, current.contentModificationDate == cursor.modified else { throw CloudError.message("El archivo cambió durante la subida.") }
+            guard current.fileSize == attributes.fileSize, current.contentModificationDate == cursor.modified else { throw CloudError.message(L("El archivo cambió durante la subida.")) }
             // Reading 5 MiB blocks on the main actor stalled the interface on slow volumes.
             let data = try await blockingIO { try handle.read(upToCount: 5 * 1024 * 1024) ?? Data() }
-            guard total == 0 || !data.isEmpty, cursor.offset + Int64(data.count) <= total else { throw CloudError.message("El tamaño del origen ha cambiado.") }
+            guard total == 0 || !data.isEmpty, cursor.offset + Int64(data.count) <= total else { throw CloudError.message(L("El tamaño del origen ha cambiado.")) }
             var upload = URLRequest(url: url)
             upload.httpMethod = "PUT"; upload.timeoutInterval = 180
             upload.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
@@ -170,7 +170,7 @@ extension CloudAPI {
             let (body, response) = try await session.upload(for: upload, from: data)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             if [200, 201].contains(status) {
-                guard cursor.offset + Int64(data.count) == total else { throw CloudError.message("El servidor confirmó una subida incompleta.") }
+                guard cursor.offset + Int64(data.count) == total else { throw CloudError.message(L("El servidor confirmó una subida incompleta.")) }
                 cursor.offset = total; cursor.complete = true
                 let item = (try? HTTP.json(body)) ?? [:]
                 receipt = UploadReceipt(remoteID: item["id"] as? String, verification: try hasher?.verify(against: item, name: name) ?? .unavailable)
@@ -193,7 +193,7 @@ extension CloudAPI {
     }
     private static func microsoftOffset(_ data: Data) throws -> Int64 {
         let result = try HTTP.json(data)
-        guard let ranges = result["nextExpectedRanges"] as? [String], let start = ranges.first?.split(separator: "-").first, let offset = Int64(start) else { throw CloudError.message("No se pudo recuperar el avance de OneDrive.") }
+        guard let ranges = result["nextExpectedRanges"] as? [String], let start = ranges.first?.split(separator: "-").first, let offset = Int64(start) else { throw CloudError.message(L("No se pudo recuperar el avance de OneDrive.")) }
         return offset
     }
 }
@@ -229,7 +229,7 @@ struct UploadHasher {
         }
         guard let expected else { return .unavailable }
         guard expected.lowercased() == actual.lowercased() else {
-            throw CloudError.message("La suma de verificación de «\(name)» no coincide con la que informa el servidor. La copia remota puede estar dañada: revísala o vuelve a subirla.")
+            throw CloudError.message(L("La suma de verificación de «\(name)» no coincide con la que informa el servidor. La copia remota puede estar dañada: revísala o vuelve a subirla."))
         }
         return .verified
     }

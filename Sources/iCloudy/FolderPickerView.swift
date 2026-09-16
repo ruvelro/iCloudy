@@ -11,10 +11,10 @@ struct Relocation: Identifiable {
     let origin: String?
     var isMove: Bool { if case .move = kind { return true } else { return false } }
     var title: String {
-        switch kind { case .move: return "Mover a…"; case .copy: return "Copiar a…"; case .transfer: return "Enviar a otra nube…" }
+        switch kind { case .move: return L("Mover a…"); case .copy: return L("Copiar a…"); case .transfer: return L("Enviar a otra nube…") }
     }
     var verb: String { switch kind { case .move: return "Mover"; case .copy: return "Copiar"; case .transfer: return "Enviar" } }
-    var confirm: String { switch kind { case .move: return "Mover aquí"; case .copy: return "Copiar aquí"; case .transfer: return "Enviar aquí" } }
+    var confirm: String { switch kind { case .move: return L("Mover aquí"); case .copy: return L("Copiar aquí"); case .transfer: return L("Enviar aquí") } }
 }
 
 /// Items chosen for a cross-cloud transfer, waiting for the user to pick the destination account.
@@ -33,7 +33,7 @@ struct CloudTargetPicker: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Enviar a otra nube").font(.title2)
-            Text("\(request.files.count == 1 ? "«\(request.files[0].name)»" : "\(request.files.count) elementos") se descargan por bloques y se suben a la cuenta elegida; no queda copia en el Mac. Los documentos de Google salen como Word, Excel o PowerPoint.")
+            Text("\(request.files.count == 1 ? L("«\(request.files[0].name)»") : L("\(request.files.count) elementos")) se descargan por bloques y se suben a la cuenta elegida; no queda copia en el Mac. Los documentos de Google salen como Word, Excel o PowerPoint.")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             List(candidates) { account in
                 HStack(spacing: 10) {
@@ -73,8 +73,8 @@ struct FolderPickerView: View {
         return !path.contains { movedIDs.contains($0.id) }
     }
     private var summary: String {
-        let what = request.files.count == 1 ? "«\(request.files[0].name)»" : "\(request.files.count) elementos"
-        return "\(request.verb) \(what) a \(model.accountTitle(request.account)) · \(request.account.email)"
+        let what = request.files.count == 1 ? L("«\(request.files[0].name)»") : L("\(request.files.count) elementos")
+        return L("\(request.verb) \(what) a \(model.accountTitle(request.account)) · \(request.account.email)")
     }
 
     var body: some View {
@@ -105,7 +105,7 @@ struct FolderPickerView: View {
             }
             if let error { Text(error).foregroundStyle(.red).font(.caption).fixedSize(horizontal: false, vertical: true) }
             if !destinationIsValid {
-                Text(request.isMove ? "Elige una carpeta distinta de la actual y que no esté dentro de lo que mueves." : "Una carpeta no puede copiarse dentro de sí misma.")
+                Text(request.isMove ? L("Elige una carpeta distinta de la actual y que no esté dentro de lo que mueves.") : L("Una carpeta no puede copiarse dentro de sí misma."))
                     .font(.caption).foregroundStyle(.orange)
             }
             HStack {

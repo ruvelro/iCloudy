@@ -33,9 +33,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard model?.hasActiveTransfers == true else { return .terminateNow }
         let alert = NSAlert()
-        alert.messageText = "Hay transferencias pendientes"
-        alert.informativeText = "La cola se guardará en pausa. Al volver a abrir podrás reanudarla. Los elementos ya completados se conservarán."
-        alert.addButton(withTitle: "Continuar en iCloudy")
+        alert.messageText = L("Hay transferencias pendientes")
+        alert.informativeText = L("La cola se guardará en pausa. Al volver a abrir podrás reanudarla. Los elementos ya completados se conservarán.")
+        alert.addButton(withTitle: L("Continuar en iCloudy"))
         alert.addButton(withTitle: "Salir")
         if alert.runModal() == .alertFirstButtonReturn { return .terminateCancel }
         model?.queue.pauseAll()
@@ -118,7 +118,7 @@ struct ExplorerView: View {
                 Button { model.showConnect = true } label: { Label("Añadir cuenta", systemImage: "plus.circle") }.buttonStyle(.plain).padding(12)
                 Button { model.enableDemo() } label: { Label("Probar demo local", systemImage: "play.circle") }.buttonStyle(.plain).padding(.horizontal, 12)
                 Divider()
-                Label(model.isOnline ? "Solo se descarga lo que eliges" : "Sin conexión", systemImage: model.isOnline ? "internaldrive" : "wifi.slash")
+                Label(model.isOnline ? L("Solo se descarga lo que eliges") : L("Sin conexión"), systemImage: model.isOnline ? "internaldrive" : "wifi.slash")
                     .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.bottom, 12)
             }.padding(.horizontal, 10)
             .navigationSplitViewColumnWidth(min: 230, ideal: 260, max: 320)
@@ -201,7 +201,7 @@ struct ExplorerView: View {
         .sheet(item: $model.appearanceAccount) { account in AccountAppearanceEditor(model: model, account: account) }
         .sheet(isPresented: $model.showNameDialog) {
             VStack(alignment: .leading, spacing: 18) {
-                Text(model.editingFile == nil ? "Nueva carpeta" : "Renombrar").font(.title2)
+                Text(model.editingFile == nil ? L("Nueva carpeta") : L("Renombrar")).font(.title2)
                 TextField("Nombre", text: $model.editName).textFieldStyle(.roundedBorder)
                 HStack {
                     Button("Cancelar") { model.showNameDialog = false }.keyboardShortcut(.cancelAction)
@@ -267,7 +267,7 @@ struct ExplorerView: View {
                 }
                 Spacer()
                 if model.showingCachedListing {
-                    Label(model.loading ? "Última copia conocida · actualizando…" : "Última copia conocida · sin respuesta del proveedor", systemImage: "clock.arrow.circlepath")
+                    Label(model.loading ? L("Última copia conocida · actualizando…") : L("Última copia conocida · sin respuesta del proveedor"), systemImage: "clock.arrow.circlepath")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if model.loading { ProgressView().controlSize(.small) }
@@ -294,21 +294,21 @@ struct ExplorerView: View {
 
     private var trashTitle: String {
         guard let files = model.pendingTrash else { return "" }
-        return files.count == 1 ? "¿Enviar «\(files[0].name)» a la papelera?" : "¿Enviar \(files.count) elementos a la papelera?"
+        return files.count == 1 ? L("¿Enviar «\(files[0].name)» a la papelera?") : L("¿Enviar \(files.count) elementos a la papelera?")
     }
     private var emptyTitle: String {
-        if !model.search.isEmpty { return "Sin resultados" }
+        if !model.search.isEmpty { return L("Sin resultados") }
         if model.path.isEmpty {
             switch model.collection {
-            case .recent: return "Todavía no hay elementos recientes"
-            case .shared: return "Nadie ha compartido nada contigo"
+            case .recent: return L("Todavía no hay elementos recientes")
+            case .shared: return L("Nadie ha compartido nada contigo")
             case .files: break
             }
         }
-        return "Esta carpeta está vacía"
+        return L("Esta carpeta está vacía")
     }
     private var emptyDescription: String {
-        model.canWrite ? "Arrastra archivos o carpetas para subirlos aquí." : "Esta lista la calcula el proveedor y no admite subidas."
+        model.canWrite ? L("Arrastra archivos o carpetas para subirlos aquí.") : L("Esta lista la calcula el proveedor y no admite subidas.")
     }
 
     private var fileList: some View {
@@ -412,7 +412,7 @@ struct ExplorerView: View {
     @ViewBuilder private func fileActions(_ file: CloudFile) -> some View {
         Button("Vista previa") { model.showPreview(file) }
         Divider()
-        Button(model.isFavorite(file) ? "Quitar de favoritos" : "Añadir a favoritos") { model.toggleFavorite(file) }
+        Button(model.isFavorite(file) ? L("Quitar de favoritos") : L("Añadir a favoritos")) { model.toggleFavorite(file) }
         Button("Renombrar…") { model.promptName(file) }
         Button("Mover a…") { model.requestRelocation([file], copy: false) }
         Button("Copiar a…") { model.requestRelocation([file], copy: true) }
@@ -555,7 +555,7 @@ struct ConflictView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Label("Ya existe «\(request.name)»", systemImage: "doc.on.doc").font(.title2)
-            Text(request.folder ? "Combinar conserva los elementos exclusivos del destino y aplica las decisiones de conflicto a los archivos coincidentes." : "Reemplazar actualiza el contenido del archivo existente. Guardar otra copia conserva ambos.").fixedSize(horizontal: false, vertical: true)
+            Text(request.folder ? L("Combinar conserva los elementos exclusivos del destino y aplica las decisiones de conflicto a los archivos coincidentes.") : L("Reemplazar actualiza el contenido del archivo existente. Guardar otra copia conserva ambos.")).fixedSize(horizontal: false, vertical: true)
             Toggle("Aplicar a los siguientes conflictos de este lote", isOn: $applyToBatch)
             HStack {
                 Button("Cancelar transferencia") { queue.cancel(request.transferID) }

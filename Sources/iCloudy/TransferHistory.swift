@@ -62,7 +62,7 @@ final class TransferHistory: ObservableObject {
     init(storeURL: URL = LocalStore.directory.appendingPathComponent("history.json")) {
         self.storeURL = storeURL
         do { entries = try LocalStore.read([HistoryEntry].self, from: storeURL) ?? [] }
-        catch { persistenceError = "No se pudo leer el historial: \(error.localizedDescription)" }
+        catch { persistenceError = L("No se pudo leer el historial: \(error.localizedDescription)") }
     }
     func record(_ transfer: Transfer) {
         entries.insert(HistoryEntry(transfer: transfer), at: 0)
@@ -72,6 +72,6 @@ final class TransferHistory: ObservableObject {
     func clear() { entries = []; persist() }
     private func persist() {
         do { try LocalStore.save(entries, to: storeURL); persistenceError = nil }
-        catch { persistenceError = "No se pudo guardar el historial: \(error.localizedDescription)" }
+        catch { persistenceError = L("No se pudo guardar el historial: \(error.localizedDescription)") }
     }
 }

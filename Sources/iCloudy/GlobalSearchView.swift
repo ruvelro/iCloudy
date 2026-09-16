@@ -16,9 +16,9 @@ struct GlobalSearchView: View {
                     if !search.loadingIDs.isEmpty { Button("Cancelar") { search.cancel() } }
                 }
                 HStack {
-                    Picker("Tipo", selection: $search.filters.type) { ForEach(SearchFileType.allCases) { Text($0.rawValue).tag($0) } }
+                    Picker("Tipo", selection: $search.filters.type) { ForEach(SearchFileType.allCases) { Text(LocalizedStringKey($0.rawValue)).tag($0) } }
                     Picker("Fecha", selection: $search.filters.age) { ForEach(SearchAge.allCases) { Text($0.title).tag($0) } }
-                    Picker("Tamaño", selection: $search.filters.size) { ForEach(SearchSize.allCases) { Text($0.rawValue).tag($0) } }
+                    Picker("Tamaño", selection: $search.filters.size) { ForEach(SearchSize.allCases) { Text(LocalizedStringKey($0.rawValue)).tag($0) } }
                 }.labelsHidden()
                 HStack {
                     Picker("Cuenta", selection: $search.filters.accountID) {
@@ -63,9 +63,9 @@ struct GlobalSearchView: View {
             .overlay {
                 if search.visibleHits.isEmpty {
                     ContentUnavailableView {
-                        Label(search.submittedQuery.isEmpty ? "Todas tus cuentas, una búsqueda" : (search.loadingIDs.isEmpty ? "Sin resultados con estos filtros" : "Buscando…"), systemImage: "magnifyingglass")
+                        Label(search.submittedQuery.isEmpty ? "Todas tus cuentas, una búsqueda" : (search.loadingIDs.isEmpty ? L("Sin resultados con estos filtros") : L("Buscando…")), systemImage: "magnifyingglass")
                     } description: {
-                        Text(search.submittedQuery.isEmpty ? "Escribe un término y pulsa Intro. Cada proveedor usa su propio índice de nombres y contenido." : "Los filtros se aplican a los resultados recibidos. Si quedan páginas, carga más; si hubo errores, reintenta la cuenta.")
+                        Text(search.submittedQuery.isEmpty ? L("Escribe un término y pulsa Intro. Cada proveedor usa su propio índice de nombres y contenido.") : L("Los filtros se aplican a los resultados recibidos. Si quedan páginas, carga más; si hubo errores, reintenta la cuenta."))
                     }.allowsHitTesting(false)
                 }
             }
@@ -97,7 +97,7 @@ struct GlobalSearchView: View {
         .onChange(of: search.submittedQuery) { selected = []; model.preview.close() }
     }
     private func run() {
-        guard search.query.count <= 256 else { model.error = "Usa una búsqueda de hasta 256 caracteres."; return }
+        guard search.query.count <= 256 else { model.error = L("Usa una búsqueda de hasta 256 caracteres."); return }
         selected = []; model.preview.close()
         search.start(accounts: model.accounts) { [weak model] account, term, cursor in
             guard let model else { throw CancellationError() }
@@ -107,7 +107,7 @@ struct GlobalSearchView: View {
     @ViewBuilder private func actions(_ hit: SearchHit) -> some View {
         Button("Vista previa") { model.previewSearchHit(hit) }
         if hit.file.isFolder || hit.parentID != nil {
-            Button(hit.file.isFolder ? "Abrir carpeta" : "Mostrar en su carpeta") { model.openSearchLocation(hit) }
+            Button(hit.file.isFolder ? L("Abrir carpeta") : L("Mostrar en su carpeta")) { model.openSearchLocation(hit) }
         }
         if let account = model.accounts.first(where: { $0.id == hit.accountID }), !hit.file.isGoogleDocument {
             Button("Descargar…") { Task { await model.saveMany([hit.file], targetAccount: account) } }

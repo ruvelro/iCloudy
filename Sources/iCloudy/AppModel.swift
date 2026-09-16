@@ -85,7 +85,7 @@ final class AppModel: ObservableObject {
     }
     init() {
         do { let store = try AppearanceStore(); appearanceStore = store; appearances = store.values }
-        catch { self.error = "No se pudo cargar la personalización: \(error.localizedDescription)" }
+        catch { self.error = L("No se pudo cargar la personalización: \(error.localizedDescription)") }
         do {
             accounts = try Vault.read([Account].self, key: "accounts") ?? []
             favorites = try LocalStore.read([Favorite].self, from: favoritesURL) ?? []
@@ -95,7 +95,7 @@ final class AppModel: ObservableObject {
         if UserDefaults.standard.bool(forKey: "demoEnabled") { enableDemo(select: false) }
         selectedAccountID = accounts.first?.id
         queue.client = { [weak self] id in
-            guard let self, let account = self.accounts.first(where: { $0.id == id }) else { throw CloudError.message("Vuelve a conectar la cuenta de esta transferencia.") }
+            guard let self, let account = self.accounts.first(where: { $0.id == id }) else { throw CloudError.message(L("Vuelve a conectar la cuenta de esta transferencia.")) }
             return try self.client(account)
         }
         queue.didFinish = { [weak self] transfer in self?.history.record(transfer); self?.mirrors.handleFinished(transfer) }
@@ -152,7 +152,7 @@ final class AppModel: ObservableObject {
     }
     func accountTitle(_ account: Account) -> String { appearance(for: account).title(for: account) }
     func saveAppearance(_ value: AccountAppearance, for account: Account) throws {
-        guard let appearanceStore else { throw CloudError.message("No se puede guardar la personalización. Se conserva el archivo anterior; revisa el error de carga.") }
+        guard let appearanceStore else { throw CloudError.message(L("No se puede guardar la personalización. Se conserva el archivo anterior; revisa el error de carga.")) }
         try appearanceStore.save(value, for: account.id); appearances = appearanceStore.values
     }
     func failNextDemoTransfer() { demo?.failNext = true }
@@ -177,7 +177,7 @@ final class AppModel: ObservableObject {
     }
     func disconnect(_ account: Account) {
         guard canDisconnect(account) else {
-            error = "Pausa o termina las transferencias de esta cuenta antes de desconectarla."
+            error = L("Pausa o termina las transferencias de esta cuenta antes de desconectarla.")
             return
         }
         do {
@@ -236,7 +236,7 @@ final class AppModel: ObservableObject {
     }
     /// Jumps to a remote folder of any connected account, rebuilding the breadcrumbs from the provider.
     func openFolder(accountID: String, folderID target: String) {
-        guard let account = accounts.first(where: { $0.id == accountID }) else { error = "Conecta la cuenta de esta transferencia para abrir su carpeta."; return }
+        guard let account = accounts.first(where: { $0.id == accountID }) else { error = L("Conecta la cuenta de esta transferencia para abrir su carpeta."); return }
         navigationTask?.cancel(); let request = UUID(); navigationID = request; loading = true
         navigationTask = Task {
             do {
@@ -291,10 +291,10 @@ final class AppModel: ObservableObject {
     }
     /// Copies the provider's own web link; it opens only for people who already have access.
     func copyLink(_ file: CloudFile) {
-        guard let url = file.webURL else { error = "Este elemento no tiene enlace web."; return }
+        guard let url = file.webURL else { error = L("Este elemento no tiene enlace web."); return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url.absoluteString, forType: .string)
-        info = "Enlace copiado. Solo funciona para quien ya tenga acceso a «\(file.name)»."
+        info = L("Enlace copiado. Solo funciona para quien ya tenga acceso a «\(file.name)».")
     }
     /// Sharing with anyone is irreversible from the app, so the view asks for confirmation before calling this.
     func createPublicLink(_ file: CloudFile, account target: Account? = nil) async {
@@ -303,19 +303,19 @@ final class AppModel: ObservableObject {
             let link = try await client(account).publicLink(for: file)
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(link.absoluteString, forType: .string)
-            info = "Enlace público copiado. Cualquiera que lo tenga podrá ver «\(file.name)». Para revocarlo, usa la web del proveedor."
+            info = L("Enlace público copiado. Cualquiera que lo tenga podrá ver «\(file.name)». Para revocarlo, usa la web del proveedor.")
         } catch { self.error = error.localizedDescription }
     }
     func requestRelocation(_ files: [CloudFile], copy: Bool) {
         guard let account, !files.isEmpty else { return }
         if copy, account.cloud == .google, files.contains(where: \.isFolder) {
-            error = "Google Drive no permite copiar carpetas. Copia los archivos que contiene."; return
+            error = L("Google Drive no permite copiar carpetas. Copia los archivos que contiene."); return
         }
         relocation = Relocation(files: files, kind: copy ? .copy : .move, account: account, origin: path.isEmpty && collection != .files ? nil : folderID)
     }
     func requestCrossCloud(_ files: [CloudFile]) {
         guard let account, !files.isEmpty else { return }
-        guard accounts.count > 1 else { error = "Conecta otra cuenta para poder enviar archivos entre nubes."; return }
+        guard accounts.count > 1 else { error = L("Conecta otra cuenta para poder enviar archivos entre nubes."); return }
         crossCloud = CrossCloudRequest(files: files, source: account)
     }
     /// Queues one job per item; the queue stages each file locally and uploads it with checkpoints and verification.
@@ -328,7 +328,7 @@ final class AppModel: ObservableObject {
             job.targetAccountID = target.id
             return job
         }
-        do { try queue.add(jobs); info = "\(jobs.count == 1 ? "«\(files[0].name)»" : "\(jobs.count) elementos") en cola hacia \(accountTitle(target)). Sigue el progreso en Transferencias." }
+        do { try queue.add(jobs); info = L("\(jobs.count == 1 ? L("«\(files[0].name)»") : L("\(jobs.count) elementos")) en cola hacia \(accountTitle(target)). Sigue el progreso en Transferencias.") }
         catch { self.error = error.localizedDescription }
     }
     /// Checks cycles and name clashes first, then processes item by item and stops at the first failure.
@@ -338,7 +338,7 @@ final class AppModel: ObservableObject {
         }
         let ids = Set(request.files.map(\.id))
         guard !ids.contains(destination), !destinationPath.contains(where: { ids.contains($0.id) }) else {
-            error = "Una carpeta no puede moverse ni copiarse dentro de sí misma."; return
+            error = L("Una carpeta no puede moverse ni copiarse dentro de sí misma."); return
         }
         var done = 0
         do {
@@ -346,7 +346,7 @@ final class AppModel: ObservableObject {
             let siblings = try await api.list(parent: destination)
             let clashes = request.files.filter { file in siblings.contains { $0.id != file.id && $0.name.localizedCaseInsensitiveCompare(file.name) == .orderedSame } }
             guard clashes.isEmpty else {
-                throw CloudError.message("En la carpeta de destino ya existe " + clashes.map { "«\($0.name)»" }.joined(separator: ", ") + ". Renombra antes de mover o copiar.")
+                throw CloudError.message(L("En la carpeta de destino ya existe ") + clashes.map { "«\($0.name)»" }.joined(separator: ", ") + ". Renombra antes de mover o copiar.")
             }
             for file in request.files {
                 if request.isMove { try await api.move(file: file, to: destination) } else { try await api.copy(file: file, to: destination) }
@@ -360,9 +360,9 @@ final class AppModel: ObservableObject {
             if request.isMove { try LocalStore.save(favorites, to: favoritesURL) }
             let target = destinationPath.last?.name ?? "Mis archivos"
             let verb = request.isMove ? (done == 1 ? "movido" : "movidos") : (done == 1 ? "copiado" : "copiados")
-            info = "\(done == 1 ? "«\(request.files[0].name)»" : "\(done) elementos") \(verb) a «\(target)»." + (!request.isMove && request.account.cloud == .microsoft ? " OneDrive puede tardar unos segundos en mostrar la copia." : "")
+            info = L("\(done == 1 ? L("«\(request.files[0].name)»") : L("\(done) elementos")) \(verb) a «\(target)».") + (!request.isMove && request.account.cloud == .microsoft ? L(" OneDrive puede tardar unos segundos en mostrar la copia.") : L(""))
         } catch {
-            self.error = (done > 0 ? "Se completaron \(done) de \(request.files.count). " : "") + error.localizedDescription
+            self.error = (done > 0 ? L("Se completaron \(done) de \(request.files.count). ") : L("")) + error.localizedDescription
         }
         reload(fresh: true)
     }
@@ -371,11 +371,11 @@ final class AppModel: ObservableObject {
         guard let account, folder.isFolder else { return }
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
         panel.prompt = "Reflejar"
-        panel.message = "Los archivos de la carpeta elegida se subirán a «\(folder.name)» y se mantendrán al día. Solo en un sentido: iCloudy nunca borra ni modifica lo local, y no elimina en la nube lo que borres aquí."
+        panel.message = L("Los archivos de la carpeta elegida se subirán a «\(folder.name)» y se mantendrán al día. Solo en un sentido: iCloudy nunca borra ni modifica lo local, y no elimina en la nube lo que borres aquí.")
         guard await panel.begin() == .OK, let local = panel.url else { return }
         do {
             try mirrors.add(local: local, account: account, folder: folder, path: path)
-            info = "«\(local.lastPathComponent)» se refleja en «\(folder.name)». La primera sincronización está en cola."
+            info = L("«\(local.lastPathComponent)» se refleja en «\(folder.name)». La primera sincronización está en cola.")
         } catch { self.error = error.localizedDescription }
     }
     func revealLocal(_ mirror: FolderMirror) { NSWorkspace.shared.activateFileViewerSelecting([mirror.localURL]) }
@@ -395,9 +395,9 @@ final class AppModel: ObservableObject {
                 favorites.removeAll { $0.accountID == account.id && ($0.file.id == file.id || $0.path.contains { $0.id == file.id }) }
             }
             try LocalStore.save(favorites, to: favoritesURL)
-            info = moved == 1 ? "«\(files[0].name)» está en la papelera de \(account.cloud.title). Puedes restaurarlo desde su web." : "\(moved) elementos enviados a la papelera de \(account.cloud.title)."
+            info = moved == 1 ? L("«\(files[0].name)» está en la papelera de \(account.cloud.title). Puedes restaurarlo desde su web.") : L("\(moved) elementos enviados a la papelera de \(account.cloud.title).")
         } catch {
-            self.error = (moved > 0 ? "Se enviaron \(moved) de \(files.count) elementos. " : "") + error.localizedDescription
+            self.error = (moved > 0 ? L("Se enviaron \(moved) de \(files.count) elementos. ") : L("")) + error.localizedDescription
         }
         reload(fresh: true)
     }
@@ -412,11 +412,11 @@ final class AppModel: ObservableObject {
         let scoped = folder.startAccessingSecurityScopedResource()
         defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
         let item = folder.appendingPathComponent(target.lastPathComponent)
-        guard FileManager.default.fileExists(atPath: item.path) else { error = "«\(target.lastPathComponent)» ya no está en \(folder.path)."; return }
+        guard FileManager.default.fileExists(atPath: item.path) else { error = L("«\(target.lastPathComponent)» ya no está en \(folder.path)."); return }
         NSWorkspace.shared.activateFileViewerSelecting([item])
     }
     func openBrowser(_ file: CloudFile) {
-        guard let url = file.webURL, ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { error = "No hay un enlace web disponible."; return }
+        guard let url = file.webURL, ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { error = L("No hay un enlace web disponible."); return }
         NSWorkspace.shared.open(url)
     }
     func pickUpload() async {
@@ -427,7 +427,7 @@ final class AppModel: ObservableObject {
     }
     func enqueueUploads(_ urls: [URL], target: (Account, String, String)? = nil) {
         guard let account = target?.0 ?? account, target != nil || canWrite else {
-            if !canWrite { error = "Abre una carpeta de «Mis archivos» para subir aquí. Recientes y Compartido conmigo son listas, no carpetas." }
+            if !canWrite { error = L("Abre una carpeta de «Mis archivos» para subir aquí. Recientes y Compartido conmigo son listas, no carpetas.") }
             return
         }
         let batch = UUID()
@@ -443,8 +443,8 @@ final class AppModel: ObservableObject {
     func save(_ file: CloudFile, export: (mime: String, ext: String)? = nil) async { await saveMany([file], export: export) }
     func saveMany(_ files: [CloudFile], export: (mime: String, ext: String)? = nil, targetAccount: Account? = nil) async {
         guard let account = targetAccount ?? account, accounts.contains(where: { $0.id == account.id }), !files.isEmpty else { return }
-        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true; panel.prompt = "Guardar aquí"
-        panel.message = "Los documentos de Google dentro de carpetas se guardan como enlaces. Si hay nombres repetidos, podrás decidir qué hacer."
+        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true; panel.prompt = L("Guardar aquí")
+        panel.message = L("Los documentos de Google dentro de carpetas se guardan como enlaces. Si hay nombres repetidos, podrás decidir qué hacer.")
         guard await panel.begin() == .OK, let folder = panel.url else { return }
         do {
             let bookmark = try TransferQueue.bookmark(folder), batch = UUID()
@@ -462,7 +462,7 @@ final class AppModel: ObservableObject {
         do {
             let api = try client(account)
             let siblings = try await api.list(parent: parent)
-            guard !siblings.contains(where: { $0.id != file?.id && $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }) else { throw CloudError.message("Ya existe un elemento con ese nombre. Elige otro.") }
+            guard !siblings.contains(where: { $0.id != file?.id && $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }) else { throw CloudError.message(L("Ya existe un elemento con ese nombre. Elige otro.")) }
             if let file {
                 try await api.rename(file: file, name: name)
                 let updated = CloudFile(id: file.id, name: name, mime: file.mime, size: file.size, modified: Date(), webURL: file.webURL, isFolder: file.isFolder)
@@ -483,7 +483,7 @@ final class AppModel: ObservableObject {
         do { try LocalStore.save(favorites, to: favoritesURL) } catch { self.error = error.localizedDescription }
     }
     func openFavorite(_ favorite: Favorite) {
-        guard accounts.contains(where: { $0.id == favorite.accountID }) else { error = "Conecta la cuenta de este favorito."; return }
+        guard accounts.contains(where: { $0.id == favorite.accountID }) else { error = L("Conecta la cuenta de este favorito."); return }
         preview.close()
         showGlobalSearch = false; globalSearch.cancel()
         selectedAccountID = favorite.accountID; collection = favorite.collection; path = favorite.path + (favorite.file.isFolder ? [favorite.file] : []); files = []; search = ""; reload()

@@ -53,7 +53,7 @@ final class CloudAPI {
             }
             try Task.checkCancellation()
             guard !self.invalidated else { throw CancellationError() }
-            guard let access = result["access_token"] as? String else { throw CloudError.message("No se pudo renovar la sesión. Vuelve a conectar la cuenta.") }
+            guard let access = result["access_token"] as? String else { throw CloudError.message(L("No se pudo renovar la sesión. Vuelve a conectar la cuenta.")) }
             let updated = Credential(accessToken: access, refreshToken: result["refresh_token"] as? String ?? credential.refreshToken, expires: Date().addingTimeInterval(result["expires_in"] as? Double ?? 3600))
             try credentials.save(updated, key: account.id)
             self.cachedCredential = updated
@@ -100,7 +100,7 @@ final class CloudAPI {
             try HTTP.validate(response, data: data)
             return try HTTP.json(data)
         }
-        throw CloudError.message("El servicio no responde.")
+        throw CloudError.message(L("El servicio no responde."))
     }
 
     static func googleFile(_ value: [String: Any]) -> CloudFile? {
@@ -159,7 +159,7 @@ final class CloudAPI {
             }
             var next: URL? = URL(string: "https://graph.microsoft.com/v1.0/me/drive/\(route)")!
             while let url = next {
-                guard url.scheme == "https", url.host == "graph.microsoft.com" else { throw CloudError.message("Paginación no válida.") }
+                guard url.scheme == "https", url.host == "graph.microsoft.com" else { throw CloudError.message(L("Paginación no válida.")) }
                 let result = try await json(url)
                 files += (result["value"] as? [[String: Any]] ?? []).compactMap(Self.microsoftFile)
                 next = (result["@odata.nextLink"] as? String).flatMap(URL.init(string:))
@@ -180,7 +180,7 @@ final class CloudAPI {
         } else {
             result = try await json(URL(string: "https://graph.microsoft.com/v1.0/me/drive/\(graphItem(parent))/children")!, method: "POST", body: ["name": name, "folder": [:], "@microsoft.graph.conflictBehavior": "rename"])
         }
-        guard let id = result["id"] as? String else { throw CloudError.message("No se pudo crear la carpeta.") }
+        guard let id = result["id"] as? String else { throw CloudError.message(L("No se pudo crear la carpeta.")) }
         return id
     }
 
@@ -206,7 +206,7 @@ final class CloudAPI {
                 (temporary, response) = try await session.download(for: request, delegate: delegate)
             }
         } catch {
-            if delegate.exceededLimit { throw CloudError.message("La vista previa supera el límite de descarga autorizado.") }
+            if delegate.exceededLimit { throw CloudError.message(L("La vista previa supera el límite de descarga autorizado.")) }
             throw error
         }
         defer { try? FileManager.default.removeItem(at: temporary) }
@@ -220,7 +220,7 @@ final class CloudAPI {
         }
         if let maxBytes {
             let actual = try temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-            guard Int64(actual) <= maxBytes else { throw CloudError.message("La vista previa supera el límite de descarga autorizado.") }
+            guard Int64(actual) <= maxBytes else { throw CloudError.message(L("La vista previa supera el límite de descarga autorizado.")) }
         }
         // moveItem refuses to overwrite an existing destination.
         let downloaded = temporary

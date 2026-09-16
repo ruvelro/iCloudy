@@ -42,14 +42,14 @@ final class PreviewWindow: NSObject, NSWindowDelegate {
         guard let source = model.localURL, let file = model.file, let window else { return }
         let panel = NSSavePanel()
         panel.nameFieldStringValue = FileNames.safe(file.name)
-        panel.prompt = "Guardar copia"
-        panel.message = "Se guardará una copia local, sin modificar el archivo de la nube. Elige un nombre que no exista."
+        panel.prompt = L("Guardar copia")
+        panel.message = L("Se guardará una copia local, sin modificar el archivo de la nube. Elige un nombre que no exista.")
         guard await panel.beginSheetModal(for: window) == .OK, let destination = panel.url else { return }
-        guard model.localURL == source else { model.saveError = "La vista previa cambió; vuelve a elegir Guardar copia."; return }
+        guard model.localURL == source else { model.saveError = L("La vista previa cambió; vuelve a elegir Guardar copia."); return }
         let scoped = destination.startAccessingSecurityScopedResource()
         defer { if scoped { destination.stopAccessingSecurityScopedResource() } }
         do { try model.saveCopy(to: destination) }
-        catch { model.saveError = "No se pudo guardar la copia. Si ya existe un archivo con ese nombre, elige otro. \(error.localizedDescription)" }
+        catch { model.saveError = L("No se pudo guardar la copia. Si ya existe un archivo con ese nombre, elige otro. \(error.localizedDescription)") }
     }
 }
 

@@ -130,7 +130,7 @@ final class MirrorManager: ObservableObject {
     init(storeURL: URL = LocalStore.directory.appendingPathComponent("mirrors.json")) {
         self.storeURL = storeURL
         do { mirrors = try LocalStore.read([FolderMirror].self, from: storeURL) ?? [] }
-        catch { persistenceError = "No se pudieron leer los reflejos: \(error.localizedDescription)" }
+        catch { persistenceError = L("No se pudieron leer los reflejos: \(error.localizedDescription)") }
     }
     /// Called once the queue exists: watches every folder and runs a cheap catch-up sync for each mirror.
     func start() {
@@ -140,10 +140,10 @@ final class MirrorManager: ObservableObject {
     func add(local: URL, account: Account, folder: CloudFile, path: [CloudFile]) throws {
         let standardized = local.standardizedFileURL
         guard !mirrors.contains(where: { $0.localURL.standardizedFileURL == standardized && $0.remoteFolderID == folder.id }) else {
-            throw CloudError.message("Esa carpeta ya se refleja en ese destino.")
+            throw CloudError.message(L("Esa carpeta ya se refleja en ese destino."))
         }
         guard !mirrors.contains(where: { $0.localURL.standardizedFileURL == standardized }) else {
-            throw CloudError.message("Esa carpeta ya se refleja en otro destino. Deja de reflejarla antes de elegir uno nuevo.")
+            throw CloudError.message(L("Esa carpeta ya se refleja en otro destino. Deja de reflejarla antes de elegir uno nuevo."))
         }
         let mirror = FolderMirror(accountID: account.id, remoteFolderID: folder.id, remoteName: ([account.email] + path.map(\.name) + [folder.name]).joined(separator: " / "), localURL: standardized, bookmark: try? TransferQueue.bookmark(local))
         mirrors.append(mirror)
@@ -164,18 +164,18 @@ final class MirrorManager: ObservableObject {
     /// What the sidebar shows next to a mirror.
     func status(of mirror: FolderMirror) -> String {
         if let active = mirror.activeTransferID, let item = queue?.items.first(where: { $0.id == active }), [.queued, .running].contains(item.state) {
-            return item.state == .running ? "Sincronizando…" : "En cola"
+            return item.state == .running ? L("Sincronizando…") : L("En cola")
         }
-        if pending.contains(mirror.id) { return "Cambios detectados · sincronizando en breve" }
-        if let error = mirror.lastError { return "Error: " + error }
-        guard let last = mirror.lastSync else { return "Pendiente de la primera sincronización" }
+        if pending.contains(mirror.id) { return L("Cambios detectados · sincronizando en breve") }
+        if let error = mirror.lastError { return L("Error: ") + error }
+        guard let last = mirror.lastSync else { return L("Pendiente de la primera sincronización") }
         let formatter = RelativeDateTimeFormatter(); formatter.locale = Locale(identifier: "es_ES"); formatter.unitsStyle = .short
-        return "Sincronizado " + formatter.localizedString(for: last, relativeTo: Date())
+        return L("Sincronizado ") + formatter.localizedString(for: last, relativeTo: Date())
     }
 
     private func persist() throws {
         do { try LocalStore.save(mirrors, to: storeURL); persistenceError = nil }
-        catch { persistenceError = "No se pudieron guardar los reflejos: \(error.localizedDescription)"; throw error }
+        catch { persistenceError = L("No se pudieron guardar los reflejos: \(error.localizedDescription)"); throw error }
     }
     private func resolvedURL(_ mirror: FolderMirror) -> URL {
         if let url = scopedURLs[mirror.id] { return url }
@@ -216,7 +216,7 @@ final class MirrorManager: ObservableObject {
         let mirror = mirrors[index]
         let url = resolvedURL(mirror)
         do {
-            guard FileManager.default.fileExists(atPath: url.path) else { throw CloudError.message("La carpeta local ya no existe en \(url.path).") }
+            guard FileManager.default.fileExists(atPath: url.path) else { throw CloudError.message(L("La carpeta local ya no existe en \(url.path).")) }
             let current = try await blockingIO { try MirrorPlanner.stamps(of: url) }
             guard let position = mirrors.firstIndex(where: { $0.id == id }) else { return }
             let unchanged = MirrorPlanner.completedKeys(current: current, previous: mirrors[position].stamps)
