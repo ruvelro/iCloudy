@@ -117,7 +117,7 @@ struct ExplorerView: View {
                 Button { model.showConnect = true } label: { Label("Añadir cuenta", systemImage: "plus.circle") }.buttonStyle(.plain).padding(12)
                 Button { model.enableDemo() } label: { Label("Probar demo local", systemImage: "play.circle") }.buttonStyle(.plain).padding(.horizontal, 12)
                 Divider()
-                Label("Solo se descarga lo que eliges", systemImage: "internaldrive")
+                Label(model.isOnline ? "Solo se descarga lo que eliges" : "Sin conexión", systemImage: model.isOnline ? "internaldrive" : "wifi.slash")
                     .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.bottom, 12)
             }.padding(.horizontal, 10)
             .navigationSplitViewColumnWidth(min: 230, ideal: 260, max: 320)
@@ -144,6 +144,13 @@ struct ExplorerView: View {
                             Spacer()
                             Toggle("Sin conexión", isOn: $model.demoOffline).toggleStyle(.checkbox)
                             Button("Simular corte") { model.failNextDemoTransfer() }.help("La siguiente operación fallará una vez para probar el reintento")
+                        }.padding(10).background(Color.orange.opacity(0.12))
+                    }
+                    if !model.isOnline {
+                        HStack {
+                            Label("Sin conexión. Las transferencias se han pausado y se reanudarán solas al volver la red; los listados pueden no estar al día.", systemImage: "wifi.slash")
+                                .font(.caption).fixedSize(horizontal: false, vertical: true)
+                            Spacer()
                         }.padding(10).background(Color.orange.opacity(0.12))
                     }
                     if let account = model.account, model.isExpired(account) {

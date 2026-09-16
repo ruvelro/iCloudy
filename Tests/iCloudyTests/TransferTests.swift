@@ -230,6 +230,43 @@ final class TransferTests: XCTestCase {
         XCTAssertTrue(history.entries.allSatisfy { !$0.summary.isEmpty || $0.direction == .download })
     }
 
+    func testLosingTheNetworkPausesAndRecoveringResumesWithoutUserAction() async throws {
+        let (root, demo, queue) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        demo.latency = .milliseconds(30)
+        var jobs: [Transfer] = []
+        for name in ["a", "b"] { let url = root.appendingPathComponent(name); try Data(repeating: 1, count: 4 * 1024 * 1024).write(to: url); jobs.append(upload(url)) }
+        try queue.add(jobs)
+        try await wait { (queue.items.first?.bytes ?? 0) > 0 }
+        queue.setOnline(false)
+        try await wait { !queue.isWorking }
+        XCTAssertEqual(queue.items.map(\.state), [.paused, .paused])
+        XCTAssertTrue(queue.items.allSatisfy { $0.status.contains("Sin conexión") })
+        let late = root.appendingPathComponent("c"); try Data(repeating: 1, count: 1024).write(to: late)
+        try queue.add([upload(late)])
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(queue.items.last?.state, .queued, "Nothing starts while offline")
+        XCTAssertFalse(queue.isWorking)
+        queue.setOnline(true)
+        try await wait { queue.items.allSatisfy { $0.state == .completed } }
+        XCTAssertEqual(try demo.list("root").filter { ["a", "b", "c"].contains($0.name) }.count, 3)
+    }
+
+    func testManualPauseIsNotResumedByTheNetwork() async throws {
+        let (root, demo, queue) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        demo.latency = .milliseconds(30)
+        let url = root.appendingPathComponent("manual"); try Data(repeating: 1, count: 512 * 1024).write(to: url)
+        let job = upload(url)
+        try queue.add([job])
+        queue.cancel(job.id, pause: true)
+        try await wait { !queue.isWorking }
+        queue.setOnline(false); queue.setOnline(true)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(queue.items.first?.state, .paused, "Only network-paused jobs resume automatically")
+        XCTAssertEqual(queue.items.first?.status, "En pausa · Reanudar para continuar")
+    }
+
     func testRecoveryPausesRunningJobsAndCorruptionIsNotOverwritten() throws {
         let (root, _, queue) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }

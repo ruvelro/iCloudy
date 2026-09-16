@@ -97,7 +97,7 @@ struct Transfer: Identifiable, Codable {
         switch state {
         case .queued: return "En cola"
         case .running: return detail.isEmpty ? "Transfiriendo…" : detail
-        case .paused: return "En pausa · Reanudar para continuar"
+        case .paused: return detail.isEmpty ? "En pausa · Reanudar para continuar" : detail
         case .failed: return detail
         case .cancelled: return "Cancelada · Los elementos completados se conservan"
         case .completed: return detail.isEmpty ? "Completada" : detail

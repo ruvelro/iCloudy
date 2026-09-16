@@ -41,6 +41,8 @@ final class AppModel: ObservableObject {
     @Published var demoOffline = false { didSet { demo?.offline = demoOffline } }
     let queue = TransferQueue()
     let history = TransferHistory()
+    let connectivity = Connectivity()
+    @Published private(set) var isOnline = true
     let oauth = OAuth()
     let preview = PreviewWindow()
     let globalSearch = GlobalSearch()
@@ -91,6 +93,13 @@ final class AppModel: ObservableObject {
             return try self.client(account)
         }
         queue.didFinish = { [weak self] transfer in self?.history.record(transfer) }
+        connectivity.onChange = { [weak self] online in
+            guard let self else { return }
+            isOnline = online
+            queue.setOnline(online)
+            // Whatever failed while offline is worth one automatic retry now.
+            if online, account != nil { reload() }
+        }
         queue.didComplete = { [weak self] id in
             guard let self else { return }
             if self.selectedAccountID == id { self.reload() }
@@ -258,6 +267,7 @@ final class AppModel: ObservableObject {
                 loading = false
                 // An expired session already shows a banner with a reconnect button; an extra alert would only repeat it.
                 if (error as? CloudError)?.isSessionExpired == true { return }
+                if !isOnline { return } // the banner already says so
                 if !(error is CancellationError), (error as NSError).code != NSURLErrorCancelled { self.error = error.localizedDescription }
             }
         }

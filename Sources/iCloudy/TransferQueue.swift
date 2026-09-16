@@ -27,6 +27,9 @@ final class TransferQueue: ObservableObject {
     /// Delay before coalesced checkpoint writes reach disk. State transitions and new upload sessions write at once.
     var flushDelay: Duration = .seconds(2)
     var isWorking: Bool { task != nil }
+    /// While offline nothing starts; jobs interrupted by the network resume by themselves when it returns.
+    private(set) var isOnline = true
+    private var pausedByNetwork: Set<UUID> = []
     let storeURL: URL
     private var writable = true
     private var dirty = false
@@ -90,6 +93,22 @@ final class TransferQueue: ObservableObject {
         do { try persist() } catch { persistenceError = error.localizedDescription }
     }
 
+    func setOnline(_ online: Bool) {
+        guard online != isOnline else { return }
+        isOnline = online
+        if online {
+            let resume = pausedByNetwork; pausedByNetwork = []
+            for id in resume where index(id).map({ items[$0].state == .paused }) == true { retry(id) }
+            kick()
+        } else {
+            for id in items.filter({ [.running, .queued].contains($0.state) }).map(\.id) {
+                pausedByNetwork.insert(id)
+                cancel(id, pause: true)
+                if let index = index(id) { items[index].detail = "Sin conexión · se reanudará automáticamente al volver la red" }
+            }
+        }
+        stateChanges.send()
+    }
     func add(_ jobs: [Transfer]) throws {
         items += jobs
         do { try persist() } catch { items.removeAll { item in jobs.contains { $0.id == item.id } }; throw error }
@@ -105,7 +124,7 @@ final class TransferQueue: ObservableObject {
     }
     func cancel(_ id: UUID, pause: Bool = false) {
         guard let index = index(id), !items[index].finished else { return }
-        items[index].state = pause ? .paused : .cancelled; items[index].bytesPerSecond = 0
+        items[index].state = pause ? .paused : .cancelled; items[index].bytesPerSecond = 0; items[index].detail = ""
         // Session URLs are pre-authenticated capabilities; a cancelled job will not resume them, so drop them from disk.
         if !pause { items[index].uploads = [:] }
         if activeID == id {
@@ -176,10 +195,12 @@ final class TransferQueue: ObservableObject {
         if transition { stateChanges.send() }
     }
     private func kick() {
-        guard task == nil, let next = items.first(where: { $0.state == .queued }) else { return }
+        guard isOnline, task == nil, let next = items.first(where: { $0.state == .queued }) else { return }
         activeID = next.id
         task = Task {
             let id = next.id
+            // A pause or cancel can land between scheduling and this first line; never overwrite what the user chose.
+            guard (try? job(id))?.state == .queued else { activeID = nil; task = nil; kick(); return }
             do {
                 try edit(id) { $0.state = .running; $0.detail = "Preparando…" }
                 started = Date(); startBytes = next.bytes
@@ -205,8 +226,8 @@ final class TransferQueue: ObservableObject {
                 didComplete?(next.accountID)
             } catch {
                 if let index = index(id), items[index].state == .running {
-                    items[index].state = Task.isCancelled ? .paused : .failed
-                    items[index].detail = error.localizedDescription + " Los elementos ya completados se conservan."
+                    if Task.isCancelled { items[index].state = .paused; items[index].detail = "" }
+                    else { items[index].state = .failed; items[index].detail = error.localizedDescription + " Los elementos ya completados se conservan." }
                     items[index].bytesPerSecond = 0
                     do { try persist() } catch { persistenceError = error.localizedDescription }
                 }
