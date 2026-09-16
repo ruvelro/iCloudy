@@ -176,7 +176,7 @@ struct ExplorerView: View {
             .navigationTitle(model.account.map { model.accountTitle($0) } ?? "iCloudy")
             .toolbar {
                 ToolbarItemGroup {
-                    Button { model.reload() } label: { Image(systemName: "arrow.clockwise") }.help("Actualizar carpeta").disabled(model.account == nil || model.loading)
+                    Button { model.reload(fresh: true) } label: { Image(systemName: "arrow.clockwise") }.help("Actualizar carpeta").disabled(model.account == nil || model.loading)
                     Button { Task { await model.pickUpload() } } label: { Label("Subir", systemImage: "square.and.arrow.up") }.disabled(!model.canWrite)
                     Button { model.promptName() } label: { Label("Nueva carpeta", systemImage: "folder.badge.plus") }.disabled(!model.canWrite)
                     Button { Task { await model.saveMany(model.files.filter { selected.contains($0.id) }) } } label: { Label("Descargar selección", systemImage: "square.and.arrow.down") }.disabled(selected.isEmpty)
@@ -264,6 +264,10 @@ struct ExplorerView: View {
                     Text(model.account?.email ?? "Un explorador sencillo para tus nubes").foregroundStyle(.secondary)
                 }
                 Spacer()
+                if model.showingCachedListing {
+                    Label(model.loading ? "Última copia conocida · actualizando…" : "Última copia conocida · sin respuesta del proveedor", systemImage: "clock.arrow.circlepath")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 if model.loading { ProgressView().controlSize(.small) }
             }
             Picker("Vista", selection: Binding(get: { model.collection }, set: { model.show($0) })) {

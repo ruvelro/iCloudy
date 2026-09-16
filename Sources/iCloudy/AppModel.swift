@@ -42,7 +42,10 @@ final class AppModel: ObservableObject {
     let queue = TransferQueue()
     let history = TransferHistory()
     let connectivity = Connectivity()
+    let listings = ListingCache()
     @Published private(set) var isOnline = true
+    /// True while the table shows the last known listing instead of a fresh answer from the provider.
+    @Published private(set) var showingCachedListing = false
     let oauth = OAuth()
     let preview = PreviewWindow()
     let globalSearch = GlobalSearch()
@@ -102,7 +105,7 @@ final class AppModel: ObservableObject {
         }
         queue.didComplete = { [weak self] id in
             guard let self else { return }
-            if self.selectedAccountID == id { self.reload() }
+            if self.selectedAccountID == id { self.reload(fresh: true) }
             if let account = self.accounts.first(where: { $0.id == id }) { self.refreshStorage(account, force: true) }
         }
         // Only structural queue changes reach the explorer; progress ticks re-render the transfer panel alone.
@@ -179,6 +182,7 @@ final class AppModel: ObservableObject {
             quotaRequestIDs[account.id] = nil; storageQuotas[account.id] = nil
             clients[account.id]?.invalidate(); clients[account.id] = nil
             expiredAccountIDs.remove(account.id)
+            listings.removeAll(accountID: account.id)
             accounts = updated
             globalSearch.removeAccount(account.id)
             if selectedAccountID == account.id { select(accounts.first?.id) }
@@ -247,21 +251,26 @@ final class AppModel: ObservableObject {
     }
     func navigate(_ file: CloudFile) { guard file.isFolder else { return }; preview.close(); path.append(file); search = ""; files = []; reload() }
     func back(to count: Int) { preview.close(); path = Array(path.prefix(count)); search = ""; files = []; reload() }
-    func reload() {
+    /// `fresh` skips the cached copy, e.g. right after a write the cache cannot know about yet.
+    func reload(fresh: Bool = false) {
         navigationTask?.cancel()
         let requestID = UUID(); navigationID = requestID
-        guard let account else { files = []; loading = false; return }
+        guard let account else { files = []; loading = false; showingCachedListing = false; return }
         refreshStorage(account)
         let parent = folderID; loading = true
+        // Show what was there last time at once; the provider's answer replaces it when it arrives.
+        if !fresh, files.isEmpty, let cached = listings.cached(accountID: account.id, parent: parent) { files = cached; showingCachedListing = true }
+        else if fresh { showingCachedListing = false }
         navigationTask = Task {
             do {
                 // Intermediate pages appear as they arrive; `loading` stays on until the last one.
                 let result = try await client(account).list(parent: parent) { partial in
                     guard self.navigationID == requestID else { return }
-                    self.files = partial
+                    self.files = partial; self.showingCachedListing = false
                 }
                 guard navigationID == requestID else { return }
-                files = result; loading = false
+                files = result; loading = false; showingCachedListing = false
+                listings.store(result, accountID: account.id, parent: parent)
             } catch {
                 guard navigationID == requestID else { return }
                 loading = false
@@ -326,7 +335,7 @@ final class AppModel: ObservableObject {
         } catch {
             self.error = (done > 0 ? "Se completaron \(done) de \(request.files.count). " : "") + error.localizedDescription
         }
-        reload()
+        reload(fresh: true)
     }
     func requestTrash(_ files: [CloudFile]) {
         guard account != nil, !files.isEmpty else { return }
@@ -348,7 +357,7 @@ final class AppModel: ObservableObject {
         } catch {
             self.error = (moved > 0 ? "Se enviaron \(moved) de \(files.count) elementos. " : "") + error.localizedDescription
         }
-        reload()
+        reload(fresh: true)
     }
     /// Shows a downloaded item in the Finder, going through its security-scoped bookmark under the sandbox.
     func reveal(_ entry: HistoryEntry) {
@@ -421,7 +430,7 @@ final class AppModel: ObservableObject {
                 }
                 try LocalStore.save(favorites, to: favoritesURL)
             } else { _ = try await api.createFolder(name: name, parent: parent) }
-            showNameDialog = false; reload()
+            showNameDialog = false; reload(fresh: true)
         } catch { self.error = error.localizedDescription }
     }
     func isFavorite(_ file: CloudFile) -> Bool { favoriteKeys.contains((selectedAccountID ?? "") + ":" + file.id) }

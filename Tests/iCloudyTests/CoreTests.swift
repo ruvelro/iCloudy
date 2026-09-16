@@ -380,6 +380,28 @@ final class CoreTests: XCTestCase {
         XCTAssertFalse(qs[1].contains("mimeType") || qs[1].contains("filter"), "Graph search has no server-side filters")
     }
 
+    @MainActor func testListingCacheRoundTripsPerAccountAndForgetsDisconnectedAccounts() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = ListingCache(directory: root)
+        let files = [CloudFile(id: "a", name: "Uno", mime: "text/plain", size: 1, modified: nil, webURL: nil, isFolder: false)]
+        cache.store(files, accountID: "google:1", parent: "root")
+        cache.store(files, accountID: "google:1", parent: "folder")
+        cache.store(files, accountID: "microsoft:2", parent: "root")
+        XCTAssertEqual(cache.cached(accountID: "google:1", parent: "root")?.map(\.id), ["a"])
+        XCTAssertNil(cache.cached(accountID: "google:1", parent: "other"))
+        try await Task.sleep(for: .milliseconds(200)) // disk write is detached
+        let fromDisk = ListingCache(directory: root)
+        XCTAssertEqual(fromDisk.cached(accountID: "google:1", parent: "folder")?.map(\.name), ["Uno"], "Survives a restart")
+        fromDisk.removeAll(accountID: "google:1")
+        XCTAssertNil(fromDisk.cached(accountID: "google:1", parent: "root"))
+        XCTAssertNil(ListingCache(directory: root).cached(accountID: "google:1", parent: "folder"), "Removed from disk too")
+        XCTAssertEqual(ListingCache(directory: root).cached(accountID: "microsoft:2", parent: "root")?.count, 1, "Other accounts untouched")
+        let big = ListingCache(directory: root); big.maxItems = 0
+        big.store(files, accountID: "google:1", parent: "huge")
+        XCTAssertNil(big.cached(accountID: "google:1", parent: "huge"), "Oversized listings are not cached")
+    }
+
     func testOneDriveNameRulesAreStricterThanDrive() {
         XCTAssertNil(FileNames.problem(with: "Informe: final?", for: .google))
         XCTAssertNotNil(FileNames.problem(with: "Informe: final?", for: .microsoft))
