@@ -221,8 +221,8 @@ final class AppModel: ObservableObject {
         navigationTask = Task {
             do {
                 // Intermediate pages appear as they arrive; `loading` stays on until the last one.
-                let result = try await client(account).list(parent: parent) { [weak self] partial in
-                    guard let self, self.navigationID == requestID else { return }
+                let result = try await client(account).list(parent: parent) { partial in
+                    guard self.navigationID == requestID else { return }
                     self.files = partial
                 }
                 guard navigationID == requestID else { return }

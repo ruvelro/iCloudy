@@ -66,7 +66,7 @@ final class OAuthLoopbackTests: XCTestCase {
             let query = URLComponents(url: url, resolvingAgainstBaseURL: false)!.queryItems!
             let state = query.first { $0.name == "state" }!.value!
             let redirect = query.first { $0.name == "redirect_uri" }!.value!
-            Task.detached {
+            _ = Task.detached { // failures surface through the assertions on `outcome`, not through this task
                 // A forged state must be dropped without any HTTP answer.
                 if (try? await loopbackGET(URL(string: redirect + "?state=attacker&code=evil")!)) != nil { outcome.wrongStateAnswered = true }
                 outcome.callbackPage = try await loopbackGET(URL(string: redirect + "?state=\(state)&code=the-code")!)
