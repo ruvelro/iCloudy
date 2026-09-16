@@ -8,6 +8,8 @@ final class AppModel: ObservableObject {
     @Published var selectedAccountID: String?
     @Published var files: [CloudFile] = [] { didSet { updateVisibleFiles() } }
     @Published var path: [CloudFile] = []
+    /// Which top-level view of the selected account is showing. `path` hangs below it.
+    @Published var collection: Collection = .files
     @Published var loading = false
     @Published var error: String?
     /// Non-error feedback, e.g. "link copied". Shown in a plain alert.
@@ -53,10 +55,12 @@ final class AppModel: ObservableObject {
     static let quotaRefreshInterval: TimeInterval = 300
 
     var account: Account? { accounts.first { $0.id == selectedAccountID } }
-    var folderID: String { path.last?.id ?? "root" }
+    var folderID: String { path.last?.id ?? collection.rootID }
+    /// Recents and shared lists are not folders: nothing can be uploaded or created in them until a real folder is opened.
+    var canWrite: Bool { account != nil && (collection == .files || !path.isEmpty) }
     var transfers: [Transfer] { queue.items }
     var hasActiveTransfers: Bool { queue.hasActive }
-    var location: String { ([account?.email ?? ""] + path.map(\.name)).joined(separator: " / ") }
+    var location: String { ([account?.email ?? ""] + (collection == .files ? [] : [collection.title]) + path.map(\.name)).joined(separator: " / ") }
     private func updateVisibleFiles() {
         let term = search, mode = sortMode
         visibleFiles = files.filter { term.isEmpty || $0.name.localizedCaseInsensitiveContains(term) }.sorted { a, b in
@@ -186,7 +190,14 @@ final class AppModel: ObservableObject {
             }
         }
     }
-    func select(_ id: String?) { preview.close(); globalSearch.cancel(); showGlobalSearch = false; selectedAccountID = id; path = []; search = ""; files = []; reload() }
+    func select(_ id: String?) { preview.close(); globalSearch.cancel(); showGlobalSearch = false; selectedAccountID = id; collection = .files; path = []; search = ""; files = []; reload() }
+    func show(_ target: Collection) {
+        guard account != nil, target != collection || !path.isEmpty else { return }
+        preview.close(); collection = target; path = []; search = ""; files = []
+        // Recents only make sense in time order; the user can switch back afterwards.
+        if target == .recent { sortMode = "date" } else if sortMode == "date" && target == .files { sortMode = "name" }
+        reload()
+    }
     func previewSearchHit(_ hit: SearchHit) {
         guard let account = accounts.first(where: { $0.id == hit.accountID }) else { return }
         do { preview.show(file: hit.file, account: account, client: try client(account)) }
@@ -201,7 +212,7 @@ final class AppModel: ObservableObject {
                 try Task.checkCancellation()
                 guard navigationID == request else { return }
                 preview.close(); globalSearch.cancel(); showGlobalSearch = false
-                selectedAccountID = account.id; path = trail; search = ""; files = []; reload()
+                selectedAccountID = account.id; collection = .files; path = trail; search = ""; files = []; reload()
             } catch {
                 guard navigationID == request else { return }
                 loading = false
@@ -262,13 +273,16 @@ final class AppModel: ObservableObject {
         NSWorkspace.shared.open(url)
     }
     func pickUpload() async {
-        guard let account else { return }
+        guard let account, canWrite else { return }
         let parent = folderID, destination = location
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = true; panel.allowsMultipleSelection = true; panel.prompt = "Subir"
         if await panel.begin() == .OK { enqueueUploads(panel.urls, target: (account, parent, destination)) }
     }
     func enqueueUploads(_ urls: [URL], target: (Account, String, String)? = nil) {
-        guard let account = target?.0 ?? account else { return }
+        guard let account = target?.0 ?? account, target != nil || canWrite else {
+            if !canWrite { error = "Abre una carpeta de «Mis archivos» para subir aquí. Recientes y Compartido conmigo son listas, no carpetas." }
+            return
+        }
         let batch = UUID()
         do {
             let jobs = try urls.filter(\.isFileURL).map { url -> Transfer in
@@ -291,7 +305,7 @@ final class AppModel: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     func promptName(_ file: CloudFile? = nil) {
-        guard let account else { return }
+        guard let account, file != nil || canWrite else { return }
         editingFile = file; editName = file?.name ?? ""; editContext = (account, folderID); showNameDialog = true
     }
     func commitName() async {
@@ -318,13 +332,13 @@ final class AppModel: ObservableObject {
     func toggleFavorite(_ file: CloudFile) {
         guard let account else { return }
         if isFavorite(file) { favorites.removeAll { $0.accountID == account.id && $0.file.id == file.id } }
-        else { favorites.append(Favorite(accountID: account.id, file: file, path: path)) }
+        else { favorites.append(Favorite(accountID: account.id, file: file, path: path, collection: collection)) }
         do { try LocalStore.save(favorites, to: favoritesURL) } catch { self.error = error.localizedDescription }
     }
     func openFavorite(_ favorite: Favorite) {
         guard accounts.contains(where: { $0.id == favorite.accountID }) else { error = "Conecta la cuenta de este favorito."; return }
         preview.close()
         showGlobalSearch = false; globalSearch.cancel()
-        selectedAccountID = favorite.accountID; path = favorite.path + (favorite.file.isFolder ? [favorite.file] : []); files = []; search = ""; reload()
+        selectedAccountID = favorite.accountID; collection = favorite.collection; path = favorite.path + (favorite.file.isFolder ? [favorite.file] : []); files = []; search = ""; reload()
     }
 }

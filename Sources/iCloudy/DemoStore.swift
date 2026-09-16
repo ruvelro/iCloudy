@@ -28,7 +28,14 @@ final class DemoStore {
     }
     func list(_ parent: String) throws -> [CloudFile] {
         try check()
-        return entries.values.filter { $0.parent == parent }.map(\.file).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        switch parent {
+        case Collection.recent.rootID:
+            return entries.values.map(\.file).filter { !$0.isFolder }.sorted { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }
+        case Collection.shared.rootID:
+            return [] // the demo has a single local user; nothing is shared with it
+        default:
+            return entries.values.filter { $0.parent == parent }.map(\.file).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        }
     }
     func searchPage(term: String, cursor: String?, accountID: String) throws -> SearchPage {
         try check()

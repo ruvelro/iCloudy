@@ -17,7 +17,7 @@ struct iCloudyApp: App {
         .commands {
             CommandGroup(after: .newItem) {
                 Button("Añadir cuenta…") { model.showConnect = true }.keyboardShortcut("n", modifiers: [.command, .shift])
-                Button("Subir archivos…") { Task { await model.pickUpload() } }.disabled(model.account == nil)
+                Button("Subir archivos…") { Task { await model.pickUpload() } }.disabled(!model.canWrite)
                 Button("Buscar en todas las nubes") { model.preview.close(); model.showGlobalSearch = true }.keyboardShortcut("f", modifiers: [.command, .shift])
             }
         }
@@ -162,15 +162,16 @@ struct ExplorerView: View {
                 HStack {
                     Text("\(model.visibleFiles.count) elementos")
                     Spacer()
-                    if model.account != nil { Text("Arrastra aquí para subir una copia") }
+                    if model.canWrite { Text("Arrastra aquí para subir una copia") }
+                    else if model.account != nil { Text("Lista de solo lectura · abre una carpeta para subir") }
                 }.font(.caption).foregroundStyle(.secondary).padding(12)
             }
             .navigationTitle(model.account.map { model.accountTitle($0) } ?? "iCloudy")
             .toolbar {
                 ToolbarItemGroup {
                     Button { model.reload() } label: { Image(systemName: "arrow.clockwise") }.help("Actualizar carpeta").disabled(model.account == nil || model.loading)
-                    Button { Task { await model.pickUpload() } } label: { Label("Subir", systemImage: "square.and.arrow.up") }.disabled(model.account == nil)
-                    Button { model.promptName() } label: { Label("Nueva carpeta", systemImage: "folder.badge.plus") }.disabled(model.account == nil)
+                    Button { Task { await model.pickUpload() } } label: { Label("Subir", systemImage: "square.and.arrow.up") }.disabled(!model.canWrite)
+                    Button { model.promptName() } label: { Label("Nueva carpeta", systemImage: "folder.badge.plus") }.disabled(!model.canWrite)
                     Button { Task { await model.saveMany(model.files.filter { selected.contains($0.id) }) } } label: { Label("Descargar selección", systemImage: "square.and.arrow.down") }.disabled(selected.isEmpty)
                     Button { previewSelection() } label: { Image(systemName: "eye") }.help("Vista previa (Espacio)").disabled(selected.count != 1)
                     Picker("Vista", selection: $model.viewMode) {
@@ -242,17 +243,20 @@ struct ExplorerView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(model.path.last?.name ?? "Mis archivos").font(.system(size: 27, weight: .semibold))
+                    Text(model.path.last?.name ?? model.collection.title).font(.system(size: 27, weight: .semibold))
                     Text(model.account?.email ?? "Un explorador sencillo para tus nubes").foregroundStyle(.secondary)
                 }
                 Spacer()
                 if model.loading { ProgressView().controlSize(.small) }
             }
+            Picker("Vista", selection: Binding(get: { model.collection }, set: { model.show($0) })) {
+                ForEach(Collection.allCases) { Label($0.title, systemImage: $0.icon).tag($0) }
+            }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 420).disabled(model.account == nil)
             HStack {
                 Button { model.back(to: max(0, model.path.count - 1)) } label: { Image(systemName: "chevron.left") }.disabled(model.path.isEmpty)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 7) {
-                        Button("Inicio") { model.back(to: 0) }.buttonStyle(.link)
+                        Button(model.collection == .files ? "Inicio" : model.collection.title) { model.back(to: 0) }.buttonStyle(.link)
                         ForEach(Array(model.path.enumerated()), id: \.element.id) { index, folder in
                             Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
                             Button(folder.name) { model.back(to: index + 1) }.buttonStyle(.link)
@@ -263,6 +267,21 @@ struct ExplorerView: View {
                 Picker("Orden", selection: $model.sortMode) { Text("Nombre").tag("name"); Text("Más recientes").tag("date"); Text("Mayor tamaño").tag("size") }.labelsHidden().frame(width: 130)
             }
         }.padding(22)
+    }
+
+    private var emptyTitle: String {
+        if !model.search.isEmpty { return "Sin resultados" }
+        if model.path.isEmpty {
+            switch model.collection {
+            case .recent: return "Todavía no hay elementos recientes"
+            case .shared: return "Nadie ha compartido nada contigo"
+            case .files: break
+            }
+        }
+        return "Esta carpeta está vacía"
+    }
+    private var emptyDescription: String {
+        model.canWrite ? "Arrastra archivos o carpetas para subirlos aquí." : "Esta lista la calcula el proveedor y no admite subidas."
     }
 
     private var fileList: some View {
@@ -341,7 +360,7 @@ struct ExplorerView: View {
         }
         .overlay {
             if model.visibleFiles.isEmpty && !model.loading {
-                ContentUnavailableView(model.search.isEmpty ? "Esta carpeta está vacía" : "Sin resultados", systemImage: "folder", description: Text("Arrastra archivos o carpetas para subirlos aquí."))
+                ContentUnavailableView(emptyTitle, systemImage: model.path.isEmpty ? model.collection.icon : "folder", description: Text(emptyDescription))
                     .allowsHitTesting(false)
             }
             if dropTarget {

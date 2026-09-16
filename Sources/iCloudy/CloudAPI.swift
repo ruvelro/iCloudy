@@ -123,22 +123,39 @@ final class CloudAPI {
 
     /// Folders first, then by name. `onPage` receives the accumulated, sorted listing after each intermediate page so the
     /// explorer can show large folders progressively instead of waiting for the last page.
+    /// `parent` is a folder id, "root", or one of `Collection.virtualRoots`, which map to provider-computed lists.
     func list(parent: String, onPage: (([CloudFile]) -> Void)? = nil) async throws -> [CloudFile] {
         if let demo { return try demo.list(parent) }
         var files: [CloudFile] = []
+        let fields = "nextPageToken,files(id,name,mimeType,size,modifiedTime,webViewLink)"
+        let select = "$select=id,name,size,folder,file,remoteItem,webUrl,lastModifiedDateTime"
         if account.cloud == .google {
             var page: String?
             repeat {
                 var url = URLComponents(string: "https://www.googleapis.com/drive/v3/files")!
-                let escaped = parent.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
-                url.queryItems = [URLQueryItem(name: "q", value: "'\(escaped)' in parents and trashed = false"), URLQueryItem(name: "pageSize", value: "1000"), URLQueryItem(name: "fields", value: "nextPageToken,files(id,name,mimeType,size,modifiedTime,webViewLink)"), URLQueryItem(name: "pageToken", value: page)]
+                switch parent {
+                case Collection.recent.rootID:
+                    // One page of what the user opened last; folders are noise here.
+                    url.queryItems = [URLQueryItem(name: "q", value: "trashed = false and mimeType != 'application/vnd.google-apps.folder'"), URLQueryItem(name: "orderBy", value: "viewedByMeTime desc"), URLQueryItem(name: "pageSize", value: "100"), URLQueryItem(name: "fields", value: fields)]
+                case Collection.shared.rootID:
+                    url.queryItems = [URLQueryItem(name: "q", value: "sharedWithMe = true and trashed = false"), URLQueryItem(name: "pageSize", value: "1000"), URLQueryItem(name: "fields", value: fields), URLQueryItem(name: "pageToken", value: page)]
+                default:
+                    let escaped = parent.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+                    url.queryItems = [URLQueryItem(name: "q", value: "'\(escaped)' in parents and trashed = false"), URLQueryItem(name: "pageSize", value: "1000"), URLQueryItem(name: "fields", value: fields), URLQueryItem(name: "pageToken", value: page)]
+                }
                 let result = try await json(url.url!)
                 files += (result["files"] as? [[String: Any]] ?? []).compactMap(Self.googleFile)
-                page = result["nextPageToken"] as? String
+                page = parent == Collection.recent.rootID ? nil : result["nextPageToken"] as? String
                 if page != nil { onPage?(Self.sorted(files)) }
             } while page != nil
         } else {
-            var next: URL? = URL(string: "https://graph.microsoft.com/v1.0/me/drive/\(graphItem(parent))/children?$top=200&$select=id,name,size,folder,file,remoteItem,webUrl,lastModifiedDateTime")!
+            let route: String
+            switch parent {
+            case Collection.recent.rootID: route = "recent?\(select)"
+            case Collection.shared.rootID: route = "sharedWithMe?\(select)"
+            default: route = "\(graphItem(parent))/children?$top=200&\(select)"
+            }
+            var next: URL? = URL(string: "https://graph.microsoft.com/v1.0/me/drive/\(route)")!
             while let url = next {
                 guard url.scheme == "https", url.host == "graph.microsoft.com" else { throw CloudError.message("Paginación no válida.") }
                 let result = try await json(url)

@@ -81,6 +81,43 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(files.last?.size, 42)
     }
 
+    @MainActor func testRecentAndSharedCollectionsUseProviderLists() async throws {
+        var urls: [URL] = []
+        StubProtocol.handler = { request in
+            urls.append(request.url!)
+            if request.url!.host == "www.googleapis.com" { return (200, [:], Data(#"{"files":[{"id":"r1","name":"Reciente.pdf","mimeType":"application/pdf"}]}"#.utf8)) }
+            return (200, [:], Data(#"{"value":[{"id":"s1","name":"Compartida","folder":{},"remoteItem":{"id":"x"},"webUrl":"https://1drv.ms/f/s1"}]}"#.utf8))
+        }
+        let google = try await makeClient(.google)
+        let recent = try await google.list(parent: Collection.recent.rootID)
+        XCTAssertEqual(recent.map(\.id), ["r1"])
+        var query = URLComponents(url: urls[0], resolvingAgainstBaseURL: false)!.queryItems!
+        XCTAssertEqual(query.first { $0.name == "orderBy" }?.value, "viewedByMeTime desc")
+        XCTAssertTrue(query.first { $0.name == "q" }!.value!.contains("mimeType != 'application/vnd.google-apps.folder'"))
+        _ = try await google.list(parent: Collection.shared.rootID)
+        query = URLComponents(url: urls[1], resolvingAgainstBaseURL: false)!.queryItems!
+        XCTAssertEqual(query.first { $0.name == "q" }?.value, "sharedWithMe = true and trashed = false")
+
+        let microsoft = try await makeClient(.microsoft)
+        _ = try await microsoft.list(parent: Collection.recent.rootID)
+        XCTAssertEqual(urls[2].path, "/v1.0/me/drive/recent")
+        let shared = try await microsoft.list(parent: Collection.shared.rootID)
+        XCTAssertEqual(urls[3].path, "/v1.0/me/drive/sharedWithMe")
+        XCTAssertEqual(shared.first?.isGoogleDocument, true, "Remote items stay browser links in this version")
+        XCTAssertFalse(urls.contains { $0.path.contains("items/recent") || $0.path.contains("items/sharedWithMe") }, "Virtual roots must never be treated as item ids")
+    }
+
+    @MainActor func testDemoRecentListsFilesNewestFirstAndSharedIsEmpty() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let demo = try DemoStore(directory: root)
+        let newest = try demo.add(name: "z-nuevo.txt", parent: "root", content: Data("x".utf8))
+        let recent = try demo.list(Collection.recent.rootID)
+        XCTAssertEqual(recent.first?.id, newest)
+        XCTAssertFalse(recent.contains { $0.isFolder })
+        XCTAssertTrue(try demo.list(Collection.shared.rootID).isEmpty)
+    }
+
     @MainActor func testMicrosoftRejectsForeignPaginationHost() async throws {
         StubProtocol.handler = { _ in (200, [:], Data(#"{"value":[],"@odata.nextLink":"https://untrusted.example/collect"}"#.utf8)) }
         do {

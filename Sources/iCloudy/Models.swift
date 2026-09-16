@@ -109,11 +109,29 @@ struct Transfer: Identifiable, Codable {
         return done + size + " · " + speed + eta
     }
 }
+/// Top-level views of an account. `files` is the browsable tree; the others are provider-computed lists.
+enum Collection: String, Codable, CaseIterable, Identifiable {
+    case files, recent, shared
+    var id: String { rawValue }
+    var title: String {
+        switch self { case .files: return "Mis archivos"; case .recent: return "Recientes"; case .shared: return "Compartido conmigo" }
+    }
+    var icon: String {
+        switch self { case .files: return "folder"; case .recent: return "clock"; case .shared: return "person.2" }
+    }
+    /// Pseudo-parent handed to `CloudAPI.list`; never a real item id.
+    var rootID: String {
+        switch self { case .files: return "root"; case .recent: return "recent"; case .shared: return "sharedWithMe" }
+    }
+    static let virtualRoots: Set<String> = [Collection.recent.rootID, Collection.shared.rootID]
+}
+
 struct Favorite: Identifiable, Codable {
     var id: String { accountID + ":" + file.id }
     let accountID: String
     var file: CloudFile
     var path: [CloudFile]
+    var collection: Collection = .files
 }
 
 /// Runs blocking file-system work off the main actor. Network calls were already asynchronous; disk reads, directory
@@ -317,11 +335,12 @@ extension Transfer {
 }
 
 extension Favorite {
-    enum CodingKeys: String, CodingKey { case accountID, file, path }
+    enum CodingKeys: String, CodingKey { case accountID, file, path, collection }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         self.init(accountID: try values.decode(String.self, forKey: .accountID),
                   file: try values.decode(CloudFile.self, forKey: .file),
-                  path: try values.decodeIfPresent([CloudFile].self, forKey: .path) ?? [])
+                  path: try values.decodeIfPresent([CloudFile].self, forKey: .path) ?? [],
+                  collection: try values.decodeIfPresent(String.self, forKey: .collection).flatMap(Collection.init(rawValue:)) ?? .files)
     }
 }
