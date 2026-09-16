@@ -9,6 +9,20 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(quota.fraction!, 0.8, accuracy: 0.0001)
     }
 
+    func testGoogleBreakdownSeparatesFilesTrashAndOtherServices() throws {
+        let quota = try StorageQuota.parse(["storageQuota": ["usage": "1000", "usageInDrive": "600", "usageInDriveTrash": "100", "limit": "2000"]], cloud: .google)
+        XCTAssertEqual(quota.files, 600); XCTAssertEqual(quota.trash, 100)
+        let segments = quota.segments
+        XCTAssertEqual(segments.map(\.kind), [.files, .trash, .other])
+        XCTAssertEqual(segments[0].fraction, 0.25, accuracy: 0.0001, "files without the trash")
+        XCTAssertEqual(segments[1].fraction, 0.05, accuracy: 0.0001)
+        XCTAssertEqual(segments[2].fraction, 0.20, accuracy: 0.0001, "Gmail, Photos and the rest")
+        XCTAssertEqual(segments.reduce(0) { $0 + $1.fraction }, quota.fraction!, accuracy: 0.0001)
+        XCTAssertTrue(quota.breakdown.contains("Papelera"))
+        XCTAssertTrue(quota.breakdown.contains("Otros servicios"))
+        XCTAssertTrue(try StorageQuota.parse(["storageQuota": ["usage": "5"]], cloud: .google).segments.isEmpty, "no total, no pie")
+    }
+
     func testMissingAndZeroLimitNeverInventsAPercentage() throws {
         let unknown = try StorageQuota.parse(["storageQuota": ["usage": "0"]], cloud: .google)
         XCTAssertEqual(unknown.used, 0)
@@ -22,7 +36,9 @@ final class StorageTests: XCTestCase {
 
     func testMicrosoftSupportsNumbersAndRemainingFallback() throws {
         let quota = try StorageQuota.parse(["quota": ["used": 1234, "total": 5000, "deleted": 34]], cloud: .microsoft)
-        XCTAssertEqual(quota, StorageQuota(used: 1234, total: 5000))
+        XCTAssertEqual(quota, StorageQuota(used: 1234, total: 5000, trash: 34))
+        XCTAssertEqual(quota.segments.map(\.kind), [.files, .trash])
+        XCTAssertEqual(quota.segments[0].fraction, 0.24, accuracy: 0.0001)
         let fallback = try StorageQuota.parse(["quota": ["remaining": 4000, "total": 5000]], cloud: .microsoft)
         XCTAssertEqual(fallback.used, 1000)
         XCTAssertThrowsError(try StorageQuota.parse(["quota": ["remaining": 6000, "total": 5000]], cloud: .microsoft))

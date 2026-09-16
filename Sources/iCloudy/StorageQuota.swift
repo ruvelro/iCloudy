@@ -5,15 +5,40 @@ import SwiftUI
 struct StorageQuota: Equatable {
     let used: Int64
     let total: Int64?
+    /// Bytes sitting in the provider's trash (Drive `usageInDriveTrash`, Graph `deleted`), when reported.
+    let trash: Int64?
+    /// Bytes used by the files themselves (Drive `usageInDrive`); the remainder of `used` belongs to other services.
+    let files: Int64?
+    init(used: Int64, total: Int64?, trash: Int64? = nil, files: Int64? = nil) {
+        self.used = used; self.total = total; self.trash = trash; self.files = files
+    }
 
+    enum Segment { case files, trash, other }
     var fraction: Double? {
         guard let total, total > 0 else { return nil }
         return min(1, max(0, Double(used) / Double(total)))
+    }
+    /// Pie segments in drawing order. Missing breakdown data collapses into a single `files` segment.
+    var segments: [(kind: Segment, fraction: Double)] {
+        guard let total, total > 0 else { return [] }
+        let trashBytes = min(trash ?? 0, used)
+        let fileBytes = max(0, (files ?? used) - trashBytes)
+        let otherBytes = max(0, used - (files ?? used))
+        let scale = { (bytes: Int64) in min(1, Double(bytes) / Double(total)) }
+        return [(Segment.files, scale(fileBytes)), (.trash, scale(trashBytes)), (.other, scale(otherBytes))].filter { $0.1 > 0 }.map { (kind: $0.0, fraction: $0.1) }
     }
     var summary: String {
         let usedText = ByteCountFormatter.string(fromByteCount: used, countStyle: .decimal)
         guard let total else { return "\(usedText) usados · total no disponible" }
         return "\(usedText) de \(ByteCountFormatter.string(fromByteCount: total, countStyle: .decimal))"
+    }
+    /// One line per known component, for the tooltip.
+    var breakdown: String {
+        var lines: [String] = []
+        if let files { lines.append("Archivos: " + ByteCountFormatter.string(fromByteCount: max(0, files - (trash ?? 0)), countStyle: .decimal)) }
+        if let trash { lines.append("Papelera: " + ByteCountFormatter.string(fromByteCount: trash, countStyle: .decimal)) }
+        if let files, used > files { lines.append("Otros servicios: " + ByteCountFormatter.string(fromByteCount: used - files, countStyle: .decimal)) }
+        return lines.joined(separator: " · ")
     }
     static func parse(_ response: [String: Any], cloud: Cloud) throws -> StorageQuota {
         let quota = response[cloud == .google ? "storageQuota" : "quota"] as? [String: Any] ?? [:]
@@ -32,7 +57,7 @@ struct StorageQuota: Equatable {
             used = total - remaining
         }
         guard let used else { throw CloudError.message("El proveedor no ha informado del espacio utilizado.") }
-        return StorageQuota(used: used, total: total)
+        return StorageQuota(used: used, total: total, trash: bytes(cloud == .google ? "usageInDriveTrash" : "deleted"), files: cloud == .google ? bytes("usageInDrive") : nil)
     }
 }
 
@@ -53,13 +78,14 @@ extension CloudAPI {
 }
 
 private struct UsageSlice: Shape {
-    let fraction: Double
+    let start: Double
+    let end: Double
     func path(in rect: CGRect) -> Path {
         var path = Path()
         let center = CGPoint(x: rect.midX, y: rect.midY)
         path.move(to: center)
         path.addArc(center: center, radius: min(rect.width, rect.height) / 2,
-                    startAngle: .degrees(-90), endAngle: .degrees(-90 + fraction * 360), clockwise: false)
+                    startAngle: .degrees(-90 + start * 360), endAngle: .degrees(-90 + end * 360), clockwise: false)
         path.closeSubpath()
         return path
     }
@@ -76,6 +102,20 @@ struct StorageUsageView: View {
         }
         return "Cuota comunicada por Microsoft. En OneDrive personal puede incluir almacenamiento compartido entre varios servicios."
     }
+    private func cumulative(_ segments: [(kind: StorageQuota.Segment, fraction: Double)]) -> [(kind: StorageQuota.Segment, start: Double, end: Double)] {
+        var position = 0.0
+        return segments.map { segment in
+            let start = position; position = min(1, position + segment.fraction)
+            return (segment.kind, start, position)
+        }
+    }
+    private func color(for kind: StorageQuota.Segment, full: Bool) -> Color {
+        switch kind {
+        case .files: return full ? .orange : .accentColor
+        case .trash: return .red.opacity(0.75)
+        case .other: return (full ? Color.orange : Color.accentColor).opacity(0.45)
+        }
+    }
     var body: some View {
         Group {
             switch state {
@@ -84,14 +124,17 @@ struct StorageUsageView: View {
                     ZStack {
                         Circle().fill(Color.secondary.opacity(0.18))
                         if let fraction = quota.fraction {
-                            UsageSlice(fraction: fraction).fill(fraction >= 0.9 ? Color.orange : Color.accentColor)
+                            // Files, then trash, then other services, drawn clockwise from the top.
+                            ForEach(Array(cumulative(quota.segments).enumerated()), id: \.offset) { _, slice in
+                                UsageSlice(start: slice.start, end: slice.end).fill(color(for: slice.kind, full: fraction >= 0.9))
+                            }
                         } else {
                             Text("?").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
                         }
                     }.frame(width: 19, height: 19).accessibilityHidden(true)
                     Text(quota.summary).fixedSize(horizontal: false, vertical: true)
                 }
-                .help(explanation + "\n" + quota.summary)
+                .help(explanation + "\n" + quota.summary + (quota.breakdown.isEmpty ? "" : "\n" + quota.breakdown))
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Almacenamiento: " + quota.summary)
             case .unavailable(let message):
