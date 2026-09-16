@@ -16,9 +16,13 @@ final class CloudAPI {
     private var cachedCredential: Credential?
     /// Real id behind the "root" alias, needed where the providers reject the alias (parents, parentReference).
     var rootIDCache: String?
+    /// Live FTP control connection, created on first use and reused until the account is disconnected.
+    var ftpSession: FTPSession?
     func invalidate() {
         invalidated = true
         refreshTask?.cancel()
+        if let ftpSession { Task { await ftpSession.close() } }
+        ftpSession = nil
     }
     init(account: Account, session: URLSession = .shared, demo: DemoStore? = nil, tokenProvider: (() async throws -> String)? = nil, credentials: CredentialStore = KeychainCredentialStore()) {
         self.demo = demo
@@ -39,8 +43,8 @@ final class CloudAPI {
         if cachedCredential == nil { cachedCredential = try credentials.read(account.id) }
         guard let credential = cachedCredential else { expireSession(); throw CloudError.sessionExpired(nil) }
         if !force, credential.expires.timeIntervalSinceNow > 90 { return credential.accessToken }
-        // A WebDAV password has no refresh endpoint: if the server stops accepting it, only new credentials help.
-        guard account.cloud != .webdav else {
+        // A self-hosted password has no refresh endpoint: if the server stops accepting it, only new credentials help.
+        guard !account.cloud.isSelfHosted else {
             if force { expireSession(); throw CloudError.sessionExpired(nil) }
             return credential.accessToken
         }
@@ -137,6 +141,7 @@ final class CloudAPI {
         case .google: return try await googleList(parent: parent, onPage: onPage)
         case .microsoft: return try await graphList(parent: parent, onPage: onPage)
         case .dropbox: return try await dropboxList(parent: parent, onPage: onPage)
+        case .ftp: return try await ftpList(parent: parent, onPage: onPage)
         case .box: return try await boxList(parent: parent, onPage: onPage)
         case .webdav: return try await webdavList(parent: parent, onPage: onPage)
         }
@@ -201,6 +206,7 @@ final class CloudAPI {
         case .box:
             result = try await json(URL(string: "https://api.box.com/2.0/folders")!, method: "POST", body: ["name": name, "parent": ["id": boxID(parent)]])
         case .webdav: return try await webdavCreateFolder(name: name, parent: parent)
+        case .ftp: return try await ftpCreateFolder(name: name, parent: parent)
         }
         guard let id = result["id"] as? String else { throw CloudError.message(L("No se pudo crear la carpeta.")) }
         return id
@@ -226,11 +232,22 @@ final class CloudAPI {
             return request
         case .webdav:
             return try await request(webdavURL(file.id))
+        case .ftp:
+            // FTP never goes through URLSession; `download` branches before reaching here.
+            throw CloudError.message(L("FTP no usa peticiones HTTP."))
         }
     }
 
     func download(file: CloudFile, to destination: URL, exportMime: String? = nil, maxBytes: Int64? = nil, progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws {
         if let demo { try await demo.download(file, to: destination, maxBytes: maxBytes, progress: progress); return }
+        if account.cloud == .ftp {
+            try await ftpDownload(file: file, to: destination, progress: progress)
+            if let maxBytes, Int64((try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > maxBytes {
+                try? FileManager.default.removeItem(at: destination)
+                throw CloudError.message(L("La vista previa supera el límite de descarga autorizado."))
+            }
+            return
+        }
         let delegate = DownloadProgress(maxBytes: maxBytes) { bytes, total in Task { @MainActor in progress(bytes, total) } }
         var request = try await contentRequest(for: file, exportMime: exportMime)
         var temporary: URL, response: URLResponse

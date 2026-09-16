@@ -629,58 +629,48 @@ struct TransferPanel: View {
 
 struct ConnectView: View {
     @ObservedObject var model: AppModel
-    @State private var showWebDAV = false
-    @State private var server = ""
-    @State private var username = ""
-    @State private var password = ""
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 Label("Añade tu nube", systemImage: "cloud").font(.title.weight(.semibold))
-                Text("Elige tu cuenta y autoriza el acceso a tus archivos. Puedes añadir tantas cuentas como necesites.").foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text("Elige tu proveedor y autoriza el acceso a tus archivos. Puedes añadir tantas cuentas como necesites.")
+                    .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text("SERVICIOS").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 VStack(spacing: 10) {
                     providerButton(.google, title: "Continuar con Google", subtitle: "Google Drive", icon: "externaldrive")
                     providerButton(.microsoft, title: "Continuar con Microsoft", subtitle: "OneDrive · Outlook, Hotmail o Microsoft 365", icon: "cloud.fill")
                     providerButton(.dropbox, title: "Continuar con Dropbox", subtitle: "Dropbox personal o de equipo", icon: "shippingbox")
                     providerButton(.box, title: "Continuar con Box", subtitle: "Box personal o de empresa", icon: "square.stack.3d.up")
                 }.disabled(model.connecting)
-                DisclosureGroup(isExpanded: $showWebDAV) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Para Nextcloud, ownCloud, Synology, otros NAS y cualquier servidor WebDAV. Tus credenciales se guardan en el Llavero de este Mac y solo se envían a ese servidor.")
-                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        TextField("https://nube.ejemplo.com/remote.php/dav/files/ana", text: $server).textFieldStyle(.roundedBorder)
-                        TextField("Usuario", text: $username).textFieldStyle(.roundedBorder)
-                        SecureField("Contraseña o contraseña de aplicación", text: $password).textFieldStyle(.roundedBorder)
-                        Text("Si tu servidor usa verificación en dos pasos, crea una contraseña de aplicación en su configuración.")
-                            .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        HStack {
-                            Spacer()
-                            Button("Conectar servidor") { Task { await model.connectWebDAV(server: server, username: username, password: password); password = "" } }
-                                .buttonStyle(.borderedProminent)
-                                .disabled(model.connecting || server.isEmpty || username.isEmpty || password.isEmpty)
-                        }
-                    }.padding(.top, 8)
-                } label: {
-                    Label("Conectar un servidor WebDAV…", systemImage: "server.rack")
-                }
+                Text("TU PROPIO SERVIDOR").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                VStack(spacing: 10) {
+                    providerButton(.webdav, title: "Conectar WebDAV", subtitle: "Nextcloud, ownCloud, Synology y otros NAS", icon: "server.rack")
+                    providerButton(.ftp, title: "Conectar FTP", subtitle: "FTP y FTPS implícito, con usuario y contraseña", icon: "arrow.up.arrow.down.square")
+                }.disabled(model.connecting)
                 Button("Probar demo local sin iniciar sesión") { model.enableDemo() }.disabled(model.connecting)
-                if let error = model.connectionError {
+                if let error = model.connectionError, model.serverLogin == nil {
                     Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
                 }
                 if model.connecting { HStack { ProgressView().controlSize(.small); Text("Esperando el inicio de sesión en el navegador…").font(.caption) } }
-                Text("Con Google, Microsoft, Dropbox y Box tu contraseña se introduce únicamente en la web del proveedor. Las credenciales de un servidor WebDAV las escribes aquí y se guardan en el Llavero de este Mac.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text("Con Google, Microsoft, Dropbox y Box tu contraseña se introduce únicamente en la web del proveedor. Las credenciales de un servidor propio las escribes aquí y se guardan en el Llavero de este Mac.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 HStack {
                     Button("Cancelar") { model.oauth.cancel(); model.showConnect = false }.keyboardShortcut(.cancelAction)
                     Spacer()
                 }
             }.padding(30)
-        }.frame(width: 470, height: 620).interactiveDismissDisabled(model.connecting)
+        }.frame(width: 470, height: 640).interactiveDismissDisabled(model.connecting)
             .onAppear { model.connectionError = nil }
+            .sheet(item: $model.serverLogin) { cloud in ServerLoginView(model: model, cloud: cloud) }
     }
 
     private func providerButton(_ cloud: Cloud, title: String, subtitle: String, icon: String) -> some View {
-        Button { Task { await model.connect(cloud: cloud) } } label: {
+        Button {
+            // A self-hosted provider needs an address and credentials before anything can be attempted.
+            if cloud.isSelfHosted { model.connectionError = nil; model.serverLogin = cloud }
+            else { Task { await model.connect(cloud: cloud) } }
+        } label: {
             HStack(spacing: 14) {
                 Image(systemName: icon).font(.title2).foregroundStyle(tint(cloud)).frame(width: 30)
                 VStack(alignment: .leading, spacing: 4) {
@@ -688,7 +678,7 @@ struct ConnectView: View {
                     Text(subtitle).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Image(systemName: "arrow.up.right").foregroundStyle(.secondary)
+                Image(systemName: cloud.isSelfHosted ? "chevron.right" : "arrow.up.right").foregroundStyle(.secondary)
             }.padding(14).frame(maxWidth: .infinity).contentShape(Rectangle())
                 .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(.quaternary))
@@ -701,7 +691,74 @@ struct ConnectView: View {
         case .dropbox: return .indigo
         case .box: return .cyan
         case .webdav: return .gray
+        case .ftp: return .orange
         }
+    }
+}
+
+/// Address and credentials for a server the user runs: WebDAV or FTP. Both store the password in the Keychain and
+/// send it only to that host.
+struct ServerLoginView: View {
+    @ObservedObject var model: AppModel
+    let cloud: Cloud
+    @Environment(\.dismiss) private var dismiss
+    @State private var server = ""
+    @State private var username = ""
+    @State private var password = ""
+    @State private var secureFTP = false
+
+    private var placeholder: String {
+        cloud == .webdav ? "https://nube.ejemplo.com/remote.php/dav/files/ana" : "servidor.ejemplo.com/carpeta"
+    }
+    private var explanation: String {
+        cloud == .webdav
+            ? L("Para Nextcloud, ownCloud, Synology, otros NAS y cualquier servidor WebDAV. La dirección es la ruta WebDAV completa.")
+            : L("Para servidores FTP propios y NAS. iCloudy usa siempre modo pasivo. Sin FTPS, la contraseña y los archivos viajan sin cifrar.")
+    }
+    private var address: String {
+        guard cloud == .ftp else { return server }
+        let clean = server.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "ftps://", with: "").replacingOccurrences(of: "ftp://", with: "")
+        return (secureFTP ? "ftps://" : "ftp://") + clean
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(cloud.title, systemImage: cloud == .webdav ? "server.rack" : "arrow.up.arrow.down.square").font(.title2)
+            Text(explanation).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if cloud == .ftp {
+                Picker("Seguridad", selection: $secureFTP) {
+                    Text("FTP sin cifrar").tag(false)
+                    Text("FTPS implícito (puerto 990)").tag(true)
+                }.pickerStyle(.segmented).labelsHidden()
+                if !secureFTP {
+                    Label("Sin cifrar: usa esta opción solo en tu red local.", systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+            }
+            TextField(placeholder, text: $server).textFieldStyle(.roundedBorder)
+            TextField("Usuario", text: $username).textFieldStyle(.roundedBorder)
+            SecureField("Contraseña o contraseña de aplicación", text: $password).textFieldStyle(.roundedBorder)
+            Text("Si tu servidor usa verificación en dos pasos, crea una contraseña de aplicación en su configuración.")
+                .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if let error = model.connectionError {
+                Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Button("Cancelar") { model.serverLogin = nil; dismiss() }.keyboardShortcut(.cancelAction)
+                Spacer()
+                if model.connecting { ProgressView().controlSize(.small) }
+                Button("Conectar") {
+                    Task {
+                        await model.connectServer(cloud: cloud, server: address, username: username, password: password)
+                        password = ""
+                        if model.connectionError == nil { dismiss() }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.connecting || server.isEmpty || username.isEmpty || password.isEmpty)
+            }
+        }.padding(24).frame(width: 470)
     }
 }
 

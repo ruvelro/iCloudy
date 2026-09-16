@@ -22,6 +22,8 @@ final class AppModel: ObservableObject {
     @Published var relocation: Relocation?
     /// Cross-cloud transfer waiting for its destination account.
     @Published var crossCloud: CrossCloudRequest?
+    /// Self-hosted provider whose credentials form is open, if any.
+    @Published var serverLogin: Cloud?
     @Published var connecting = false
     @Published var connectionError: String?
     @Published var showConnect = false
@@ -267,18 +269,26 @@ final class AppModel: ObservableObject {
             }
         }
     }
-    /// Connects a WebDAV server. The password goes straight to the Keychain and never leaves this Mac except to that server.
-    func connectWebDAV(server: String, username: String, password: String) async {
+    /// Connects a server the user hosts: WebDAV or FTP. The password goes straight to the Keychain and never leaves
+    /// this Mac except to that server.
+    func connectServer(cloud: Cloud, server: String, username: String, password: String) async {
         guard !connecting else { return }
         connectionError = nil; connecting = true
         defer { connecting = false }
         do {
-            let (account, credential) = try await oauth.signInWebDAV(server: server, username: username, password: password)
+            let result: (Account, Credential)
+            switch cloud {
+            case .webdav: result = try await oauth.signInWebDAV(server: server, username: username, password: password)
+            case .ftp: result = try await oauth.signInFTP(server: server, username: username, password: password)
+            default: throw CloudError.message(L("\(cloud.title) no se conecta con usuario y contraseña."))
+            }
+            let (account, credential) = result
             try Vault.save(credential, key: account.id)
             var updated = accounts.filter { $0.id != account.id }; updated.append(account)
             try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
             accounts = updated; clients[account.id]?.invalidate(); clients[account.id] = nil
             expiredAccountIDs.remove(account.id)
+            serverLogin = nil
             select(account.id); showConnect = false
         } catch { connectionError = error.localizedDescription }
     }
@@ -305,6 +315,7 @@ final class AppModel: ObservableObject {
         case .dropbox: return .purple
         case .box: return .teal
         case .webdav: return .gray
+        case .ftp: return .orange
         }
     }
     func accountTitle(_ account: Account) -> String { appearance(for: account).title(for: account) }
@@ -357,6 +368,11 @@ final class AppModel: ObservableObject {
     }
     func refreshStorage(_ account: Account, force: Bool = false) {
         guard accounts.contains(where: { $0.id == account.id }) else { return }
+        // Asking a provider that has no quota command would only produce a pointless error every time.
+        guard account.capabilities.quota else {
+            storageQuotas[account.id] = .unavailable(L("\(account.cloud.title) no informa del espacio disponible."))
+            return
+        }
         if !force, case .available = storageQuotas[account.id], let fetched = quotaFetched[account.id], Date().timeIntervalSince(fetched) < Self.quotaRefreshInterval { return }
         quotaTasks[account.id]?.cancel()
         let requestID = UUID(); quotaRequestIDs[account.id] = requestID

@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 enum Cloud: String, Codable, CaseIterable, Identifiable {
-    case google, microsoft, dropbox, box, webdav
+    case google, microsoft, dropbox, box, webdav, ftp
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -11,6 +11,7 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
         case .dropbox: return L("Dropbox")
         case .box: return L("Box")
         case .webdav: return L("WebDAV")
+        case .ftp: return L("FTP")
         }
     }
     var tokenURL: String {
@@ -19,15 +20,17 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
         case .microsoft: return "https://login.microsoftonline.com/common/oauth2/v2.0/token"
         case .dropbox: return "https://api.dropboxapi.com/oauth2/token"
         case .box: return "https://api.box.com/oauth2/token"
-        case .webdav: return "" // password-based; there is no token endpoint
+        case .webdav, .ftp: return "" // password-based; there is no token endpoint
         }
     }
     /// HTTP authorization scheme for the value stored in `Credential.accessToken`.
-    var authorizationScheme: String { self == .webdav ? "Basic" : "Bearer" }
+    var authorizationScheme: String { [.webdav, .ftp].contains(self) ? "Basic" : "Bearer" }
+    /// True when the user brings their own server and credentials instead of signing in at a provider.
+    var isSelfHosted: Bool { [.webdav, .ftp].contains(self) }
     /// Identifier the provider gives to the top of the tree, behind iCloudy's own "root" alias.
     var rootAlias: String {
         switch self {
-        case .google, .microsoft, .webdav: return "root"
+        case .google, .microsoft, .webdav, .ftp: return "root"
         case .dropbox: return "" // Dropbox addresses the root as an empty path
         case .box: return "0"
         }
@@ -66,6 +69,11 @@ struct CloudCapabilities {
             // Plain WebDAV has no search, no sharing links and no recycle bin.
             return CloudCapabilities(oauth: false, search: false, recents: false, sharedWithMe: false,
                                      publicLinks: false, reversibleTrash: false, checksum: false)
+        case .ftp:
+            // FTP has no copy, no quota report and no checksum either; deleting is final.
+            return CloudCapabilities(oauth: false, search: false, recents: false, sharedWithMe: false,
+                                     publicLinks: false, copy: false, quota: false,
+                                     reversibleTrash: false, checksum: false)
         }
     }
 }

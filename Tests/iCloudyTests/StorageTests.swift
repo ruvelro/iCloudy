@@ -56,6 +56,14 @@ final class StorageTests: XCTestCase {
     @MainActor func testQuotaRequestsAreAuthenticatedAndReadOnly() async throws {
         defer { StubProtocol.handler = nil }
         for cloud in Cloud.allCases {
+            // A provider with no quota command is expected to say so instead of inventing a number.
+            guard cloud.capabilities.quota else {
+                let api = CloudAPI(account: Account(id: "sin-cuota", cloud: cloud, name: "T", email: "t@example.com", clientID: "", clientSecret: nil, serverURL: "ftp://127.0.0.1/"),
+                                   tokenProvider: { "quota-token" })
+                do { _ = try await api.storageQuota(); XCTFail("\(cloud) no tiene cuota que informar") }
+                catch { XCTAssertTrue(error.localizedDescription.contains("espacio disponible"), error.localizedDescription) }
+                continue
+            }
             let config = URLSessionConfiguration.ephemeral
             config.protocolClasses = [StubProtocol.self]
             let session = URLSession(configuration: config)
@@ -93,6 +101,8 @@ final class StorageTests: XCTestCase {
                     XCTAssertEqual(url.host, "api.box.com")
                     XCTAssertEqual(url.path, "/2.0/users/me")
                     return (200, [:], Data(#"{"space_used":40,"space_amount":100}"#.utf8))
+                case .ftp:
+                    XCTFail("FTP no llega hasta aquí"); return (500, [:], Data())
                 case .webdav:
                     XCTAssertEqual(request.httpMethod, "PROPFIND")
                     XCTAssertEqual(request.value(forHTTPHeaderField: "Depth"), "0")

@@ -36,8 +36,8 @@ struct OAuthConfiguration: Codable {
     /// Returns the registered client for a cloud, or explains that this build has none. WebDAV has no client at all:
     /// the user brings their own server and password.
     func client(for cloud: Cloud) throws -> (id: String, secret: String) {
-        guard cloud != .webdav else {
-            throw CloudError.message(L("WebDAV no usa OAuth: introduce la dirección del servidor y tus credenciales."))
+        guard !cloud.isSelfHosted else {
+            throw CloudError.message(L("\(cloud.title) no usa OAuth: introduce la dirección del servidor y tus credenciales."))
         }
         let raw: String, secret: String
         switch cloud {
@@ -45,7 +45,7 @@ struct OAuthConfiguration: Codable {
         case .microsoft: raw = microsoftClientID; secret = ""
         case .dropbox: raw = dropboxAppKey; secret = ""
         case .box: raw = boxClientID; secret = boxClientSecret
-        case .webdav: raw = ""; secret = ""
+        case .webdav, .ftp: raw = ""; secret = ""
         }
         let id = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let valid: Bool
@@ -55,7 +55,7 @@ struct OAuthConfiguration: Codable {
         // Dropbox app keys and Box client ids are opaque alphanumeric strings.
         case .dropbox: valid = id.count >= 10 && id.allSatisfy { $0.isLetter || $0.isNumber }
         case .box: valid = id.count >= 20 && id.allSatisfy { $0.isLetter || $0.isNumber }
-        case .webdav: valid = false
+        case .webdav, .ftp: valid = false
         }
         guard valid else {
             throw CloudError.message(L("La conexión con \(cloud.title) todavía no está habilitada en esta versión de iCloudy. No necesitas configurar nada en tu cuenta."))
@@ -76,7 +76,7 @@ enum OAuthRequest {
         case .microsoft: return "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
         case .dropbox: return "https://www.dropbox.com/oauth2/authorize"
         case .box: return "https://account.box.com/api/oauth2/authorize"
-        case .webdav: return ""
+        case .webdav, .ftp: return ""
         }
     }
     static func authorizationURL(cloud: Cloud, clientID: String, state: String, challenge: String, port: UInt16 = defaultPort) -> URL {

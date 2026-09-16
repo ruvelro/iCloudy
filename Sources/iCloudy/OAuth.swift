@@ -133,7 +133,7 @@ final class OAuth {
         case .microsoft: return "https://graph.microsoft.com/v1.0/me?$select=id,displayName,mail,userPrincipalName"
         case .dropbox: return "https://api.dropboxapi.com/2/users/get_current_account"
         case .box: return "https://api.box.com/2.0/users/me"
-        case .webdav: return ""
+        case .webdav, .ftp: return ""
         }
     }
 
@@ -174,6 +174,40 @@ final class OAuth {
                               serverURL: base.absoluteString)
         // Basic credentials never expire on their own; only the server can revoke them.
         return (account, Credential(accessToken: secret, refreshToken: "", expires: .distantFuture))
+    }
+
+    /// Signs in to an FTP or FTPS server. The credentials are proved against the server before anything is stored,
+    /// exactly like WebDAV, and the connection is closed again straight away.
+    func signInFTP(server: String, username: String, password: String) async throws -> (Account, Credential) {
+        let trimmed = server.trimmingCharacters(in: .whitespacesAndNewlines)
+        let withScheme = trimmed.contains("://") ? trimmed : "ftp://" + trimmed
+        guard var components = URLComponents(string: withScheme), let host = components.host, !host.isEmpty,
+              ["ftp", "ftps"].contains((components.scheme ?? "").lowercased()) else {
+            throw CloudError.message(L("Escribe una dirección válida, por ejemplo ftp://servidor.ejemplo.com/carpeta"))
+        }
+        guard !username.isEmpty else { throw CloudError.message(L("Introduce el usuario del servidor.")) }
+        components.query = nil; components.fragment = nil
+        if components.path.hasSuffix("/"), components.path.count > 1 { components.path = String(components.path.dropLast()) }
+        let secure = components.scheme?.lowercased() == "ftps"
+        let port = UInt16(components.port ?? (secure ? 990 : 21))
+        let session = FTPSession(host: host, port: port, user: username, password: password,
+                                 security: secure ? .implicitTLS : .none)
+        do {
+            try await session.connect()
+            // PWD proves the session is usable, not just that the socket opened.
+            _ = try await session.require("PWD", L("El servidor no respondió al comprobar la sesión."))
+        } catch {
+            await session.close()
+            throw error
+        }
+        await session.close()
+        guard let base = components.url?.absoluteString else {
+            throw CloudError.message(L("Escribe una dirección válida, por ejemplo ftp://servidor.ejemplo.com/carpeta"))
+        }
+        let account = Account(id: "ftp:" + host + ":" + String(port) + components.path + "#" + username, cloud: .ftp,
+                              name: host, email: username + "@" + host, clientID: "", clientSecret: nil, serverURL: base)
+        return (account, Credential(accessToken: Data("\(username):\(password)".utf8).base64EncodedString(),
+                                    refreshToken: "", expires: .distantFuture))
     }
 
     /// Binds the loopback listener and returns the port actually in use (`0` asks the system for a free one).
