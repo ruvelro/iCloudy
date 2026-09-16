@@ -169,7 +169,6 @@ struct ExplorerView: View {
                 }
                 Spacer(minLength: 0)
                 Button { model.showConnect = true } label: { Label("Añadir cuenta", systemImage: "plus.circle") }.buttonStyle(.plain).padding(Layout.sidebarInner)
-                Button { model.enableDemo() } label: { Label("Probar demo local", systemImage: "play.circle") }.buttonStyle(.plain).padding(.horizontal, Layout.sidebarInner)
                 SettingsLink { Label("Configuración", systemImage: "gearshape") }
                     .buttonStyle(.plain).padding(.horizontal, Layout.sidebarInner)
                     .help("Abrir Configuración (⌘,)")
@@ -184,6 +183,7 @@ struct ExplorerView: View {
             // detail view, losing table scroll position or cancelling an in-flight global search.
             .frame(minWidth: sidebarVisible ? 230 : 0, idealWidth: sidebarVisible ? 260 : 0,
                    maxWidth: sidebarVisible ? 320 : 0, maxHeight: .infinity)
+            .background(VisualEffect(material: .sidebar).ignoresSafeArea())
             .clipped().opacity(sidebarVisible ? 1 : 0)
             .accessibilityHidden(!sidebarVisible).allowsHitTesting(sidebarVisible)
             Group {
@@ -246,12 +246,11 @@ struct ExplorerView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .navigationTitle(model.account.map { model.accountTitle($0) } ?? "iCloudy")
-            .toolbar { explorerToolbar }
             }
             }
             .frame(minWidth: 580, maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .windowBackgroundColor))
         }
-        .background(Color(nsColor: .windowBackgroundColor))
         .background(ExplorerWindowChrome())
         .toolbarBackground(.hidden, for: .windowToolbar)
         .toolbar {
@@ -267,10 +266,14 @@ struct ExplorerView: View {
                     .font(.headline).lineLimit(1).truncationMode(.tail)
                     .frame(maxWidth: 220, alignment: .leading)
                     .help(model.account.map { model.accountTitle($0) } ?? "iCloudy")
+                // A flexible space is the only way to send the action buttons to the trailing edge: without it the
+                // toolbar packs every item against the leading side, whatever placement they declare.
+                Spacer()
             }
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
                 SettingsLink { Label("Configuración", systemImage: "gearshape") }
                     .help("Abrir Configuración (⌘,)")
+                if !model.showGlobalSearch { explorerActions }
             }
         }
     }
@@ -340,8 +343,8 @@ struct ExplorerView: View {
         }
     }
 
-    @ToolbarContentBuilder private var explorerToolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
+    @ViewBuilder private var explorerActions: some View {
+        Group {
             Button { model.reload(fresh: true) } label: { Image(systemName: "arrow.clockwise") }.help("Actualizar carpeta").disabled(model.account == nil || model.loading)
             Button { Task { await model.pickUpload() } } label: { Label("Subir", systemImage: "square.and.arrow.up") }.disabled(!model.canWrite)
             Button { model.promptName() } label: { Label("Nueva carpeta", systemImage: "folder.badge.plus") }.disabled(!model.canWrite)
