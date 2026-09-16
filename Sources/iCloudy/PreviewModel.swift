@@ -91,7 +91,8 @@ final class PreviewStore {
 
 @MainActor
 final class PreviewModel: ObservableObject {
-    static let automaticLimit: Int64 = 100_000_000
+    /// Above this, the preview asks first. Configurable from the settings window.
+    static var automaticLimit: Int64 { Int64(Prefs.int(Prefs.previewConsentMB, default: 100)) * 1_000_000 }
     static let textLimit = 1_000_000
     enum Phase: Equatable { case idle, confirmation, loading, ready, unsupported, failed(String) }
     @Published private(set) var phase: Phase = .idle

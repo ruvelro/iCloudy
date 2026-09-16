@@ -97,6 +97,14 @@ final class SpotlightIndex {
         }
         persist()
     }
+    /// Retires everything iCloudy published, leaving the system search without any of its entries.
+    func clear() {
+        let domains = Set(items.map(\.accountID))
+        items = []
+        persist()
+        guard !domains.isEmpty else { return }
+        Task { [index] in try? await index.deleteItems(withDomainIdentifiers: Array(domains)) }
+    }
     /// Disconnecting an account must leave nothing of it in Spotlight.
     func removeAccount(_ accountID: String) {
         items.removeAll { $0.accountID == accountID }

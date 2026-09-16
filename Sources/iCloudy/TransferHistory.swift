@@ -61,6 +61,7 @@ final class TransferHistory: ObservableObject {
 
     init(storeURL: URL = LocalStore.directory.appendingPathComponent("history.json")) {
         self.storeURL = storeURL
+        limit = max(20, Prefs.int(Prefs.historyLimit, default: 200))
         do { entries = try LocalStore.read([HistoryEntry].self, from: storeURL) ?? [] }
         catch { persistenceError = L("No se pudo leer el historial: \(error.localizedDescription)") }
     }

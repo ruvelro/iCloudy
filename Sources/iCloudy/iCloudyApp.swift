@@ -9,8 +9,10 @@ struct iCloudyApp: App {
     @StateObject private var model = AppModel()
     @AppStorage("menuBarEnabled") private var menuBarEnabled = true
     var body: some Scene {
-        // A single window: every window of a WindowGroup would mirror the same account, folder and selection.
-        Window("iCloudy", id: "explorer") {
+        // A WindowGroup always restores a window at launch and when the Dock icon is clicked; a `Window` scene that
+        // the user (or a crash) closed stays closed, leaving the app running with nothing on screen. "Nueva ventana"
+        // is removed below, so this still behaves as a single-window app over one shared model.
+        WindowGroup(id: "explorer") {
             ExplorerView(model: model)
                 .frame(minWidth: 900, minHeight: 600)
                 .onAppear { delegate.model = model }
@@ -22,7 +24,8 @@ struct iCloudyApp: App {
         }
         .defaultSize(width: 1120, height: 740)
         .commands {
-            CommandGroup(after: .newItem) {
+            CommandGroup(replacing: .newItem) { }
+            CommandGroup(after: .appInfo) {
                 Button("Añadir cuenta…") { model.showConnect = true }.keyboardShortcut("n", modifiers: [.command, .shift])
                 Button("Subir archivos…") { Task { await model.pickUpload() } }.disabled(!model.canWrite)
                 Button("Subir el portapapeles") { model.uploadFromPasteboard() }.disabled(!model.canWrite)
@@ -35,12 +38,15 @@ struct iCloudyApp: App {
         MenuBarExtra("iCloudy", systemImage: "cloud.fill", isInserted: $menuBarEnabled) {
             MenuBarContent(model: model, queue: model.queue)
         }
+        Settings { SettingsView(model: model) }
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var model: AppModel? { didSet { services.model = model } }
     private let services = ServicesProvider()
+    /// Clicking the Dock icon with no window open must bring the explorer back, not just activate a headless process.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { true }
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
@@ -73,6 +79,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+/// One horizontal margin for every block of the detail column, so titles, banners, rows and the footer share an edge.
+enum Layout {
+    static let margin: CGFloat = 22
+    static let sidebarOuter: CGFloat = 10
+    static let sidebarInner: CGFloat = 12
+    /// Difference between a Table's built-in cell inset and `margin`, measured on screen.
+    static let tableCorrection: CGFloat = 4
+}
+
 struct ExplorerView: View {
     @ObservedObject var model: AppModel
     @State private var selected: Set<CloudFile.ID> = []
@@ -87,10 +102,10 @@ struct ExplorerView: View {
         NavigationSplitView {
             VStack(alignment: .leading, spacing: 16) {
                 Label("iCloudy", systemImage: "cloud.fill")
-                    .font(.system(size: 24, weight: .semibold)).padding(.horizontal, 12).padding(.top, 20)
-                Text("TUS NUBES").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, 12)
+                    .font(.system(size: 24, weight: .semibold)).padding(.horizontal, Layout.sidebarInner).padding(.top, 20)
+                Text("TUS NUBES").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, Layout.sidebarInner)
                 Button { model.preview.close(); model.showGlobalSearch = true } label: {
-                    Label("Buscar en todas las nubes", systemImage: "magnifyingglass").frame(maxWidth: .infinity, alignment: .leading).padding(10)
+                    Label("Buscar en todas las nubes", systemImage: "magnifyingglass").frame(maxWidth: .infinity, alignment: .leading).padding(Layout.sidebarInner)
                         .background(model.showGlobalSearch ? Color.accentColor.opacity(0.13) : .clear, in: RoundedRectangle(cornerRadius: 9))
                 }.buttonStyle(.plain)
                 ScrollView {
@@ -109,7 +124,7 @@ struct ExplorerView: View {
                                         }
                                     }
                                     Spacer(minLength: 0)
-                                }.padding(10).contentShape(Rectangle())
+                                }.padding(Layout.sidebarInner).contentShape(Rectangle())
                                     .background(model.selectedAccountID == account.id && !model.showGlobalSearch ? model.appearance(for: account).tint.color.opacity(0.13) : .clear, in: RoundedRectangle(cornerRadius: 9))
                             }.buttonStyle(.plain)
                                 .contextMenu {
@@ -128,6 +143,12 @@ struct ExplorerView: View {
                                     }
                                 }
                         }
+                        if model.loadingAccounts {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text("Abriendo el Llavero…").font(.caption).foregroundStyle(.secondary)
+                            }.padding(Layout.sidebarInner)
+                        }
                         if !model.mirrors.mirrors.isEmpty { MirrorList(model: model, mirrors: model.mirrors, disconnectTarget: $disconnectTarget) }
                         if !model.favorites.isEmpty {
                             Divider().padding(.vertical, 8)
@@ -141,12 +162,12 @@ struct ExplorerView: View {
                     }
                 }
                 Spacer(minLength: 0)
-                Button { model.showConnect = true } label: { Label("Añadir cuenta", systemImage: "plus.circle") }.buttonStyle(.plain).padding(12)
-                Button { model.enableDemo() } label: { Label("Probar demo local", systemImage: "play.circle") }.buttonStyle(.plain).padding(.horizontal, 12)
+                Button { model.showConnect = true } label: { Label("Añadir cuenta", systemImage: "plus.circle") }.buttonStyle(.plain).padding(Layout.sidebarInner)
+                Button { model.enableDemo() } label: { Label("Probar demo local", systemImage: "play.circle") }.buttonStyle(.plain).padding(.horizontal, Layout.sidebarInner)
                 Divider()
                 Label(model.isOnline ? L("Solo se descarga lo que eliges") : L("Sin conexión"), systemImage: model.isOnline ? "internaldrive" : "wifi.slash")
-                    .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.bottom, 12)
-            }.padding(.horizontal, 10)
+                    .font(.caption).foregroundStyle(.secondary).padding(.horizontal, Layout.sidebarInner).padding(.bottom, 12)
+            }.padding(.horizontal, Layout.sidebarOuter)
             .navigationSplitViewColumnWidth(min: 230, ideal: 260, max: 320)
         } detail: {
             if model.showGlobalSearch {
@@ -156,6 +177,7 @@ struct ExplorerView: View {
                 header
                 Divider()
                 if model.account == nil {
+                    // Greedy, so the block above it stays anchored to the top instead of floating in the middle.
                     ContentUnavailableView {
                         Label("Tus archivos, en un solo lugar", systemImage: "cloud")
                     } description: {
@@ -163,7 +185,7 @@ struct ExplorerView: View {
                     } actions: {
                         Button("Conectar una cuenta") { model.showConnect = true }.buttonStyle(.borderedProminent)
                         Button("Explorar demo sin cuenta") { model.enableDemo() }
-                    }
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     if model.account?.isDemo == true {
                         HStack {
@@ -171,14 +193,14 @@ struct ExplorerView: View {
                             Spacer()
                             Toggle("Sin conexión", isOn: $model.demoOffline).toggleStyle(.checkbox)
                             Button("Simular corte") { model.failNextDemoTransfer() }.help("La siguiente operación fallará una vez para probar el reintento")
-                        }.padding(10).background(Color.orange.opacity(0.12))
+                        }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
                     }
                     if !model.isOnline {
                         HStack {
                             Label("Sin conexión. Las transferencias se han pausado y se reanudarán solas al volver la red; los listados pueden no estar al día.", systemImage: "wifi.slash")
                                 .font(.caption).fixedSize(horizontal: false, vertical: true)
                             Spacer()
-                        }.padding(10).background(Color.orange.opacity(0.12))
+                        }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
                     }
                     if let account = model.account, model.isExpired(account) {
                         HStack {
@@ -186,7 +208,7 @@ struct ExplorerView: View {
                                 .font(.caption).fixedSize(horizontal: false, vertical: true)
                             Spacer()
                             Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.connecting)
-                        }.padding(10).background(Color.orange.opacity(0.12))
+                        }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
                     }
                     fileBrowser
                 }
@@ -195,11 +217,16 @@ struct ExplorerView: View {
                 Divider()
                 HStack {
                     Text("\(model.visibleFiles.count) elementos")
+                    if model.downloadedCount > 0 {
+                        Text("·")
+                        Label("\(model.downloadedCount) en este Mac", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    }
                     Spacer()
                     if model.canWrite { Text("Arrastra aquí para subir una copia") }
                     else if model.account != nil { Text("Lista de solo lectura · abre una carpeta para subir") }
-                }.font(.caption).foregroundStyle(.secondary).padding(12)
+                }.font(.caption).foregroundStyle(.secondary).padding(.horizontal, Layout.margin).padding(.vertical, 12)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .navigationTitle(model.account.map { model.accountTitle($0) } ?? "iCloudy")
             .toolbar {
                 ToolbarItemGroup {
@@ -244,7 +271,7 @@ struct ExplorerView: View {
         .onChange(of: model.folderID) { selected.removeAll() }
         .onChange(of: model.selectedAccountID) { selected.removeAll() }
         .onChange(of: selected) {
-            guard model.preview.isVisible else { return }
+            guard model.preview.isVisible, Prefs.bool(Prefs.previewFollowsSelection, default: true) else { return }
             // Follow the selection like Quick Look, but wait for the arrow keys to settle: each preview is a download.
             previewFollow?.cancel()
             if selected.count == 1 {
@@ -319,7 +346,7 @@ struct ExplorerView: View {
                 TextField("Filtrar esta carpeta", text: $model.search).textFieldStyle(.roundedBorder).frame(width: 210)
                 Picker("Orden", selection: $model.sortMode) { Text("Nombre").tag("name"); Text("Más recientes").tag("date"); Text("Mayor tamaño").tag("size") }.labelsHidden().frame(width: 130)
             }
-        }.padding(22)
+        }.padding(.horizontal, Layout.margin).padding(.top, 20).padding(.bottom, 14)
     }
 
     private var trashTitle: String {
@@ -344,8 +371,12 @@ struct ExplorerView: View {
     private var fileList: some View {
         Table(model.visibleFiles, selection: $selected) {
             TableColumn("Nombre") { file in
-                HStack(spacing: 10) {
-                    Image(systemName: file.icon).foregroundStyle(file.isFolder ? Color.accentColor : Color.secondary).frame(width: 22)
+                HStack(spacing: 8) {
+                    // Folders carry no badge: iCloudy cannot claim that everything inside is present and current.
+                    Group {
+                        if file.isFolder { Color.clear } else { LocalCopyBadge(status: model.localStatus(file)) }
+                    }.frame(width: 15)
+                    Image(systemName: file.icon).foregroundStyle(file.isFolder ? Color.accentColor : Color.secondary).frame(width: 20)
                     Text(file.name).lineLimit(1)
                     if model.isFavorite(file) { Image(systemName: "star.fill").font(.caption).foregroundStyle(.yellow) }
                 }.padding(.vertical, 5)
@@ -362,6 +393,8 @@ struct ExplorerView: View {
                 } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).frame(width: 25)
             }.width(35)
         }
+        // A Table insets its own cells; this brings their text onto the margin shared by the title and the footer.
+        .padding(.horizontal, Layout.tableCorrection)
         .onDeleteCommand { model.requestTrash(model.files.filter { selected.contains($0.id) }) }
         .contextMenu(forSelectionType: CloudFile.ID.self) { ids in
             if ids.count > 1 {
@@ -393,6 +426,13 @@ struct ExplorerView: View {
                         ForEach(model.visibleFiles) { file in
                             VStack(spacing: 10) {
                                 Image(systemName: file.icon).font(.system(size: 42)).foregroundStyle(file.isFolder ? Color.accentColor : .secondary)
+                                    .overlay(alignment: .bottomTrailing) {
+                                        if !file.isFolder {
+                                            LocalCopyBadge(status: model.localStatus(file), size: 14)
+                                                .background(Circle().fill(.background).padding(-1))
+                                                .offset(x: 8, y: 2)
+                                        }
+                                    }
                                 Text(file.name).font(.callout).lineLimit(2).multilineTextAlignment(.center)
                                 if model.isFavorite(file) { Image(systemName: "star.fill").foregroundStyle(.yellow).font(.caption) }
                             }.frame(maxWidth: .infinity).frame(height: 112).padding(8)
@@ -412,7 +452,7 @@ struct ExplorerView: View {
                                 .contextMenu { fileActions(file) }
                                 .accessibilityLabel(file.name)
                         }
-                    }.padding(20)
+                    }.padding(.horizontal, Layout.margin).padding(.vertical, 18)
                 }.focusable().focusEffectDisabled().focused($gridFocused)
             } else { fileList }
         }
@@ -459,6 +499,13 @@ struct ExplorerView: View {
         if file.webURL != nil { Button("Abrir en navegador") { model.openBrowser(file) } }
         ForEach(file.exportOptions, id: \.ext) { option in
             Button("Exportar como \(option.title)…") { Task { await model.save(file, export: (option.mime, option.ext)) } }
+        }
+        if let copy = model.localStatus(file).copy {
+            Divider()
+            Button("Mostrar la copia de este Mac en el Finder") { model.revealLocalCopy(file) }
+                .help(copy.path)
+            Button("Olvidar la copia local") { model.forgetLocalCopy(file) }
+                .help(L("Quita la marca de descargado. No borra el archivo del Mac."))
         }
         Divider()
         if file.webURL != nil { Button("Copiar enlace") { model.copyLink(file) } }
@@ -535,7 +582,7 @@ struct TransferPanel: View {
                     }
                 }
             }
-        }.padding(16).background(.quaternary.opacity(0.4))
+        }.padding(.horizontal, Layout.margin).padding(.vertical, 14).background(.quaternary.opacity(0.4))
     }
 }
 

@@ -21,6 +21,8 @@ final class TransferQueue: ObservableObject {
     var didComplete: ((String) -> Void)?
     /// Receives the completed job itself, for the persistent history.
     var didFinish: ((Transfer) -> Void)?
+    /// Fires for every single file that ends up on this Mac, or whose local original was just uploaded.
+    var didStoreLocalCopy: ((LocalCopy) -> Void)?
     var retryDelay: Double = 1
     /// Minimum interval between two progress updates; URLSession can report dozens of times per second.
     var reportInterval: TimeInterval = 0.1
@@ -473,6 +475,12 @@ final class TransferQueue: ObservableObject {
             try edit(id, coalesce: true) { if receipt.verification == .verified { $0.verifiedFiles += 1 } else { $0.unverifiedFiles += 1 } }
             done += Int64(values.fileSize ?? 0)
             mark(id, done: done)
+            if let remoteID = receipt.remoteID {
+                // The file that was just uploaded is, by definition, also on this Mac.
+                didStoreLocalCopy?(LocalCopy(accountID: try job(id).accountID, fileID: remoteID, name: name, path: local.path,
+                                             bookmark: try job(id).bookmark, size: Int64(values.fileSize ?? 0),
+                                             remoteModified: Date(), savedAt: Date(), origin: .upload))
+            }
             if replacing == nil {
                 siblings[parent, default: []].append(CloudFile(id: "", name: name, mime: "application/octet-stream", size: values.fileSize.map(Int64.init), modified: nil, webURL: nil, isFolder: false))
             }
@@ -535,6 +543,12 @@ final class TransferQueue: ObservableObject {
             }
             done += file.size ?? 0
             mark(id, done: done)
+            // Only real content counts as a local copy: a .webloc is a link and an export is a different document.
+            if !file.isGoogleDocument, !exporting {
+                didStoreLocalCopy?(LocalCopy(accountID: current.accountID, fileID: file.id, name: file.name, path: target.path,
+                                             bookmark: current.bookmark, size: file.size ?? 0,
+                                             remoteModified: file.modified, savedAt: Date(), origin: .download))
+            }
         }
         try edit(id, coalesce: true) { $0.completedPaths.insert(key) }
     }

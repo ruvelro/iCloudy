@@ -11,6 +11,8 @@ final class PreviewWindow: NSObject, NSWindowDelegate {
     var isVisible: Bool { window?.isVisible == true }
     var download: ((CloudFile, Account) -> Void)?
     var openBrowser: ((CloudFile) -> Void)?
+    /// Reports a copy the user chose to keep, so the explorer can mark that file as present on this Mac.
+    var didSaveCopy: ((CloudFile, Account, URL) -> Void)?
 
     override init() {
         super.init()
@@ -48,7 +50,10 @@ final class PreviewWindow: NSObject, NSWindowDelegate {
         guard model.localURL == source else { model.saveError = L("La vista previa cambió; vuelve a elegir Guardar copia."); return }
         let scoped = destination.startAccessingSecurityScopedResource()
         defer { if scoped { destination.stopAccessingSecurityScopedResource() } }
-        do { try model.saveCopy(to: destination) }
+        do {
+            try model.saveCopy(to: destination)
+            if let account = model.account { didSaveCopy?(file, account, destination) }
+        }
         catch { model.saveError = L("No se pudo guardar la copia. Si ya existe un archivo con ese nombre, elige otro. \(error.localizedDescription)") }
     }
 }

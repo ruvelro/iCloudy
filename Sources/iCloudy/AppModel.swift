@@ -46,12 +46,15 @@ final class AppModel: ObservableObject {
     let connectivity = Connectivity()
     let mirrors = MirrorManager()
     let spotlight = SpotlightIndex()
+    let localCopies = LocalCopyIndex()
     /// The running model, so App Intents and the Services menu can reach it. Intents run inside the app process.
     @MainActor static private(set) weak var shared: AppModel?
     let listings = ListingCache()
     @Published private(set) var isOnline = true
     /// True while the table shows the last known listing instead of a fresh answer from the provider.
     @Published private(set) var showingCachedListing = false
+    /// True until the stored accounts have been read from the Keychain, which happens after the window is on screen.
+    @Published private(set) var loadingAccounts = true
     let oauth = OAuth()
     let preview = PreviewWindow()
     let globalSearch = GlobalSearch()
@@ -89,19 +92,17 @@ final class AppModel: ObservableObject {
     init() {
         do { let store = try AppearanceStore(); appearanceStore = store; appearances = store.values }
         catch { self.error = L("No se pudo cargar la personalización: \(error.localizedDescription)") }
-        do {
-            accounts = try Vault.read([Account].self, key: "accounts") ?? []
-            favorites = try LocalStore.read([Favorite].self, from: favoritesURL) ?? []
-        } catch { self.error = error.localizedDescription }
+        do { favorites = try LocalStore.read([Favorite].self, from: favoritesURL) ?? [] }
+        catch { self.error = error.localizedDescription }
         // Property observers do not run while an initializer sets its own properties.
         favoriteKeys = Set(favorites.map(\.id))
         if UserDefaults.standard.bool(forKey: "demoEnabled") { enableDemo(select: false) }
-        selectedAccountID = accounts.first?.id
         queue.client = { [weak self] id in
             guard let self, let account = self.accounts.first(where: { $0.id == id }) else { throw CloudError.message(L("Vuelve a conectar la cuenta de esta transferencia.")) }
             return try self.client(account)
         }
         queue.didFinish = { [weak self] transfer in self?.history.record(transfer); self?.mirrors.handleFinished(transfer) }
+        queue.didStoreLocalCopy = { [weak self] copy in self?.localCopies.record(copy) }
         connectivity.onChange = { [weak self] online in
             guard let self else { return }
             isOnline = online
@@ -121,13 +122,16 @@ final class AppModel: ObservableObject {
         mirrors.queue = queue
         mirrors.accountLookup = { [weak self] id in self?.accounts.first { $0.id == id } }
         mirrors.start()
-        if account != nil { reload() }
-        for account in accounts where account.id != selectedAccountID { refreshStorage(account) }
+        loadAccounts()
         preview.download = { [weak self] file, account in
             Task { await self?.saveMany([file], targetAccount: account) }
         }
         preview.openBrowser = { [weak self] file in self?.openBrowser(file) }
-        spotlight.refreshFavorites(favorites) { [weak self] id in self?.accounts.first { $0.id == id }.map { self?.accountTitle($0) ?? $0.email } ?? id }
+        preview.didSaveCopy = { [weak self] file, account, destination in
+            self?.localCopies.record(LocalCopy(accountID: account.id, fileID: file.id, name: file.name, path: destination.path,
+                                               bookmark: try? TransferQueue.bookmark(destination), size: file.size ?? 0,
+                                               remoteModified: file.modified, savedAt: Date(), origin: .preview))
+        }
         Self.shared = self
     }
 
@@ -198,8 +202,50 @@ final class AppModel: ObservableObject {
             catch { self.error = error.localizedDescription }
         }
     }
+    /// Where this file stands: only in the cloud, downloaded, or downloaded but behind the cloud.
+    func localStatus(_ file: CloudFile) -> LocalCopyStatus {
+        guard let account else { return .cloudOnly }
+        return localCopies.status(for: file, accountID: account.id)
+    }
+    var downloadedCount: Int {
+        guard let account else { return 0 }
+        return files.filter { !$0.isFolder && localCopies.status(for: $0, accountID: account.id).copy != nil }.count
+    }
+    func revealLocalCopy(_ file: CloudFile) {
+        guard let copy = localStatus(file).copy else { return }
+        if !localCopies.reveal(copy) {
+            error = L("«\(copy.name)» ya no está en \(copy.path). Se ha quitado de la lista de copias locales.")
+            localCopies.forget(accountID: copy.accountID, fileID: copy.fileID)
+        }
+    }
+    func forgetLocalCopy(_ file: CloudFile) {
+        guard let account else { return }
+        localCopies.forget(accountID: account.id, fileID: file.id)
+    }
     private func noteForSpotlight(_ file: CloudFile, account: Account) {
         spotlight.note(file, accountID: account.id, path: path, accountLabel: accountTitle(account))
+    }
+    /// Reads the stored accounts off the main thread. The Keychain call can block for a long time: macOS asks the user
+    /// for permission whenever the app's signature changes, and doing that inside `init` froze the launch before SwiftUI
+    /// had built any window, leaving a running app with nothing on screen.
+    private func loadAccounts() {
+        loadingAccounts = true
+        Task { [favoritesKey = "accounts"] in
+            let stored: [Account]
+            do { stored = try await Task.detached { try Vault.read([Account].self, key: favoritesKey) ?? [] }.value }
+            catch {
+                loadingAccounts = false
+                self.error = L("No se pudieron leer las cuentas guardadas: \(error.localizedDescription)")
+                return
+            }
+            loadingAccounts = false
+            // The demo account is local and may already be in the list.
+            accounts = stored + accounts.filter(\.isDemo)
+            if selectedAccountID == nil { selectedAccountID = accounts.first?.id }
+            spotlight.refreshFavorites(favorites) { [weak self] id in self?.accounts.first { $0.id == id }.map { self?.accountTitle($0) ?? $0.email } ?? id }
+            if account != nil { reload() }
+            for account in accounts where account.id != selectedAccountID { refreshStorage(account) }
+        }
     }
     func client(_ account: Account) throws -> CloudAPI {
         if let client = clients[account.id] { return client }
@@ -303,6 +349,7 @@ final class AppModel: ObservableObject {
             listings.removeAll(accountID: account.id)
             mirrors.removeAll(accountID: account.id)
             spotlight.removeAccount(account.id)
+            localCopies.removeAccount(account.id)
             accounts = updated
             globalSearch.removeAccount(account.id)
             if selectedAccountID == account.id { select(accounts.first?.id) }
@@ -385,7 +432,8 @@ final class AppModel: ObservableObject {
         refreshStorage(account)
         let parent = folderID; loading = true
         // Show what was there last time at once; the provider's answer replaces it when it arrives.
-        if !fresh, files.isEmpty, let cached = listings.cached(accountID: account.id, parent: parent) { files = cached; showingCachedListing = true }
+        if !fresh, Prefs.bool(Prefs.listingCache, default: true), files.isEmpty,
+           let cached = listings.cached(accountID: account.id, parent: parent) { files = cached; showingCachedListing = true }
         else if fresh { showingCachedListing = false }
         navigationTask = Task {
             do {
@@ -397,6 +445,8 @@ final class AppModel: ObservableObject {
                 guard navigationID == requestID else { return }
                 files = result; loading = false; showingCachedListing = false
                 listings.store(result, accountID: account.id, parent: parent)
+                // Drop entries whose local file the user has moved or deleted meanwhile.
+                localCopies.verify(result, accountID: account.id)
             } catch {
                 guard navigationID == requestID else { return }
                 loading = false
