@@ -1,4 +1,5 @@
 import XCTest
+import PDFKit
 @testable import iCloudy
 
 @MainActor
@@ -23,9 +24,49 @@ final class PreviewTests: XCTestCase {
     }
     func testAllowlistDoesNotEnableExecutableOrWebContent() {
         for name in ["a.pdf", "a.PNG", "a.heic", "a.txt", "a.py", "a.js"] { XCTAssertNotNil(PreviewKind.forFile(file(name))) }
-        for name in ["a.html", "a.svg", "a.app", "a.zip", "a.mp4", "a.docx", "a.pdf.exe", "a"] { XCTAssertNil(PreviewKind.forFile(file(name))) }
+        for name in ["a.html", "a.svg", "a.app", "a.zip", "a.pdf.exe", "a", "a.pkg", "a.dmg", "a.webarchive"] { XCTAssertNil(PreviewKind.forFile(file(name))) }
         XCTAssertNil(PreviewKind.forFile(file("folder.txt", folder: true)))
-        XCTAssertNil(PreviewKind.forFile(file("Google.txt", mime: "application/vnd.google-apps.document")))
+        XCTAssertEqual(PreviewKind.forFile(file("a.mp4")), .media("mp4"))
+        XCTAssertEqual(PreviewKind.forFile(file("a.M4A")), .media("m4a"))
+        XCTAssertEqual(PreviewKind.forFile(file("a.docx")), .office("docx"))
+        XCTAssertEqual(PreviewKind.forFile(file("a.key")), .office("key"))
+        XCTAssertEqual(PreviewKind.forFile(file("Google", mime: "application/vnd.google-apps.document")), .exportedPDF)
+        XCTAssertEqual(PreviewKind.forFile(file("Hoja", mime: "application/vnd.google-apps.spreadsheet")), .exportedPDF)
+        XCTAssertNil(PreviewKind.forFile(file("Form", mime: "application/vnd.google-apps.form")), "Forms have no PDF export")
+        XCTAssertNil(PreviewKind.forFile(file("Shortcut", mime: "application/vnd.google-apps.shortcut")))
+        XCTAssertTrue(PreviewKind.exportedPDF.usesQuickLook && PreviewKind.office("docx").usesQuickLook)
+        XCTAssertFalse(PreviewKind.media("mp4").usesQuickLook || PreviewKind.text.usesQuickLook)
+        XCTAssertEqual(PreviewKind.exportedPDF.exportMime, "application/pdf")
+    }
+    func testOfficeStructureCheckRejectsMislabelledContent() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let docx = root.appendingPathComponent("a.docx"); try Data([0x50, 0x4B, 0x03, 0x04, 0, 0, 0, 0]).write(to: docx)
+        let fake = root.appendingPathComponent("b.docx"); try Data("<html>".utf8).write(to: fake)
+        let doc = root.appendingPathComponent("c.doc"); try Data([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]).write(to: doc)
+        let rtf = root.appendingPathComponent("d.rtf"); try Data("{\\rtf1\\ansi}".utf8).write(to: rtf)
+        XCTAssertTrue(PreviewKind.looksValid(.office("docx"), at: docx))
+        XCTAssertFalse(PreviewKind.looksValid(.office("docx"), at: fake))
+        XCTAssertTrue(PreviewKind.looksValid(.office("doc"), at: doc))
+        XCTAssertTrue(PreviewKind.looksValid(.office("rtf"), at: rtf))
+        XCTAssertTrue(PreviewKind.looksValid(.pdf, at: fake), "Only Office kinds are structurally checked here")
+    }
+    func testGoogleDocumentPreviewExportsToPDFWithoutSizeConfirmation() async throws {
+        let (root, _, model, _) = try fixture()
+        defer { model.close(); try? FileManager.default.removeItem(at: root) }
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let api = CloudAPI(account: Account(id: "google:t", cloud: .google, name: "T", email: "t@example.com", clientID: "c", clientSecret: nil), session: URLSession(configuration: config), tokenProvider: { "token" })
+        var exportURL: URL?
+        let pdf = PDFDocument(); pdf.insert(PDFPage(), at: 0)
+        StubProtocol.handler = { request in exportURL = request.url; return (200, [:], pdf.dataRepresentation() ?? Data()) }
+        model.open(file: file("Informe", size: nil, mime: "application/vnd.google-apps.document"), account: .demo, client: api)
+        XCTAssertEqual(model.phase, .loading, "Exports skip the unknown-size confirmation")
+        try await settle(model)
+        XCTAssertEqual(model.phase, .ready)
+        XCTAssertEqual(exportURL?.path, "/drive/v3/files/test/export")
+        XCTAssertEqual(URLComponents(url: exportURL!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "mimeType" }?.value, "application/pdf")
+        XCTAssertEqual(model.localURL?.pathExtension, "pdf")
     }
     func testTextPreviewSaveAndCleanupNeverChangesSourceOrSavedCopy() async throws {
         let (root, demo, model, api) = try fixture()

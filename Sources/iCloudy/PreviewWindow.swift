@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import QuickLookUI
+import AVKit
 
 @MainActor
 final class PreviewWindow: NSObject, NSWindowDelegate {
@@ -103,6 +104,17 @@ private struct NativePreview: NSViewRepresentable {
     }
 }
 
+/// Local playback only: the file is complete on disk before the player sees it.
+private struct MediaPreview: View {
+    let url: URL
+    @State private var player: AVPlayer?
+    var body: some View {
+        VideoPlayer(player: player)
+            .onAppear { player = AVPlayer(url: url) }
+            .onDisappear { player?.pause(); player = nil }
+    }
+}
+
 private struct PlainTextPreview: NSViewRepresentable {
     let text: String
     func makeNSView(context: Context) -> NSScrollView {
@@ -163,9 +175,11 @@ private struct PreviewContent: View {
                             if text.isEmpty { Text("Archivo de texto vacío").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity) }
                             else { PlainTextPreview(text: text) }
                         }
+                    } else if let url = model.localURL, case .media = model.kind {
+                        MediaPreview(url: url).id(url)
                     } else if let url = model.localURL { NativePreview(url: url, owner: owner).id(url) }
                 case .unsupported:
-                    unavailable("Vista previa no disponible", message: "Esta versión permite PDF, imágenes y texto. Los documentos de Google se abren en el navegador o se exportan desde su menú.")
+                    unavailable("Vista previa no disponible", message: "Se admiten PDF, imágenes, texto y código, audio y vídeo (MP4, MOV, MP3, M4A, WAV…), documentos de Office e iWork, y Google Docs, Sheets y Slides exportados a PDF. Otros formatos se descargan o se abren en el navegador.")
                 case .failed(let message):
                     unavailable("No se pudo previsualizar", message: message)
                 }

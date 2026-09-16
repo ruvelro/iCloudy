@@ -1,4 +1,8 @@
-# Vista previa — primera versión implementada
+# Vista previa
+
+Segunda fase implementada: además de PDF, imágenes y texto, se previsualizan Google Docs, Sheets, Slides y Drawings exportados a un PDF temporal mediante `files.export` (sin confirmación de tamaño porque Google limita la exportación a 10 MB), audio y vídeo descargados completos y reproducidos con AVKit (sin streaming), y documentos de Office e iWork mediante Quick Look tras comprobar su cabecera (contenedor ZIP para los formatos modernos, OLE para los antiguos, `{\rtf` para RTF). Los formatos de audio y vídeo dependen de los codecs de macOS; un archivo no reproducible se rechaza antes de abrir el reproductor.
+
+## Primera versión
 
 Objetivo: consultar un archivo sin elegir dónde guardarlo y sin dejar una copia permanente administrada por iCloudy. No significa cero descarga: para Quick Look necesitamos una copia local temporal.
 

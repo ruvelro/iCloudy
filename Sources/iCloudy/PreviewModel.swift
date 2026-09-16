@@ -2,20 +2,54 @@ import Foundation
 import Combine
 import ImageIO
 import PDFKit
+import AVFoundation
 
 enum PreviewKind: Equatable {
     case pdf, image(String), text
+    /// Google Docs, Sheets and Slides exported to a temporary PDF through `files.export`.
+    case exportedPDF
+    /// Audio or video played locally with AVKit after the whole file is downloaded; no streaming.
+    case media(String)
+    /// Word, Excel, PowerPoint, RTF and iWork files rendered by Quick Look's own sandboxed previewer.
+    case office(String)
     var localExtension: String {
-        switch self { case .pdf: return "pdf"; case .image(let ext): return ext; case .text: return "txt" }
+        switch self {
+        case .pdf, .exportedPDF: return "pdf"
+        case .image(let ext), .media(let ext), .office(let ext): return ext
+        case .text: return "txt"
+        }
     }
+    /// Only these kinds go through QLPreviewView; text has its own viewer and media its own player.
+    var usesQuickLook: Bool {
+        switch self { case .pdf, .exportedPDF, .image, .office: return true; case .text, .media: return false }
+    }
+    var exportMime: String? { self == .exportedPDF ? "application/pdf" : nil }
+    static let mediaExtensions: Set<String> = ["mp4", "m4v", "mov", "mp3", "m4a", "aac", "wav", "aiff", "aif", "caf"]
+    static let officeExtensions: Set<String> = ["doc", "docx", "xls", "xlsx", "ppt", "pptx", "rtf", "pages", "numbers", "key"]
+    static let exportableGoogleMimes: Set<String> = ["application/vnd.google-apps.document", "application/vnd.google-apps.spreadsheet", "application/vnd.google-apps.presentation", "application/vnd.google-apps.drawing"]
     static func forFile(_ file: CloudFile) -> PreviewKind? {
-        guard !file.isFolder, !file.isGoogleDocument else { return nil }
+        guard !file.isFolder else { return nil }
+        if file.isGoogleDocument { return exportableGoogleMimes.contains(file.mime) ? .exportedPDF : nil }
         let ext = (file.name as NSString).pathExtension.lowercased()
         // Explicit allowlist; never send arbitrary code, HTML, SVG or packages to Quick Look.
         if ext == "pdf" { return .pdf }
         if ["jpg", "jpeg", "png", "heic", "heif", "gif", "tif", "tiff", "bmp", "webp"].contains(ext) { return .image(ext) }
         if ["txt", "md", "markdown", "csv", "tsv", "log", "json", "yaml", "yml", "xml", "swift", "py", "js", "ts", "tsx", "jsx", "css", "sh", "c", "h", "cpp", "rs", "go", "java", "sql", "toml", "ini", "conf"].contains(ext) { return .text }
+        if mediaExtensions.contains(ext) { return .media(ext) }
+        if officeExtensions.contains(ext) { return .office(ext) }
         return nil
+    }
+    /// Cheap structural check before handing a downloaded file to a system framework.
+    static func looksValid(_ kind: PreviewKind, at url: URL) -> Bool {
+        guard case .office(let ext) = kind, let handle = try? FileHandle(forReadingFrom: url) else { return true }
+        defer { try? handle.close() }
+        let head = handle.readData(ofLength: 8)
+        switch ext {
+        case "docx", "xlsx", "pptx", "pages", "numbers", "key": return head.starts(with: [0x50, 0x4B]) // zip container
+        case "doc", "xls", "ppt": return head.starts(with: [0xD0, 0xCF, 0x11, 0xE0]) // OLE compound file
+        case "rtf": return head.starts(with: Array("{\\rtf".utf8))
+        default: return true
+        }
     }
 }
 
@@ -67,6 +101,8 @@ final class PreviewModel: ObservableObject {
     @Published private(set) var total: Int64 = 0
     @Published private(set) var localURL: URL?
     @Published private(set) var text: String?
+    /// What the ready file is, so the window can pick the right viewer.
+    var kind: PreviewKind? { file.flatMap(PreviewKind.forFile) }
     @Published private(set) var textTruncated = false
     @Published var saveError: String?
     var willDiscard: (() -> Void)?
@@ -91,9 +127,10 @@ final class PreviewModel: ObservableObject {
         if self.file == file, self.account?.id == account.id, phase == .ready || phase == .loading { return }
         close()
         self.file = file; self.account = account; self.client = client
-        guard PreviewKind.forFile(file) != nil else { phase = .unsupported; return }
+        guard let kind = PreviewKind.forFile(file) else { phase = .unsupported; return }
         guard store != nil else { phase = .failed(initializationError ?? "No se pudo preparar la vista previa."); return }
-        if file.size == nil || file.size! < 0 || file.size! > Self.automaticLimit { phase = .confirmation }
+        // Exports have no size, but Drive caps them at 10 MB, well under the automatic limit.
+        if kind != .exportedPDF, file.size == nil || file.size! < 0 || file.size! > Self.automaticLimit { phase = .confirmation }
         else { start() }
     }
     func start() {
@@ -115,7 +152,7 @@ final class PreviewModel: ObservableObject {
                     if generation == request { task = nil }
                 }
                 do {
-                    try await client.download(file: file, to: destination, maxBytes: limit) { [weak self] bytes, expected in
+                    try await client.download(file: file, to: destination, exportMime: kind.exportMime, maxBytes: limit) { [weak self] bytes, expected in
                         guard let self, self.generation == request, self.phase == .loading else { return }
                         self.received = bytes; self.total = expected
                     }
@@ -136,8 +173,13 @@ final class PreviewModel: ObservableObject {
                             guard !prefix.contains(0) else { throw CloudError.message("Este archivo contiene datos binarios, no texto plano.") }
                             text = String(decoding: prefix, as: UTF8.self)
                         }
-                    case .pdf:
+                    case .pdf, .exportedPDF:
                         guard PDFDocument(url: destination) != nil else { throw CloudError.message("El archivo no es un PDF válido.") }
+                    case .media:
+                        let asset = AVURLAsset(url: destination)
+                        guard try await asset.load(.isPlayable) else { throw CloudError.message("Este archivo de audio o vídeo no se puede reproducir en este Mac.") }
+                    case .office:
+                        guard PreviewKind.looksValid(kind, at: destination) else { throw CloudError.message("El contenido no corresponde a un documento de Office válido.") }
                     case .image:
                         guard let source = CGImageSourceCreateWithURL(destination as CFURL, nil), CGImageSourceGetCount(source) > 0 else {
                             throw CloudError.message("El archivo no es una imagen compatible.")
