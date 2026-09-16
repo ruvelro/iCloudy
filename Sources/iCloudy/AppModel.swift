@@ -6,15 +6,17 @@ import Combine
 final class AppModel: ObservableObject {
     @Published var accounts: [Account] = []
     @Published var selectedAccountID: String?
-    @Published var files: [CloudFile] = []
+    @Published var files: [CloudFile] = [] { didSet { updateVisibleFiles() } }
     @Published var path: [CloudFile] = []
     @Published var loading = false
     @Published var error: String?
     @Published var connecting = false
     @Published var connectionError: String?
     @Published var showConnect = false
-    @Published var search = ""
-    @Published var favorites: [Favorite] = []
+    @Published var search = "" { didSet { updateVisibleFiles() } }
+    @Published var favorites: [Favorite] = [] { didSet { favoriteKeys = Set(favorites.map(\.id)) } }
+    /// Filtered and sorted once per change of `files`, `search` or `sortMode`, not on every render.
+    @Published private(set) var visibleFiles: [CloudFile] = []
     @Published var showGlobalSearch = false
     @Published var appearanceAccount: Account?
     @Published private(set) var appearances: [String: AccountAppearance] = [:]
@@ -22,7 +24,7 @@ final class AppModel: ObservableObject {
     /// Accounts whose provider rejected the stored credential. Shown in the sidebar until the user reconnects.
     @Published private(set) var expiredAccountIDs: Set<String> = []
     @Published var viewMode = UserDefaults.standard.string(forKey: "viewMode") ?? "list" { didSet { UserDefaults.standard.set(viewMode, forKey: "viewMode") } }
-    @Published var sortMode = "name"
+    @Published var sortMode = "name" { didSet { updateVisibleFiles() } }
     @Published var showNameDialog = false
     @Published var editName = ""
     @Published var editingFile: CloudFile?
@@ -38,20 +40,25 @@ final class AppModel: ObservableObject {
     private var navigationID = UUID()
     private var quotaTasks: [String: Task<Void, Never>] = [:]
     private var quotaRequestIDs: [String: UUID] = [:]
+    private var quotaFetched: [String: Date] = [:]
+    private var favoriteKeys: Set<String> = []
     private var subscription: AnyCancellable?
     private var editContext: (Account, String)?
     private let favoritesURL = LocalStore.directory.appendingPathComponent("favorites.json")
+    /// Opening folders refreshes the quota at most this often; explicit requests and finished transfers always do.
+    static let quotaRefreshInterval: TimeInterval = 300
 
     var account: Account? { accounts.first { $0.id == selectedAccountID } }
     var folderID: String { path.last?.id ?? "root" }
     var transfers: [Transfer] { queue.items }
     var hasActiveTransfers: Bool { queue.hasActive }
     var location: String { ([account?.email ?? ""] + path.map(\.name)).joined(separator: " / ") }
-    var visibleFiles: [CloudFile] {
-        files.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }.sorted { a, b in
+    private func updateVisibleFiles() {
+        let term = search, mode = sortMode
+        visibleFiles = files.filter { term.isEmpty || $0.name.localizedCaseInsensitiveContains(term) }.sorted { a, b in
             if a.isFolder != b.isFolder { return a.isFolder }
-            if sortMode == "size", a.size != b.size { return (a.size ?? 0) > (b.size ?? 0) }
-            if sortMode == "date", a.modified != b.modified { return (a.modified ?? .distantPast) > (b.modified ?? .distantPast) }
+            if mode == "size", a.size != b.size { return (a.size ?? 0) > (b.size ?? 0) }
+            if mode == "date", a.modified != b.modified { return (a.modified ?? .distantPast) > (b.modified ?? .distantPast) }
             return a.name.localizedStandardCompare(b.name) == .orderedAscending
         }
     }
@@ -62,6 +69,8 @@ final class AppModel: ObservableObject {
             accounts = try Vault.read([Account].self, key: "accounts") ?? []
             favorites = try LocalStore.read([Favorite].self, from: favoritesURL) ?? []
         } catch { self.error = error.localizedDescription }
+        // Property observers do not run while an initializer sets its own properties.
+        favoriteKeys = Set(favorites.map(\.id))
         if UserDefaults.standard.bool(forKey: "demoEnabled") { enableDemo(select: false) }
         selectedAccountID = accounts.first?.id
         queue.client = { [weak self] id in
@@ -71,9 +80,10 @@ final class AppModel: ObservableObject {
         queue.didComplete = { [weak self] id in
             guard let self else { return }
             if self.selectedAccountID == id { self.reload() }
-            else if let account = self.accounts.first(where: { $0.id == id }) { self.refreshStorage(account) }
+            if let account = self.accounts.first(where: { $0.id == id }) { self.refreshStorage(account, force: true) }
         }
-        subscription = queue.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        // Only structural queue changes reach the explorer; progress ticks re-render the transfer panel alone.
+        subscription = queue.stateChanges.sink { [weak self] _ in self?.objectWillChange.send() }
         if let message = queue.persistenceError { error = message }
         if account != nil { reload() }
         for account in accounts where account.id != selectedAccountID { refreshStorage(account) }
@@ -151,8 +161,9 @@ final class AppModel: ObservableObject {
             if selectedAccountID == account.id { select(accounts.first?.id) }
         } catch { self.error = error.localizedDescription }
     }
-    func refreshStorage(_ account: Account) {
+    func refreshStorage(_ account: Account, force: Bool = false) {
         guard accounts.contains(where: { $0.id == account.id }) else { return }
+        if !force, case .available = storageQuotas[account.id], let fetched = quotaFetched[account.id], Date().timeIntervalSince(fetched) < Self.quotaRefreshInterval { return }
         quotaTasks[account.id]?.cancel()
         let requestID = UUID(); quotaRequestIDs[account.id] = requestID
         // Keep an already displayed value visible while refreshing it.
@@ -164,7 +175,7 @@ final class AppModel: ObservableObject {
                 let quota = try await client(account).storageQuota()
                 try Task.checkCancellation()
                 guard quotaRequestIDs[account.id] == requestID else { return }
-                storageQuotas[account.id] = .available(quota)
+                storageQuotas[account.id] = .available(quota); quotaFetched[account.id] = Date()
             } catch {
                 guard !Task.isCancelled, quotaRequestIDs[account.id] == requestID else { return }
                 storageQuotas[account.id] = .unavailable(error.localizedDescription)
@@ -209,7 +220,11 @@ final class AppModel: ObservableObject {
         let parent = folderID; loading = true
         navigationTask = Task {
             do {
-                let result = try await client(account).list(parent: parent)
+                // Intermediate pages appear as they arrive; `loading` stays on until the last one.
+                let result = try await client(account).list(parent: parent) { [weak self] partial in
+                    guard let self, self.navigationID == requestID else { return }
+                    self.files = partial
+                }
                 guard navigationID == requestID else { return }
                 files = result; loading = false
             } catch {
@@ -278,7 +293,7 @@ final class AppModel: ObservableObject {
             showNameDialog = false; reload()
         } catch { self.error = error.localizedDescription }
     }
-    func isFavorite(_ file: CloudFile) -> Bool { favorites.contains { $0.accountID == selectedAccountID && $0.file.id == file.id } }
+    func isFavorite(_ file: CloudFile) -> Bool { favoriteKeys.contains((selectedAccountID ?? "") + ":" + file.id) }
     func toggleFavorite(_ file: CloudFile) {
         guard let account else { return }
         if isFavorite(file) { favorites.removeAll { $0.accountID == account.id && $0.file.id == file.id } }

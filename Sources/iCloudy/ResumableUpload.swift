@@ -80,7 +80,8 @@ extension CloudAPI {
             try Task.checkCancellation()
             let current = try local.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
             guard current.fileSize == attributes.fileSize, current.contentModificationDate == cursor.modified else { throw CloudError.message("El archivo cambió durante la subida.") }
-            let data = try handle.read(upToCount: 5 * 1024 * 1024) ?? Data()
+            // Reading 5 MiB blocks on the main actor stalled the interface on slow volumes.
+            let data = try await blockingIO { try handle.read(upToCount: 5 * 1024 * 1024) ?? Data() }
             guard total == 0 || !data.isEmpty, cursor.offset + Int64(data.count) <= total else { throw CloudError.message("El tamaño del origen ha cambiado.") }
             var upload = URLRequest(url: url)
             upload.httpMethod = "PUT"; upload.timeoutInterval = 180

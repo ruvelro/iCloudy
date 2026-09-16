@@ -116,6 +116,12 @@ struct Favorite: Identifiable, Codable {
     var path: [CloudFile]
 }
 
+/// Runs blocking file-system work off the main actor. Network calls were already asynchronous; disk reads, directory
+/// walks and moves were not, and on slow or external volumes they froze the interface.
+func blockingIO<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+    try await Task.detached(priority: .userInitiated) { try work() }.value
+}
+
 enum LocalStore {
     static var directory: URL { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("iCloudy", isDirectory: true) }
     static func save<T: Encodable>(_ value: T, to url: URL) throws {

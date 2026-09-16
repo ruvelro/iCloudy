@@ -40,7 +40,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model?.queue.pauseAll()
         return .terminateNow
     }
-    func applicationWillTerminate(_ notification: Notification) { model?.preview.close() }
+    func applicationWillTerminate(_ notification: Notification) {
+        model?.queue.flush() // coalesced checkpoints still in memory
+        model?.preview.close()
+    }
 }
 
 struct ExplorerView: View {
@@ -87,7 +90,7 @@ struct ExplorerView: View {
                                         Divider()
                                     }
                                     Button("Personalizar nube…") { model.appearanceAccount = account }
-                                    Button("Actualizar espacio") { model.refreshStorage(account) }
+                                    Button("Actualizar espacio") { model.refreshStorage(account, force: true) }
                                     Divider()
                                     Button("Desconectar cuenta…", role: .destructive) {
                                         disconnectTarget = account; confirmDisconnect = true
@@ -152,7 +155,7 @@ struct ExplorerView: View {
                     fileBrowser
                 }
                 // Keep the panel visible while the saved queue is unreadable, otherwise the recovery button would never appear.
-                if showTransfers && (!model.transfers.isEmpty || model.queue.persistenceError != nil) { transferList }
+                if showTransfers && (!model.transfers.isEmpty || model.queue.persistenceError != nil) { TransferPanel(queue: model.queue) }
                 Divider()
                 HStack {
                     Text("\(model.visibleFiles.count) elementos")
@@ -353,17 +356,22 @@ struct ExplorerView: View {
         }
     }
 
-    private var transferList: some View {
+}
+
+/// Observes the queue directly: progress ticks re-render this panel only, not the whole explorer.
+struct TransferPanel: View {
+    @ObservedObject var queue: TransferQueue
+    var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Transferencias").font(.headline)
                 Spacer()
-                Button("Pausar todas") { model.queue.pauseAll() }.buttonStyle(.link).font(.caption)
-                Button("Limpiar completadas") { model.queue.clearCompleted() }.buttonStyle(.link).font(.caption)
+                Button("Pausar todas") { queue.pauseAll() }.buttonStyle(.link).font(.caption)
+                Button("Limpiar completadas") { queue.clearCompleted() }.buttonStyle(.link).font(.caption)
             }
             ScrollView {
                 LazyVStack(spacing: 10) {
-                    ForEach(model.transfers.reversed()) { transfer in
+                    ForEach(queue.items.reversed()) { transfer in
                         HStack(alignment: .top) {
                             Image(systemName: transfer.failed ? "exclamationmark.circle.fill" : (transfer.finished ? "checkmark.circle.fill" : "arrow.up.arrow.down.circle"))
                                 .foregroundStyle(transfer.failed ? .red : (transfer.finished ? .green : .secondary))
@@ -379,22 +387,22 @@ struct ExplorerView: View {
                             }.font(.caption)
                             Spacer()
                             if [.failed, .paused, .cancelled].contains(transfer.state) {
-                                Button(transfer.state == .failed ? "Reintentar" : "Reanudar") { model.queue.retry(transfer.id) }
+                                Button(transfer.state == .failed ? "Reintentar" : "Reanudar") { queue.retry(transfer.id) }
                             }
                             if [.running, .queued].contains(transfer.state) {
-                                Button { model.queue.cancel(transfer.id, pause: true) } label: { Image(systemName: "pause.circle") }.help("Pausar")
-                                Button { model.queue.cancel(transfer.id) } label: { Image(systemName: "xmark.circle") }.help("Cancelar")
+                                Button { queue.cancel(transfer.id, pause: true) } label: { Image(systemName: "pause.circle") }.help("Pausar")
+                                Button { queue.cancel(transfer.id) } label: { Image(systemName: "xmark.circle") }.help("Cancelar")
                             }
                         }
                     }
                 }
             }.frame(maxHeight: 180)
-            if let message = model.queue.persistenceError {
+            if let message = queue.persistenceError {
                 HStack(alignment: .top) {
                     Text(message).foregroundStyle(.red).font(.caption).fixedSize(horizontal: false, vertical: true)
                     Spacer()
-                    if model.queue.canDiscardSavedQueue {
-                        Button("Descartar cola guardada") { model.queue.discardSavedQueue() }.font(.caption)
+                    if queue.canDiscardSavedQueue {
+                        Button("Descartar cola guardada") { queue.discardSavedQueue() }.font(.caption)
                             .help("Aparta el archivo dañado con una copia junto al original y permite crear transferencias nuevas.")
                     }
                 }

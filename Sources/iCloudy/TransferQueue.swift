@@ -12,19 +12,29 @@ struct ConflictRequest: Identifiable {
 @MainActor
 final class TransferQueue: ObservableObject {
     @Published private(set) var items: [Transfer] = []
-    @Published var conflict: ConflictRequest?
-    @Published var persistenceError: String?
+    @Published var conflict: ConflictRequest? { didSet { stateChanges.send() } }
+    @Published var persistenceError: String? { didSet { stateChanges.send() } }
+    /// Fires on structural changes only: jobs added or removed, state transitions, conflicts and persistence errors.
+    /// Progress ticks mutate `items` without touching it, so views observing the whole app do not re-render per block.
+    let stateChanges = PassthroughSubject<Void, Never>()
     var client: ((String) throws -> CloudAPI)?
     var didComplete: ((String) -> Void)?
     var retryDelay: Double = 1
+    /// Minimum interval between two progress updates; URLSession can report dozens of times per second.
+    var reportInterval: TimeInterval = 0.1
+    /// Delay before coalesced checkpoint writes reach disk. State transitions and new upload sessions write at once.
+    var flushDelay: Duration = .seconds(2)
     var isWorking: Bool { task != nil }
     let storeURL: URL
     private var writable = true
+    private var dirty = false
+    private var flushTask: Task<Void, Never>?
     private var task: Task<Void, Never>?
     private var activeID: UUID?
     private var conflictContinuation: CheckedContinuation<ConflictChoice, Error>?
     private var started = Date()
     private var startBytes: Int64 = 0
+    private var lastReport = Date.distantPast
 
     init(storeURL: URL = LocalStore.directory.appendingPathComponent("transfers.json")) {
         self.storeURL = storeURL
@@ -45,20 +55,43 @@ final class TransferQueue: ObservableObject {
                 try FileManager.default.moveItem(at: storeURL, to: backup)
             }
             items = []; writable = true; persistenceError = nil
+            stateChanges.send()
         } catch { persistenceError = "No se pudo apartar la cola dañada: \(error.localizedDescription)" }
     }
     var hasActive: Bool { items.contains { [.queued, .running].contains($0.state) } }
     func hasActive(accountID: String) -> Bool {
         items.contains { $0.accountID == accountID && ([.queued, .running].contains($0.state) || $0.id == activeID) }
     }
-    private func persist() throws {
+
+    /// Coalesced writes batch the per-block checkpoints into one file write every `flushDelay`. The server is the
+    /// authority on resume anyway, so losing the last seconds of offsets only costs a probe request.
+    private func persist(coalesce: Bool = false) throws {
         guard writable else { throw CloudError.message(persistenceError ?? "La cola no se puede guardar.") }
+        if coalesce { dirty = true; scheduleFlush(); return }
+        flushTask?.cancel(); flushTask = nil; dirty = false
         do { try LocalStore.save(items, to: storeURL) }
         catch { persistenceError = "No se pudo guardar la cola: \(error.localizedDescription)"; throw error }
     }
+    private func scheduleFlush() {
+        guard flushTask == nil else { return }
+        flushTask = Task { [weak self] in
+            guard let delay = self?.flushDelay else { return }
+            try? await Task.sleep(for: delay)
+            guard let self, !Task.isCancelled else { return }
+            self.flushTask = nil
+            self.flush()
+        }
+    }
+    /// Writes pending coalesced changes now. Called before the process exits.
+    func flush() {
+        guard dirty, writable else { return }
+        do { try persist() } catch { persistenceError = error.localizedDescription }
+    }
+
     func add(_ jobs: [Transfer]) throws {
         items += jobs
         do { try persist() } catch { items.removeAll { item in jobs.contains { $0.id == item.id } }; throw error }
+        stateChanges.send()
         kick()
     }
     static func bookmark(_ url: URL) throws -> Data { try url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) }
@@ -66,6 +99,7 @@ final class TransferQueue: ObservableObject {
         guard let index = index(id), [.failed, .paused, .cancelled].contains(items[index].state) else { return }
         items[index].state = .queued; items[index].detail = ""; items[index].attempts = 0
         do { try persist(); kick() } catch { items[index].state = .failed }
+        stateChanges.send()
     }
     func cancel(_ id: UUID, pause: Bool = false) {
         guard let index = index(id), !items[index].finished else { return }
@@ -75,6 +109,7 @@ final class TransferQueue: ObservableObject {
             conflictContinuation?.resume(throwing: CancellationError()); conflictContinuation = nil; conflict = nil
         }
         do { try persist() } catch { persistenceError = error.localizedDescription }
+        stateChanges.send()
     }
     func pauseAll() {
         for id in items.filter({ [.running, .queued].contains($0.state) }).map(\.id) { cancel(id, pause: true) }
@@ -82,6 +117,7 @@ final class TransferQueue: ObservableObject {
     func clearCompleted() {
         items.removeAll { $0.state == .completed }
         do { try persist() } catch { persistenceError = error.localizedDescription }
+        stateChanges.send()
     }
     func resolve(_ choice: ConflictChoice, applyToBatch: Bool) {
         guard let request = conflict, let index = index(request.transferID) else { return }
@@ -98,9 +134,14 @@ final class TransferQueue: ObservableObject {
         guard let index = index(id) else { throw CancellationError() }
         return items[index]
     }
-    private func edit(_ id: UUID, _ change: (inout Transfer) -> Void) throws {
+    /// `coalesce` defers the disk write; a state transition always writes immediately and notifies observers.
+    private func edit(_ id: UUID, coalesce: Bool = false, _ change: (inout Transfer) -> Void) throws {
         guard let index = index(id) else { throw CancellationError() }
-        change(&items[index]); try persist()
+        let before = items[index].state
+        change(&items[index])
+        let transition = items[index].state != before
+        try persist(coalesce: coalesce && !transition)
+        if transition { stateChanges.send() }
     }
     private func kick() {
         guard task == nil, let next = items.first(where: { $0.state == .queued }) else { return }
@@ -132,7 +173,9 @@ final class TransferQueue: ObservableObject {
                     do { try persist() } catch { persistenceError = error.localizedDescription }
                 }
             }
-            activeID = nil; task = nil; kick()
+            activeID = nil; task = nil
+            stateChanges.send()
+            kick()
         }
     }
     private func choose(_ id: UUID, name: String, replace: Bool, folder: Bool) async throws -> ConflictChoice {
@@ -145,6 +188,10 @@ final class TransferQueue: ObservableObject {
     }
     private func report(_ id: UUID, base: Int64, bytes: Int64, total: Int64) {
         guard let index = index(id), items[index].state == .running else { return }
+        let now = Date()
+        // Throttle to `reportInterval`, but always deliver the final tick of an item.
+        guard now.timeIntervalSince(lastReport) >= reportInterval || (total > 0 && bytes >= total) else { return }
+        lastReport = now
         items[index].bytes = base + bytes
         items[index].total = max(items[index].total, base + total)
         items[index].bytesPerSecond = Double(max(0, items[index].bytes - startBytes)) / max(0.1, Date().timeIntervalSince(started))
@@ -167,47 +214,54 @@ final class TransferQueue: ObservableObject {
         }
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let source = url
         if current.direction == .upload {
-            let total = try Self.localSize(url)
+            let total = try await blockingIO { try Self.localSize(source) }
             try edit(id) { $0.total = total; $0.bytes = 0 }
             var done: Int64 = 0
-            try await uploadTree(id, api: api, local: url, parent: current.parent, key: ".", done: &done)
+            var siblings: [String: [CloudFile]] = [:]
+            try await uploadTree(id, api: api, local: source, parent: current.parent, key: ".", done: &done, siblings: &siblings)
         } else if let file = current.file {
             try edit(id) { $0.bytes = 0 }
             var done: Int64 = 0
-            try await downloadTree(id, api: api, file: file, folder: url, key: ".", done: &done)
+            try await downloadTree(id, api: api, file: file, folder: source, key: ".", done: &done)
         }
     }
-    private static func localSize(_ url: URL) throws -> Int64 {
+    /// Walks the tree synchronously; callers run it through `blockingIO` because large folders take a while.
+    nonisolated private static func localSize(_ url: URL) throws -> Int64 {
         let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey])
         guard values.isSymbolicLink != true else { throw CloudError.message("No se admiten enlaces simbólicos: \(url.lastPathComponent)") }
         if values.isDirectory == true { return try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil).reduce(0) { try $0 + localSize($1) } }
         return Int64(values.fileSize ?? 0)
     }
-    private func uploadTree(_ id: UUID, api: CloudAPI, local: URL, parent: String, key: String, done: inout Int64) async throws {
+    /// `siblings` caches one remote listing per destination folder for the whole run. Before, every uploaded item listed
+    /// its parent again, which made a folder of N files cost N listings of N items.
+    private func uploadTree(_ id: UUID, api: CloudAPI, local: URL, parent: String, key: String, done: inout Int64, siblings: inout [String: [CloudFile]]) async throws {
         try Task.checkCancellation()
         let values = try local.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey])
         guard values.isSymbolicLink != true else { throw CloudError.message("No se admiten enlaces simbólicos.") }
         let folder = values.isDirectory == true
-        if try job(id).completedPaths.contains(key) { done += try Self.localSize(local); return }
+        if try job(id).completedPaths.contains(key) { done += try await blockingIO { try Self.localSize(local) }; return }
         var current = try job(id)
         if current.uncertainFolders.contains(key) {
             // An earlier POST may have committed even though its reply was lost. Recheck conflicts before creating again.
             try edit(id) { $0.names[key] = nil; $0.replacements[key] = nil; $0.uncertainFolders.remove(key) }
+            siblings[parent] = nil
             current = try job(id)
         }
         if current.names[key] == nil {
-            let siblings = try await api.list(parent: parent)
-            let matches = siblings.filter { $0.name.localizedCaseInsensitiveCompare(local.lastPathComponent) == .orderedSame }
+            if siblings[parent] == nil { siblings[parent] = try await api.list(parent: parent) }
+            let existing = siblings[parent] ?? []
+            let matches = existing.filter { $0.name.localizedCaseInsensitiveCompare(local.lastPathComponent) == .orderedSame }
             var name = local.lastPathComponent
             var replacing: String?
-            if let existing = matches.first {
-                let choice = try await choose(id, name: name, replace: matches.count == 1 && existing.isFolder == folder && !existing.isGoogleDocument, folder: folder)
-                if choice == .skip { try edit(id) { $0.completedPaths.insert(key) }; done += try Self.localSize(local); return }
-                if choice == .copy { name = Self.unique(name, existing: siblings.map(\.name)) }
-                if choice == .replace { replacing = existing.id }
+            if let match = matches.first {
+                let choice = try await choose(id, name: name, replace: matches.count == 1 && match.isFolder == folder && !match.isGoogleDocument, folder: folder)
+                if choice == .skip { try edit(id) { $0.completedPaths.insert(key) }; done += try await blockingIO { try Self.localSize(local) }; return }
+                if choice == .copy { name = Self.unique(name, existing: existing.map(\.name)) }
+                if choice == .replace { replacing = match.id }
             }
-            try edit(id) { $0.names[key] = name; $0.replacements[key] = replacing }
+            try edit(id, coalesce: true) { $0.names[key] = name; $0.replacements[key] = replacing }
             current = try job(id)
         }
         let name = current.names[key]!
@@ -215,20 +269,32 @@ final class TransferQueue: ObservableObject {
             let remote: String
             if let known = current.folders[key] ?? current.replacements[key] { remote = known }
             else {
+                // The marker must be on disk before the POST, so it is never coalesced.
                 try edit(id) { $0.uncertainFolders.insert(key) }
                 do { remote = try await api.createFolder(name: name, parent: parent) }
                 catch { throw CloudError.message("No se confirmó la creación de \(name). Revisa el destino antes de reintentar. \(error.localizedDescription)") }
                 try edit(id) { $0.folders[key] = remote; $0.uncertainFolders.remove(key) }
+                siblings[parent, default: []].append(CloudFile(id: remote, name: name, mime: "application/vnd.google-apps.folder", size: nil, modified: nil, webURL: nil, isFolder: true))
+                // A folder created a moment ago is empty: its children need no listing at all.
+                siblings[remote] = []
             }
-            for child in try FileManager.default.contentsOfDirectory(at: local, includingPropertiesForKeys: nil).sorted(by: { $0.path < $1.path }) {
-                try await uploadTree(id, api: api, local: child, parent: remote, key: key + "/" + child.lastPathComponent, done: &done)
+            let children = try await blockingIO { try FileManager.default.contentsOfDirectory(at: local, includingPropertiesForKeys: nil).sorted(by: { $0.path < $1.path }) }
+            for child in children {
+                try await uploadTree(id, api: api, local: child, parent: remote, key: key + "/" + child.lastPathComponent, done: &done, siblings: &siblings)
             }
         } else {
             let base = done
-            try await api.resumableUpload(local: local, parent: parent, name: name, replacing: current.replacements[key], checkpoint: current.uploads[key], save: { checkpoint in try self.edit(id) { $0.uploads[key] = checkpoint } }, progress: { bytes, total in self.report(id, base: base, bytes: bytes, total: total) })
+            let replacing = current.replacements[key]
+            try await api.resumableUpload(local: local, parent: parent, name: name, replacing: replacing, checkpoint: current.uploads[key], save: { checkpoint in
+                // A new session URL and the completion are durable at once; intermediate offsets are coalesced.
+                try self.edit(id, coalesce: checkpoint.offset > 0 && !checkpoint.complete) { $0.uploads[key] = checkpoint }
+            }, progress: { bytes, total in self.report(id, base: base, bytes: bytes, total: total) })
             done += Int64(values.fileSize ?? 0)
+            if replacing == nil {
+                siblings[parent, default: []].append(CloudFile(id: "", name: name, mime: "application/octet-stream", size: values.fileSize.map(Int64.init), modified: nil, webURL: nil, isFolder: false))
+            }
         }
-        try edit(id) { $0.completedPaths.insert(key) }
+        try edit(id, coalesce: true) { $0.completedPaths.insert(key) }
     }
     static func unique(_ name: String, existing: [String]) -> String {
         let url = URL(fileURLWithPath: name)
@@ -256,7 +322,7 @@ final class TransferQueue: ObservableObject {
                 if choice == .replace { replace = true }
             }
             let selectedName = target.lastPathComponent
-            try edit(id) { $0.names[key] = selectedName; if replace { $0.replacements[key] = "local" } }
+            try edit(id, coalesce: true) { $0.names[key] = selectedName; if replace { $0.replacements[key] = "local" } }
             current = try job(id)
         }
         // Never follow an externally substituted symlink, including on recovery.
@@ -270,16 +336,20 @@ final class TransferQueue: ObservableObject {
             defer { try? FileManager.default.removeItem(at: temporary) }
             if file.isGoogleDocument && !exporting {
                 guard let url = file.webURL else { throw CloudError.message("No hay enlace web para este documento.") }
-                try PropertyListSerialization.data(fromPropertyList: ["URL": url.absoluteString], format: .xml, options: 0).write(to: temporary)
+                let link = try PropertyListSerialization.data(fromPropertyList: ["URL": url.absoluteString], format: .xml, options: 0)
+                try await blockingIO { try link.write(to: temporary) }
             } else {
                 let base = done
                 try await api.download(file: file, to: temporary, exportMime: exporting ? current.exportMime : nil) { bytes, total in self.report(id, base: base, bytes: bytes, total: total) }
             }
             try Task.checkCancellation()
-            if replace && FileManager.default.fileExists(atPath: target.path) { _ = try FileManager.default.replaceItemAt(target, withItemAt: temporary) }
-            else { try FileManager.default.moveItem(at: temporary, to: target) }
+            let destination = target, replacing = replace
+            try await blockingIO {
+                if replacing && FileManager.default.fileExists(atPath: destination.path) { _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary) }
+                else { try FileManager.default.moveItem(at: temporary, to: destination) }
+            }
             done += file.size ?? 0
         }
-        try edit(id) { $0.completedPaths.insert(key) }
+        try edit(id, coalesce: true) { $0.completedPaths.insert(key) }
     }
 }

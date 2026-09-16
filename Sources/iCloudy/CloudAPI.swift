@@ -11,6 +11,8 @@ final class CloudAPI {
     /// Set once the provider rejects the stored credential. Only reconnecting the account, which replaces this client, clears it.
     private(set) var sessionExpired = false
     var sessionDidExpire: (() -> Void)?
+    /// Keychain reads are synchronous and comparatively slow; the credential is read once per client and kept current here.
+    private var cachedCredential: Credential?
     func invalidate() {
         invalidated = true
         refreshTask?.cancel()
@@ -31,7 +33,8 @@ final class CloudAPI {
         if let tokenProvider { return try await tokenProvider() }
         guard !sessionExpired else { throw CloudError.sessionExpired(nil) }
         if let refreshTask { return try await refreshTask.value }
-        guard let credential = try Vault.read(Credential.self, key: account.id) else { expireSession(); throw CloudError.sessionExpired(nil) }
+        if cachedCredential == nil { cachedCredential = try Vault.read(Credential.self, key: account.id) }
+        guard let credential = cachedCredential else { expireSession(); throw CloudError.sessionExpired(nil) }
         if !force, credential.expires.timeIntervalSinceNow > 90 { return credential.accessToken }
         let task = Task { () throws -> String in
             var fields = ["client_id": account.clientID, "refresh_token": credential.refreshToken, "grant_type": "refresh_token"]
@@ -50,6 +53,7 @@ final class CloudAPI {
             guard let access = result["access_token"] as? String else { throw CloudError.message("No se pudo renovar la sesión. Vuelve a conectar la cuenta.") }
             let updated = Credential(accessToken: access, refreshToken: result["refresh_token"] as? String ?? credential.refreshToken, expires: Date().addingTimeInterval(result["expires_in"] as? Double ?? 3600))
             try Vault.save(updated, key: account.id)
+            self.cachedCredential = updated
             return access
         }
         refreshTask = task
@@ -116,7 +120,9 @@ final class CloudAPI {
     func graphItem(_ id: String) -> String { id == "root" ? "root" : "items/" + Self.segment(id) }
     static func segment(_ value: String) -> String { value.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~")))! }
 
-    func list(parent: String) async throws -> [CloudFile] {
+    /// Folders first, then by name. `onPage` receives the accumulated, sorted listing after each intermediate page so the
+    /// explorer can show large folders progressively instead of waiting for the last page.
+    func list(parent: String, onPage: (([CloudFile]) -> Void)? = nil) async throws -> [CloudFile] {
         if let demo { return try demo.list(parent) }
         var files: [CloudFile] = []
         if account.cloud == .google {
@@ -128,6 +134,7 @@ final class CloudAPI {
                 let result = try await json(url.url!)
                 files += (result["files"] as? [[String: Any]] ?? []).compactMap(Self.googleFile)
                 page = result["nextPageToken"] as? String
+                if page != nil { onPage?(Self.sorted(files)) }
             } while page != nil
         } else {
             var next: URL? = URL(string: "https://graph.microsoft.com/v1.0/me/drive/\(graphItem(parent))/children?$top=200&$select=id,name,size,folder,file,remoteItem,webUrl,lastModifiedDateTime")!
@@ -136,9 +143,13 @@ final class CloudAPI {
                 let result = try await json(url)
                 files += (result["value"] as? [[String: Any]] ?? []).compactMap(Self.microsoftFile)
                 next = (result["@odata.nextLink"] as? String).flatMap(URL.init(string:))
+                if next != nil { onPage?(Self.sorted(files)) }
             }
         }
-        return files.sorted { a, b in a.isFolder != b.isFolder ? a.isFolder : a.name.localizedStandardCompare(b.name) == .orderedAscending }
+        return Self.sorted(files)
+    }
+    static func sorted(_ files: [CloudFile]) -> [CloudFile] {
+        files.sorted { a, b in a.isFolder != b.isFolder ? a.isFolder : a.name.localizedStandardCompare(b.name) == .orderedAscending }
     }
 
     func createFolder(name: String, parent: String) async throws -> String {
@@ -254,7 +265,8 @@ final class CloudAPI {
             guard Int64(actual) <= maxBytes else { throw CloudError.message("La vista previa supera el límite de descarga autorizado.") }
         }
         // moveItem refuses to overwrite an existing destination.
-        try FileManager.default.moveItem(at: temporary, to: destination)
+        let downloaded = temporary
+        try await blockingIO { try FileManager.default.moveItem(at: downloaded, to: destination) }
     }
 
     func downloadTree(file: CloudFile, into folder: URL, progress: @escaping (Double) -> Void) async throws {
