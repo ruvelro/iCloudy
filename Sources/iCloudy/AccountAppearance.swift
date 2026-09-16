@@ -76,7 +76,17 @@ struct AccountIcon: View {
     let account: Account
     let appearance: AccountAppearance
     var size: CGFloat = 28
-    private var icon: String { appearance.icon == "automatic" ? (account.isDemo ? "externaldrive.fill" : (account.cloud == .google ? "drive" : "onedrive")) : appearance.icon }
+    private var icon: String {
+        guard appearance.icon == "automatic" else { return appearance.icon }
+        guard !account.isDemo else { return "externaldrive.fill" }
+        switch account.cloud {
+        case .google: return "drive"          // drawn by hand below
+        case .microsoft: return "onedrive"    // drawn by hand below
+        case .dropbox: return "shippingbox.fill"
+        case .box: return "square.stack.3d.up.fill"
+        case .webdav: return "server.rack"
+        }
+    }
     var body: some View {
         Group {
             if icon == "custom", let png = appearance.customPNG, let image = NSImage(data: png) {

@@ -157,6 +157,12 @@ extension CloudAPI {
 
     func searchPage(term: String, cursor: String? = nil, filters: SearchFilters = SearchFilters()) async throws -> SearchPage {
         if let demo { return try demo.searchPage(term: term, cursor: cursor, accountID: account.id) }
+        switch account.cloud {
+        case .dropbox: return try await dropboxSearch(term: term, cursor: cursor)
+        case .box: return try await boxSearch(term: term, cursor: cursor)
+        case .webdav: throw CloudError.message(L("WebDAV no ofrece búsqueda. Navega por las carpetas o usa el filtro de la carpeta actual."))
+        case .google, .microsoft: break
+        }
         if account.cloud == .google {
             let terms = term.split(whereSeparator: \.isWhitespace).map {
                 String($0).replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
@@ -190,6 +196,12 @@ extension CloudAPI {
 
     func folderTrail(id: String) async throws -> [CloudFile] {
         if let demo { return try demo.folderTrail(id: id) }
+        switch account.cloud {
+        case .dropbox: return dropboxTrail(id: id)
+        case .webdav: return webdavTrail(id: id)
+        case .box: return try await boxTrail(id: id)
+        case .google, .microsoft: break
+        }
         var result: [CloudFile] = [], current: String? = id, seen: Set<String> = []
         let googleRoot: String?
         if account.cloud == .google {

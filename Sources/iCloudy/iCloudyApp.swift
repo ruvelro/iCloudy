@@ -274,7 +274,9 @@ struct ExplorerView: View {
             }
             Button("Cancelar", role: .cancel) { model.pendingTrash = nil }
         } message: {
-            Text("Los elementos van a la papelera de \(model.account?.cloud.title ?? "la nube") y se pueden restaurar desde su web. Las carpetas se envían con todo su contenido. iCloudy no borra nada de forma definitiva.")
+            Text(model.account?.capabilities.reversibleTrash == false
+                 ? L("Este servidor no tiene papelera: lo que elimines se borra de forma definitiva, con todo el contenido de las carpetas. iCloudy no puede deshacerlo.")
+                 : L("Los elementos van a la papelera de \(model.account?.cloud.title ?? "la nube") y se pueden restaurar desde su web. Las carpetas se envían con todo su contenido. iCloudy no borra nada de forma definitiva."))
         }
         .confirmationDialog("¿Desconectar esta cuenta?", isPresented: $confirmDisconnect, titleVisibility: .visible, presenting: disconnectTarget) { account in
             Button("Desconectar", role: .destructive) { model.disconnect(account) }
@@ -298,9 +300,11 @@ struct ExplorerView: View {
                 }
                 if model.loading { ProgressView().controlSize(.small) }
             }
-            Picker("Vista", selection: Binding(get: { model.collection }, set: { model.show($0) })) {
-                ForEach(Collection.allCases) { Label($0.title, systemImage: $0.icon).tag($0) }
-            }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 420).disabled(model.account == nil)
+            if let account = model.account, model.collections(for: account).count > 1 {
+                Picker("Vista", selection: Binding(get: { model.collection }, set: { model.show($0) })) {
+                    ForEach(model.collections(for: account)) { Label($0.title, systemImage: $0.icon).tag($0) }
+                }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 420)
+            }
             HStack {
                 Button { model.back(to: max(0, model.path.count - 1)) } label: { Image(systemName: "chevron.left") }.disabled(model.path.isEmpty)
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -442,7 +446,7 @@ struct ExplorerView: View {
         Button("Renombrar…") { model.promptName(file) }
         Button("Mover a…") { model.requestRelocation([file], copy: false) }
         Button("Copiar a…") { model.requestRelocation([file], copy: true) }
-            .disabled(file.isFolder && model.account?.cloud == .google)
+            .disabled((file.isFolder && model.account?.cloud == .google) || model.account?.capabilities.copy == false)
         if model.accounts.count > 1 { Button("Enviar a otra nube…") { model.requestCrossCloud([file]) } }
         Divider()
         if file.isFolder {
@@ -458,9 +462,11 @@ struct ExplorerView: View {
         }
         Divider()
         if file.webURL != nil { Button("Copiar enlace") { model.copyLink(file) } }
-        if let account = model.account { Button("Crear enlace público de solo lectura…") { model.pendingShare = (file, account) } }
+        if let account = model.account, account.capabilities.publicLinks {
+            Button("Crear enlace público de solo lectura…") { model.pendingShare = (file, account) }
+        }
         Divider()
-        Button("Enviar a la papelera…", role: .destructive) { model.requestTrash([file]) }
+        Button(model.account?.capabilities.reversibleTrash == false ? "Eliminar del servidor…" : "Enviar a la papelera…", role: .destructive) { model.requestTrash([file]) }
     }
 
 }
@@ -535,42 +541,79 @@ struct TransferPanel: View {
 
 struct ConnectView: View {
     @ObservedObject var model: AppModel
+    @State private var showWebDAV = false
+    @State private var server = ""
+    @State private var username = ""
+    @State private var password = ""
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Label("Añade tu nube", systemImage: "cloud").font(.title.weight(.semibold))
-            Text("Elige tu cuenta y autoriza el acceso a tus archivos. Puedes añadir tantas cuentas como necesites.").foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            VStack(spacing: 12) {
-                providerButton(.google, title: "Continuar con Google", subtitle: "Google Drive", icon: "externaldrive")
-                providerButton(.microsoft, title: "Continuar con Microsoft", subtitle: "OneDrive · Outlook, Hotmail o Microsoft 365", icon: "cloud.fill")
-            }.disabled(model.connecting)
-            Button("Probar demo local sin iniciar sesión") { model.enableDemo() }.disabled(model.connecting)
-            if let error = model.connectionError {
-                Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
-            }
-            if model.connecting { HStack { ProgressView().controlSize(.small); Text("Esperando el inicio de sesión en el navegador…").font(.caption) } }
-            Text("Tu contraseña se introduce únicamente en Google o Microsoft. iCloudy guarda la sesión de forma segura en este Mac.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Button("Cancelar") { model.oauth.cancel(); model.showConnect = false }.keyboardShortcut(.cancelAction)
-                Spacer()
-            }
-        }.padding(30).frame(width: 460).interactiveDismissDisabled(model.connecting)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Label("Añade tu nube", systemImage: "cloud").font(.title.weight(.semibold))
+                Text("Elige tu cuenta y autoriza el acceso a tus archivos. Puedes añadir tantas cuentas como necesites.").foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                VStack(spacing: 10) {
+                    providerButton(.google, title: "Continuar con Google", subtitle: "Google Drive", icon: "externaldrive")
+                    providerButton(.microsoft, title: "Continuar con Microsoft", subtitle: "OneDrive · Outlook, Hotmail o Microsoft 365", icon: "cloud.fill")
+                    providerButton(.dropbox, title: "Continuar con Dropbox", subtitle: "Dropbox personal o de equipo", icon: "shippingbox")
+                    providerButton(.box, title: "Continuar con Box", subtitle: "Box personal o de empresa", icon: "square.stack.3d.up")
+                }.disabled(model.connecting)
+                DisclosureGroup(isExpanded: $showWebDAV) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Para Nextcloud, ownCloud, Synology, otros NAS y cualquier servidor WebDAV. Tus credenciales se guardan en el Llavero de este Mac y solo se envían a ese servidor.")
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        TextField("https://nube.ejemplo.com/remote.php/dav/files/ana", text: $server).textFieldStyle(.roundedBorder)
+                        TextField("Usuario", text: $username).textFieldStyle(.roundedBorder)
+                        SecureField("Contraseña o contraseña de aplicación", text: $password).textFieldStyle(.roundedBorder)
+                        Text("Si tu servidor usa verificación en dos pasos, crea una contraseña de aplicación en su configuración.")
+                            .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        HStack {
+                            Spacer()
+                            Button("Conectar servidor") { Task { await model.connectWebDAV(server: server, username: username, password: password); password = "" } }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(model.connecting || server.isEmpty || username.isEmpty || password.isEmpty)
+                        }
+                    }.padding(.top, 8)
+                } label: {
+                    Label("Conectar un servidor WebDAV…", systemImage: "server.rack")
+                }
+                Button("Probar demo local sin iniciar sesión") { model.enableDemo() }.disabled(model.connecting)
+                if let error = model.connectionError {
+                    Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                }
+                if model.connecting { HStack { ProgressView().controlSize(.small); Text("Esperando el inicio de sesión en el navegador…").font(.caption) } }
+                Text("Con Google, Microsoft, Dropbox y Box tu contraseña se introduce únicamente en la web del proveedor. Las credenciales de un servidor WebDAV las escribes aquí y se guardan en el Llavero de este Mac.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button("Cancelar") { model.oauth.cancel(); model.showConnect = false }.keyboardShortcut(.cancelAction)
+                    Spacer()
+                }
+            }.padding(30)
+        }.frame(width: 470, height: 620).interactiveDismissDisabled(model.connecting)
             .onAppear { model.connectionError = nil }
     }
 
     private func providerButton(_ cloud: Cloud, title: String, subtitle: String, icon: String) -> some View {
         Button { Task { await model.connect(cloud: cloud) } } label: {
             HStack(spacing: 14) {
-                Image(systemName: icon).font(.title2).foregroundStyle(cloud == .google ? .green : .blue).frame(width: 30)
+                Image(systemName: icon).font(.title2).foregroundStyle(tint(cloud)).frame(width: 30)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title).font(.headline)
                     Text(subtitle).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Image(systemName: "arrow.up.right").foregroundStyle(.secondary)
-            }.padding(16).frame(maxWidth: .infinity).contentShape(Rectangle())
+            }.padding(14).frame(maxWidth: .infinity).contentShape(Rectangle())
                 .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(.quaternary))
         }.buttonStyle(.plain)
+    }
+    private func tint(_ cloud: Cloud) -> Color {
+        switch cloud {
+        case .google: return .green
+        case .microsoft: return .blue
+        case .dropbox: return .indigo
+        case .box: return .cyan
+        case .webdav: return .gray
+        }
     }
 }
 

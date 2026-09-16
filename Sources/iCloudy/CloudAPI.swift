@@ -39,6 +39,11 @@ final class CloudAPI {
         if cachedCredential == nil { cachedCredential = try credentials.read(account.id) }
         guard let credential = cachedCredential else { expireSession(); throw CloudError.sessionExpired(nil) }
         if !force, credential.expires.timeIntervalSinceNow > 90 { return credential.accessToken }
+        // A WebDAV password has no refresh endpoint: if the server stops accepting it, only new credentials help.
+        guard account.cloud != .webdav else {
+            if force { expireSession(); throw CloudError.sessionExpired(nil) }
+            return credential.accessToken
+        }
         let task = Task { () throws -> String in
             var fields = ["client_id": account.clientID, "refresh_token": credential.refreshToken, "grant_type": "refresh_token"]
             if let secret = account.clientSecret { fields["client_secret"] = secret }
@@ -68,7 +73,7 @@ final class CloudAPI {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.timeoutInterval = 120
-        request.setValue("Bearer \(try await token())", forHTTPHeaderField: "Authorization")
+        request.setValue(account.cloud.authorizationScheme + " " + (try await token()), forHTTPHeaderField: "Authorization")
         if let body {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -81,7 +86,7 @@ final class CloudAPI {
     func send(_ request: inout URLRequest) async throws -> (Data, URLResponse) {
         let (data, response) = try await session.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 401, tokenProvider == nil else { return (data, response) }
-        request.setValue("Bearer \(try await token(force: true))", forHTTPHeaderField: "Authorization")
+        request.setValue(account.cloud.authorizationScheme + " " + (try await token(force: true)), forHTTPHeaderField: "Authorization")
         let (retriedData, retriedResponse) = try await session.data(for: request)
         if (retriedResponse as? HTTPURLResponse)?.statusCode == 401 { expireSession(); throw CloudError.sessionExpired(nil) }
         return (retriedData, retriedResponse)
@@ -114,7 +119,7 @@ final class CloudAPI {
         let remote = value["remoteItem"] != nil
         return CloudFile(id: id, name: name, mime: remote ? "application/vnd.google-apps.shortcut" : ((value["file"] as? [String: Any])?["mimeType"] as? String ?? "application/octet-stream"), size: (value["size"] as? NSNumber)?.int64Value, modified: date(value["lastModifiedDateTime"] as? String), webURL: (value["webUrl"] as? String).flatMap(URL.init(string:)), isFolder: !remote && value["folder"] != nil)
     }
-    private static func date(_ string: String?) -> Date? {
+    static func date(_ string: String?) -> Date? {
         guard let string else { return nil }
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -128,43 +133,55 @@ final class CloudAPI {
     /// `parent` is a folder id, "root", or one of `Collection.virtualRoots`, which map to provider-computed lists.
     func list(parent: String, onPage: (([CloudFile]) -> Void)? = nil) async throws -> [CloudFile] {
         if let demo { return try demo.list(parent) }
+        switch account.cloud {
+        case .google: return try await googleList(parent: parent, onPage: onPage)
+        case .microsoft: return try await graphList(parent: parent, onPage: onPage)
+        case .dropbox: return try await dropboxList(parent: parent, onPage: onPage)
+        case .box: return try await boxList(parent: parent, onPage: onPage)
+        case .webdav: return try await webdavList(parent: parent, onPage: onPage)
+        }
+    }
+    private func googleList(parent: String, onPage: (([CloudFile]) -> Void)?) async throws -> [CloudFile] {
         var files: [CloudFile] = []
         let fields = "nextPageToken,files(id,name,mimeType,size,modifiedTime,webViewLink)"
-        let select = "$select=id,name,size,folder,file,remoteItem,webUrl,lastModifiedDateTime"
-        if account.cloud == .google {
-            var page: String?
-            repeat {
-                var url = URLComponents(string: "https://www.googleapis.com/drive/v3/files")!
-                switch parent {
-                case Collection.recent.rootID:
-                    // One page of what the user opened last; folders are noise here.
-                    url.queryItems = [URLQueryItem(name: "q", value: "trashed = false and mimeType != 'application/vnd.google-apps.folder'"), URLQueryItem(name: "orderBy", value: "viewedByMeTime desc"), URLQueryItem(name: "pageSize", value: "100"), URLQueryItem(name: "fields", value: fields)]
-                case Collection.shared.rootID:
-                    url.queryItems = [URLQueryItem(name: "q", value: "sharedWithMe = true and trashed = false"), URLQueryItem(name: "pageSize", value: "1000"), URLQueryItem(name: "fields", value: fields), URLQueryItem(name: "pageToken", value: page)]
-                default:
-                    let escaped = parent.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
-                    url.queryItems = [URLQueryItem(name: "q", value: "'\(escaped)' in parents and trashed = false"), URLQueryItem(name: "pageSize", value: "1000"), URLQueryItem(name: "fields", value: fields), URLQueryItem(name: "pageToken", value: page)]
-                }
-                let result = try await json(url.url!)
-                files += (result["files"] as? [[String: Any]] ?? []).compactMap(Self.googleFile)
-                page = parent == Collection.recent.rootID ? nil : result["nextPageToken"] as? String
-                if page != nil { onPage?(Self.sorted(files)) }
-            } while page != nil
-        } else {
-            let route: String
+
+        var page: String?
+        repeat {
+            var url = URLComponents(string: "https://www.googleapis.com/drive/v3/files")!
             switch parent {
-            case Collection.recent.rootID: route = "recent?\(select)"
-            case Collection.shared.rootID: route = "sharedWithMe?\(select)"
-            default: route = "\(graphItem(parent))/children?$top=200&\(select)"
+            case Collection.recent.rootID:
+                // One page of what the user opened last; folders are noise here.
+                url.queryItems = [URLQueryItem(name: "q", value: "trashed = false and mimeType != 'application/vnd.google-apps.folder'"), URLQueryItem(name: "orderBy", value: "viewedByMeTime desc"), URLQueryItem(name: "pageSize", value: "100"), URLQueryItem(name: "fields", value: fields)]
+            case Collection.shared.rootID:
+                url.queryItems = [URLQueryItem(name: "q", value: "sharedWithMe = true and trashed = false"), URLQueryItem(name: "pageSize", value: "1000"), URLQueryItem(name: "fields", value: fields), URLQueryItem(name: "pageToken", value: page)]
+            default:
+                let escaped = parent.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+                url.queryItems = [URLQueryItem(name: "q", value: "'\(escaped)' in parents and trashed = false"), URLQueryItem(name: "pageSize", value: "1000"), URLQueryItem(name: "fields", value: fields), URLQueryItem(name: "pageToken", value: page)]
             }
-            var next: URL? = URL(string: "https://graph.microsoft.com/v1.0/me/drive/\(route)")!
-            while let url = next {
-                guard url.scheme == "https", url.host == "graph.microsoft.com" else { throw CloudError.message(L("Paginación no válida.")) }
-                let result = try await json(url)
-                files += (result["value"] as? [[String: Any]] ?? []).compactMap(Self.microsoftFile)
-                next = (result["@odata.nextLink"] as? String).flatMap(URL.init(string:))
-                if next != nil { onPage?(Self.sorted(files)) }
-            }
+            let result = try await json(url.url!)
+            files += (result["files"] as? [[String: Any]] ?? []).compactMap(Self.googleFile)
+            page = parent == Collection.recent.rootID ? nil : result["nextPageToken"] as? String
+            if page != nil { onPage?(Self.sorted(files)) }
+        } while page != nil
+        return Self.sorted(files)
+    }
+    private func graphList(parent: String, onPage: (([CloudFile]) -> Void)?) async throws -> [CloudFile] {
+        var files: [CloudFile] = []
+        let select = "$select=id,name,size,folder,file,remoteItem,webUrl,lastModifiedDateTime"
+
+        let route: String
+        switch parent {
+        case Collection.recent.rootID: route = "recent?\(select)"
+        case Collection.shared.rootID: route = "sharedWithMe?\(select)"
+        default: route = "\(graphItem(parent))/children?$top=200&\(select)"
+        }
+        var next: URL? = URL(string: "https://graph.microsoft.com/v1.0/me/drive/\(route)")!
+        while let url = next {
+            guard url.scheme == "https", url.host == "graph.microsoft.com" else { throw CloudError.message(L("Paginación no válida.")) }
+            let result = try await json(url)
+            files += (result["value"] as? [[String: Any]] ?? []).compactMap(Self.microsoftFile)
+            next = (result["@odata.nextLink"] as? String).flatMap(URL.init(string:))
+            if next != nil { onPage?(Self.sorted(files)) }
         }
         return Self.sorted(files)
     }
@@ -175,10 +192,15 @@ final class CloudAPI {
     func createFolder(name: String, parent: String) async throws -> String {
         if let demo { return try demo.add(name: name, parent: parent, folder: true) }
         let result: [String: Any]
-        if account.cloud == .google {
+        switch account.cloud {
+        case .google:
             result = try await json(URL(string: "https://www.googleapis.com/drive/v3/files")!, method: "POST", body: ["name": name, "mimeType": "application/vnd.google-apps.folder", "parents": [parent]])
-        } else {
+        case .microsoft:
             result = try await json(URL(string: "https://graph.microsoft.com/v1.0/me/drive/\(graphItem(parent))/children")!, method: "POST", body: ["name": name, "folder": [:], "@microsoft.graph.conflictBehavior": "rename"])
+        case .dropbox: return try await dropboxCreateFolder(name: name, parent: parent)
+        case .box:
+            result = try await json(URL(string: "https://api.box.com/2.0/folders")!, method: "POST", body: ["name": name, "parent": ["id": boxID(parent)]])
+        case .webdav: return try await webdavCreateFolder(name: name, parent: parent)
         }
         guard let id = result["id"] as? String else { throw CloudError.message(L("No se pudo crear la carpeta.")) }
         return id
@@ -186,23 +208,38 @@ final class CloudAPI {
 
     // Uploads live in ResumableUpload.swift; the queue drives them with checkpoints. There is no second, simpler path.
 
-    func download(file: CloudFile, to destination: URL, exportMime: String? = nil, maxBytes: Int64? = nil, progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws {
-        if let demo { try await demo.download(file, to: destination, maxBytes: maxBytes, progress: progress); return }
-        var url: URL
-        if account.cloud == .google {
+    /// The authenticated request that yields a file's bytes. Each provider addresses content differently: a query
+    /// parameter in Drive, a sub-path in Graph and Box, a JSON header in Dropbox and a plain URL in WebDAV.
+    func contentRequest(for file: CloudFile, exportMime: String?) async throws -> URLRequest {
+        switch account.cloud {
+        case .google:
             var parts = URLComponents(string: "https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))" + (exportMime == nil ? "" : "/export"))!
             parts.queryItems = [URLQueryItem(name: exportMime == nil ? "alt" : "mimeType", value: exportMime ?? "media")]
-            url = parts.url!
-        } else { url = URL(string: "https://graph.microsoft.com/v1.0/me/drive/items/\(Self.segment(file.id))/content")! }
+            return try await request(parts.url!)
+        case .microsoft:
+            return try await request(URL(string: "https://graph.microsoft.com/v1.0/me/drive/items/\(Self.segment(file.id))/content")!)
+        case .box:
+            return try await request(URL(string: "https://api.box.com/2.0/files/\(Self.segment(file.id))/content")!)
+        case .dropbox:
+            var request = try await request(URL(string: "https://content.dropboxapi.com/2/files/download")!, method: "POST")
+            request.setValue(Self.asciiJSON(["path": dropboxPath(file.id)]), forHTTPHeaderField: "Dropbox-API-Arg")
+            return request
+        case .webdav:
+            return try await request(webdavURL(file.id))
+        }
+    }
+
+    func download(file: CloudFile, to destination: URL, exportMime: String? = nil, maxBytes: Int64? = nil, progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws {
+        if let demo { try await demo.download(file, to: destination, maxBytes: maxBytes, progress: progress); return }
         let delegate = DownloadProgress(maxBytes: maxBytes) { bytes, total in Task { @MainActor in progress(bytes, total) } }
-        var request = try await request(url)
+        var request = try await contentRequest(for: file, exportMime: exportMime)
         var temporary: URL, response: URLResponse
         do {
             (temporary, response) = try await session.download(for: request, delegate: delegate)
             if (response as? HTTPURLResponse)?.statusCode == 401, tokenProvider == nil {
                 // Same policy as `send`: renew once, then treat a repeated 401 as a revoked session.
                 try? FileManager.default.removeItem(at: temporary)
-                request.setValue("Bearer \(try await token(force: true))", forHTTPHeaderField: "Authorization")
+                request.setValue(account.cloud.authorizationScheme + " " + (try await token(force: true)), forHTTPHeaderField: "Authorization")
                 (temporary, response) = try await session.download(for: request, delegate: delegate)
             }
         } catch {

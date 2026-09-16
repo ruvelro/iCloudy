@@ -60,28 +60,57 @@ final class StorageTests: XCTestCase {
             config.protocolClasses = [StubProtocol.self]
             let session = URLSession(configuration: config)
             defer { session.invalidateAndCancel() }
-            let account = Account(id: "quota-test", cloud: cloud, name: "Test", email: "test@example.com", clientID: "test", clientSecret: nil)
+            let account = Account(id: "quota-test", cloud: cloud, name: "Test", email: "test@example.com", clientID: "test", clientSecret: nil,
+                                  serverURL: cloud == .webdav ? "https://dav.example.com/remote.php/dav/files/ana" : nil)
             let api = CloudAPI(account: account, session: session, tokenProvider: { "quota-token" })
             StubProtocol.handler = { request in
-                XCTAssertEqual(request.httpMethod, "GET")
-                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer quota-token")
-                XCTAssertNil(request.httpBody)
+                let scheme = cloud == .webdav ? "Basic" : "Bearer"
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "\(scheme) quota-token")
                 let url = try XCTUnwrap(request.url)
                 let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
-                if cloud == .google {
+                switch cloud {
+                case .google:
+                    XCTAssertEqual(request.httpMethod, "GET")
                     XCTAssertEqual(url.host, "www.googleapis.com")
                     XCTAssertEqual(url.path, "/drive/v3/about")
                     XCTAssertEqual(query?.first?.value, "storageQuota")
                     return (200, [:], Data(#"{"storageQuota":{"usage":"40","limit":"100"}}"#.utf8))
+                case .microsoft:
+                    XCTAssertEqual(request.httpMethod, "GET")
+                    XCTAssertEqual(url.host, "graph.microsoft.com")
+                    XCTAssertEqual(url.path, "/v1.0/me/drive")
+                    XCTAssertEqual(query?.first?.name, "$select")
+                    XCTAssertEqual(query?.first?.value, "quota")
+                    return (200, [:], Data(#"{"quota":{"used":40,"total":100}}"#.utf8))
+                case .dropbox:
+                    // Dropbox reads through an RPC, so the method is POST even though nothing is modified.
+                    XCTAssertEqual(request.httpMethod, "POST")
+                    XCTAssertEqual(url.host, "api.dropboxapi.com")
+                    XCTAssertEqual(url.path, "/2/users/get_space_usage")
+                    return (200, [:], Data(#"{"used":40,"allocation":{".tag":"individual","allocated":100}}"#.utf8))
+                case .box:
+                    XCTAssertEqual(request.httpMethod, "GET")
+                    XCTAssertEqual(url.host, "api.box.com")
+                    XCTAssertEqual(url.path, "/2.0/users/me")
+                    return (200, [:], Data(#"{"space_used":40,"space_amount":100}"#.utf8))
+                case .webdav:
+                    XCTAssertEqual(request.httpMethod, "PROPFIND")
+                    XCTAssertEqual(request.value(forHTTPHeaderField: "Depth"), "0")
+                    XCTAssertEqual(url.host, "dav.example.com")
+                    XCTAssertEqual(url.path, "/remote.php/dav/files/ana")
+                    // The standard reports what is left, not the capacity.
+                    return (207, [:], Data(#"""
+                    <?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response>
+                    <d:href>/remote.php/dav/files/ana/</d:href><d:propstat><d:prop>
+                    <d:resourcetype><d:collection/></d:resourcetype>
+                    <d:quota-used-bytes>40</d:quota-used-bytes><d:quota-available-bytes>60</d:quota-available-bytes>
+                    </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>
+                    """#.utf8))
                 }
-                XCTAssertEqual(url.host, "graph.microsoft.com")
-                XCTAssertEqual(url.path, "/v1.0/me/drive")
-                XCTAssertEqual(query?.first?.name, "$select")
-                XCTAssertEqual(query?.first?.value, "quota")
-                return (200, [:], Data(#"{"quota":{"used":40,"total":100}}"#.utf8))
             }
             let result = try await api.storageQuota()
-            XCTAssertEqual(result, StorageQuota(used: 40, total: 100))
+            XCTAssertEqual(result.used, 40, "\(cloud)")
+            XCTAssertEqual(result.total, 100, "\(cloud)")
             api.invalidate()
             do { _ = try await api.storageQuota(); XCTFail("Disconnected clients must not reuse credentials") }
             catch is CancellationError {} catch { XCTFail("Unexpected error: \(error)") }

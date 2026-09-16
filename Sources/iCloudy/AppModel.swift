@@ -175,7 +175,8 @@ final class AppModel: ObservableObject {
         preview.close()
         showGlobalSearch = true
         globalSearch.query = String(term.prefix(256))
-        globalSearch.start(accounts: accounts) { [weak self] account, query, cursor in
+        // Providers without a search API would only add an error row to every search.
+        globalSearch.start(accounts: accounts.filter { $0.capabilities.search }) { [weak self] account, query, cursor in
             guard let self else { throw CancellationError() }
             return try await self.client(account).searchPage(term: query, cursor: cursor, filters: self.globalSearch.filters)
         }
@@ -209,6 +210,32 @@ final class AppModel: ObservableObject {
         return client
     }
     func isExpired(_ account: Account) -> Bool { expiredAccountIDs.contains(account.id) }
+    /// Top-level views this account's provider can actually produce.
+    func collections(for account: Account) -> [Collection] {
+        let capabilities = account.capabilities
+        return Collection.allCases.filter {
+            switch $0 {
+            case .files: return true
+            case .recent: return capabilities.recents
+            case .shared: return capabilities.sharedWithMe
+            }
+        }
+    }
+    /// Connects a WebDAV server. The password goes straight to the Keychain and never leaves this Mac except to that server.
+    func connectWebDAV(server: String, username: String, password: String) async {
+        guard !connecting else { return }
+        connectionError = nil; connecting = true
+        defer { connecting = false }
+        do {
+            let (account, credential) = try await oauth.signInWebDAV(server: server, username: username, password: password)
+            try Vault.save(credential, key: account.id)
+            var updated = accounts.filter { $0.id != account.id }; updated.append(account)
+            try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
+            accounts = updated; clients[account.id]?.invalidate(); clients[account.id] = nil
+            expiredAccountIDs.remove(account.id)
+            select(account.id); showConnect = false
+        } catch { connectionError = error.localizedDescription }
+    }
     /// Starts the provider's sign-in for the same cloud; signing in with the same identity replaces the expired session.
     func reconnect(_ account: Account) async {
         await connect(cloud: account.cloud)
@@ -223,7 +250,16 @@ final class AppModel: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     func appearance(for account: Account) -> AccountAppearance {
-        appearances[account.id] ?? AccountAppearance(tint: account.cloud == .google ? .green : .blue)
+        appearances[account.id] ?? AccountAppearance(tint: Self.defaultTint(account.cloud))
+    }
+    static func defaultTint(_ cloud: Cloud) -> AccountTint {
+        switch cloud {
+        case .google: return .green
+        case .microsoft: return .blue
+        case .dropbox: return .purple
+        case .box: return .teal
+        case .webdav: return .gray
+        }
     }
     func accountTitle(_ account: Account) -> String { appearance(for: account).title(for: account) }
     func saveAppearance(_ value: AccountAppearance, for account: Account) throws {
@@ -295,7 +331,8 @@ final class AppModel: ObservableObject {
     }
     func select(_ id: String?) { preview.close(); globalSearch.cancel(); showGlobalSearch = false; selectedAccountID = id; collection = .files; path = []; search = ""; files = []; reload() }
     func show(_ target: Collection) {
-        guard account != nil, target != collection || !path.isEmpty else { return }
+        guard let account, target != collection || !path.isEmpty else { return }
+        guard collections(for: account).contains(target) else { return }
         preview.close(); collection = target; path = []; search = ""; files = []
         // Recents only make sense in time order; the user can switch back afterwards.
         if target == .recent { sortMode = "date" } else if sortMode == "date" && target == .files { sortMode = "name" }
@@ -392,6 +429,7 @@ final class AppModel: ObservableObject {
         if copy, account.cloud == .google, files.contains(where: \.isFolder) {
             error = L("Google Drive no permite copiar carpetas. Copia los archivos que contiene."); return
         }
+        if copy, !account.capabilities.copy { error = L("\(account.cloud.title) no permite copiar desde iCloudy."); return }
         relocation = Relocation(files: files, kind: copy ? .copy : .move, account: account, origin: path.isEmpty && collection != .files ? nil : folderID)
     }
     func requestCrossCloud(_ files: [CloudFile]) {

@@ -13,12 +13,21 @@ struct ServiceError: LocalizedError {
 extension CloudAPI {
     func rename(file: CloudFile, name: String) async throws {
         if let demo { try demo.rename(file.id, name: name); return }
-        let base = account.cloud == .google ? "https://www.googleapis.com/drive/v3/files/" : "https://graph.microsoft.com/v1.0/me/drive/items/"
-        _ = try await json(URL(string: base + Self.segment(file.id))!, method: "PATCH", body: ["name": name])
+        switch account.cloud {
+        case .google:
+            _ = try await json(URL(string: "https://www.googleapis.com/drive/v3/files/" + Self.segment(file.id))!, method: "PATCH", body: ["name": name])
+        case .microsoft:
+            _ = try await json(URL(string: "https://graph.microsoft.com/v1.0/me/drive/items/" + Self.segment(file.id))!, method: "PATCH", body: ["name": name])
+        case .dropbox: try await dropboxRename(file: file, name: name)
+        case .box: _ = try await boxUpdate(file, body: ["name": name])
+        case .webdav: try await webdavRename(file: file, name: name)
+        }
     }
 
     func rootID() async throws -> String {
         if demo != nil { return "root" }
+        // Dropbox, Box and WebDAV name their root directly; only Drive and Graph hide it behind an alias.
+        guard [.google, .microsoft].contains(account.cloud) else { return account.cloud.rootAlias }
         if let rootIDCache { return rootIDCache }
         let endpoint = account.cloud == .google ? "https://www.googleapis.com/drive/v3/files/root?fields=id" : "https://graph.microsoft.com/v1.0/me/drive/root?$select=id"
         guard let id = try await json(URL(string: endpoint)!)["id"] as? String else { throw CloudError.message(L("No se pudo identificar la carpeta raíz.")) }
@@ -29,6 +38,12 @@ extension CloudAPI {
     /// Moves an item to another folder of the same account. The caller checks name clashes and cycles beforehand.
     func move(file: CloudFile, to destination: String) async throws {
         if let demo { try demo.move(file.id, to: destination); return }
+        switch account.cloud {
+        case .dropbox: try await dropboxMove(file: file, to: destination); return
+        case .webdav: try await webdavMove(file: file, to: destination); return
+        case .box: _ = try await boxUpdate(file, body: ["parent": ["id": boxID(destination)]]); return
+        case .google, .microsoft: break
+        }
         let target = destination == "root" ? try await rootID() : destination
         if account.cloud == .google {
             // Drive items can have several parents; moving means replacing all of them with the destination.
@@ -45,6 +60,12 @@ extension CloudAPI {
     /// Copies an item into another folder. Drive cannot copy folders; Graph copies asynchronously and answers 202.
     func copy(file: CloudFile, to destination: String) async throws {
         if let demo { _ = try demo.copy(file.id, to: destination); return }
+        switch account.cloud {
+        case .dropbox: try await dropboxCopy(file: file, to: destination); return
+        case .webdav: try await webdavCopy(file: file, to: destination); return
+        case .box: try await boxCopy(file: file, to: destination); return
+        case .google, .microsoft: break
+        }
         let target = destination == "root" ? try await rootID() : destination
         if account.cloud == .google {
             guard !file.isFolder else { throw CloudError.message(L("Google Drive no permite copiar carpetas. Copia los archivos que contiene.")) }
@@ -59,6 +80,12 @@ extension CloudAPI {
     /// Moves the item to the provider's trash or recycle bin, which the user can undo on the web. Never a hard delete.
     func trash(file: CloudFile) async throws {
         if let demo { try demo.trash(file.id); return }
+        switch account.cloud {
+        case .dropbox: try await dropboxTrash(file: file); return
+        case .box: try await boxTrash(file: file); return
+        case .webdav: try await webdavDelete(file: file); return
+        case .google, .microsoft: break
+        }
         if account.cloud == .google {
             _ = try await json(URL(string: "https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))")!, method: "PATCH", body: ["trashed": true])
         } else {
@@ -73,6 +100,12 @@ extension CloudAPI {
     /// owner removes it on the web, so the caller must confirm with the user first.
     func publicLink(for file: CloudFile) async throws -> URL {
         if let demo { return try demo.publicLink(file.id) }
+        switch account.cloud {
+        case .dropbox: return try await dropboxPublicLink(for: file)
+        case .box: return try await boxPublicLink(for: file)
+        case .webdav: throw CloudError.message(L("Este servidor WebDAV no admite enlaces públicos desde iCloudy. Créalos en su interfaz web."))
+        case .google, .microsoft: break
+        }
         if account.cloud == .google {
             _ = try await json(URL(string: "https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))/permissions")!, method: "POST", body: ["role": "reader", "type": "anyone"])
             let metadata = try await json(URL(string: "https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))?fields=webViewLink")!)
@@ -98,6 +131,23 @@ extension CloudAPI {
         var cursor = checkpoint ?? UploadCheckpoint(total: total, modified: attributes.contentModificationDate)
         guard cursor.total == total, cursor.modified == attributes.contentModificationDate else { throw CloudError.message(L("El origen ha cambiado. Cancela esta operación y vuelve a subirlo.")) }
         if cursor.complete { progress(total, total); return UploadReceipt(remoteID: nil, verification: .unavailable) }
+        switch account.cloud {
+        case .google, .microsoft:
+            return try await rangeUpload(local: local, parent: parent, name: name, replacing: replacing, attributes: attributes, cursor: &cursor, save: save, progress: progress)
+        case .dropbox:
+            return try await dropboxUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+        case .box:
+            return try await boxUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+        case .webdav:
+            return try await webdavUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+        }
+    }
+
+    /// Google Drive and Microsoft Graph both resume with `Content-Range` against a session URL the server hands out.
+    private func rangeUpload(local: URL, parent: String, name: String, replacing: String?, attributes: URLResourceValues,
+                             cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void,
+                             progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
+        let total = cursor.total
         if let url = cursor.url {
             var probe = URLRequest(url: url)
             probe.httpMethod = account.cloud == .google ? "PUT" : "GET"

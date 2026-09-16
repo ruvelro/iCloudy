@@ -31,6 +31,10 @@ enum HTTP {
         if let code = object["error"] as? String {
             return (code, (object["error_description"] as? String) ?? code)
         }
+        // Dropbox describes the failure in a flat summary string alongside a tagged error object.
+        if let summary = object["error_summary"] as? String { return (summary, summary) }
+        // Box uses `code` and `message` at the top level.
+        if let code = object["code"] as? String { return (code, object["message"] as? String ?? code) }
         return (nil, nil)
     }
     static func token(cloud: Cloud, values: [String: String], session: URLSession = .shared) async throws -> [String: Any] {
@@ -98,20 +102,78 @@ final class OAuth {
             if !openURL(url) { finish(.failure(CloudError.message(L("No se pudo abrir el navegador.")))) }
         }
         var fields = ["client_id": clientID, "code": code, "redirect_uri": redirect, "grant_type": "authorization_code", "code_verifier": verifier]
-        if cloud == .google && !clientSecret.isEmpty { fields["client_secret"] = clientSecret }
+        // Google desktop clients and Box both expect their (public, extractable) secret alongside the PKCE verifier.
+        if [.google, .box].contains(cloud) && !clientSecret.isEmpty { fields["client_secret"] = clientSecret }
         let tokens = try await HTTP.token(cloud: cloud, values: fields, session: session)
         guard !cancelled else { throw CancellationError() }
         guard let access = tokens["access_token"] as? String, let refresh = tokens["refresh_token"] as? String else { throw CloudError.message(L("El proveedor no devolvió acceso permanente. Repite el consentimiento.")) }
-        var request = URLRequest(url: URL(string: cloud == .google ? "https://openidconnect.googleapis.com/v1/userinfo" : "https://graph.microsoft.com/v1.0/me?$select=id,displayName,mail,userPrincipalName")!)
+        var request = URLRequest(url: URL(string: Self.profileEndpoint(cloud))!)
+        // Dropbox exposes the current account through an RPC, so it is a POST even though it only reads.
+        if cloud == .dropbox { request.httpMethod = "POST" }
         request.setValue("Bearer \(access)", forHTTPHeaderField: "Authorization")
         let (data, response) = try await session.data(for: request)
         guard !cancelled else { throw CancellationError() }
         try HTTP.validate(response, data: data)
         let profile = try HTTP.json(data)
-        guard let identity = profile[cloud == .google ? "sub" : "id"] as? String else { throw CloudError.message(L("No se pudo identificar la cuenta.")) }
-        let email = profile["email"] as? String ?? profile["mail"] as? String ?? profile["userPrincipalName"] as? String ?? identity
-        let account = Account(id: cloud.rawValue + ":" + identity, cloud: cloud, name: profile["name"] as? String ?? profile["displayName"] as? String ?? email, email: email, clientID: clientID, clientSecret: cloud == .google && !clientSecret.isEmpty ? clientSecret : nil)
+        let identityKey = cloud == .google ? "sub" : (cloud == .dropbox ? "account_id" : "id")
+        guard let identity = profile[identityKey] as? String else { throw CloudError.message(L("No se pudo identificar la cuenta.")) }
+        let email = profile["email"] as? String ?? profile["mail"] as? String ?? profile["userPrincipalName"] as? String
+            ?? profile["login"] as? String ?? identity
+        // Dropbox nests the display name; Box and Graph use plain strings under different keys.
+        let name = profile["name"] as? String ?? (profile["name"] as? [String: Any])?["display_name"] as? String
+            ?? ((profile["name"] as? [String: Any])?["display_name"] as? String) ?? profile["displayName"] as? String ?? email
+        let account = Account(id: cloud.rawValue + ":" + identity, cloud: cloud, name: name, email: email, clientID: clientID,
+                              clientSecret: [.google, .box].contains(cloud) && !clientSecret.isEmpty ? clientSecret : nil)
         return (account, Credential(accessToken: access, refreshToken: refresh, expires: Date().addingTimeInterval(tokens["expires_in"] as? Double ?? 3600)))
+    }
+
+    static func profileEndpoint(_ cloud: Cloud) -> String {
+        switch cloud {
+        case .google: return "https://openidconnect.googleapis.com/v1/userinfo"
+        case .microsoft: return "https://graph.microsoft.com/v1.0/me?$select=id,displayName,mail,userPrincipalName"
+        case .dropbox: return "https://api.dropboxapi.com/2/users/get_current_account"
+        case .box: return "https://api.box.com/2.0/users/me"
+        case .webdav: return ""
+        }
+    }
+
+    /// WebDAV servers authenticate with a user name and a password, so there is no browser round trip. The credentials
+    /// are checked with one PROPFIND before the account is stored, and they only ever reach the server the user typed.
+    func signInWebDAV(server: String, username: String, password: String) async throws -> (Account, Credential) {
+        let trimmed = server.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var components = URLComponents(string: trimmed.contains("://") ? trimmed : "https://" + trimmed),
+              let host = components.host, !host.isEmpty, ["http", "https"].contains(components.scheme ?? "") else {
+            throw CloudError.message(L("Escribe una dirección de servidor válida, por ejemplo https://nube.ejemplo.com/remote.php/dav/files/ana"))
+        }
+        guard !username.isEmpty, !password.isEmpty else { throw CloudError.message(L("Introduce el usuario y la contraseña del servidor.")) }
+        components.query = nil; components.fragment = nil
+        if components.path.hasSuffix("/") { components.path = String(components.path.dropLast()) }
+        guard let base = components.url else { throw CloudError.message(L("Escribe una dirección de servidor válida, por ejemplo https://nube.ejemplo.com/remote.php/dav/files/ana")) }
+
+        let secret = Data("\(username):\(password)".utf8).base64EncodedString()
+        var probe = URLRequest(url: base)
+        probe.httpMethod = "PROPFIND"
+        probe.setValue("0", forHTTPHeaderField: "Depth")
+        probe.setValue("Basic " + secret, forHTTPHeaderField: "Authorization")
+        probe.setValue("application/xml; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        probe.httpBody = Data("<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>".utf8)
+        let (data, response) = try await session.data(for: probe)
+        guard let http = response as? HTTPURLResponse else { throw CloudError.message(L("Respuesta HTTP no válida.")) }
+        switch http.statusCode {
+        case 401, 403:
+            throw CloudError.message(L("El servidor rechazó el usuario o la contraseña. Si tu servidor usa verificación en dos pasos, crea una contraseña de aplicación."))
+        case 404:
+            throw CloudError.message(L("El servidor respondió, pero esa ruta no existe. Comprueba la dirección completa de WebDAV."))
+        case 207, 200..<300:
+            break
+        default:
+            try HTTP.validate(response, data: data)
+        }
+        let account = Account(id: "webdav:" + host + components.path + "#" + username, cloud: .webdav,
+                              name: host, email: username + "@" + host, clientID: "", clientSecret: nil,
+                              serverURL: base.absoluteString)
+        // Basic credentials never expire on their own; only the server can revoke them.
+        return (account, Credential(accessToken: secret, refreshToken: "", expires: .distantFuture))
     }
 
     /// Binds the loopback listener and returns the port actually in use (`0` asks the system for a free one).

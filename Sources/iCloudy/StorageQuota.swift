@@ -70,9 +70,14 @@ enum StorageQuotaState {
 extension CloudAPI {
     func storageQuota() async throws -> StorageQuota {
         if let demo { return try demo.storageQuota() }
-        let endpoint = account.cloud == .google
-            ? "https://www.googleapis.com/drive/v3/about?fields=storageQuota"
-            : "https://graph.microsoft.com/v1.0/me/drive?$select=quota"
+        let endpoint: String
+        switch account.cloud {
+        case .google: endpoint = "https://www.googleapis.com/drive/v3/about?fields=storageQuota"
+        case .microsoft: endpoint = "https://graph.microsoft.com/v1.0/me/drive?$select=quota"
+        case .dropbox: return try await dropboxQuota()
+        case .box: return try await boxQuota()
+        case .webdav: return try await webdavQuota()
+        }
         return try StorageQuota.parse(await json(URL(string: endpoint)!), cloud: account.cloud)
     }
 }

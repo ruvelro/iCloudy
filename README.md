@@ -1,6 +1,6 @@
 # iCloudy — MVP para macOS
 
-Explorador nativo de Google Drive y OneDrive, escrito con SwiftUI, para macOS 14 o superior. Conexión directa desde el Mac a los proveedores; no requiere un backend propio ni instala componentes de sincronización.
+Explorador nativo de Google Drive, OneDrive, Dropbox, Box y WebDAV (Nextcloud, ownCloud, Synology y otros NAS), escrito con SwiftUI, para macOS 14 o superior. Conexión directa desde el Mac a los proveedores; no requiere un backend propio ni instala componentes de sincronización.
 
 ## Ejecutar
 
@@ -16,7 +16,8 @@ También puedes abrir `Package.swift` en Xcode o ejecutar `swift run iCloudy` pa
 
 ## Funciones
 
-- Varias cuentas de Google y Microsoft con selección independiente en la barra lateral.
+- Varias cuentas de Google, Microsoft, Dropbox, Box y WebDAV, con selección independiente en la barra lateral. Cada proveedor declara lo que admite y la interfaz oculta o explica lo que falta: WebDAV no tiene búsqueda, enlaces públicos ni papelera, y Dropbox y Box no tienen «Recientes» ni «Compartido conmigo» en esta versión.
+- Los proveedores se conectan con OAuth y PKCE salvo WebDAV, que pide dirección del servidor, usuario y contraseña (o contraseña de aplicación) y los guarda en el Llavero. Dropbox usa rutas como identificador, Box ids numéricos y WebDAV rutas del servidor; las migas de pan de esos tres se resuelven sin peticiones adicionales o con una sola.
 - Búsqueda entre cuentas desde la barra lateral o ⇧⌘F, con filtros por cuenta, tipo, fecha de modificación y tamaño. Tipo y fecha se incorporan a la consulta de Google Drive al buscar, así que llegan menos páginas; OneDrive no admite filtros en su búsqueda y el tamaño no es consultable en ningún proveedor, por lo que esos casos se filtran en local. Resultados progresivos, cancelación, errores independientes y «Cargar más resultados». Vista previa, descarga/exportación e ir a la carpeta desde el resultado. Los proveedores pueden buscar también en contenido indexado: iCloudy no descarga contenidos para buscar.
 - Alias, ocho colores e iconos por cuenta: clic derecho → «Personalizar nube…». Predefinidos Drive/OneDrive, trabajo, personal, casa, estudios y otros; símbolo de macOS por nombre o imagen propia (PNG/JPEG/HEIC/GIF/TIFF, hasta 10 MB). Se conserva una copia PNG reducida a 256 px y se guarda todo localmente, sin modificar la cuenta remota. Los ajustes se conservan al desconectar y reconectar la misma cuenta.
 - Gráfico circular con desglose y texto de espacio usado/total por cuenta: archivos, papelera (`usageInDriveTrash` en Drive, `deleted` en OneDrive) y, en Google, el resto de servicios como Gmail o Fotos; el detalle aparece al pasar el cursor. Se consulta al conectar y tras cada transferencia; al navegar por carpetas se reutiliza el valor durante cinco minutos para no duplicar peticiones, y «Actualizar espacio» en el menú contextual fuerza la consulta. Si no hay cuota disponible no se inventa un porcentaje. Google informa del almacenamiento de todos sus servicios (o de la organización si es compartido); OneDrive personal puede incluir otros servicios Microsoft. La demo simula 5 GB.
@@ -26,8 +27,8 @@ También puedes abrir `Package.swift` en Xcode o ejecutar `swift run iCloudy` pa
 - Las subidas de carpetas listan cada carpeta de destino una sola vez por transferencia, y las carpetas recién creadas no se listan. Los puntos de control por bloque se agrupan en una escritura cada dos segundos; las transiciones de estado, las nuevas sesiones de subida y la salida de la app escriben al instante. La lectura de bloques, el recorrido de carpetas locales y los movimientos de archivos se hacen fuera del hilo principal.
 - Doble clic para entrar en carpetas, descargar binarios o abrir documentos nativos en el navegador.
 - Arrastrar archivos/carpetas desde Finder al listado para subir copias a la carpeta actual. También hay un botón Subir.
-- Subida recursiva de carpetas y archivos por bloques de 5 MiB, sin cargar todo el archivo en memoria.
-- Verificación de integridad al subir: el hash se calcula sobre los mismos bloques que se envían, sin releer el archivo, y se compara con `md5Checksum` de Drive o con `sha256Hash`/`sha1Hash` de OneDrive personal. Si no coincide, la transferencia falla con aviso. Las subidas reanudadas y las cuentas de OneDrive empresarial (solo `quickXorHash`) quedan como «sin verificar»; el resumen final indica cuántos archivos se verificaron.
+- Subida recursiva de carpetas y archivos por bloques, sin cargar todo el archivo en memoria: 5 MiB con Drive y Graph, 4 MiB con Dropbox (el tamaño de bloque de su suma de verificación), el que indique la sesión de Box, y un PUT directo en WebDAV, que no tiene protocolo reanudable. Box usa una subida simple por debajo de 20 MB, que es su mínimo para sesiones.
+- Verificación de integridad al subir: el hash se calcula sobre los mismos bloques que se envían, sin releer el archivo, y se compara con `md5Checksum` de Drive, `sha256Hash`/`sha1Hash` de OneDrive personal, el `content_hash` documentado de Dropbox y el SHA-1 que Box comprueba en cada bloque y en el archivo completo. WebDAV no informa de ninguna suma, así que sus subidas quedan sin verificar. Si no coincide, la transferencia falla con aviso. Las subidas reanudadas y las cuentas de OneDrive empresarial (solo `quickXorHash`) quedan como «sin verificar»; el resumen final indica cuántos archivos se verificaron.
 - Descarga explícita a una carpeta elegida, incluyendo carpetas recursivas. Ningún listado descarga contenidos automáticamente.
 - Google Docs: PDF/Word; Sheets: Excel/PDF; Slides: PowerPoint/PDF. Exportación individual.
 - Reflejo unidireccional de carpetas: desde el menú de una carpeta remota, «Reflejar una carpeta local aquí…» elige una carpeta del Mac cuyo contenido se sube y se mantiene al día. FSEvents vigila los cambios y, tras unos segundos de calma, se encola una subida en la que los archivos sin cambios (mismo tamaño y fecha) ya figuran como completados y los cambiados reemplazan su copia remota. Sin red no pasa nada hasta que vuelve. Nunca se borra ni se modifica nada local, y lo que borres o renombres en el Mac no se elimina en la nube. La sección «Reflejos» de la barra lateral muestra el estado y permite sincronizar ahora, abrir ambas carpetas o dejar de reflejar.
@@ -46,12 +47,13 @@ También puedes abrir `Package.swift` en Xcode o ejecutar `swift run iCloudy` pa
 
 ## Configuración real de cuentas
 
-La configuración corresponde al desarrollador y se hace una sola vez. Los usuarios del binario oficial solo eligen una cuenta y autorizan el acceso. **Todavía hacen falta los registros reales de iCloudy en Google y Microsoft**; no se incluyen IDs inventados ni un login simulado.
+La configuración corresponde al desarrollador y se hace una sola vez, salvo WebDAV: ese lo conecta cada usuario con su propio servidor y no necesita registro. Los usuarios del binario oficial solo eligen una cuenta y autorizan el acceso. **Todavía hacen falta los registros reales de iCloudy en Google y Microsoft**; no se incluyen IDs inventados ni un login simulado.
 
 Consulta [la guía de registro, GitHub y App Store](docs/OAUTH.md). Una vez registrados los clientes:
 
 ```sh
-swift scripts/configure-oauth.swift --google /ruta/cliente-desktop.json --microsoft APPLICATION_CLIENT_ID
+swift scripts/configure-oauth.swift --google /ruta/cliente-desktop.json --microsoft APPLICATION_CLIENT_ID \
+  --dropbox APP_KEY --box CLIENT_ID:CLIENT_SECRET
 bash scripts/build-app.sh --require-oauth
 open dist/iCloudy.app
 ```

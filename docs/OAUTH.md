@@ -44,7 +44,40 @@ swift scripts/configure-oauth.swift --microsoft EL_APPLICATION_CLIENT_ID
 
 El endpoint `/common` del código acepta cuentas personales y empresariales según la audiencia registrada. Para reducir advertencias y facilitar la adopción empresarial, configura Branding, dominio del publicador y, si reúnes sus requisitos, **Publisher verification**. Las políticas corporativas pueden requerir consentimiento del administrador incluso con la app verificada; no se puede prometer acceso a todas las organizaciones. [Tipos de cuenta](https://learn.microsoft.com/en-us/entra/architecture/establish-applications), [verificación del publicador](https://learn.microsoft.com/en-us/entra/identity-platform/publisher-verification-overview).
 
-## 3. Compilar una app sin configuración para el usuario
+## 3. Dropbox
+
+En [Dropbox App Console](https://www.dropbox.com/developers/apps):
+
+1. **Create app** → **Scoped access** → **Full Dropbox** (o **App folder** si prefieres limitar iCloudy a su propia carpeta).
+2. En **Permissions**, marca `account_info.read`, `files.metadata.read`, `files.content.read`, `files.content.write`, `sharing.read` y `sharing.write`. Guarda antes de salir de esa pestaña.
+3. En **Settings → OAuth 2 → Redirect URIs**, añade `http://127.0.0.1:53682/callback`.
+4. Copia la **App key**. No hace falta el App secret: iCloudy usa PKCE y pide `token_access_type=offline` para obtener un refresh token.
+
+```sh
+swift scripts/configure-oauth.swift --dropbox LA_APP_KEY
+```
+
+## 4. Box
+
+En [Box Developer Console](https://app.box.com/developers/console):
+
+1. **Create Platform App** → **Custom App** → método de autenticación **User Authentication (OAuth 2.0)**.
+2. En **Configuration → OAuth 2.0 Redirect URIs**, añade `http://127.0.0.1:53682/callback`.
+3. En **Application Scopes**, deja al menos lectura y escritura de todos los archivos y carpetas. iCloudy no envía un parámetro `scope`: usa los permisos configurados aquí.
+4. Copia **Client ID** y **Client Secret**. Box exige el secreto al canjear el código incluso con PKCE; es metadato de un cliente instalado, extraíble del binario, igual que el de Google.
+5. Si la cuenta es de empresa, un administrador debe autorizar la aplicación en **Admin Console → Apps → Custom Apps Manager**.
+
+```sh
+swift scripts/configure-oauth.swift --box CLIENT_ID:CLIENT_SECRET
+```
+
+## 5. WebDAV, Nextcloud y NAS
+
+No hay nada que registrar. Cada usuario escribe en iCloudy la dirección de su servidor, su usuario y su contraseña, que se guardan en el Llavero de este Mac y solo viajan a ese servidor. La dirección es la ruta WebDAV completa; en Nextcloud y ownCloud es `https://servidor/remote.php/dav/files/USUARIO`. Con verificación en dos pasos hay que crear una contraseña de aplicación.
+
+Limitaciones del protocolo, reflejadas en la interfaz: no hay búsqueda, ni enlaces públicos, ni papelera. Eliminar es definitivo y el diálogo de confirmación lo dice. Las subidas son un `PUT` completo, sin reanudación, y el servidor no informa de ninguna suma de verificación. Un servidor `http://` sin cifrar requiere además permitir esa conexión en las políticas de seguridad de transporte de macOS.
+
+## 6. Compilar una app sin configuración para el usuario
 
 Los comandos anteriores guardan `Configuration/OAuth.local.plist`, ignorado por Git. El script conserva el proveedor ya configurado al importar el otro.
 
@@ -54,7 +87,7 @@ bash scripts/build-app.sh --require-oauth
 open dist/iCloudy.app
 ```
 
-`--require-oauth` rechaza una configuración vacía o con formato inválido. No verifica que las aplicaciones existan ni que estén aprobadas: eso se comprueba mediante el login real en cada proveedor. Sin ese argumento se permite compilar para desarrollo de interfaz; los botones explican que el servicio aún no está habilitado, sin pedir acciones técnicas al usuario.
+`--require-oauth` exige clientes válidos de Google y Microsoft; Dropbox y Box se informan como pendientes si faltan, y WebDAV nunca los necesita. No verifica que las aplicaciones existan ni que estén aprobadas: eso se comprueba mediante el login real en cada proveedor. Sin ese argumento se permite compilar para desarrollo de interfaz; los botones explican que el servicio aún no está habilitado, sin pedir acciones técnicas al usuario.
 
 El archivo se copia a `Contents/Resources/OAuth.plist` antes de firmar. Se puede suministrar una ruta alternativa a través de `ICLOUDY_OAUTH_CONFIG` para CI. No edites un paquete ya firmado: vuelve a compilar. El ejecutable suelto de `swift run` no lleva ese recurso; usa el paquete `.app` para probar OAuth.
 

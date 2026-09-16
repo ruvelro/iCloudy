@@ -4,4 +4,7 @@
     <key>googleClientID</key><string></string>
     <key>googleDesktopClientSecret</key><string></string>
     <key>microsoftClientID</key><string></string>
+    <key>dropboxAppKey</key><string></string>
+    <key>boxClientID</key><string></string>
+    <key>boxClientSecret</key><string></string>
 </dict></plist>

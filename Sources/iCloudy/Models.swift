@@ -2,10 +2,72 @@ import Foundation
 import Security
 
 enum Cloud: String, Codable, CaseIterable, Identifiable {
-    case google, microsoft
+    case google, microsoft, dropbox, box, webdav
     var id: String { rawValue }
-    var title: String { self == .google ? L("Google Drive") : L("OneDrive") }
-    var tokenURL: String { self == .google ? "https://oauth2.googleapis.com/token" : "https://login.microsoftonline.com/common/oauth2/v2.0/token" }
+    var title: String {
+        switch self {
+        case .google: return L("Google Drive")
+        case .microsoft: return L("OneDrive")
+        case .dropbox: return L("Dropbox")
+        case .box: return L("Box")
+        case .webdav: return L("WebDAV")
+        }
+    }
+    var tokenURL: String {
+        switch self {
+        case .google: return "https://oauth2.googleapis.com/token"
+        case .microsoft: return "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+        case .dropbox: return "https://api.dropboxapi.com/oauth2/token"
+        case .box: return "https://api.box.com/oauth2/token"
+        case .webdav: return "" // password-based; there is no token endpoint
+        }
+    }
+    /// HTTP authorization scheme for the value stored in `Credential.accessToken`.
+    var authorizationScheme: String { self == .webdav ? "Basic" : "Bearer" }
+    /// Identifier the provider gives to the top of the tree, behind iCloudy's own "root" alias.
+    var rootAlias: String {
+        switch self {
+        case .google, .microsoft, .webdav: return "root"
+        case .dropbox: return "" // Dropbox addresses the root as an empty path
+        case .box: return "0"
+        }
+    }
+    var capabilities: CloudCapabilities { CloudCapabilities.of(self) }
+}
+
+/// What each provider can actually do. The interface hides or explains whatever is missing instead of failing later.
+struct CloudCapabilities {
+    var oauth = true
+    var search = true
+    var recents = true
+    var sharedWithMe = true
+    var publicLinks = true
+    var copy = true
+    var move = true
+    var quota = true
+    var exportsDocuments = false
+    /// False when deleting is permanent: the confirmation has to say so.
+    var reversibleTrash = true
+    /// The provider reports a checksum iCloudy can verify after uploading.
+    var checksum = true
+
+    static func of(_ cloud: Cloud) -> CloudCapabilities {
+        switch cloud {
+        case .google:
+            return CloudCapabilities(exportsDocuments: true)
+        case .microsoft:
+            return CloudCapabilities()
+        case .dropbox:
+            // No "recent" or "shared with me" listing in this version; both need APIs beyond plain file browsing.
+            return CloudCapabilities(recents: false, sharedWithMe: false)
+        case .box:
+            return CloudCapabilities(recents: false, sharedWithMe: false)
+        case .webdav:
+            // Plain WebDAV has no search, no sharing links and no recycle bin.
+            return CloudCapabilities(oauth: false, search: false, recents: false, sharedWithMe: false,
+                                     publicLinks: false, reversibleTrash: false, checksum: false)
+        }
+    }
 }
 
 struct Account: Codable, Identifiable, Hashable {
@@ -15,7 +77,10 @@ struct Account: Codable, Identifiable, Hashable {
     let email: String
     let clientID: String
     let clientSecret: String?
+    /// Base URL of the WebDAV server, including any path prefix. Unused by the OAuth providers.
+    var serverURL: String?
     var isDemo: Bool { id.hasPrefix("demo:") }
+    var capabilities: CloudCapabilities { isDemo ? CloudCapabilities(oauth: false, publicLinks: true) : cloud.capabilities }
     static let demo = Account(id: "demo:local", cloud: .google, name: "Demo local", email: "Sin conexión · datos de prueba", clientID: "", clientSecret: nil)
 }
 
@@ -74,6 +139,12 @@ struct UploadCheckpoint: Codable {
     var total: Int64 = 0
     var modified: Date?
     var complete = false
+    /// Dropbox and Box identify an upload session by an opaque id rather than by a URL.
+    var sessionID: String?
+    /// Box needs every part it has accepted when the session is committed, as JSON fragments.
+    var parts: [String] = []
+    /// Block size imposed by the provider; Box chooses it when the session starts.
+    var chunkSize: Int64?
 }
 struct Transfer: Identifiable, Codable {
     var id = UUID()
@@ -232,7 +303,8 @@ enum FileNames {
     static func problem(with name: String, for cloud: Cloud) -> String? {
         if name.isEmpty || name == "." || name == ".." { return L("Introduce un nombre válido.") }
         if name.contains("/") || name.contains("\0") { return L("El nombre no puede contener barras.") }
-        guard cloud == .microsoft else { return nil }
+        // OneDrive, Box and most WebDAV servers sit on Windows-style rules; Drive and Dropbox are permissive.
+        guard [.microsoft, .box, .webdav].contains(cloud) else { return nil }
         if name.unicodeScalars.contains(where: { oneDriveForbidden.contains($0) }) { return L("OneDrive no admite los caracteres \" * : < > ? / \\ | en los nombres.") }
         if name.hasPrefix(" ") || name.hasSuffix(" ") { return L("OneDrive no admite espacios al principio o al final del nombre.") }
         if name.hasSuffix(".") { return L("OneDrive no admite nombres que terminen en punto.") }
@@ -265,7 +337,7 @@ enum FileNames {
 // defaults, so adding a property never invalidates an existing file. Renaming or removing one still needs a migration.
 
 extension Account {
-    enum CodingKeys: String, CodingKey { case id, cloud, name, email, clientID, clientSecret }
+    enum CodingKeys: String, CodingKey { case id, cloud, name, email, clientID, clientSecret, serverURL }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let email = try values.decodeIfPresent(String.self, forKey: .email) ?? ""
@@ -274,7 +346,8 @@ extension Account {
                   name: try values.decodeIfPresent(String.self, forKey: .name) ?? email,
                   email: email,
                   clientID: try values.decodeIfPresent(String.self, forKey: .clientID) ?? "",
-                  clientSecret: try values.decodeIfPresent(String.self, forKey: .clientSecret))
+                  clientSecret: try values.decodeIfPresent(String.self, forKey: .clientSecret),
+                  serverURL: try values.decodeIfPresent(String.self, forKey: .serverURL))
     }
 }
 
@@ -305,14 +378,17 @@ extension CloudFile {
 }
 
 extension UploadCheckpoint {
-    enum CodingKeys: String, CodingKey { case url, offset, total, modified, complete }
+    enum CodingKeys: String, CodingKey { case url, offset, total, modified, complete, sessionID, parts, chunkSize }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         self.init(url: try values.decodeIfPresent(URL.self, forKey: .url),
                   offset: try values.decodeIfPresent(Int64.self, forKey: .offset) ?? 0,
                   total: try values.decodeIfPresent(Int64.self, forKey: .total) ?? 0,
                   modified: try values.decodeIfPresent(Date.self, forKey: .modified),
-                  complete: try values.decodeIfPresent(Bool.self, forKey: .complete) ?? false)
+                  complete: try values.decodeIfPresent(Bool.self, forKey: .complete) ?? false,
+                  sessionID: try values.decodeIfPresent(String.self, forKey: .sessionID),
+                  parts: try values.decodeIfPresent([String].self, forKey: .parts) ?? [],
+                  chunkSize: try values.decodeIfPresent(Int64.self, forKey: .chunkSize))
     }
 }
 
