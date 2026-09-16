@@ -16,6 +16,21 @@ extension CloudAPI {
         _ = try await json(URL(string: base + Self.segment(file.id))!, method: "PATCH", body: ["name": name])
     }
 
+    /// Grants read-only access to anyone holding the link and returns it. Both providers keep the permission until the
+    /// owner removes it on the web, so the caller must confirm with the user first.
+    func publicLink(for file: CloudFile) async throws -> URL {
+        if let demo { return try demo.publicLink(file.id) }
+        if account.cloud == .google {
+            _ = try await json(URL(string: "https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))/permissions")!, method: "POST", body: ["role": "reader", "type": "anyone"])
+            let metadata = try await json(URL(string: "https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))?fields=webViewLink")!)
+            guard let link = (metadata["webViewLink"] as? String).flatMap(URL.init(string:)) ?? file.webURL else { throw CloudError.message("Google no devolvió un enlace para este elemento.") }
+            return link
+        }
+        let result = try await json(URL(string: "https://graph.microsoft.com/v1.0/me/drive/items/\(Self.segment(file.id))/createLink")!, method: "POST", body: ["type": "view", "scope": "anonymous"])
+        guard let link = ((result["link"] as? [String: Any])?["webUrl"] as? String).flatMap(URL.init(string:)) else { throw CloudError.message("OneDrive no devolvió el enlace. La organización puede no permitir enlaces anónimos.") }
+        return link
+    }
+
     /// The checkpoint is committed before sending bytes. Recovery asks the server for its authoritative offset.
     func resumableUpload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws {
         if let demo { try await demo.upload(local: local, parent: parent, name: name, replacing: replacing, checkpoint: checkpoint, save: save, progress: progress); return }

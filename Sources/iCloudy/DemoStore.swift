@@ -68,6 +68,11 @@ final class DemoStore {
         entries[id] = Entry(file: CloudFile(id: id, name: name, mime: entry.file.mime, size: entry.file.size, modified: Date(), webURL: nil, isFolder: entry.file.isFolder), parent: entry.parent)
         try persist()
     }
+    func publicLink(_ id: String) throws -> URL {
+        try check()
+        guard entries[id] != nil else { throw CloudError.message("El archivo demo ya no existe.") }
+        return URL(string: "https://demo.icloudy.invalid/share/\(id)")!
+    }
     private func persist() throws { try LocalStore.save(entries, to: indexURL) }
 
     func upload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: (Int64, Int64) -> Void) async throws {

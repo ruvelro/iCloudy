@@ -170,6 +170,33 @@ final class CoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
+    @MainActor func testPublicLinkGrantsAnyoneReadOnlyAndReturnsTheProviderLink() async throws {
+        let file = CloudFile(id: "f1", name: "Informe.pdf", mime: "application/pdf", size: 10, modified: nil, webURL: URL(string: "https://drive.google.com/file/d/f1/view"), isFolder: false)
+        var calls: [String] = []
+        StubProtocol.handler = { request in
+            calls.append("\(request.httpMethod ?? "") \(request.url!.path)")
+            if request.url!.path.hasSuffix("/permissions") {
+                XCTAssertTrue(requestBody(request).contains(#""role":"reader""#))
+                XCTAssertTrue(requestBody(request).contains(#""type":"anyone""#))
+                return (200, [:], Data(#"{"id":"anyoneWithLink"}"#.utf8))
+            }
+            return (200, [:], Data(#"{"webViewLink":"https://drive.google.com/file/d/f1/view?usp=sharing"}"#.utf8))
+        }
+        let google = try await makeClient(.google).publicLink(for: file)
+        XCTAssertEqual(google.absoluteString, "https://drive.google.com/file/d/f1/view?usp=sharing")
+        XCTAssertEqual(calls, ["POST /drive/v3/files/f1/permissions", "GET /drive/v3/files/f1"])
+
+        StubProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertTrue(request.url!.path.hasSuffix("/items/f1/createLink"))
+            XCTAssertTrue(requestBody(request).contains(#""scope":"anonymous""#))
+            XCTAssertTrue(requestBody(request).contains(#""type":"view""#))
+            return (201, [:], Data(#"{"link":{"type":"view","scope":"anonymous","webUrl":"https://1drv.ms/x/abc"}}"#.utf8))
+        }
+        let microsoft = try await makeClient(.microsoft).publicLink(for: file)
+        XCTAssertEqual(microsoft.absoluteString, "https://1drv.ms/x/abc")
+    }
+
     func testOneDriveNameRulesAreStricterThanDrive() {
         XCTAssertNil(FileNames.problem(with: "Informe: final?", for: .google))
         XCTAssertNotNil(FileNames.problem(with: "Informe: final?", for: .microsoft))

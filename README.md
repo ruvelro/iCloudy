@@ -28,6 +28,7 @@ También puedes abrir `Package.swift` en Xcode o ejecutar `swift run iCloudy` pa
 - Subida recursiva de carpetas y archivos por bloques de 5 MiB, sin cargar todo el archivo en memoria.
 - Descarga explícita a una carpeta elegida, incluyendo carpetas recursivas. Ningún listado descarga contenidos automáticamente.
 - Google Docs: PDF/Word; Sheets: Excel/PDF; Slides: PowerPoint/PDF. Exportación individual.
+- «Copiar enlace» pone en el portapapeles el enlace web del proveedor, que solo abre quien ya tiene acceso. «Crear enlace público de solo lectura…» pide confirmación, concede acceso de lectura a cualquiera con el enlace (permiso `anyone/reader` en Drive, `createLink` anónimo en OneDrive) y lo copia; revocarlo se hace desde la web del proveedor. Disponible en el explorador y en la búsqueda global.
 - Vista previa con Espacio, botón de ojo o menú contextual, en lista y cuadrícula: PDF, imágenes y texto/código en solo lectura. Descarga temporal cancelable, limpieza al cerrar y al arrancar, consentimiento por encima de 100 MB o tamaño desconocido, y «Guardar copia…». Detalles y límites en [Vista previa](docs/PREVIEW.md).
 - Cola secuencial con estados, progreso por bloques en subidas y por elementos en carpetas; descarga individual con indicador de actividad.
 - Botones «Continuar con Google» y «Continuar con Microsoft», sin campos técnicos para el usuario. OAuth con navegador externo, PKCE y validación de state, con hasta diez minutos para completar el inicio de sesión. Tokens y cuentas en el Llavero; configuración del desarrollador incorporada al paquete.

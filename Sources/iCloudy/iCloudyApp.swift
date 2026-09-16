@@ -220,6 +220,16 @@ struct ExplorerView: View {
         }
         .onDisappear { model.preview.close() }
         .alert("No se pudo completar la operación", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) { Button("Aceptar") { model.error = nil } } message: { Text(model.error ?? "") }
+        .alert("iCloudy", isPresented: Binding(get: { model.info != nil }, set: { if !$0 { model.info = nil } })) { Button("Aceptar") { model.info = nil } } message: { Text(model.info ?? "") }
+        .confirmationDialog("¿Crear un enlace público?", isPresented: Binding(get: { model.pendingShare != nil }, set: { if !$0 { model.pendingShare = nil } }), titleVisibility: .visible) {
+            Button("Crear y copiar enlace") {
+                if let pending = model.pendingShare { Task { await model.createPublicLink(pending.file, account: pending.account) } }
+                model.pendingShare = nil
+            }
+            Button("Cancelar", role: .cancel) { model.pendingShare = nil }
+        } message: {
+            Text("Cualquier persona con el enlace podrá ver «\(model.pendingShare?.file.name ?? "")» sin iniciar sesión. El permiso queda en \(model.pendingShare?.account.cloud.title ?? "la nube") hasta que lo revoques desde su web.")
+        }
         .confirmationDialog("¿Desconectar esta cuenta?", isPresented: $confirmDisconnect, titleVisibility: .visible, presenting: disconnectTarget) { account in
             Button("Desconectar", role: .destructive) { model.disconnect(account) }
             Button("Cancelar", role: .cancel) {}
@@ -363,6 +373,9 @@ struct ExplorerView: View {
         ForEach(file.exportOptions, id: \.ext) { option in
             Button("Exportar como \(option.title)…") { Task { await model.save(file, export: (option.mime, option.ext)) } }
         }
+        Divider()
+        if file.webURL != nil { Button("Copiar enlace") { model.copyLink(file) } }
+        if let account = model.account { Button("Crear enlace público de solo lectura…") { model.pendingShare = (file, account) } }
     }
 
 }

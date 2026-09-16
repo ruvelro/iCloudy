@@ -10,6 +10,10 @@ final class AppModel: ObservableObject {
     @Published var path: [CloudFile] = []
     @Published var loading = false
     @Published var error: String?
+    /// Non-error feedback, e.g. "link copied". Shown in a plain alert.
+    @Published var info: String?
+    /// File awaiting confirmation before a public link is created for it.
+    @Published var pendingShare: (file: CloudFile, account: Account)?
     @Published var connecting = false
     @Published var connectionError: String?
     @Published var showConnect = false
@@ -235,6 +239,23 @@ final class AppModel: ObservableObject {
                 if !(error is CancellationError), (error as NSError).code != NSURLErrorCancelled { self.error = error.localizedDescription }
             }
         }
+    }
+    /// Copies the provider's own web link; it opens only for people who already have access.
+    func copyLink(_ file: CloudFile) {
+        guard let url = file.webURL else { error = "Este elemento no tiene enlace web."; return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+        info = "Enlace copiado. Solo funciona para quien ya tenga acceso a «\(file.name)»."
+    }
+    /// Sharing with anyone is irreversible from the app, so the view asks for confirmation before calling this.
+    func createPublicLink(_ file: CloudFile, account target: Account? = nil) async {
+        guard let account = target ?? account else { return }
+        do {
+            let link = try await client(account).publicLink(for: file)
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(link.absoluteString, forType: .string)
+            info = "Enlace público copiado. Cualquiera que lo tenga podrá ver «\(file.name)». Para revocarlo, usa la web del proveedor."
+        } catch { self.error = error.localizedDescription }
     }
     func openBrowser(_ file: CloudFile) {
         guard let url = file.webURL, ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { error = "No hay un enlace web disponible."; return }

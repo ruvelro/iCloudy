@@ -112,7 +112,13 @@ struct GlobalSearchView: View {
         if let account = model.accounts.first(where: { $0.id == hit.accountID }), !hit.file.isGoogleDocument {
             Button("Descargar…") { Task { await model.saveMany([hit.file], targetAccount: account) } }
         }
-        if hit.file.webURL != nil { Button("Abrir en navegador") { model.openBrowser(hit.file) } }
+        if hit.file.webURL != nil {
+            Button("Abrir en navegador") { model.openBrowser(hit.file) }
+            Button("Copiar enlace") { model.copyLink(hit.file) }
+        }
+        if let account = model.accounts.first(where: { $0.id == hit.accountID }) {
+            Button("Crear enlace público de solo lectura…") { model.pendingShare = (hit.file, account) }
+        }
         ForEach(hit.file.exportOptions, id: \.ext) { option in
             if let account = model.accounts.first(where: { $0.id == hit.accountID }) {
                 Button("Exportar como \(option.title)…") { Task { await model.saveMany([hit.file], export: (option.mime, option.ext), targetAccount: account) } }
