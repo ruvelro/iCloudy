@@ -1,0 +1,87 @@
+# OAuth de iCloudy: configuración del desarrollador
+
+El usuario final solo pulsa **Continuar con Google** o **Continuar con Microsoft**, elige una cuenta y acepta los permisos del proveedor. No crea proyectos, introduce IDs ni copia códigos. Outlook/Hotmail son cuentas Microsoft: se accede a sus archivos de **OneDrive**, no al correo.
+
+Esta configuración se hace una vez por el responsable de iCloudy, antes de distribuir el binario. Los IDs deben ser emitidos por Google y Microsoft; no se pueden generar localmente ni sustituir por valores de ejemplo. Publicar el repositorio en GitHub o subir una app a Apple no registra estos clientes automáticamente.
+
+## 1. Google Drive
+
+En [Google Cloud Console](https://console.cloud.google.com/):
+
+1. Crea o selecciona el proyecto **iCloudy** de tu organización.
+2. En **APIs & Services → Library**, habilita **Google Drive API**.
+3. En **Google Auth Platform → Branding**, configura el nombre iCloudy, correo de soporte y contacto del desarrollador. Para distribución pública, añade web, política de privacidad y dominios verificados reales.
+4. En **Audience**, elige **External** para admitir cuentas ajenas a tu organización. Mientras estés en Testing, añade las cuentas que usarás en la prueba de concepto a **Test users**.
+5. En **Data Access**, declara `openid`, `email`, `profile` y `https://www.googleapis.com/auth/drive`. La aplicación navega por todo Mi unidad y sube a sus carpetas: `drive.file` por sí solo no permite ese alcance.
+6. En **Clients → Create client**, selecciona **Desktop app** y descarga su JSON. No elijas Web application ni crees una cuenta de servicio.
+7. Importa ese archivo desde la raíz del repositorio:
+
+```sh
+swift scripts/configure-oauth.swift --google /ruta/al/cliente-desktop.json
+```
+
+El flujo Desktop admite la redirección loopback `http://127.0.0.1:53682/callback`, que no sale del Mac. No tienes que alojar esa dirección en un servidor. La app abre el navegador, verifica `state` y usa PKCE S256 para canjear el código. [Documentación de Google](https://developers.google.com/identity/protocols/oauth2/native-app).
+
+### Abrir el acceso al público
+
+Testing sirve para la PoC; no es una configuración de distribución. El scope `drive` está restringido y exige el proceso de verificación aplicable de Google para el acceso público. Prepara dominio y política de privacidad, justificación de permisos y demostración del flujo. Cambiar Audience a producción no sustituye esa verificación. Si los datos restringidos pasan por servidores propios o de terceros, puede ser necesaria una evaluación de seguridad; la arquitectura actual los procesa directamente en el Mac, pero Google determina los requisitos concretos. [Verificación de scopes restringidos](https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification).
+
+## 2. Microsoft: OneDrive, Outlook y Hotmail
+
+En [Microsoft Entra admin center](https://entra.microsoft.com/):
+
+1. Abre **Identity → Applications → App registrations → New registration** en el tenant del desarrollador.
+2. Nombre: **iCloudy**.
+3. Supported account types: **Accounts in any organizational directory and personal Microsoft accounts**. La audiencia del manifiesto es `AzureADandPersonalMicrosoftAccount`. Esto admite Outlook/Hotmail y Microsoft 365; no uses una app single-tenant.
+4. Configura un redirect de **Mobile and desktop applications / cliente público**: `http://127.0.0.1:53682/callback`. No lo registres como Web o SPA.
+5. La interfaz del portal puede rechazar una URI HTTP con IP loopback. En ese caso añade la URI a `publicClient.redirectUris` en el manifiesto de Microsoft Graph; en una vista de manifiesto legado aparece como `replyUrlsWithType` con `type: InstalledClient`. Conserva los redirects existentes. El nombre del campo depende de la versión del manifiesto del portal. [Restricciones de redirects](https://learn.microsoft.com/en-us/entra/identity-platform/reply-url).
+6. En **API permissions → Microsoft Graph → Delegated permissions**, añade **User.Read** y **Files.ReadWrite**. La app solicita además `openid profile email offline_access`. No se necesitan permisos de correo ni permisos Application.
+7. Copia el **Application (client) ID**, no el Directory (tenant) ID. No crees un client secret para este cliente de escritorio.
+
+```sh
+swift scripts/configure-oauth.swift --microsoft EL_APPLICATION_CLIENT_ID
+```
+
+El endpoint `/common` del código acepta cuentas personales y empresariales según la audiencia registrada. Para reducir advertencias y facilitar la adopción empresarial, configura Branding, dominio del publicador y, si reúnes sus requisitos, **Publisher verification**. Las políticas corporativas pueden requerir consentimiento del administrador incluso con la app verificada; no se puede prometer acceso a todas las organizaciones. [Tipos de cuenta](https://learn.microsoft.com/en-us/entra/architecture/establish-applications), [verificación del publicador](https://learn.microsoft.com/en-us/entra/identity-platform/publisher-verification-overview).
+
+## 3. Compilar una app sin configuración para el usuario
+
+Los comandos anteriores guardan `Configuration/OAuth.local.plist`, ignorado por Git. El script conserva el proveedor ya configurado al importar el otro.
+
+```sh
+swift test
+bash scripts/build-app.sh --require-oauth
+open dist/iCloudy.app
+```
+
+`--require-oauth` rechaza una configuración vacía o con formato inválido. No verifica que las aplicaciones existan ni que estén aprobadas: eso se comprueba mediante el login real en cada proveedor. Sin ese argumento se permite compilar para desarrollo de interfaz; los botones explican que el servicio aún no está habilitado, sin pedir acciones técnicas al usuario.
+
+El archivo se copia a `Contents/Resources/OAuth.plist` antes de firmar. Se puede suministrar una ruta alternativa a través de `ICLOUDY_OAUTH_CONFIG` para CI. No edites un paquete ya firmado: vuelve a compilar. El ejecutable suelto de `swift run` no lleva ese recurso; usa el paquete `.app` para probar OAuth.
+
+## GitHub y credenciales
+
+- Los **client IDs son identificadores públicos** y es normal que se incluyan en la app. Puedes decidir publicar una configuración oficial con esos IDs o inyectarla en el proceso de release.
+- El campo `client_secret` del JSON **Google Desktop** es metadato de un cliente instalado, extraíble del binario; no lo trates como una credencial confidencial de servidor. El código usa PKCE. Nunca importes un cliente Web ni credenciales de una cuenta de servicio.
+- No publiques tokens de usuarios, JSON de cuentas de servicio, secretos de servidor Microsoft, certificados de firma, perfiles de aprovisionamiento ni exportaciones del Llavero.
+- Los forks que distribuyan su propia aplicación deben registrar sus propios clientes y políticas de privacidad. Los usuarios del binario oficial usan el registro de iCloudy.
+- El repositorio ignora la configuración local, certificados y perfiles. No contiene tokens ni IDs ficticios habilitados.
+
+## Mac App Store
+
+Se incluye `Resources/iCloudy.entitlements` y el script lo usa al firmar: **App Sandbox**, red de salida, red de entrada para el callback exclusivo de loopback y acceso de lectura/escritura a archivos elegidos por el usuario. Los tests con respuestas simuladas no certifican el funcionamiento real en el sandbox. [App Sandbox de Apple](https://developer.apple.com/documentation/xcode/configuring-the-macos-app-sandbox).
+
+La firma ad hoc del script es para desarrollo. Aún hay que elegir un bundle ID definitivo, configurar tu Apple Developer Team, firma y aprovisionamiento de Mac App Store, preparar el archivo de distribución y completar App Store Connect. Una firma Developer ID con notarización corresponde a distribución fuera de la Store; no sustituye el proceso de Mac App Store. El script permite `ICLOUDY_SIGNING_IDENTITY`, pero no crea certificados ni perfiles.
+
+Esta app conecta cuentas externas para acceder a sus contenidos y no crea una cuenta propia de iCloudy. La regla 4.8 contempla una excepción para clientes de servicios de terceros; esa es la justificación que presentaríamos a revisión, no una garantía de aceptación. También se requieren política de privacidad, declaración de tratamiento de datos e instrucciones de prueba para App Review. [App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/).
+
+## Prueba de aceptación con cuentas reales
+
+1. Compila con ambos clientes y abre el `.app`.
+2. Pulsa Google: selector de cuenta → consentimiento → regreso a iCloudy → listado de Drive.
+3. Añade otra cuenta Google y verifica que se mantienen separadas.
+4. Repite con una cuenta Outlook/Hotmail y, si procede, Microsoft 365.
+5. Reinicia la app: las cuentas deben seguir presentes y los tokens renovarse cuando caduquen.
+6. Prueba cancelar el consentimiento y volver a conectar.
+7. Selecciona una carpeta local con el diálogo del sistema y prueba subida y descarga bajo el sandbox.
+
+Pendientes hasta contar con registros reales: consentimiento end-to-end, permisos del tenant, renovación de tokens real, acceso al Llavero y transferencias en una distribución firmada/aprovisionada. El Mac debe estar desbloqueado para la prueba interactiva.

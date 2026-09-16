@@ -1,0 +1,9 @@
+.build/
+.swiftpm/
+dist/
+.DS_Store
+Configuration/OAuth.local.plist
+Configuration/*client_secret*.json
+*.p12
+*.mobileprovision
+*.provisionprofile
