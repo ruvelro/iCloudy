@@ -135,7 +135,27 @@ final class GlobalSearch: ObservableObject {
 }
 
 extension CloudAPI {
-    func searchPage(term: String, cursor: String? = nil) async throws -> SearchPage {
+    /// Type and date filters travel to Drive inside `q`, so fewer pages are needed. Graph's search endpoint does not
+    /// accept them, and size is not queryable anywhere: those cases stay with the local filter.
+    static func googleFilterClauses(_ filters: SearchFilters, now: Date = Date()) -> [String] {
+        var clauses: [String] = []
+        switch filters.type {
+        case .all: break
+        case .folders: clauses.append("mimeType = 'application/vnd.google-apps.folder'")
+        case .images: clauses.append("mimeType contains 'image/'")
+        case .video: clauses.append("mimeType contains 'video/'")
+        case .audio: clauses.append("mimeType contains 'audio/'")
+        case .documents: clauses.append("(mimeType contains 'application/vnd.google-apps.' or mimeType = 'application/pdf' or mimeType contains 'text/' or mimeType contains 'officedocument' or mimeType contains 'application/msword' or mimeType contains 'application/vnd.ms-' or mimeType contains 'opendocument')")
+        case .other: clauses.append("mimeType != 'application/vnd.google-apps.folder' and not mimeType contains 'image/' and not mimeType contains 'video/' and not mimeType contains 'audio/'")
+        }
+        if filters.age != .any {
+            let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withInternetDateTime]
+            clauses.append("modifiedTime > '\(formatter.string(from: now.addingTimeInterval(-Double(filters.age.rawValue) * 86400)))'")
+        }
+        return clauses
+    }
+
+    func searchPage(term: String, cursor: String? = nil, filters: SearchFilters = SearchFilters()) async throws -> SearchPage {
         if let demo { return try demo.searchPage(term: term, cursor: cursor, accountID: account.id) }
         if account.cloud == .google {
             let terms = term.split(whereSeparator: \.isWhitespace).map {
@@ -143,7 +163,7 @@ extension CloudAPI {
             }
             var url = URLComponents(string: "https://www.googleapis.com/drive/v3/files")!
             url.queryItems = [
-                URLQueryItem(name: "q", value: (["trashed = false"] + terms.map { "(name contains '\($0)' or fullText contains '\($0)')" }).joined(separator: " and ")),
+                URLQueryItem(name: "q", value: (["trashed = false"] + terms.map { "(name contains '\($0)' or fullText contains '\($0)')" } + Self.googleFilterClauses(filters)).joined(separator: " and ")),
                 URLQueryItem(name: "spaces", value: "drive"), URLQueryItem(name: "corpora", value: "user"),
                 URLQueryItem(name: "pageSize", value: "100"), URLQueryItem(name: "pageToken", value: cursor),
                 URLQueryItem(name: "fields", value: "nextPageToken,incompleteSearch,files(id,name,mimeType,size,modifiedTime,webViewLink,parents,driveId)")

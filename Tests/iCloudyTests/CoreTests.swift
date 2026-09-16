@@ -330,6 +330,27 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent(copied.id)), Data("hola".utf8))
     }
 
+    @MainActor func testSearchFiltersTravelToDriveButNotToGraph() async throws {
+        var filters = SearchFilters(); filters.type = .images; filters.age = .week; filters.size = .large
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let clauses = CloudAPI.googleFilterClauses(filters, now: now)
+        XCTAssertEqual(clauses.count, 2)
+        XCTAssertEqual(clauses[0], "mimeType contains 'image/'")
+        XCTAssertEqual(clauses[1], "modifiedTime > '2027-01-08T08:00:00Z'")
+        XCTAssertTrue(CloudAPI.googleFilterClauses(SearchFilters()).isEmpty, "Default filters leave the query untouched")
+        var qs: [String] = []
+        StubProtocol.handler = { request in
+            qs.append(request.url!.absoluteString)
+            return (200, [:], Data(request.url!.host == "www.googleapis.com" ? #"{"files":[]}"# .utf8 : #"{"value":[]}"# .utf8))
+        }
+        _ = try await makeClient(.google).searchPage(term: "foto", filters: filters)
+        _ = try await makeClient(.microsoft).searchPage(term: "foto", filters: filters)
+        let google = URLComponents(string: qs[0])!.queryItems!.first { $0.name == "q" }!.value!
+        XCTAssertTrue(google.contains("mimeType contains 'image/'") && google.contains("modifiedTime >"), google)
+        XCTAssertFalse(google.contains("size"), "Drive cannot filter by size")
+        XCTAssertFalse(qs[1].contains("mimeType") || qs[1].contains("filter"), "Graph search has no server-side filters")
+    }
+
     func testOneDriveNameRulesAreStricterThanDrive() {
         XCTAssertNil(FileNames.problem(with: "Informe: final?", for: .google))
         XCTAssertNotNil(FileNames.problem(with: "Informe: final?", for: .microsoft))

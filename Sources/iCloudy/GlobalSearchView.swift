@@ -85,7 +85,7 @@ struct GlobalSearchView: View {
                         }
                     }
                 }
-                Text("\(search.visibleHits.count) resultados visibles · \(search.hits.count) recibidos. Tamaños/fechas desconocidos quedan fuera de filtros específicos.").foregroundStyle(.secondary)
+                Text("\(search.visibleHits.count) resultados visibles · \(search.hits.count) recibidos. Tipo y fecha se envían a Google Drive al pulsar Buscar; OneDrive y el tamaño se filtran en local. Tamaños/fechas desconocidos quedan fuera de filtros específicos.").foregroundStyle(.secondary)
             }.font(.caption).padding(12)
         }
         .navigationTitle("Buscar en todas las nubes")
@@ -101,7 +101,7 @@ struct GlobalSearchView: View {
         selected = []; model.preview.close()
         search.start(accounts: model.accounts) { [weak model] account, term, cursor in
             guard let model else { throw CancellationError() }
-            return try await model.client(account).searchPage(term: term, cursor: cursor)
+            return try await model.client(account).searchPage(term: term, cursor: cursor, filters: search.filters)
         }
     }
     @ViewBuilder private func actions(_ hit: SearchHit) -> some View {
