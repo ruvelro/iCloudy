@@ -113,6 +113,34 @@ final class TransferQueue: ObservableObject {
         do { try persist() } catch { persistenceError = error.localizedDescription }
         stateChanges.send()
     }
+    /// True for jobs that can be re-prioritised: waiting or paused. The running job and finished ones keep their place.
+    func isMovable(_ transfer: Transfer) -> Bool { [.queued, .paused].contains(transfer.state) && transfer.id != activeID }
+    /// Same semantics as SwiftUI's `onMove`: `destination` is an index in the list before removal.
+    func move(fromOffsets source: IndexSet, toOffset destination: Int) {
+        guard !source.isEmpty, source.allSatisfy({ items.indices.contains($0) && isMovable(items[$0]) }), (0...items.count).contains(destination) else { return }
+        let moving = source.map { items[$0] }
+        var remaining = items
+        for index in source.reversed() { remaining.remove(at: index) }
+        remaining.insert(contentsOf: moving, at: destination - source.filter { $0 < destination }.count)
+        items = remaining
+        do { try persist() } catch { persistenceError = error.localizedDescription }
+        stateChanges.send()
+    }
+    /// Puts a waiting job in front of every other waiting job, right after whatever is running or already finished.
+    func prioritize(_ id: UUID) {
+        guard let from = index(id), isMovable(items[from]) else { return }
+        let to = items.firstIndex { isMovable($0) } ?? from
+        guard to < from else { return }
+        move(fromOffsets: IndexSet(integer: from), toOffset: to)
+    }
+    /// Other jobs of the same batch that would still run; drives the "cancel the rest" affordance.
+    func pendingBatchMates(of id: UUID) -> Int {
+        guard let job = items.first(where: { $0.id == id }) else { return 0 }
+        return items.filter { $0.batchID == job.batchID && $0.id != id && [.queued, .running].contains($0.state) }.count
+    }
+    func cancelBatch(_ batchID: UUID) {
+        for id in items.filter({ $0.batchID == batchID && [.running, .queued].contains($0.state) }).map(\.id) { cancel(id) }
+    }
     func pauseAll() {
         for id in items.filter({ [.running, .queued].contains($0.state) }).map(\.id) { cancel(id, pause: true) }
     }

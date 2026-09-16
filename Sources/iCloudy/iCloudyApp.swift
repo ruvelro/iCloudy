@@ -434,34 +434,43 @@ struct TransferPanel: View {
                 Button("Pausar todas") { queue.pauseAll() }.buttonStyle(.link).font(.caption)
                 Button("Limpiar completadas") { queue.clearCompleted() }.buttonStyle(.link).font(.caption)
             }
-            ScrollView {
-                LazyVStack(spacing: 10) {
-                    ForEach(queue.items.reversed()) { transfer in
-                        HStack(alignment: .top) {
-                            Image(systemName: transfer.failed ? "exclamationmark.circle.fill" : (transfer.finished ? "checkmark.circle.fill" : "arrow.up.arrow.down.circle"))
-                                .foregroundStyle(transfer.failed ? .red : (transfer.finished ? .green : .secondary))
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(transfer.name).fontWeight(.medium)
-                                Text(transfer.destination).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
-                                Text(transfer.status).foregroundStyle(transfer.failed ? .red : .secondary).textSelection(.enabled)
-                                Text(transfer.metrics).monospacedDigit().foregroundStyle(.secondary)
-                                if !transfer.finished {
-                                    if transfer.progress > 0 { ProgressView(value: transfer.progress) }
-                                    else if transfer.status != "En cola" { ProgressView().controlSize(.mini) }
-                                }
-                            }.font(.caption)
-                            Spacer()
-                            if [.failed, .paused, .cancelled].contains(transfer.state) {
-                                Button(transfer.state == .failed ? "Reintentar" : "Reanudar") { queue.retry(transfer.id) }
+            // Queue order, oldest first: the running job sits on top and waiting jobs can be dragged to re-prioritise.
+            List {
+                ForEach(queue.items) { transfer in
+                    HStack(alignment: .top) {
+                        Image(systemName: transfer.failed ? "exclamationmark.circle.fill" : (transfer.finished ? "checkmark.circle.fill" : "arrow.up.arrow.down.circle"))
+                            .foregroundStyle(transfer.failed ? .red : (transfer.finished ? .green : .secondary))
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(transfer.name).fontWeight(.medium)
+                            Text(transfer.destination).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
+                            Text(transfer.status).foregroundStyle(transfer.failed ? .red : .secondary).textSelection(.enabled)
+                            Text(transfer.metrics).monospacedDigit().foregroundStyle(.secondary)
+                            if !transfer.finished {
+                                if transfer.progress > 0 { ProgressView(value: transfer.progress) }
+                                else if transfer.status != "En cola" { ProgressView().controlSize(.mini) }
                             }
-                            if [.running, .queued].contains(transfer.state) {
-                                Button { queue.cancel(transfer.id, pause: true) } label: { Image(systemName: "pause.circle") }.help("Pausar")
-                                Button { queue.cancel(transfer.id) } label: { Image(systemName: "xmark.circle") }.help("Cancelar")
+                        }.font(.caption)
+                        Spacer()
+                        if [.failed, .paused, .cancelled].contains(transfer.state) {
+                            Button(transfer.state == .failed ? "Reintentar" : "Reanudar") { queue.retry(transfer.id) }
+                        }
+                        if queue.isMovable(transfer) {
+                            Button { queue.prioritize(transfer.id) } label: { Image(systemName: "arrow.up.to.line") }.help("Pasar al principio de la cola")
+                        }
+                        if [.running, .queued].contains(transfer.state) {
+                            Button { queue.cancel(transfer.id, pause: true) } label: { Image(systemName: "pause.circle") }.help("Pausar")
+                            Button { queue.cancel(transfer.id) } label: { Image(systemName: "xmark.circle") }.help("Cancelar")
+                            if queue.pendingBatchMates(of: transfer.id) > 0 {
+                                Button("Cancelar el resto del lote") { queue.cancelBatch(transfer.batchID) }.font(.caption)
+                                    .help("Cancela este elemento y los \(queue.pendingBatchMates(of: transfer.id)) pendientes que se añadieron con él")
                             }
                         }
                     }
+                    .moveDisabled(!queue.isMovable(transfer))
+                    .listRowSeparator(.hidden)
                 }
-            }.frame(maxHeight: 180)
+                .onMove { from, to in queue.move(fromOffsets: from, toOffset: to) }
+            }.listStyle(.plain).scrollContentBackground(.hidden).frame(maxHeight: 220)
             if let message = queue.persistenceError {
                 HStack(alignment: .top) {
                     Text(message).foregroundStyle(.red).font(.caption).fixedSize(horizontal: false, vertical: true)

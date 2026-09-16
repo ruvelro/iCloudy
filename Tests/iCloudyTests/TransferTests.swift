@@ -160,6 +160,49 @@ final class TransferTests: XCTestCase {
         XCTAssertTrue(try demo.list(nested.id).contains { $0.name == "new.txt" })
     }
 
+    func testWaitingJobsCanBeReorderedAndPersistTheirOrder() async throws {
+        let (root, demo, queue) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        demo.latency = .milliseconds(50)
+        var jobs: [Transfer] = []
+        for name in ["a", "b", "c"] {
+            let url = root.appendingPathComponent(name); try Data(repeating: 1, count: 512 * 1024).write(to: url); jobs.append(upload(url))
+        }
+        try queue.add(jobs)
+        queue.pauseAll()
+        try await wait { !queue.isWorking }
+        XCTAssertEqual(queue.items.map(\.name), ["a", "b", "c"])
+        queue.prioritize(jobs[2].id)
+        XCTAssertEqual(queue.items.map(\.name), ["c", "a", "b"])
+        queue.move(fromOffsets: IndexSet(integer: 0), toOffset: 3)
+        XCTAssertEqual(queue.items.map(\.name), ["a", "b", "c"], "SwiftUI onMove semantics: destination indexes the list before removal")
+        XCTAssertEqual(TransferQueue(storeURL: queue.storeURL).items.map(\.name), ["a", "b", "c"], "Order is persisted")
+        queue.retry(jobs[0].id)
+        try await wait { queue.items.first?.state == .running }
+        XCTAssertFalse(queue.isMovable(queue.items[0]), "The running job is pinned")
+        queue.move(fromOffsets: IndexSet(integer: 0), toOffset: 3)
+        XCTAssertEqual(queue.items.first?.name, "a")
+        queue.pauseAll(); try await wait { !queue.isWorking }
+    }
+
+    func testCancelBatchStopsOnlyTheMatesOfThatBatch() async throws {
+        let (root, demo, queue) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        demo.latency = .milliseconds(50)
+        let batch = UUID(), other = UUID()
+        var jobs: [Transfer] = []
+        for (name, id) in [("a", batch), ("b", batch), ("c", other), ("d", batch)] {
+            let url = root.appendingPathComponent(name); try Data(repeating: 1, count: 512 * 1024).write(to: url); jobs.append(upload(url, batch: id))
+        }
+        try queue.add(jobs)
+        try await wait { queue.items.first?.state == .running }
+        XCTAssertEqual(queue.pendingBatchMates(of: jobs[0].id), 2)
+        XCTAssertEqual(queue.pendingBatchMates(of: jobs[2].id), 0)
+        queue.cancelBatch(batch)
+        try await wait { !queue.isWorking }
+        XCTAssertEqual(queue.items.map(\.state), [.cancelled, .cancelled, .completed, .cancelled])
+    }
+
     func testRecoveryPausesRunningJobsAndCorruptionIsNotOverwritten() throws {
         let (root, _, queue) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
