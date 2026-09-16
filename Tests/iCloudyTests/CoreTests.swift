@@ -1,4 +1,5 @@
 import XCTest
+import CryptoKit
 @testable import iCloudy
 
 final class StubProtocol: URLProtocol {
@@ -141,8 +142,10 @@ final class CoreTests: XCTestCase {
 
     @MainActor func testChunkedGoogleUploadRequiresServerAcknowledgement() async throws {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try Data(repeating: 42, count: 5 * 1024 * 1024 + 17).write(to: file)
+        let payload = Data(repeating: 42, count: 5 * 1024 * 1024 + 17)
+        try payload.write(to: file)
         defer { try? FileManager.default.removeItem(at: file) }
+        let md5 = UploadHasher.hex(Insecure.MD5.hash(data: payload))
         var count = 0
         StubProtocol.handler = { request in
             count += 1
@@ -159,12 +162,14 @@ final class CoreTests: XCTestCase {
                 return (308, ["Range": "bytes=0-5242879"], Data())
             default:
                 XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Range"), "bytes 5242880-5242896/5242897")
-                return (201, [:], Data(#"{"id":"created"}"#.utf8))
+                return (201, [:], Data(#"{"id":"created","md5Checksum":"\#(md5)"}"#.utf8))
             }
         }
         var offsets: [Int64] = []
         var saved: [UploadCheckpoint] = []
-        try await makeClient(.google).resumableUpload(local: file, parent: "root", name: "big.bin", replacing: nil, checkpoint: nil, save: { saved.append($0) }, progress: { bytes, _ in offsets.append(bytes) })
+        let receipt = try await makeClient(.google).resumableUpload(local: file, parent: "root", name: "big.bin", replacing: nil, checkpoint: nil, save: { saved.append($0) }, progress: { bytes, _ in offsets.append(bytes) })
+        XCTAssertEqual(receipt.verification, .verified)
+        XCTAssertEqual(receipt.remoteID, "created")
         XCTAssertEqual(count, 3)
         XCTAssertEqual(offsets.last, 5_242_897)
         XCTAssertEqual(saved.first?.url?.absoluteString, "https://upload.example/session", "The session is checkpointed before any byte is sent")
@@ -187,10 +192,34 @@ final class CoreTests: XCTestCase {
             }
             XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
             XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Range"), "bytes 0-7/8")
-            return (201, [:], Data(#"{"id":"created"}"#.utf8))
+            let sha = UploadHasher.hex(SHA256.hash(data: Data("contents".utf8))).uppercased()
+            return (201, [:], Data(#"{"id":"created","file":{"hashes":{"sha256Hash":"\#(sha)","quickXorHash":"ignored"}}}"#.utf8))
         }
-        try await makeClient(.microsoft).resumableUpload(local: file, parent: "root", name: "contents.txt", replacing: nil, checkpoint: nil, save: { _ in }, progress: { _, _ in })
+        let receipt = try await makeClient(.microsoft).resumableUpload(local: file, parent: "root", name: "contents.txt", replacing: nil, checkpoint: nil, save: { _ in }, progress: { _, _ in })
         XCTAssertEqual(count, 2)
+        XCTAssertEqual(receipt.verification, .verified, "Graph's SHA-256 is compared case-insensitively")
+    }
+
+    @MainActor func testChecksumMismatchFailsTheUploadAndMissingHashesStayUnverified() async throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data("payload".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        StubProtocol.handler = { request in
+            if request.httpMethod == "POST" { return (200, ["Location": "https://upload.example/session"], Data()) }
+            return (200, [:], Data(#"{"id":"x","md5Checksum":"00000000000000000000000000000000"}"#.utf8))
+        }
+        do {
+            try await makeClient(.google).resumableUpload(local: file, parent: "root", name: "payload.bin", replacing: nil, checkpoint: nil, save: { _ in }, progress: { _, _ in })
+            XCTFail("A wrong checksum must fail loudly")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("suma de verificación"), error.localizedDescription) }
+        StubProtocol.handler = { request in
+            if request.httpMethod == "POST" { return (200, [:], Data(#"{"uploadUrl":"https://upload.example/session"}"#.utf8)) }
+            return (201, [:], Data(#"{"id":"x","file":{"hashes":{"quickXorHash":"only-business-hash"}}}"#.utf8))
+        }
+        let receipt = try await makeClient(.microsoft).resumableUpload(local: file, parent: "root", name: "payload.bin", replacing: nil, checkpoint: nil, save: { _ in }, progress: { _, _ in })
+        XCTAssertEqual(receipt.verification, .unavailable, "quickXorHash alone is not verified")
+        XCTAssertEqual(TransferQueue.completionSummary(verified: 2, unverified: 1), "Completada · 2 archivos verificados con la suma del proveedor · 1 sin verificar (reanudados o sin suma del proveedor)")
+        XCTAssertEqual(TransferQueue.completionSummary(verified: 0, unverified: 0), "")
     }
 
     @MainActor func testDownloadErrorBodyReachesTheUser() async throws {

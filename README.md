@@ -27,6 +27,7 @@ También puedes abrir `Package.swift` en Xcode o ejecutar `swift run iCloudy` pa
 - Doble clic para entrar en carpetas, descargar binarios o abrir documentos nativos en el navegador.
 - Arrastrar archivos/carpetas desde Finder al listado para subir copias a la carpeta actual. También hay un botón Subir.
 - Subida recursiva de carpetas y archivos por bloques de 5 MiB, sin cargar todo el archivo en memoria.
+- Verificación de integridad al subir: el hash se calcula sobre los mismos bloques que se envían, sin releer el archivo, y se compara con `md5Checksum` de Drive o con `sha256Hash`/`sha1Hash` de OneDrive personal. Si no coincide, la transferencia falla con aviso. Las subidas reanudadas y las cuentas de OneDrive empresarial (solo `quickXorHash`) quedan como «sin verificar»; el resumen final indica cuántos archivos se verificaron.
 - Descarga explícita a una carpeta elegida, incluyendo carpetas recursivas. Ningún listado descarga contenidos automáticamente.
 - Google Docs: PDF/Word; Sheets: Excel/PDF; Slides: PowerPoint/PDF. Exportación individual.
 - «Mover a…» y «Copiar a…» dentro de la misma cuenta, para uno o varios elementos, con un selector de carpetas propio. Se comprueban antes los nombres repetidos en el destino y que una carpeta no acabe dentro de sí misma. Drive reemplaza todos los padres del elemento y no permite copiar carpetas; OneDrive copia en segundo plano y puede tardar unos segundos en mostrar el resultado. Los favoritos movidos actualizan su ruta.

@@ -87,6 +87,9 @@ struct Transfer: Identifiable, Codable {
     var names: [String: String] = [:]
     var replacements: [String: String] = [:]
     var uploads: [String: UploadCheckpoint] = [:]
+    /// Files whose provider checksum matched the bytes sent, and files that could not be checked (resumed, or no hash).
+    var verifiedFiles = 0
+    var unverifiedFiles = 0
     var finished: Bool { [.completed, .cancelled, .failed].contains(state) }
     var failed: Bool { state == .failed }
     var progress: Double { state == .completed ? 1 : (total > 0 ? min(1, Double(bytes) / Double(total)) : 0) }
@@ -97,7 +100,7 @@ struct Transfer: Identifiable, Codable {
         case .paused: return "En pausa · Reanudar para continuar"
         case .failed: return detail
         case .cancelled: return "Cancelada · Los elementos completados se conservan"
-        case .completed: return "Completada"
+        case .completed: return detail.isEmpty ? "Completada" : detail
         }
     }
     var metrics: String {
@@ -301,6 +304,7 @@ extension Transfer {
     enum CodingKeys: String, CodingKey {
         case id, batchID, name, destination, accountID, direction, localURL, bookmark, parent, file, exportMime, exportExtension
         case state, detail, bytes, total, bytesPerSecond, attempts, batchChoice, completedPaths, folders, uncertainFolders, names, replacements, uploads
+        case verifiedFiles, unverifiedFiles
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -330,7 +334,9 @@ extension Transfer {
                   uncertainFolders: try values.decodeIfPresent(Set<String>.self, forKey: .uncertainFolders) ?? [],
                   names: try values.decodeIfPresent([String: String].self, forKey: .names) ?? [:],
                   replacements: try values.decodeIfPresent([String: String].self, forKey: .replacements) ?? [:],
-                  uploads: try values.decodeIfPresent([String: UploadCheckpoint].self, forKey: .uploads) ?? [:])
+                  uploads: try values.decodeIfPresent([String: UploadCheckpoint].self, forKey: .uploads) ?? [:],
+                  verifiedFiles: try values.decodeIfPresent(Int.self, forKey: .verifiedFiles) ?? 0,
+                  unverifiedFiles: try values.decodeIfPresent(Int.self, forKey: .unverifiedFiles) ?? 0)
     }
 }
 

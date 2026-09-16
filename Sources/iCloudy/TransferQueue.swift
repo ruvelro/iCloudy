@@ -193,7 +193,12 @@ final class TransferQueue: ObservableObject {
                     }
                 }
                 // If the user cancelled just after the server committed, preserve the completed checkpoint but keep their state.
-                if try job(id).state == .running { try edit(id) { $0.state = .completed; $0.bytes = max($0.bytes, $0.total); $0.bytesPerSecond = 0; $0.detail = ""; $0.uploads = [:] } }
+                if try job(id).state == .running {
+                    try edit(id) {
+                        $0.state = .completed; $0.bytes = max($0.bytes, $0.total); $0.bytesPerSecond = 0; $0.uploads = [:]
+                        $0.detail = Self.completionSummary(verified: $0.verifiedFiles, unverified: $0.unverifiedFiles)
+                    }
+                }
                 didComplete?(next.accountID)
             } catch {
                 if let index = index(id), items[index].state == .running {
@@ -207,6 +212,13 @@ final class TransferQueue: ObservableObject {
             stateChanges.send()
             kick()
         }
+    }
+    static func completionSummary(verified: Int, unverified: Int) -> String {
+        guard verified + unverified > 0 else { return "" }
+        var parts = ["Completada"]
+        if verified > 0 { parts.append("\(verified) \(verified == 1 ? "archivo verificado" : "archivos verificados") con la suma del proveedor") }
+        if unverified > 0 { parts.append("\(unverified) sin verificar (reanudados o sin suma del proveedor)") }
+        return parts.joined(separator: " · ")
     }
     private func choose(_ id: UUID, name: String, replace: Bool, folder: Bool) async throws -> ConflictChoice {
         try Task.checkCancellation()
@@ -324,10 +336,11 @@ final class TransferQueue: ObservableObject {
         } else {
             let base = done
             let replacing = current.replacements[key]
-            try await api.resumableUpload(local: local, parent: parent, name: name, replacing: replacing, checkpoint: current.uploads[key], save: { checkpoint in
+            let receipt = try await api.resumableUpload(local: local, parent: parent, name: name, replacing: replacing, checkpoint: current.uploads[key], save: { checkpoint in
                 // A new session URL and the completion are durable at once; intermediate offsets are coalesced.
                 try self.edit(id, coalesce: checkpoint.offset > 0 && !checkpoint.complete) { $0.uploads[key] = checkpoint }
             }, progress: { bytes, total in self.report(id, base: base, bytes: bytes, total: total) })
+            try edit(id, coalesce: true) { if receipt.verification == .verified { $0.verifiedFiles += 1 } else { $0.unverifiedFiles += 1 } }
             done += Int64(values.fileSize ?? 0)
             mark(id, done: done)
             if replacing == nil {
