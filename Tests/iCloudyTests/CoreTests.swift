@@ -16,6 +16,20 @@ final class StubProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
+/// URLProtocol receives POST bodies as a stream, not as `httpBody`.
+func requestBody(_ request: URLRequest) -> String {
+    if let data = request.httpBody { return String(decoding: data, as: UTF8.self) }
+    guard let stream = request.httpBodyStream else { return "" }
+    stream.open(); defer { stream.close() }
+    var data = Data(); var buffer = [UInt8](repeating: 0, count: 4096)
+    while stream.hasBytesAvailable {
+        let read = stream.read(&buffer, maxLength: buffer.count)
+        guard read > 0 else { break }
+        data.append(buffer, count: read)
+    }
+    return String(decoding: data, as: UTF8.self)
+}
+
 final class CoreTests: XCTestCase {
     func testFormEncodingDoesNotTurnPlusIntoSpace() {
         let result = String(data: HTTP.form(["code": "a+b /&=ñ"]), encoding: .utf8)
@@ -82,8 +96,10 @@ final class CoreTests: XCTestCase {
         let link = folder.appendingPathComponent("loop")
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: folder)
         StubProtocol.handler = { _ in XCTFail("Must not contact the cloud for symlinks"); return (500, [:], Data()) }
-        do { try await makeClient(.google).upload(local: link, parent: "root") { _ in }; XCTFail("Expected rejection") }
-        catch { XCTAssertTrue(error.localizedDescription.contains("simbólicos")) }
+        do {
+            try await makeClient(.google).resumableUpload(local: link, parent: "root", name: "loop", replacing: nil, checkpoint: nil, save: { _ in }, progress: { _, _ in })
+            XCTFail("Expected rejection")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("simbólicos")) }
     }
 
     @MainActor func testChunkedGoogleUploadRequiresServerAcknowledgement() async throws {
@@ -96,10 +112,12 @@ final class CoreTests: XCTestCase {
             switch count {
             case 1:
                 XCTAssertEqual(request.httpMethod, "POST")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
                 XCTAssertEqual(request.value(forHTTPHeaderField: "X-Upload-Content-Length"), "5242897")
                 return (200, ["Location": "https://upload.example/session"], Data())
             case 2:
                 XCTAssertEqual(request.httpMethod, "PUT")
+                XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"), "The session URI is the credential")
                 XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Range"), "bytes 0-5242879/5242897")
                 return (308, ["Range": "bytes=0-5242879"], Data())
             default:
@@ -107,14 +125,17 @@ final class CoreTests: XCTestCase {
                 return (201, [:], Data(#"{"id":"created"}"#.utf8))
             }
         }
-        var progress: [Double] = []
-        try await makeClient(.google).upload(local: file, parent: "root") { progress.append($0) }
+        var offsets: [Int64] = []
+        var saved: [UploadCheckpoint] = []
+        try await makeClient(.google).resumableUpload(local: file, parent: "root", name: "big.bin", replacing: nil, checkpoint: nil, save: { saved.append($0) }, progress: { bytes, _ in offsets.append(bytes) })
         XCTAssertEqual(count, 3)
-        XCTAssertEqual(progress.last, 1)
-        XCTAssertEqual(progress.count, 2)
+        XCTAssertEqual(offsets.last, 5_242_897)
+        XCTAssertEqual(saved.first?.url?.absoluteString, "https://upload.example/session", "The session is checkpointed before any byte is sent")
+        XCTAssertEqual(saved.map(\.offset), [0, 5_242_880, 5_242_897])
+        XCTAssertEqual(saved.last?.complete, true)
     }
 
-    @MainActor func testMicrosoftUploadUsesRenameAndDoesNotSendBearerToUploadHost() async throws {
+    @MainActor func testMicrosoftUploadFailsOnConflictAndDoesNotSendBearerToUploadHost() async throws {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try Data("contents".utf8).write(to: file)
         defer { try? FileManager.default.removeItem(at: file) }
@@ -124,14 +145,54 @@ final class CoreTests: XCTestCase {
             if count == 1 {
                 XCTAssertTrue(request.url!.path.hasSuffix("createUploadSession"))
                 XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
+                XCTAssertTrue(requestBody(request).contains(#""@microsoft.graph.conflictBehavior":"fail""#), "The queue resolves conflicts itself; the server must not rename silently")
                 return (200, [:], Data(#"{"uploadUrl":"https://upload.example/session"}"#.utf8))
             }
             XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
             XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Range"), "bytes 0-7/8")
             return (201, [:], Data(#"{"id":"created"}"#.utf8))
         }
-        try await makeClient(.microsoft).upload(local: file, parent: "root") { _ in }
+        try await makeClient(.microsoft).resumableUpload(local: file, parent: "root", name: "contents.txt", replacing: nil, checkpoint: nil, save: { _ in }, progress: { _, _ in })
         XCTAssertEqual(count, 2)
+    }
+
+    @MainActor func testDownloadErrorBodyReachesTheUser() async throws {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        StubProtocol.handler = { _ in (403, [:], Data(#"{"error":{"code":403,"message":"This file is too large to be exported."}}"#.utf8)) }
+        let file = CloudFile(id: "doc", name: "Informe", mime: "application/vnd.google-apps.document", size: nil, modified: nil, webURL: nil, isFolder: false)
+        do {
+            try await makeClient(.google).download(file: file, to: destination, exportMime: "application/pdf")
+            XCTFail("Expected the export to fail")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("too large"), error.localizedDescription)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    func testOneDriveNameRulesAreStricterThanDrive() {
+        XCTAssertNil(FileNames.problem(with: "Informe: final?", for: .google))
+        XCTAssertNotNil(FileNames.problem(with: "Informe: final?", for: .microsoft))
+        XCTAssertNotNil(FileNames.problem(with: "a/b", for: .google))
+        XCTAssertNotNil(FileNames.problem(with: "", for: .google))
+        for bad in [" leading", "trailing ", "dot.", "CON", "com1.txt", "desktop.ini", "~$lock.docx", "x_vti_y", String(repeating: "a", count: 256)] {
+            XCTAssertNotNil(FileNames.problem(with: bad, for: .microsoft), bad)
+        }
+        for good in ["Informe final.pdf", "Fotos 2026", "console.log", "ñandú (2).txt", ".ocultos"] {
+            XCTAssertNil(FileNames.problem(with: good, for: .microsoft), good)
+        }
+    }
+
+    func testErrorDetailsUnderstandBothProviderShapes() {
+        let oauth = HTTP.errorDetails(Data(#"{"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#.utf8))
+        XCTAssertEqual(oauth.code, "invalid_grant")
+        XCTAssertEqual(oauth.message, "Token has been expired or revoked.")
+        let graph = HTTP.errorDetails(Data(#"{"error":{"code":"InvalidAuthenticationToken","message":"Access token has expired."}}"#.utf8))
+        XCTAssertEqual(graph.code, "InvalidAuthenticationToken")
+        XCTAssertEqual(graph.message, "Access token has expired.")
+        let drive = HTTP.errorDetails(Data(#"{"error":{"code":404,"status":"NOT_FOUND","message":"File not found"}}"#.utf8))
+        XCTAssertEqual(drive.code, "NOT_FOUND")
+        XCTAssertEqual(HTTP.errorDetails(Data("nonsense".utf8)).message, nil)
     }
 
     @MainActor private func makeClient(_ cloud: Cloud) -> CloudAPI {

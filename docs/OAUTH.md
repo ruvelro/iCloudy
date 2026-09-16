@@ -20,7 +20,7 @@ En [Google Cloud Console](https://console.cloud.google.com/):
 swift scripts/configure-oauth.swift --google /ruta/al/cliente-desktop.json
 ```
 
-El flujo Desktop admite la redirección loopback `http://127.0.0.1:53682/callback`, que no sale del Mac. No tienes que alojar esa dirección en un servidor. La app abre el navegador, verifica `state` y usa PKCE S256 para canjear el código. [Documentación de Google](https://developers.google.com/identity/protocols/oauth2/native-app).
+El flujo Desktop admite la redirección loopback `http://127.0.0.1:53682/callback`, que no sale del Mac. No tienes que alojar esa dirección en un servidor. Google no valida el puerto de una redirección loopback, así que si el 53682 está ocupado por otra instancia o por otra app, iCloudy escucha en un puerto efímero y envía ese `redirect_uri`. La app abre el navegador, verifica `state` y usa PKCE S256 para canjear el código. [Documentación de Google](https://developers.google.com/identity/protocols/oauth2/native-app).
 
 ### Abrir el acceso al público
 
@@ -33,7 +33,7 @@ En [Microsoft Entra admin center](https://entra.microsoft.com/):
 1. Abre **Identity → Applications → App registrations → New registration** en el tenant del desarrollador.
 2. Nombre: **iCloudy**.
 3. Supported account types: **Accounts in any organizational directory and personal Microsoft accounts**. La audiencia del manifiesto es `AzureADandPersonalMicrosoftAccount`. Esto admite Outlook/Hotmail y Microsoft 365; no uses una app single-tenant.
-4. Configura un redirect de **Mobile and desktop applications / cliente público**: `http://127.0.0.1:53682/callback`. No lo registres como Web o SPA.
+4. Configura un redirect de **Mobile and desktop applications / cliente público**: `http://127.0.0.1:53682/callback`. No lo registres como Web o SPA. Microsoft exige que el puerto coincida con el registrado, por eso con esta cuenta iCloudy no recurre a un puerto alternativo: si el 53682 está ocupado, pide cerrar la otra instancia.
 5. La interfaz del portal puede rechazar una URI HTTP con IP loopback. En ese caso añade la URI a `publicClient.redirectUris` en el manifiesto de Microsoft Graph; en una vista de manifiesto legado aparece como `replyUrlsWithType` con `type: InstalledClient`. Conserva los redirects existentes. El nombre del campo depende de la versión del manifiesto del portal. [Restricciones de redirects](https://learn.microsoft.com/en-us/entra/identity-platform/reply-url).
 6. En **API permissions → Microsoft Graph → Delegated permissions**, añade **User.Read** y **Files.ReadWrite**. La app solicita además `openid profile email offline_access`. No se necesitan permisos de correo ni permisos Application.
 7. Copia el **Application (client) ID**, no el Directory (tenant) ID. No crees un client secret para este cliente de escritorio.
@@ -82,7 +82,7 @@ Los certificados autofirmados no admiten sello de tiempo de Apple, por eso el sc
 
 Se incluye `Resources/iCloudy.entitlements` y el script lo usa al firmar: **App Sandbox**, red de salida, red de entrada para el callback exclusivo de loopback y acceso de lectura/escritura a archivos elegidos por el usuario. Los tests con respuestas simuladas no certifican el funcionamiento real en el sandbox. [App Sandbox de Apple](https://developer.apple.com/documentation/xcode/configuring-the-macos-app-sandbox).
 
-La firma ad hoc del script es para desarrollo. Aún hay que elegir un bundle ID definitivo, configurar tu Apple Developer Team, firma y aprovisionamiento de Mac App Store, preparar el archivo de distribución y completar App Store Connect. Una firma Developer ID con notarización corresponde a distribución fuera de la Store; no sustituye el proceso de Mac App Store. El script permite `ICLOUDY_SIGNING_IDENTITY`, pero no crea certificados ni perfiles.
+La firma ad hoc del script es para desarrollo. El `Info.plist` declara categoría, copyright, icono y la exención de cifrado; el bundle ID `dev.icloudy.desktop` es provisional y se sustituye al compilar con `ICLOUDY_BUNDLE_ID=com.tuempresa.icloudy bash scripts/build-app.sh`. El icono se genera con `swift scripts/make-icon.swift` a partir de un símbolo del sistema y puede reemplazarse por un `Resources/AppIcon.icns` propio. Aún hay que elegir el bundle ID definitivo, configurar tu Apple Developer Team, firma y aprovisionamiento de Mac App Store, preparar el archivo de distribución y completar App Store Connect. Una firma Developer ID con notarización corresponde a distribución fuera de la Store; no sustituye el proceso de Mac App Store. El script permite `ICLOUDY_SIGNING_IDENTITY`, pero no crea certificados ni perfiles.
 
 Esta app conecta cuentas externas para acceder a sus contenidos y no crea una cuenta propia de iCloudy. La regla 4.8 contempla una excepción para clientes de servicios de terceros; esa es la justificación que presentaríamos a revisión, no una garantía de aceptación. También se requieren política de privacidad, declaración de tratamiento de datos e instrucciones de prueba para App Review. [App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/).
 

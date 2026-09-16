@@ -276,7 +276,7 @@ final class AppModel: ObservableObject {
     func commitName() async {
         guard let (account, parent) = editContext else { return }
         let file = editingFile, name = editName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, name != ".", name != "..", !name.contains("/"), !name.contains("\0") else { error = "Introduce un nombre válido, sin barras."; return }
+        if let problem = FileNames.problem(with: name, for: account.cloud) { error = problem; return }
         do {
             let api = try client(account)
             let siblings = try await api.list(parent: parent)

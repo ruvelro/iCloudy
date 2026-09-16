@@ -177,7 +177,34 @@ enum Vault {
     }
 }
 
+/// Abstracts the Keychain so token handling can be tested without touching the user's real keychain.
+protocol CredentialStore {
+    func read(_ key: String) throws -> Credential?
+    func save(_ credential: Credential, key: String) throws
+}
+struct KeychainCredentialStore: CredentialStore {
+    func read(_ key: String) throws -> Credential? { try Vault.read(Credential.self, key: key) }
+    func save(_ credential: Credential, key: String) throws { try Vault.save(credential, key: key) }
+}
+
 enum FileNames {
+    private static let oneDriveForbidden = CharacterSet(charactersIn: "\"*:<>?/\\|")
+    private static let oneDriveReserved: Set<String> = ["CON", "PRN", "AUX", "NUL", "COM0", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT0", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", ".LOCK", "DESKTOP.INI"]
+    /// Returns a user-facing problem, or nil when the provider will accept the name. OneDrive is far stricter than Drive.
+    /// Reference: https://support.microsoft.com/office/invalid-file-names-and-file-types-in-onedrive-and-sharepoint
+    static func problem(with name: String, for cloud: Cloud) -> String? {
+        if name.isEmpty || name == "." || name == ".." { return "Introduce un nombre válido." }
+        if name.contains("/") || name.contains("\0") { return "El nombre no puede contener barras." }
+        guard cloud == .microsoft else { return nil }
+        if name.unicodeScalars.contains(where: { oneDriveForbidden.contains($0) }) { return "OneDrive no admite los caracteres \" * : < > ? / \\ | en los nombres." }
+        if name.hasPrefix(" ") || name.hasSuffix(" ") { return "OneDrive no admite espacios al principio o al final del nombre." }
+        if name.hasSuffix(".") { return "OneDrive no admite nombres que terminen en punto." }
+        if name.hasPrefix("~$") || name.contains("_vti_") { return "OneDrive reserva los nombres que empiezan por ~$ o contienen _vti_." }
+        let stem = (name as NSString).deletingPathExtension.uppercased()
+        if oneDriveReserved.contains(name.uppercased()) || oneDriveReserved.contains(stem) { return "«\(name)» es un nombre reservado por OneDrive." }
+        if name.count > 255 { return "OneDrive limita los nombres a 255 caracteres." }
+        return nil
+    }
     static func safe(_ name: String) -> String {
         let result = name.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: ":", with: "_").replacingOccurrences(of: "\0", with: "_")
         return result.isEmpty || result == "." || result == ".." ? "archivo" : result

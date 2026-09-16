@@ -6,6 +6,7 @@ final class CloudAPI {
     let session: URLSession
     let demo: DemoStore?
     private let tokenProvider: (() async throws -> String)?
+    private let credentials: CredentialStore
     private var refreshTask: Task<String, Error>?
     private var invalidated = false
     /// Set once the provider rejects the stored credential. Only reconnecting the account, which replaces this client, clears it.
@@ -17,9 +18,9 @@ final class CloudAPI {
         invalidated = true
         refreshTask?.cancel()
     }
-    init(account: Account, session: URLSession = .shared, demo: DemoStore? = nil, tokenProvider: (() async throws -> String)? = nil) {
+    init(account: Account, session: URLSession = .shared, demo: DemoStore? = nil, tokenProvider: (() async throws -> String)? = nil, credentials: CredentialStore = KeychainCredentialStore()) {
         self.demo = demo
-        self.account = account; self.session = session; self.tokenProvider = tokenProvider
+        self.account = account; self.session = session; self.tokenProvider = tokenProvider; self.credentials = credentials
     }
     func expireSession() {
         guard !sessionExpired else { return }
@@ -33,14 +34,14 @@ final class CloudAPI {
         if let tokenProvider { return try await tokenProvider() }
         guard !sessionExpired else { throw CloudError.sessionExpired(nil) }
         if let refreshTask { return try await refreshTask.value }
-        if cachedCredential == nil { cachedCredential = try Vault.read(Credential.self, key: account.id) }
+        if cachedCredential == nil { cachedCredential = try credentials.read(account.id) }
         guard let credential = cachedCredential else { expireSession(); throw CloudError.sessionExpired(nil) }
         if !force, credential.expires.timeIntervalSinceNow > 90 { return credential.accessToken }
         let task = Task { () throws -> String in
             var fields = ["client_id": account.clientID, "refresh_token": credential.refreshToken, "grant_type": "refresh_token"]
             if let secret = account.clientSecret { fields["client_secret"] = secret }
             let result: [String: Any]
-            do { result = try await HTTP.token(cloud: account.cloud, values: fields) }
+            do { result = try await HTTP.token(cloud: account.cloud, values: fields, session: session) }
             catch let error as ServiceError where (400..<500).contains(error.status) && !error.retryable {
                 // invalid_grant, revoked consent or a deleted client: retrying cannot fix it, only a new sign-in.
                 try Task.checkCancellation()
@@ -52,7 +53,7 @@ final class CloudAPI {
             guard !self.invalidated else { throw CancellationError() }
             guard let access = result["access_token"] as? String else { throw CloudError.message("No se pudo renovar la sesión. Vuelve a conectar la cuenta.") }
             let updated = Credential(accessToken: access, refreshToken: result["refresh_token"] as? String ?? credential.refreshToken, expires: Date().addingTimeInterval(result["expires_in"] as? Double ?? 3600))
-            try Vault.save(updated, key: account.id)
+            try credentials.save(updated, key: account.id)
             self.cachedCredential = updated
             return access
         }
@@ -164,74 +165,7 @@ final class CloudAPI {
         return id
     }
 
-    func upload(local: URL, parent: String, progress: @escaping (Double) -> Void) async throws {
-        let values = try local.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey, .fileSizeKey, .isRegularFileKey])
-        guard values.isSymbolicLink != true else { throw CloudError.message("Los enlaces simbólicos no se suben: \(local.lastPathComponent)") }
-        if values.isDirectory == true {
-            let children = try FileManager.default.contentsOfDirectory(at: local, includingPropertiesForKeys: [.isSymbolicLinkKey, .isDirectoryKey], options: [])
-            let folder = try await createFolder(name: local.lastPathComponent, parent: parent)
-            for (index, child) in children.enumerated() {
-                try Task.checkCancellation()
-                try await upload(local: child, parent: folder) { fraction in progress((Double(index) + fraction) / Double(max(1, children.count))) }
-            }
-            progress(1)
-            return
-        }
-        guard values.isRegularFile == true else { throw CloudError.message("Tipo de archivo no compatible: \(local.lastPathComponent)") }
-        let total = Int64(values.fileSize ?? 0)
-        let sessionURL: URL
-        if account.cloud == .google {
-            var initial = try await request(URL(string: "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable")!, method: "POST", body: ["name": local.lastPathComponent, "parents": [parent]])
-            initial.setValue("application/octet-stream", forHTTPHeaderField: "X-Upload-Content-Type")
-            initial.setValue(String(total), forHTTPHeaderField: "X-Upload-Content-Length")
-            let (data, response) = try await send(&initial)
-            try HTTP.validate(response, data: data)
-            guard let location = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Location"), let url = URL(string: location), url.scheme == "https" else { throw CloudError.message("No se pudo iniciar la subida.") }
-            sessionURL = url
-        } else if total == 0 {
-            // A random suffix avoids replacing an existing zero-byte file via PUT.
-            let name = local.deletingPathExtension().lastPathComponent + "-" + UUID().uuidString.prefix(8) + (local.pathExtension.isEmpty ? "" : "." + local.pathExtension)
-            var empty = try await request(URL(string: "https://graph.microsoft.com/v1.0/me/drive/\(graphItem(parent)):/\(Self.segment(name)):/content")!, method: "PUT")
-            empty.httpBody = Data()
-            empty.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-            let (data, response) = try await send(&empty)
-            try HTTP.validate(response, data: data)
-            progress(1); return
-        } else {
-            let result = try await json(URL(string: "https://graph.microsoft.com/v1.0/me/drive/\(graphItem(parent)):/\(Self.segment(local.lastPathComponent)):/createUploadSession")!, method: "POST", body: ["item": ["@microsoft.graph.conflictBehavior": "rename", "name": local.lastPathComponent]])
-            guard let uploadURL = result["uploadUrl"] as? String, let url = URL(string: uploadURL), url.scheme == "https" else { throw CloudError.message("No se pudo iniciar la subida.") }
-            sessionURL = url
-        }
-        let handle = try FileHandle(forReadingFrom: local)
-        defer { try? handle.close() }
-        var offset: Int64 = 0
-        repeat {
-            try Task.checkCancellation()
-            let chunk = try handle.read(upToCount: 5 * 1024 * 1024) ?? Data()
-            guard !chunk.isEmpty || total == 0 else { throw CloudError.message("El archivo cambió durante la subida. Vuelve a intentarlo.") }
-            guard offset + Int64(chunk.count) <= total else { throw CloudError.message("El archivo creció durante la subida. Vuelve a intentarlo.") }
-            var upload = URLRequest(url: sessionURL)
-            upload.httpMethod = "PUT"
-            upload.timeoutInterval = 180
-            upload.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-            upload.setValue(total == 0 ? "bytes */0" : "bytes \(offset)-\(offset + Int64(chunk.count) - 1)/\(total)", forHTTPHeaderField: "Content-Range")
-            let (data, response) = try await session.upload(for: upload, from: chunk)
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            let isLast = offset + Int64(chunk.count) == total
-            if isLast {
-                guard [200, 201].contains(status) else { try HTTP.validate(response, data: data); throw CloudError.message("El servidor no confirmó la subida completa.") }
-            } else if account.cloud == .google {
-                guard status == 308 else { try HTTP.validate(response, data: data); throw CloudError.message("Respuesta inesperada durante la subida.") }
-                guard (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Range") == "bytes=0-\(offset + Int64(chunk.count) - 1)" else { throw CloudError.message("El servidor solo recibió parte del bloque. La subida quedó incompleta.") }
-            } else {
-                guard status == 202 else { try HTTP.validate(response, data: data); throw CloudError.message("Respuesta inesperada durante la subida.") }
-                let result = try HTTP.json(data)
-                guard let ranges = result["nextExpectedRanges"] as? [String], ranges.first?.hasPrefix("\(offset + Int64(chunk.count))-") == true else { throw CloudError.message("El servidor solo recibió parte del bloque. La subida quedó incompleta.") }
-            }
-            offset += Int64(chunk.count)
-            progress(total == 0 ? 1 : Double(offset) / Double(total))
-        } while offset < total
-    }
+    // Uploads live in ResumableUpload.swift; the queue drives them with checkpoints. There is no second, simpler path.
 
     func download(file: CloudFile, to destination: URL, exportMime: String? = nil, maxBytes: Int64? = nil, progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws {
         if let demo { try await demo.download(file, to: destination, maxBytes: maxBytes, progress: progress); return }
@@ -259,7 +193,12 @@ final class CloudAPI {
         defer { try? FileManager.default.removeItem(at: temporary) }
         try Task.checkCancellation()
         if (response as? HTTPURLResponse)?.statusCode == 401, tokenProvider == nil { expireSession(); throw CloudError.sessionExpired(nil) }
-        try HTTP.validate(response)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            // The error body landed in the temporary file. Read a bounded prefix so the provider's message survives,
+            // e.g. Google's explanation when an export exceeds its size limit.
+            let body = (try? FileHandle(forReadingFrom: temporary))?.readData(ofLength: 64 * 1024) ?? Data()
+            try HTTP.validate(response, data: body)
+        }
         if let maxBytes {
             let actual = try temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
             guard Int64(actual) <= maxBytes else { throw CloudError.message("La vista previa supera el límite de descarga autorizado.") }
@@ -267,26 +206,6 @@ final class CloudAPI {
         // moveItem refuses to overwrite an existing destination.
         let downloaded = temporary
         try await blockingIO { try FileManager.default.moveItem(at: downloaded, to: destination) }
-    }
-
-    func downloadTree(file: CloudFile, into folder: URL, progress: @escaping (Double) -> Void) async throws {
-        try Task.checkCancellation()
-        if file.isFolder {
-            let destination = FileNames.available(in: folder, name: file.name)
-            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
-            let children = try await list(parent: file.id)
-            for (index, child) in children.enumerated() {
-                try await downloadTree(file: child, into: destination) { fraction in progress((Double(index) + fraction) / Double(max(1, children.count))) }
-            }
-        } else if file.isGoogleDocument {
-            guard let url = file.webURL else { throw CloudError.message("No hay enlace para \(file.name).") }
-            let destination = FileNames.available(in: folder, name: file.name + ".webloc")
-            let data = try PropertyListSerialization.data(fromPropertyList: ["URL": url.absoluteString], format: .xml, options: 0)
-            try data.write(to: destination, options: .withoutOverwriting)
-        } else {
-            try await download(file: file, to: FileNames.available(in: folder, name: file.name))
-        }
-        progress(1)
     }
 }
 

@@ -104,6 +104,8 @@ final class TransferQueue: ObservableObject {
     func cancel(_ id: UUID, pause: Bool = false) {
         guard let index = index(id), !items[index].finished else { return }
         items[index].state = pause ? .paused : .cancelled; items[index].bytesPerSecond = 0
+        // Session URLs are pre-authenticated capabilities; a cancelled job will not resume them, so drop them from disk.
+        if !pause { items[index].uploads = [:] }
         if activeID == id {
             task?.cancel()
             conflictContinuation?.resume(throwing: CancellationError()); conflictContinuation = nil; conflict = nil
@@ -197,6 +199,11 @@ final class TransferQueue: ObservableObject {
         items[index].bytesPerSecond = Double(max(0, items[index].bytes - startBytes)) / max(0.1, Date().timeIntervalSince(started))
         items[index].detail = "Transfiriendo…"
     }
+    /// Advances the byte count when an already completed item is skipped, so a retry does not show progress falling to zero.
+    private func mark(_ id: UUID, done: Int64) {
+        guard let index = index(id), items[index].state == .running, items[index].bytes < done else { return }
+        items[index].bytes = done
+    }
     private func run(_ id: UUID) async throws {
         let current = try job(id)
         guard let client else { throw CloudError.message("Conecta la cuenta de esta transferencia.") }
@@ -222,7 +229,8 @@ final class TransferQueue: ObservableObject {
             var siblings: [String: [CloudFile]] = [:]
             try await uploadTree(id, api: api, local: source, parent: current.parent, key: ".", done: &done, siblings: &siblings)
         } else if let file = current.file {
-            try edit(id) { $0.bytes = 0 }
+            // Folder totals grow as each remote folder is listed; a single file's size is known up front.
+            try edit(id) { $0.bytes = 0; $0.total = file.isFolder ? 0 : (file.size ?? 0) }
             var done: Int64 = 0
             try await downloadTree(id, api: api, file: file, folder: source, key: ".", done: &done)
         }
@@ -241,7 +249,10 @@ final class TransferQueue: ObservableObject {
         let values = try local.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey])
         guard values.isSymbolicLink != true else { throw CloudError.message("No se admiten enlaces simbólicos.") }
         let folder = values.isDirectory == true
-        if try job(id).completedPaths.contains(key) { done += try await blockingIO { try Self.localSize(local) }; return }
+        if try job(id).completedPaths.contains(key) { done += try await blockingIO { try Self.localSize(local) }; mark(id, done: done); return }
+        if let problem = FileNames.problem(with: local.lastPathComponent, for: api.account.cloud) {
+            throw CloudError.message("No se puede subir «\(local.lastPathComponent)»: \(problem)")
+        }
         var current = try job(id)
         if current.uncertainFolders.contains(key) {
             // An earlier POST may have committed even though its reply was lost. Recheck conflicts before creating again.
@@ -257,7 +268,7 @@ final class TransferQueue: ObservableObject {
             var replacing: String?
             if let match = matches.first {
                 let choice = try await choose(id, name: name, replace: matches.count == 1 && match.isFolder == folder && !match.isGoogleDocument, folder: folder)
-                if choice == .skip { try edit(id) { $0.completedPaths.insert(key) }; done += try await blockingIO { try Self.localSize(local) }; return }
+                if choice == .skip { try edit(id) { $0.completedPaths.insert(key) }; done += try await blockingIO { try Self.localSize(local) }; mark(id, done: done); return }
                 if choice == .copy { name = Self.unique(name, existing: existing.map(\.name)) }
                 if choice == .replace { replacing = match.id }
             }
@@ -290,6 +301,7 @@ final class TransferQueue: ObservableObject {
                 try self.edit(id, coalesce: checkpoint.offset > 0 && !checkpoint.complete) { $0.uploads[key] = checkpoint }
             }, progress: { bytes, total in self.report(id, base: base, bytes: bytes, total: total) })
             done += Int64(values.fileSize ?? 0)
+            mark(id, done: done)
             if replacing == nil {
                 siblings[parent, default: []].append(CloudFile(id: "", name: name, mime: "application/octet-stream", size: values.fileSize.map(Int64.init), modified: nil, webURL: nil, isFolder: false))
             }
@@ -307,7 +319,7 @@ final class TransferQueue: ObservableObject {
     }
     private func downloadTree(_ id: UUID, api: CloudAPI, file: CloudFile, folder: URL, key: String, done: inout Int64) async throws {
         try Task.checkCancellation()
-        if try job(id).completedPaths.contains(key) { done += file.size ?? 0; return }
+        if try job(id).completedPaths.contains(key) { done += file.size ?? 0; mark(id, done: done); return }
         var current = try job(id)
         let exporting = key == "." && current.exportMime != nil
         let name = FileNames.safe(file.name + (exporting ? "." + (current.exportExtension ?? "pdf") : (file.isGoogleDocument ? ".webloc" : "")))
@@ -317,7 +329,7 @@ final class TransferQueue: ObservableObject {
             if FileManager.default.fileExists(atPath: target.path) {
                 let values = try target.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
                 let choice = try await choose(id, name: name, replace: values.isDirectory == file.isFolder && values.isSymbolicLink != true, folder: file.isFolder)
-                if choice == .skip { try edit(id) { $0.completedPaths.insert(key) }; done += file.size ?? 0; return }
+                if choice == .skip { try edit(id) { $0.completedPaths.insert(key) }; done += file.size ?? 0; mark(id, done: done); return }
                 if choice == .copy { target = FileNames.available(in: folder, name: name) }
                 if choice == .replace { replace = true }
             }
@@ -330,6 +342,8 @@ final class TransferQueue: ObservableObject {
         if file.isFolder {
             try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
             let children = try await api.list(parent: file.id)
+            let known = children.reduce(Int64(0)) { $0 + ($1.size ?? 0) }
+            if known > 0 { try edit(id, coalesce: true) { $0.total += known } }
             for child in children { try await downloadTree(id, api: api, file: child, folder: target, key: key + "/" + child.id, done: &done) }
         } else {
             let temporary = folder.appendingPathComponent(".icloudy-" + UUID().uuidString + ".part")
@@ -349,6 +363,7 @@ final class TransferQueue: ObservableObject {
                 else { try FileManager.default.moveItem(at: temporary, to: destination) }
             }
             done += file.size ?? 0
+            mark(id, done: done)
         }
         try edit(id, coalesce: true) { $0.completedPaths.insert(key) }
     }

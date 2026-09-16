@@ -27,6 +27,13 @@ app_dir="$PWD/dist/iCloudy.app"
 mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
 cp "$binary_dir/iCloudy" "$app_dir/Contents/MacOS/iCloudy"
 cp Resources/Info.plist "$app_dir/Contents/Info.plist"
+if [[ -n "${ICLOUDY_BUNDLE_ID:-}" ]]; then
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${ICLOUDY_BUNDLE_ID}" "$app_dir/Contents/Info.plist"
+fi
+if [[ ! -f Resources/AppIcon.icns ]]; then
+    swift scripts/make-icon.swift Resources
+fi
+cp Resources/AppIcon.icns "$app_dir/Contents/Resources/AppIcon.icns"
 cp "$oauth_config" "$app_dir/Contents/Resources/OAuth.plist"
 # Self-signed certificates cannot be timestamped by Apple; Developer ID builds get a timestamp automatically.
 codesign --force --options runtime --timestamp=none --entitlements Resources/iCloudy.entitlements --sign "$identity" "$app_dir"

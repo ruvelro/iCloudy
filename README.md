@@ -58,16 +58,19 @@ La configuración local queda fuera de Git y se incorpora al `.app` al compilar.
 - La búsqueda global carga lotes de hasta tres páginas de 100 elementos por cuenta. Los filtros se aplican a los resultados recibidos; usa «Cargar más resultados» para continuar. Las fechas/tamaños ausentes no se inventan. La cobertura y actualidad dependen del índice de cada proveedor; no se incluyen bibliotecas SharePoint ni unidades compartidas de Google.
 - Los enlaces simbólicos se rechazan. Se suben archivos ocultos y el contenido de paquetes como carpetas; no se conservan ACL, permisos POSIX, atributos extendidos ni resource forks.
 - Los archivos de origen deben permanecer disponibles y sin editar mientras se suben. El progreso de carpetas se pondera por elementos, no por bytes.
-- La cola está en memoria: no se recupera tras cerrar, no tiene cancelación individual ni reintento automático de escrituras. Las sesiones de subida son por bloques, pero todavía no se recuperan tras un fallo de red. Una nueva subida puede crear duplicados. Hay reintentos acotados para errores transitorios en consultas de metadatos.
+- La cola se guarda en Application Support y se recupera en pausa al abrir la app; cada transferencia se puede pausar, cancelar o reintentar, y los fallos transitorios se reintentan hasta tres veces. Las subidas reanudan desde el desplazamiento que confirma el servidor. Las URL de sesión de subida son capacidades preautenticadas y caducan solas; viven en `transfers.json` con permisos 0600 dentro del contenedor y se eliminan al completar o cancelar la transferencia. Un reintento tras un fallo no vuelve a poner el progreso a cero, y las descargas de carpetas suman el total a medida que se listan.
+- Los nombres se validan antes de crear carpetas, renombrar o subir: OneDrive rechaza `" * : < > ? / \ |`, espacios en los extremos, punto final y nombres reservados como `CON` o `desktop.ini`; el mensaje lo explica antes de contactar con el servidor.
 - Las descargas requieren espacio para el contenido y el temporal de URLSession. No existe una caché persistente de contenidos administrada por la app.
 - La exportación con Google `files.export` tiene el límite de 10 MB documentado para ese endpoint. Las cuotas y políticas de proveedores siguen aplicándose.
-- No hay integración de pruebas con cuentas reales sin aportar los IDs OAuth y completar el consentimiento. Las pruebas locales usan respuestas HTTP simuladas.
+- No hay integración de pruebas con cuentas reales sin aportar los IDs OAuth y completar el consentimiento. Las pruebas locales usan respuestas HTTP simuladas, incluidas la renovación de tokens con un Llavero en memoria y el flujo loopback completo con un navegador simulado por TCP.
+- Una sola ventana. La interfaz está en castellano con `defaultLocalization: es`; las vistas SwiftUI ya reciben claves localizables, pero los mensajes del modelo siguen en código y una traducción requiere extraerlos.
+- Con la vista previa abierta, la selección se sigue tras una pausa de 350 ms para que recorrer la lista con las flechas no descargue cada archivo intermedio.
 
 ## Estructura
 
 - `Models.swift`: cuentas, archivos, Llavero y nombres locales.
 - `OAuth.swift`: login de navegador con loopback, PKCE y canje de tokens.
-- `CloudAPI.swift`: listado, renovación de token, subidas por bloques, descargas y exportación.
+- `CloudAPI.swift`: listado, renovación de token, descargas y exportación. `ResumableUpload.swift`: la única ruta de subida, por bloques y con puntos de control.
 - `AppModel.swift`: navegación, cuentas y cola de transferencias.
 - `iCloudyApp.swift`: explorador SwiftUI y formulario de conexión.
 

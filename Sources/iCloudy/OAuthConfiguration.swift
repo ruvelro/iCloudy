@@ -26,11 +26,14 @@ struct OAuthConfiguration: Codable {
 }
 
 enum OAuthRequest {
-    static let redirectURI = "http://127.0.0.1:53682/callback"
+    /// The port registered with both providers. Google accepts any loopback port; Microsoft requires this exact one.
+    static let defaultPort: UInt16 = 53682
+    static let redirectURI = redirectURI(port: defaultPort)
+    static func redirectURI(port: UInt16) -> String { "http://127.0.0.1:\(port)/callback" }
 
-    static func authorizationURL(cloud: Cloud, clientID: String, state: String, challenge: String) -> URL {
+    static func authorizationURL(cloud: Cloud, clientID: String, state: String, challenge: String, port: UInt16 = defaultPort) -> URL {
         var url = URLComponents(string: cloud == .google ? "https://accounts.google.com/o/oauth2/v2/auth" : "https://login.microsoftonline.com/common/oauth2/v2.0/authorize")!
-        var values = ["client_id": clientID, "redirect_uri": redirectURI, "response_type": "code", "state": state, "code_challenge": challenge, "code_challenge_method": "S256", "prompt": "select_account"]
+        var values = ["client_id": clientID, "redirect_uri": redirectURI(port: port), "response_type": "code", "state": state, "code_challenge": challenge, "code_challenge_method": "S256", "prompt": "select_account"]
         if cloud == .google {
             values["scope"] = "openid email profile https://www.googleapis.com/auth/drive"
             values["access_type"] = "offline"

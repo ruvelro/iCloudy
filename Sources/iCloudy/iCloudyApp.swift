@@ -7,7 +7,8 @@ struct iCloudyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var model = AppModel()
     var body: some Scene {
-        WindowGroup {
+        // A single window: every window of a WindowGroup would mirror the same account, folder and selection.
+        Window("iCloudy", id: "explorer") {
             ExplorerView(model: model)
                 .frame(minWidth: 900, minHeight: 600)
                 .onAppear { delegate.model = model }
@@ -53,6 +54,7 @@ struct ExplorerView: View {
     @State private var showTransfers = true
     @State private var confirmDisconnect = false
     @State private var disconnectTarget: Account?
+    @State private var previewFollow: Task<Void, Never>?
     @FocusState private var gridFocused: Bool
 
     var body: some View {
@@ -205,9 +207,16 @@ struct ExplorerView: View {
         .onChange(of: model.folderID) { selected.removeAll() }
         .onChange(of: model.selectedAccountID) { selected.removeAll() }
         .onChange(of: selected) {
-            if model.preview.isVisible {
-                if selected.count == 1 { previewSelection() } else { model.preview.close() }
-            }
+            guard model.preview.isVisible else { return }
+            // Follow the selection like Quick Look, but wait for the arrow keys to settle: each preview is a download.
+            previewFollow?.cancel()
+            if selected.count == 1 {
+                previewFollow = Task {
+                    try? await Task.sleep(for: .milliseconds(350))
+                    guard !Task.isCancelled else { return }
+                    previewSelection()
+                }
+            } else { model.preview.close() }
         }
         .onDisappear { model.preview.close() }
         .alert("No se pudo completar la operación", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) { Button("Aceptar") { model.error = nil } } message: { Text(model.error ?? "") }

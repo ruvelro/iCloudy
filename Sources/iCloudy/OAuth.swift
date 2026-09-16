@@ -33,12 +33,12 @@ enum HTTP {
         }
         return (nil, nil)
     }
-    static func token(cloud: Cloud, values: [String: String]) async throws -> [String: Any] {
+    static func token(cloud: Cloud, values: [String: String], session: URLSession = .shared) async throws -> [String: Any] {
         var request = URLRequest(url: URL(string: cloud.tokenURL)!)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = form(values)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         try validate(response, data: data)
         return try json(data)
     }
@@ -53,8 +53,16 @@ final class OAuth {
     private var expectedState = ""
     private var connections: [NWConnection] = []
     private var cancelled = false
+    private let session: URLSession
+    private let openURL: (URL) -> Bool
     /// Account picker, consent screen and a second factor can easily take several minutes.
     static let loginTimeout: Duration = .seconds(600)
+
+    /// `session` carries the token and profile requests; `openURL` hands the authorization URL to the browser.
+    /// Both are injectable so the loopback flow can run end to end in tests.
+    init(session: URLSession = .shared, openURL: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) }) {
+        self.session = session; self.openURL = openURL
+    }
 
     static func random() -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
@@ -70,50 +78,33 @@ final class OAuth {
         cancelled = false
         let verifier = Self.random()
         expectedState = Self.random()
-        let parameters = NWParameters.tcp
-        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: 53682)
-        let server: NWListener
-        do { server = try NWListener(using: parameters) }
-        catch { throw CloudError.message("No se pudo preparar el inicio de sesión. Cierra otras instancias de iCloudy y vuelve a intentarlo.") }
-        listener = server
         defer { stop() }
-        server.newConnectionHandler = { [weak self] connection in
-            Task { @MainActor in self?.receive(connection) }
+        // Microsoft validates the registered port, so it must be the fixed one. Google ignores the port of a loopback
+        // redirect, which lets a second instance or another app on 53682 fall back to an ephemeral port.
+        let port: UInt16
+        do { port = try await listen(on: OAuthRequest.defaultPort) }
+        catch {
+            guard cloud == .google else { throw CloudError.message("No se pudo preparar el inicio de sesión: el puerto \(OAuthRequest.defaultPort) está ocupado. Cierra otras instancias de iCloudy y vuelve a intentarlo.") }
+            port = try await listen(on: 0)
         }
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            readiness = continuation
-            server.stateUpdateHandler = { [weak self] state in
-                Task { @MainActor in
-                    guard let self else { return }
-                    switch state {
-                    case .ready: self.readiness?.resume(); self.readiness = nil
-                    case .failed(let error):
-                        self.readiness?.resume(throwing: error); self.readiness = nil
-                        self.finish(.failure(error))
-                    default: break
-                    }
-                }
-            }
-            server.start(queue: .main)
-        }
-        let redirect = OAuthRequest.redirectURI
-        let url = OAuthRequest.authorizationURL(cloud: cloud, clientID: clientID, state: expectedState, challenge: Self.challenge(verifier))
+        let redirect = OAuthRequest.redirectURI(port: port)
+        let url = OAuthRequest.authorizationURL(cloud: cloud, clientID: clientID, state: expectedState, challenge: Self.challenge(verifier), port: port)
         let code: String = try await withCheckedThrowingContinuation { continuation in
             callback = continuation
             timeout = Task { [weak self] in
                 do { try await Task.sleep(for: Self.loginTimeout) } catch { return }
                 self?.finish(.failure(CloudError.message("No llegó la respuesta del navegador en 10 minutos y se ha cancelado el inicio de sesión. Si aún estás en la página del proveedor, ciérrala y vuelve a pulsar «Continuar» para empezar de nuevo.")))
             }
-            if !NSWorkspace.shared.open(url) { finish(.failure(CloudError.message("No se pudo abrir el navegador."))) }
+            if !openURL(url) { finish(.failure(CloudError.message("No se pudo abrir el navegador."))) }
         }
         var fields = ["client_id": clientID, "code": code, "redirect_uri": redirect, "grant_type": "authorization_code", "code_verifier": verifier]
         if cloud == .google && !clientSecret.isEmpty { fields["client_secret"] = clientSecret }
-        let tokens = try await HTTP.token(cloud: cloud, values: fields)
+        let tokens = try await HTTP.token(cloud: cloud, values: fields, session: session)
         guard !cancelled else { throw CancellationError() }
         guard let access = tokens["access_token"] as? String, let refresh = tokens["refresh_token"] as? String else { throw CloudError.message("El proveedor no devolvió acceso permanente. Repite el consentimiento.") }
         var request = URLRequest(url: URL(string: cloud == .google ? "https://openidconnect.googleapis.com/v1/userinfo" : "https://graph.microsoft.com/v1.0/me?$select=id,displayName,mail,userPrincipalName")!)
         request.setValue("Bearer \(access)", forHTTPHeaderField: "Authorization")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard !cancelled else { throw CancellationError() }
         try HTTP.validate(response, data: data)
         let profile = try HTTP.json(data)
@@ -121,6 +112,40 @@ final class OAuth {
         let email = profile["email"] as? String ?? profile["mail"] as? String ?? profile["userPrincipalName"] as? String ?? identity
         let account = Account(id: cloud.rawValue + ":" + identity, cloud: cloud, name: profile["name"] as? String ?? profile["displayName"] as? String ?? email, email: email, clientID: clientID, clientSecret: cloud == .google && !clientSecret.isEmpty ? clientSecret : nil)
         return (account, Credential(accessToken: access, refreshToken: refresh, expires: Date().addingTimeInterval(tokens["expires_in"] as? Double ?? 3600)))
+    }
+
+    /// Binds the loopback listener and returns the port actually in use (`0` asks the system for a free one).
+    private func listen(on requestedPort: UInt16) async throws -> UInt16 {
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: requestedPort) ?? .any)
+        let server = try NWListener(using: parameters)
+        listener = server
+        server.newConnectionHandler = { [weak self] connection in
+            Task { @MainActor in self?.receive(connection) }
+        }
+        do {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                readiness = continuation
+                server.stateUpdateHandler = { [weak self] state in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        switch state {
+                        case .ready: self.readiness?.resume(); self.readiness = nil
+                        case .failed(let error):
+                            self.readiness?.resume(throwing: error); self.readiness = nil
+                            self.finish(.failure(error))
+                        default: break
+                        }
+                    }
+                }
+                server.start(queue: .main)
+            }
+        } catch {
+            server.cancel(); listener = nil
+            throw error
+        }
+        guard let port = server.port?.rawValue else { throw CloudError.message("No se pudo preparar el inicio de sesión.") }
+        return port
     }
 
     func cancel() {
@@ -162,7 +187,7 @@ final class OAuth {
                     connection.cancel()
                     Task { @MainActor in
                         self?.finish(result)
-                        NSApp.activate(ignoringOtherApps: true)
+                        NSApp?.activate(ignoringOtherApps: true) // nil under XCTest
                     }
                 })
             }
