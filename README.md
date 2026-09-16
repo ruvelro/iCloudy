@@ -12,7 +12,7 @@ bash scripts/build-app.sh
 open dist/iCloudy.app
 ```
 
-También puedes abrir `Package.swift` en Xcode o ejecutar `swift run iCloudy` para desarrollar la interfaz. Para OAuth usa el paquete `.app`, que incorpora la configuración. El script firma con la primera identidad de firma de código que encuentre en el Llavero y avisa si tiene que recurrir a ad hoc, porque esa firma cambia en cada compilación y obliga a reautorizar el acceso al Llavero. La guía OAuth explica cómo crear un certificado local y los procesos de GitHub y Mac App Store.
+También puedes abrir `Package.swift` en Xcode o ejecutar `swift run iCloudy` para desarrollar la interfaz. Para OAuth usa el paquete `.app`, que incorpora la configuración. Ejecuta `bash scripts/make-signing-cert.sh` una vez: crea un certificado local de firma de código para que el acceso al Llavero no haya que reautorizarlo en cada compilación. Sin él, la firma ad hoc cambia cada vez y macOS trata cada compilación como otra aplicación. La guía OAuth explica cómo crear un certificado local y los procesos de GitHub y Mac App Store.
 
 ## Funciones
 

@@ -101,13 +101,18 @@ El archivo se copia a `Contents/Resources/OAuth.plist` antes de firmar. Se puede
 
 ## Firma local para desarrollo
 
-Los elementos del Llavero quedan ligados a la identidad que firmó la app. Una firma ad hoc (`-`) cambia en cada compilación, así que tras cada `build-app.sh` macOS pedía permiso para las cuentas guardadas o directamente negaba el acceso. El script ahora busca una identidad de firma de código estable en el Llavero y solo recurre a ad hoc, con un aviso, si no encuentra ninguna.
+Los elementos del Llavero quedan ligados a la identidad que firmó la app. Una firma ad hoc (`-`) cambia en cada compilación, así que macOS trata cada compilación como una aplicación distinta y vuelve a pedir permiso para leer las cuentas guardadas, o directamente lo niega. Con una identidad estable el requisito designado no cambia y el permiso concedido una vez sigue valiendo.
 
-Si no tienes cuenta de desarrollador, crea un certificado local una sola vez:
+```sh
+bash scripts/make-signing-cert.sh
+bash scripts/build-app.sh
+```
 
-1. Abre **Acceso a Llaveros → Asistente para Certificados → Crear un certificado…**
-2. Nombre `iCloudy Development`, tipo de identidad **Raíz autofirmada**, tipo de certificado **Firma de código**.
-3. Compila con `bash scripts/build-app.sh`; el script lo detecta por el nombre. También puedes forzar otra identidad con `ICLOUDY_SIGNING_IDENTITY="Nombre exacto"` o volver a ad hoc con `ICLOUDY_SIGNING_IDENTITY=-`.
+El script crea un certificado autofirmado de firma de código llamado `iCloudy Development` en el llavero de inicio de sesión y autoriza a `codesign` a usar su clave. **No se añade nada al almacén de confianza del sistema**: el certificado sigue sin ser de confianza y `codesign` no lo necesita, solo necesita la clave privada. Por eso `build-app.sh` busca la identidad sin el filtro `-v`, que descarta precisamente las no validadas.
+
+La primera vez que abras la app firmada, macOS pedirá una vez acceso al Llavero porque los elementos se guardaron bajo la firma anterior. Elige **Permitir siempre** y no volverá a preguntar en las siguientes compilaciones.
+
+Para quitarlo, abre Acceso a Llaveros, busca `iCloudy Development` y elimina el certificado y su clave. También puedes forzar otra identidad con `ICLOUDY_SIGNING_IDENTITY="Nombre exacto"` o volver a ad hoc con `ICLOUDY_SIGNING_IDENTITY=-`.
 
 Los certificados autofirmados no admiten sello de tiempo de Apple, por eso el script firma con `--timestamp=none`. Sirven para desarrollo; la distribución sigue requiriendo Developer ID o Mac App Store.
 

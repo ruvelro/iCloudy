@@ -12,8 +12,15 @@ swift scripts/configure-oauth.swift --validate "$oauth_config" "${1:-}"
 # identity found in the Keychain; docs/OAUTH.md explains how to create a local one.
 identity="${ICLOUDY_SIGNING_IDENTITY:-}"
 if [[ -z "$identity" ]]; then
+    # First choice: an identity Apple itself validates.
     identity="$(security find-identity -v -p codesigning 2>/dev/null \
-        | awk -F'"' '/Developer ID Application|Apple Development|Mac Developer|iCloudy/ { print $2; exit }')"
+        | awk -F'"' '/Developer ID Application|Apple Development|Mac Developer/ { print $2; exit }')"
+fi
+if [[ -z "$identity" ]]; then
+    # Second choice: the local development certificate. `codesign` accepts it even though the system does not trust
+    # a self-signed root, which is why this lookup drops the -v flag that filters out untrusted identities.
+    identity="$(security find-identity -p codesigning 2>/dev/null \
+        | awk -F'"' '/iCloudy Development/ { print $2; exit }')"
 fi
 if [[ -z "$identity" ]]; then
     identity="-"
