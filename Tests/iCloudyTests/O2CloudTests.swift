@@ -53,6 +53,48 @@ final class O2CloudTests: XCTestCase {
         return (CloudAPI(account: account, session: URLSession(configuration: configuration), credentials: store), store)
     }
 
+    func testTheSessionKeepsPresentingTheClientItWasGrantedTo() async throws {
+        // The session is created inside a window that introduces itself as a browser. Continuing as a different
+        // program is the kind of change a server treats as a session worth dropping.
+        let agent = "Mozilla/5.0 (Macintosh) AppleWebKit/605 Safari/605"
+        let stored = O2API.store(validationKey: "clave", cookies: [], userAgent: agent)
+        XCTAssertEqual(O2API.restore(stored)?.userAgent, agent, "Sobrevive al Llavero")
+        XCTAssertNil(O2API.restore(O2API.store(validationKey: "clave", cookies: []))?.userAgent)
+
+        var seen: [String?] = []
+        StubProtocol.handler = { request in
+            seen.append(request.value(forHTTPHeaderField: "User-Agent"))
+            return (200, [:], Data(#"{"data":{"used":1,"quota":2,"nolimit":false}}"#.utf8))
+        }
+        let store = MemoryCredentials()
+        store.stored["o2:cloud.o2online.es:ana@ejemplo.com"] = Credential(accessToken: "", refreshToken: "",
+                                                                          expires: .distantFuture, secret: stored)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubProtocol.self]
+        let account = Account(id: "o2:cloud.o2online.es:ana@ejemplo.com", cloud: .o2, name: "O2 Cloud",
+                              email: "ana@ejemplo.com", clientID: "", clientSecret: nil,
+                              serverURL: "https://cloud.o2online.es", bookmark: nil,
+                              options: ["host": "cloud.o2online.es"])
+        _ = try await CloudAPI(account: account, session: URLSession(configuration: configuration),
+                               credentials: store).storageQuota()
+        XCTAssertEqual(seen, [agent])
+    }
+
+    func testAClearedCookieDoesNotWipeAGoodOne() async throws {
+        // A server empties a cookie to delete it. Storing that over the session would send an empty one next time,
+        // which looks exactly like an account that expired on its own.
+        var sent: [String?] = []
+        StubProtocol.handler = { request in
+            sent.append(request.value(forHTTPHeaderField: "Cookie"))
+            return (200, ["Set-Cookie": "JSESSIONID=; Path=/; Max-Age=0"],
+                    Data(#"{"data":{"used":1,"quota":2,"nolimit":false}}"#.utf8))
+        }
+        let (api, _) = clientAndStore()
+        _ = try await api.storageQuota()
+        _ = try await api.storageQuota()
+        XCTAssertEqual(sent, ["JSESSIONID=abc", "JSESSIONID=abc"], "La sesión buena se conserva")
+    }
+
     func testARenewedKeyArrivesInACookieAndIsKept() async throws {
         // This is how the platform renews a session, and ignoring it is what made accounts expire after a few
         // minutes of ordinary use. Its own client reads the cookie for exactly this reason.

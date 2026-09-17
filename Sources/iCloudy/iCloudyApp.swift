@@ -88,13 +88,19 @@ enum Layout {
     /// Difference between a Table's built-in cell inset and `margin`, measured on screen.
     static let tableCorrection: CGFloat = 4
     static let footerHeight: CGFloat = 38
+    /// Width of the transfers drawer on the right.
+    static let transferDrawer: CGFloat = 330
+    /// Height kept for the collection picker whether or not the provider has more than one collection, so switching
+    /// clouds never moves the file list up or down.
+    static let collectionRow: CGFloat = 24
 }
 
 struct ExplorerView: View {
     @ObservedObject var model: AppModel
     @State private var selected: Set<CloudFile.ID> = []
     @State private var dropTarget = false
-    @State private var showTransfers = true
+    /// The transfers drawer starts closed and opens itself when something is transferring.
+    @State private var showTransfers = false
     @State private var confirmDisconnect = false
     @State private var disconnectTarget: Account?
     @State private var previewFollow: Task<Void, Never>?
@@ -193,44 +199,54 @@ struct ExplorerView: View {
             VStack(spacing: 0) {
                 header
                 Divider()
-                if model.account == nil {
-                    // Greedy, so the block above it stays anchored to the top instead of floating in the middle.
-                    ContentUnavailableView {
-                        Label("Tus archivos, en un solo lugar", systemImage: "cloud")
-                    } description: {
-                        Text("Conecta Google Drive o OneDrive para explorar tus carpetas y transferir archivos cuando lo necesites.")
-                    } actions: {
-                        Button("Conectar una cuenta") { model.showConnect = true }.buttonStyle(.borderedProminent)
-                        Button("Explorar demo sin cuenta") { model.enableDemo() }
-                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    if model.account?.isDemo == true {
-                        HStack {
-                            Label("DEMO LOCAL · Ningún archivo se envía a Internet", systemImage: "testtube.2").font(.caption)
-                            Spacer()
-                            Toggle("Sin conexión", isOn: $model.demoOffline).toggleStyle(.checkbox)
-                            Button("Simular corte") { model.failNextDemoTransfer() }.help("La siguiente operación fallará una vez para probar el reintento")
-                        }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
+                // The file area and the transfers drawer sit side by side, so opening the drawer narrows the
+                // listing instead of eating the height where the files are.
+                HStack(spacing: 0) {
+                    VStack(spacing: 0) {
+                    if model.account == nil {
+                        // Greedy, so the block above it stays anchored to the top instead of floating in the middle.
+                        ContentUnavailableView {
+                            Label("Tus archivos, en un solo lugar", systemImage: "cloud")
+                        } description: {
+                            Text("Conecta Google Drive o OneDrive para explorar tus carpetas y transferir archivos cuando lo necesites.")
+                        } actions: {
+                            Button("Conectar una cuenta") { model.showConnect = true }.buttonStyle(.borderedProminent)
+                            Button("Explorar demo sin cuenta") { model.enableDemo() }
+                        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        if model.account?.isDemo == true {
+                            HStack {
+                                Label("DEMO LOCAL · Ningún archivo se envía a Internet", systemImage: "testtube.2").font(.caption)
+                                Spacer()
+                                Toggle("Sin conexión", isOn: $model.demoOffline).toggleStyle(.checkbox)
+                                Button("Simular corte") { model.failNextDemoTransfer() }.help("La siguiente operación fallará una vez para probar el reintento")
+                            }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
+                        }
+                        if !model.isOnline {
+                            HStack {
+                                Label("Sin conexión. Las transferencias se han pausado y se reanudarán solas al volver la red; los listados pueden no estar al día.", systemImage: "wifi.slash")
+                                    .font(.caption).fixedSize(horizontal: false, vertical: true)
+                                Spacer()
+                            }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
+                        }
+                        if let account = model.account, model.isExpired(account) {
+                            HStack {
+                                Label("La sesión de esta cuenta ha caducado o se ha revocado. Los archivos no se pueden consultar hasta volver a conectarla.", systemImage: "exclamationmark.triangle.fill")
+                                    .font(.caption).fixedSize(horizontal: false, vertical: true)
+                                Spacer()
+                                Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.connecting)
+                            }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
+                        }
+                        fileBrowser
                     }
-                    if !model.isOnline {
-                        HStack {
-                            Label("Sin conexión. Las transferencias se han pausado y se reanudarán solas al volver la red; los listados pueden no estar al día.", systemImage: "wifi.slash")
-                                .font(.caption).fixedSize(horizontal: false, vertical: true)
-                            Spacer()
-                        }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    if showTransfers {
+                        Divider()
+                        TransferPanel(model: model, queue: model.queue, history: model.history)
+                            .frame(width: Layout.transferDrawer)
+                            .transition(.move(edge: .trailing))
                     }
-                    if let account = model.account, model.isExpired(account) {
-                        HStack {
-                            Label("La sesión de esta cuenta ha caducado o se ha revocado. Los archivos no se pueden consultar hasta volver a conectarla.", systemImage: "exclamationmark.triangle.fill")
-                                .font(.caption).fixedSize(horizontal: false, vertical: true)
-                            Spacer()
-                            Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.connecting)
-                        }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
-                    }
-                    fileBrowser
                 }
-                // Keep the panel visible while the saved queue is unreadable, otherwise the recovery button would never appear.
-                if showTransfers && (!model.transfers.isEmpty || model.queue.persistenceError != nil) { TransferPanel(model: model, queue: model.queue, history: model.history) }
                 Divider()
                 HStack {
                     Text("\(model.visibleFiles.count) elementos")
@@ -246,6 +262,11 @@ struct ExplorerView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .navigationTitle(model.account.map { model.accountTitle($0) } ?? "iCloudy")
+            // Something started moving, so show it. Closing the drawer by hand keeps it closed until the next one.
+            .onChange(of: model.transfers.count) { _, count in
+                guard count > 0, !showTransfers else { return }
+                withAnimation(.easeInOut(duration: 0.18)) { showTransfers = true }
+            }
             }
             }
             .frame(minWidth: 580, maxWidth: .infinity, maxHeight: .infinity)
@@ -354,7 +375,10 @@ struct ExplorerView: View {
                 Image(systemName: "list.bullet").tag("list")
                 Image(systemName: "square.grid.2x2").tag("grid")
             }.pickerStyle(.segmented).frame(width: 80)
-            Button { showTransfers.toggle() } label: { Image(systemName: "arrow.up.arrow.down.circle") }.help("Transferencias")
+            Button { withAnimation(.easeInOut(duration: 0.18)) { showTransfers.toggle() } } label: {
+                Image(systemName: "arrow.up.arrow.down.circle")
+                    .symbolVariant(model.transfers.isEmpty ? .none : .fill)
+            }.help(showTransfers ? "Ocultar transferencias" : "Mostrar transferencias")
             Menu {
                 Button("Personalizar nube…") { model.appearanceAccount = model.account }.disabled(model.account == nil)
                 Button("Desconectar cuenta…", role: .destructive) {
@@ -378,11 +402,15 @@ struct ExplorerView: View {
                 }
                 if model.loading { ProgressView().controlSize(.small) }
             }
-            if let account = model.account, model.collections(for: account).count > 1 {
-                Picker("Vista", selection: Binding(get: { model.collection }, set: { model.show($0) })) {
-                    ForEach(model.collections(for: account)) { Label($0.title, systemImage: $0.icon).tag($0) }
-                }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 420)
-            }
+            // The row is always here, with or without a picker in it. Providers differ in how many collections they
+            // offer, and letting that shift everything below made switching clouds feel like the window moved.
+            Group {
+                if let account = model.account, model.collections(for: account).count > 1 {
+                    Picker("Vista", selection: Binding(get: { model.collection }, set: { model.show($0) })) {
+                        ForEach(model.collections(for: account)) { Label($0.title, systemImage: $0.icon).tag($0) }
+                    }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 420)
+                }
+            }.frame(height: Layout.collectionRow, alignment: .leading)
             HStack {
                 Button { model.back(to: max(0, model.path.count - 1)) } label: { Image(systemName: "chevron.left") }.disabled(model.path.isEmpty)
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -577,13 +605,27 @@ struct TransferPanel: View {
     @State private var showHistory = false
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            // A narrow column, so the actions are icons with their names in the tooltip rather than a row of links
+            // that would not fit.
+            HStack(spacing: 2) {
                 Text("Transferencias").font(.headline)
                 Spacer()
-                Button("Historial (\(history.entries.count))") { showHistory = true }.buttonStyle(.link).font(.caption)
-                Button("Pausar todas") { queue.pauseAll() }.buttonStyle(.link).font(.caption)
-                Button("Limpiar completadas") { queue.clearCompleted() }.buttonStyle(.link).font(.caption)
-                    .help("Quita las completadas del panel; el historial las conserva")
+                Button { showHistory = true } label: { Image(systemName: "clock.arrow.circlepath") }
+                    .buttonStyle(.borderless).help("Historial (\(history.entries.count))")
+                Button { queue.pauseAll() } label: { Image(systemName: "pause.circle") }
+                    .buttonStyle(.borderless).help("Pausar todas")
+                    .disabled(!queue.items.contains { !$0.finished })
+                Menu {
+                    Button("Limpiar completadas") { queue.clearCompleted() }
+                        .disabled(!queue.items.contains { $0.state == .completed })
+                    Button("Limpiar las que fallaron") { queue.clearFailed() }
+                        .disabled(!queue.items.contains(where: \.failed))
+                    Divider()
+                    Button("Limpiar todo lo terminado") { queue.clearFinished() }
+                        .disabled(!queue.items.contains(where: \.finished))
+                } label: { Image(systemName: "trash") }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .help("Quitar del panel; el historial las conserva")
             }
             .sheet(isPresented: $showHistory) { TransferHistoryView(model: model, history: history) }
             // Queue order, oldest first: the running job sits on top and waiting jobs can be dragged to re-prioritise.
@@ -601,28 +643,42 @@ struct TransferPanel: View {
                                 if transfer.progress > 0 { ProgressView(value: transfer.progress) }
                                 else if transfer.status != "En cola" { ProgressView().controlSize(.mini) }
                             }
+                            // A column is narrow, so the actions go under the text rather than beside it.
+                            HStack(spacing: 8) {
+                                if [.failed, .paused, .cancelled].contains(transfer.state) {
+                                    Button(transfer.state == .failed ? "Reintentar" : "Reanudar") { queue.retry(transfer.id) }
+                                }
+                                if queue.isMovable(transfer) {
+                                    Button { queue.prioritize(transfer.id) } label: { Image(systemName: "arrow.up.to.line") }
+                                        .help("Pasar al principio de la cola")
+                                }
+                                if [.running, .queued].contains(transfer.state) {
+                                    Button { queue.cancel(transfer.id, pause: true) } label: { Image(systemName: "pause.circle") }.help("Pausar")
+                                    Button { queue.cancel(transfer.id) } label: { Image(systemName: "xmark.circle") }.help("Cancelar")
+                                    if queue.pendingBatchMates(of: transfer.id) > 0 {
+                                        Button("Cancelar el resto") { queue.cancelBatch(transfer.batchID) }
+                                            .help("Cancela este elemento y los \(queue.pendingBatchMates(of: transfer.id)) pendientes que se añadieron con él")
+                                    }
+                                }
+                            }.buttonStyle(.borderless).padding(.top, 1)
                         }.font(.caption)
-                        Spacer()
-                        if [.failed, .paused, .cancelled].contains(transfer.state) {
-                            Button(transfer.state == .failed ? "Reintentar" : "Reanudar") { queue.retry(transfer.id) }
-                        }
-                        if queue.isMovable(transfer) {
-                            Button { queue.prioritize(transfer.id) } label: { Image(systemName: "arrow.up.to.line") }.help("Pasar al principio de la cola")
-                        }
-                        if [.running, .queued].contains(transfer.state) {
-                            Button { queue.cancel(transfer.id, pause: true) } label: { Image(systemName: "pause.circle") }.help("Pausar")
-                            Button { queue.cancel(transfer.id) } label: { Image(systemName: "xmark.circle") }.help("Cancelar")
-                            if queue.pendingBatchMates(of: transfer.id) > 0 {
-                                Button("Cancelar el resto del lote") { queue.cancelBatch(transfer.batchID) }.font(.caption)
-                                    .help("Cancela este elemento y los \(queue.pendingBatchMates(of: transfer.id)) pendientes que se añadieron con él")
-                            }
-                        }
+                        Spacer(minLength: 0)
                     }
                     .moveDisabled(!queue.isMovable(transfer))
                     .listRowSeparator(.hidden)
                 }
                 .onMove { from, to in queue.move(fromOffsets: from, toOffset: to) }
-            }.listStyle(.plain).scrollContentBackground(.hidden).frame(maxHeight: 220)
+            }.listStyle(.plain).scrollContentBackground(.hidden).frame(maxHeight: .infinity)
+                .overlay {
+                    if queue.items.isEmpty {
+                        VStack(spacing: 6) {
+                            Image(systemName: "arrow.up.arrow.down.circle").font(.largeTitle).foregroundStyle(.tertiary)
+                            Text("No hay transferencias").font(.callout).foregroundStyle(.secondary)
+                            Text("Aquí aparecen las copias y las subidas mientras se hacen.")
+                                .font(.caption2).foregroundStyle(.tertiary).multilineTextAlignment(.center)
+                        }.padding(.horizontal, 8).allowsHitTesting(false)
+                    }
+                }
             if let message = queue.persistenceError {
                 HStack(alignment: .top) {
                     Text(message).foregroundStyle(.red).font(.caption).fixedSize(horizontal: false, vertical: true)
@@ -633,7 +689,9 @@ struct TransferPanel: View {
                     }
                 }
             }
-        }.padding(.horizontal, Layout.margin).padding(.vertical, 14).background(.quaternary.opacity(0.4))
+        }.padding(.horizontal, 14).padding(.vertical, 14)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(.quaternary.opacity(0.4))
     }
 }
 

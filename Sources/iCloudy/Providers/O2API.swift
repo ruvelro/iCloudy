@@ -71,11 +71,8 @@ enum O2API {
     static func call(_ path: String, action: String, query: [URLQueryItem], body: [String: Any]?, method: String?,
                      state: O2Session, session: URLSession) async throws -> [String: Any] {
         var request = URLRequest(url: url(host: state.host, path: path, action: action, state: state, query: query))
-        request.httpMethod = method ?? (body == nil ? "POST" : "POST")
-        // The platform checks the referer on every call; without it the request is refused as cross-site.
-        request.setValue("https://\(state.host)/", forHTTPHeaderField: "Referer")
-        request.httpShouldHandleCookies = false
-        if let header = state.cookieHeader { request.setValue(header, forHTTPHeaderField: "Cookie") }
+        request.httpMethod = method ?? "POST"
+        state.apply(to: &request)
         if let body {
             request.setValue("application/json;charset=UTF-8", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
@@ -110,6 +107,8 @@ enum O2API {
     struct StoredSession: Codable {
         var validationKey: String
         var cookies: [StoredCookie]
+        /// How the client that was granted this session introduces itself.
+        var userAgent: String?
         struct StoredCookie: Codable {
             var name: String
             var value: String
@@ -118,13 +117,13 @@ enum O2API {
             var secure: Bool
         }
     }
-    static func store(validationKey: String, cookies: [HTTPCookie]) -> String {
+    static func store(validationKey: String, cookies: [HTTPCookie], userAgent: String? = nil) -> String {
         let stored = StoredSession(validationKey: validationKey, cookies: cookies.map {
             StoredSession.StoredCookie(name: $0.name, value: $0.value, domain: $0.domain, path: $0.path, secure: $0.isSecure)
-        })
+        }, userAgent: userAgent)
         return (try? JSONEncoder().encode(stored)).map { String(decoding: $0, as: UTF8.self) } ?? ""
     }
-    static func restore(_ text: String) -> (validationKey: String, cookies: [HTTPCookie])? {
+    static func restore(_ text: String) -> (validationKey: String, cookies: [HTTPCookie], userAgent: String?)? {
         guard let stored = try? JSONDecoder().decode(StoredSession.self, from: Data(text.utf8)),
               !stored.validationKey.isEmpty else { return nil }
         let cookies = stored.cookies.compactMap { value -> HTTPCookie? in
@@ -132,7 +131,7 @@ enum O2API {
                                     .path: value.path.isEmpty ? "/" : value.path,
                                     .secure: value.secure ? "TRUE" : "FALSE"])
         }
-        return (stored.validationKey, cookies)
+        return (stored.validationKey, cookies, stored.userAgent)
     }
 
     /// Who the session belongs to, so the account has a name the person recognises.

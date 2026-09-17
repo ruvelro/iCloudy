@@ -22,7 +22,7 @@ final class O2WebLoginModel: ObservableObject {
     @Published var status: String = L("Abriendo el acceso de O2…")
     @Published var failed: String?
     /// Receives the session once O2 has granted one.
-    var onSuccess: (@MainActor (String, [HTTPCookie]) -> Void)?
+    var onSuccess: (@MainActor (String, [HTTPCookie], String?) -> Void)?
     /// A fresh store every time, so signing in again never reuses the previous account's session.
     let store = WKWebsiteDataStore.nonPersistent()
     private var watcher: Task<Void, Never>?
@@ -55,13 +55,21 @@ final class O2WebLoginModel: ObservableObject {
                 guard let key = mine.first(where: { $0.name == "validationKey" })?.value, !key.isEmpty else { continue }
                 self.done = true
                 self.status = L("Sesión iniciada. Cerrando…")
-                self.onSuccess?(key, mine)
+                self.onSuccess?(key, mine, await self.identity())
                 return
             }
             self?.failed = L("No se completó el acceso. Cierra esta ventana y vuelve a intentarlo.")
         }
     }
     func stop() { watcher?.cancel(); watcher = nil }
+
+    /// How this window introduces itself to the server. The session is granted to that identity, so iCloudy keeps
+    /// using it instead of presenting itself as a different program halfway through.
+    private func identity() async -> String? {
+        guard let webView else { return nil }
+        let value = try? await webView.evaluateJavaScript("navigator.userAgent")
+        return (value as? String).flatMap { $0.isEmpty ? nil : $0 }
+    }
 
     private func sessionCookies() async -> [HTTPCookie] {
         guard let webView else { return [] }
@@ -80,7 +88,7 @@ final class O2WebLoginModel: ObservableObject {
             return
         }
         done = true
-        onSuccess?(cookies.first { $0.name == "validationKey" }?.value ?? "", cookies)
+        onSuccess?(cookies.first { $0.name == "validationKey" }?.value ?? "", cookies, await identity())
     }
 }
 
@@ -148,9 +156,9 @@ struct O2WebLoginView: View {
         }
         .frame(width: 720, height: 720)
         .onAppear {
-            login.onSuccess = { key, cookies in
+            login.onSuccess = { key, cookies, agent in
                 Task {
-                    await model.completeO2(host: login.host, validationKey: key, cookies: cookies)
+                    await model.completeO2(host: login.host, validationKey: key, cookies: cookies, userAgent: agent)
                     finish()
                 }
             }

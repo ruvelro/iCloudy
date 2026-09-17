@@ -15,11 +15,22 @@ final class O2Session {
     /// the session belongs to this account alone and never leaks into another provider's requests. That also means
     /// following `Set-Cookie` by hand, which matters: this is how the server renews the session.
     private(set) var cookies: [HTTPCookie]
+    /// The browser identity the session was granted to. A session handed to one client and then used by another that
+    /// introduces itself differently is a thing servers reject, so iCloudy keeps presenting the same one.
+    let userAgent: String?
     /// Set when the server renewed something, so the caller knows the Keychain copy is behind.
     var renewed = false
     var rootFolder: String?
-    init(host: String, validationKey: String, cookies: [HTTPCookie] = []) {
-        self.host = host; self.validationKey = validationKey; self.cookies = cookies
+    init(host: String, validationKey: String, cookies: [HTTPCookie] = [], userAgent: String? = nil) {
+        self.host = host; self.validationKey = validationKey; self.cookies = cookies; self.userAgent = userAgent
+    }
+    /// Headers every request to this server carries, whatever it is asking for.
+    func apply(to request: inout URLRequest) {
+        // The platform checks the referer on every call; without it the request is refused as cross-site.
+        request.setValue("https://\(host)/", forHTTPHeaderField: "Referer")
+        if let userAgent { request.setValue(userAgent, forHTTPHeaderField: "User-Agent") }
+        request.httpShouldHandleCookies = false
+        if let cookieHeader { request.setValue(cookieHeader, forHTTPHeaderField: "Cookie") }
     }
     /// Takes in whatever the server just set. The platform renews the key through the cookie rather than through the
     /// body, so ignoring this is what made sessions die after a few minutes of use.
@@ -27,14 +38,16 @@ final class O2Session {
         guard !fresh.isEmpty else { return }
         var merged = cookies
         for cookie in fresh {
+            // A server clears a cookie by sending it back empty or already expired. Storing that over a good value
+            // would send an empty session on the next call, which looks exactly like an expired account.
+            let cleared = cookie.value.isEmpty || (cookie.expiresDate.map { $0 < Date() } ?? false)
+            guard !cleared else { continue }
+            guard merged.first(where: { $0.name == cookie.name })?.value != cookie.value else { continue }
             merged.removeAll { $0.name == cookie.name }
             merged.append(cookie)
-            if cookie.name == "validationKey", !cookie.value.isEmpty, cookie.value != validationKey {
-                validationKey = cookie.value
-                renewed = true
-            }
+            renewed = true
+            if cookie.name == "validationKey", cookie.value != validationKey { validationKey = cookie.value }
         }
-        if merged.count != cookies.count || renewed { renewed = true }
         cookies = merged
     }
     var cookieHeader: String? {
@@ -99,7 +112,8 @@ extension CloudAPI {
               let restored = O2API.restore(credential.secret) else {
             throw CloudError.sessionExpired(L("La sesión de O2 Cloud ha caducado. Vuelve a iniciar sesión."))
         }
-        let state = O2Session(host: o2Host, validationKey: restored.validationKey, cookies: restored.cookies)
+        let state = O2Session(host: o2Host, validationKey: restored.validationKey, cookies: restored.cookies,
+                              userAgent: restored.userAgent)
         o2SessionCache = state
         return state
     }
@@ -118,7 +132,7 @@ extension CloudAPI {
             // The key rotates while the session lives on, and the replacement comes inside the error itself.
             guard let fresh = error.data, !fresh.isEmpty else {
                 expireSession()
-                throw CloudError.sessionExpired(L("La sesión de O2 Cloud ha caducado. Vuelve a iniciar sesión."))
+                throw CloudError.sessionExpired(L("La sesión de O2 Cloud ha caducado (SEC-1003 en \(error.origin ?? "?")). Vuelve a iniciar sesión."))
             }
             state.validationKey = fresh
             state.renewed = true
@@ -126,7 +140,7 @@ extension CloudAPI {
             return try await o2Call(path, action: action, query: query, body: body, method: method, retrying: false)
         } catch let error as O2API.Failure where error.isExpiredSession {
             expireSession()
-            throw CloudError.sessionExpired(L("La sesión de O2 Cloud ha caducado. Vuelve a iniciar sesión."))
+            throw CloudError.sessionExpired(L("La sesión de O2 Cloud ha caducado (\(error.code) en \(error.origin ?? "?")). Vuelve a iniciar sesión."))
         }
     }
 
@@ -136,7 +150,8 @@ extension CloudAPI {
         guard state.renewed else { return }
         state.renewed = false
         guard var credential = try? credentials.read(account.credentialKey) else { return }
-        credential.secret = O2API.store(validationKey: state.validationKey, cookies: state.cookies)
+        credential.secret = O2API.store(validationKey: state.validationKey, cookies: state.cookies,
+                                        userAgent: state.userAgent)
         try? credentials.save(credential, key: account.credentialKey)
     }
 
@@ -302,10 +317,8 @@ extension CloudAPI {
             throw CloudError.message(L("O2 Cloud no devolvió la dirección de descarga."))
         }
         var request = URLRequest(url: url)
-        request.setValue("https://\(o2Host)/", forHTTPHeaderField: "Referer")
-        // The temporary address is still behind the session, so it needs the same cookies.
-        request.httpShouldHandleCookies = false
-        if let header = (try o2Session()).cookieHeader { request.setValue(header, forHTTPHeaderField: "Cookie") }
+        // The temporary address is still behind the session, so it needs the same identity and cookies.
+        try o2Session().apply(to: &request)
         let (temporary, response) = try await session.download(for: request)
         try HTTP.validate(response, data: Data())
         try? FileManager.default.removeItem(at: destination)
@@ -334,9 +347,7 @@ extension CloudAPI {
             URLQueryItem(name: "acceptasynchronous", value: "true")]))
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.setValue("https://\(o2Host)/", forHTTPHeaderField: "Referer")
-        request.httpShouldHandleCookies = false
-        if let header = state.cookieHeader { request.setValue(header, forHTTPHeaderField: "Cookie") }
+        state.apply(to: &request)
         let reporter = O2UploadReporter(total: total, progress: progress)
         let (data, response) = try await session.upload(for: request, fromFile: envelope, delegate: reporter)
         try HTTP.validate(response, data: data)

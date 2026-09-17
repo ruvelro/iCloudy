@@ -184,8 +184,14 @@ final class TransferQueue: ObservableObject {
     func pauseAll() {
         for id in items.filter({ [.running, .queued].contains($0.state) }).map(\.id) { cancel(id, pause: true) }
     }
-    func clearCompleted() {
-        items.removeAll { $0.state == .completed }
+    func clearCompleted() { clear { $0.state == .completed } }
+    /// Failed transfers are never retried on their own, so without a way to clear them they pile up in the panel and
+    /// bury whatever is actually running.
+    func clearFailed() { clear { $0.state == .failed } }
+    /// Everything that is over, however it ended. The history keeps its own record either way.
+    func clearFinished() { clear(\.finished) }
+    private func clear(_ matches: (Transfer) -> Bool) {
+        items.removeAll(where: matches)
         do { try persist() } catch { persistenceError = error.localizedDescription }
         stateChanges.send()
     }

@@ -316,14 +316,14 @@ final class AppModel: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     /// Stores the session O2 handed out on its own pages. iCloudy never saw the password or the code.
-    func completeO2(host: String, validationKey: String, cookies: [HTTPCookie]) async {
+    func completeO2(host: String, validationKey: String, cookies: [HTTPCookie], userAgent: String?) async {
         connectionError = nil; connecting = true
         defer { connecting = false }
         do {
             guard !validationKey.isEmpty else {
                 throw CloudError.message(L("El acceso no terminó de completarse. Vuelve a intentarlo desde la página de O2."))
             }
-            let state = O2Session(host: host, validationKey: validationKey, cookies: cookies)
+            let state = O2Session(host: host, validationKey: validationKey, cookies: cookies, userAgent: userAgent)
             let probe = URLSession(configuration: .ephemeral)
             defer { probe.invalidateAndCancel() }
             // Asking who this is proves the session works before anything is written to the Keychain.
@@ -333,7 +333,8 @@ final class AppModel: ObservableObject {
                                   clientID: "", clientSecret: nil, serverURL: "https://" + host, bookmark: nil,
                                   options: ["host": host])
             let credential = Credential(accessToken: "", refreshToken: "", expires: .distantFuture,
-                                        secret: O2API.store(validationKey: validationKey, cookies: cookies))
+                                        secret: O2API.store(validationKey: validationKey, cookies: cookies,
+                                                            userAgent: userAgent))
             try Vault.save(credential, key: account.id)
             var updated = accounts.filter { $0.id != account.id }; updated.append(account)
             try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")

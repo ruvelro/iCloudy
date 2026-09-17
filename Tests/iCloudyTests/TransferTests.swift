@@ -230,6 +230,36 @@ final class TransferTests: XCTestCase {
         XCTAssertTrue(history.entries.allSatisfy { !$0.summary.isEmpty || $0.direction == .download })
     }
 
+    func testEachKindOfFinishedTransferCanBeClearedOnItsOwn() async throws {
+        // A failed transfer is never retried by itself, so without a way to clear it the panel fills with dead
+        // entries and buries whatever is actually running.
+        let (root, demo, queue) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let good = root.appendingPathComponent("bien.txt"); try Data("bien".utf8).write(to: good)
+        try queue.add([upload(good)]); try await wait { !queue.isWorking }
+        demo.offline = true
+        let bad = root.appendingPathComponent("mal.txt"); try Data("mal".utf8).write(to: bad)
+        try queue.add([upload(bad)]); try await wait { !queue.isWorking }
+        demo.offline = false
+        XCTAssertEqual(queue.items.map(\.state), [.completed, .failed])
+
+        queue.clearCompleted()
+        XCTAssertEqual(queue.items.map(\.name), ["mal.txt"], "Limpiar completadas deja la que falló a la vista")
+        queue.clearFailed()
+        XCTAssertTrue(queue.items.isEmpty, "Y ahora sí se puede quitar")
+
+        // Two more, with names of their own so neither collides with what is already in the cloud, cleared in one go.
+        let other = root.appendingPathComponent("otro.txt"); try Data("otro".utf8).write(to: other)
+        try queue.add([upload(other)]); try await wait { !queue.isWorking }
+        demo.offline = true
+        let alsoBad = root.appendingPathComponent("tambien-mal.txt"); try Data("mal".utf8).write(to: alsoBad)
+        try queue.add([upload(alsoBad)]); try await wait { !queue.isWorking }
+        demo.offline = false
+        XCTAssertEqual(queue.items.map(\.state), [.completed, .failed])
+        queue.clearFinished()
+        XCTAssertTrue(queue.items.isEmpty)
+    }
+
     func testLosingTheNetworkPausesAndRecoveringResumesWithoutUserAction() async throws {
         let (root, demo, queue) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
