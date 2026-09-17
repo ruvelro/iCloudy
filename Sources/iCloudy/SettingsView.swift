@@ -91,6 +91,8 @@ private struct TransferSettings: View {
 }
 
 private struct StorageSettings: View {
+    @State private var exportMessage: String?
+
     @ObservedObject var model: AppModel
     @State private var sizes: [Maintenance.Kind: Int64] = [:]
     @State private var measuring = true
@@ -130,6 +132,16 @@ private struct StorageSettings: View {
                 if let failure { Text(failure).font(.caption).foregroundStyle(.red).lineLimit(2) }
                 Spacer()
                 Button("Vaciar todo lo recreable") { for kind in Maintenance.Kind.allCases where !kind.needsConfirmation { clear(kind) } }
+                if O2Log.exists {
+                    Divider().padding(.vertical, 4)
+                    Text("DIAGNÓSTICO").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Text("O2 Cloud es experimental y su servidor cierra sesiones por motivos que no se ven desde fuera. La app anota qué pidió y qué contestó, sin guardar ninguna contraseña, clave ni nombre de archivo. Exporta ese registro si hace falta para diagnosticar un problema.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Button("Exportar diagnóstico de O2…") { exportDiagnostics() }
+                        if let exportMessage { Text(exportMessage).font(.caption).foregroundStyle(.secondary) }
+                    }
+                }
             }.padding(Layout.margin)
         }
         .task { await measure() }
@@ -137,6 +149,23 @@ private struct StorageSettings: View {
             Button("Vaciar", role: .destructive) { if let confirming { clear(confirming) }; confirming = nil }
             Button("Cancelar", role: .cancel) { confirming = nil }
         } message: { Text(confirming?.detail ?? "") }
+    }
+
+    /// The log lives inside the app's container, where nothing else on the Mac may read it, not even the owner's own
+    /// terminal. Only the app can hand it over, and a save panel is how a sandboxed app is allowed to do that.
+    private func exportDiagnostics() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "o2-diagnostico.txt"
+        panel.allowedContentTypes = [.plainText]
+        panel.message = L("Se guarda una copia del registro. No contiene contraseñas, claves ni nombres de tus archivos.")
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        do {
+            let text = try String(contentsOf: O2Log.url, encoding: .utf8)
+            try text.write(to: destination, atomically: true, encoding: .utf8)
+            exportMessage = L("Guardado")
+        } catch {
+            exportMessage = error.localizedDescription
+        }
     }
 
     private func measure() async {

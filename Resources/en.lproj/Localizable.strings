@@ -648,3 +648,10 @@
 "El acceso no terminó de completarse. Vuelve a intentarlo desde la página de O2." = "The sign-in did not complete. Try again from O2's page.";
 "O2 Cloud rechazó un parámetro de la petición." = "O2 Cloud rejected one of the request's parameters.";
 "O2 Cloud devolvió HTTP %1$lld en %2$@ %3$@." = "O2 Cloud returned HTTP %1$lld at %2$@ %3$@.";
+
+/* Diagnostics export */
+"DIAGNÓSTICO" = "DIAGNOSTICS";
+"Exportar diagnóstico de O2…" = "Export O2 diagnostics…";
+"O2 Cloud es experimental y su servidor cierra sesiones por motivos que no se ven desde fuera. La app anota qué pidió y qué contestó, sin guardar ninguna contraseña, clave ni nombre de archivo. Exporta ese registro si hace falta para diagnosticar un problema." = "O2 Cloud is experimental and its server ends sessions for reasons that are invisible from outside. The app notes what it asked and what came back, storing no password, key or file name. Export that record if it is needed to diagnose a problem.";
+"Se guarda una copia del registro. No contiene contraseñas, claves ni nombres de tus archivos." = "A copy of the record is saved. It contains no passwords, keys or names of your files.";
+"Guardado" = "Saved";

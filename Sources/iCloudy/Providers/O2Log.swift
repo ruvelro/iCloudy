@@ -16,6 +16,9 @@ enum O2Log {
     /// real Application Support folder of whoever ran it. A diagnostic has no business leaving residue there.
     private static var underTest: Bool { NSClassFromString("XCTestCase") != nil }
 
+    /// Whether there is anything to hand over, so the interface only offers it when it would do something.
+    static var exists: Bool { FileManager.default.fileExists(atPath: url.path) }
+
     static func record(_ line: String) {
         guard !underTest else { return }
         let entry = "\(ISO8601DateFormatter().string(from: Date())) \(line)\n"
