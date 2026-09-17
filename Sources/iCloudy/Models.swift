@@ -319,17 +319,44 @@ enum CloudError: LocalizedError {
 }
 
 enum Vault {
+    /// Writes a value, replacing the entry rather than updating it in place.
+    ///
+    /// That distinction matters more than it looks. An entry in the classic keychain keeps the access list it was
+    /// born with, and `SecItemUpdate` never touches it. So an entry first written by a build signed differently, for
+    /// instance before this project had a signing certificate, goes on asking for permission after every rebuild,
+    /// for ever, no matter how many times the answer is "always allow". Replacing it gives it an access list that
+    /// belongs to the build running now, and the asking stops.
     static func save<T: Encodable>(_ value: T, key: String) throws {
-        let data = try JSONEncoder().encode(value)
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "dev.icloudy.credentials", kSecAttrAccount as String: key]
-        let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        if status == errSecItemNotFound {
-            var insert = query
-            insert[kSecValueData as String] = data
-            insert[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-            let result = SecItemAdd(insert as CFDictionary, nil)
-            guard result == errSecSuccess else { throw CloudError.message(L("No se pudo guardar en el Llavero (\(result)).")) }
-        } else if status != errSecSuccess { throw CloudError.message(L("No se pudo actualizar el Llavero (\(status)).")) }
+        try write(try JSONEncoder().encode(value), key: key)
+    }
+    private static func write(_ data: Data, key: String) throws {
+        var insert = descriptor(key)
+        insert[kSecValueData as String] = data
+        insert[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        SecItemDelete(descriptor(key) as CFDictionary)
+        let result = SecItemAdd(insert as CFDictionary, nil)
+        guard result == errSecSuccess else {
+            throw CloudError.message(L("No se pudo guardar en el Llavero (\(result)). Puede que haya que volver a conectar esa cuenta."))
+        }
+    }
+    private static func descriptor(_ key: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "dev.icloudy.credentials",
+         kSecAttrAccount as String: key]
+    }
+    /// Rewrites entries so their access lists belong to the build running now. Each one asks for permission once
+    /// while being read, and then stops asking for good. Anything unreadable is left exactly as it was.
+    @discardableResult
+    static func refreshAccess(keys: [String]) -> Int {
+        var repaired = 0
+        for key in keys {
+            var query = descriptor(key)
+            query[kSecReturnData as String] = true
+            query[kSecMatchLimit as String] = kSecMatchLimitOne
+            var value: CFTypeRef?
+            guard SecItemCopyMatching(query as CFDictionary, &value) == errSecSuccess, let data = value as? Data else { continue }
+            if (try? write(data, key: key)) != nil { repaired += 1 }
+        }
+        return repaired
     }
     static func read<T: Decodable>(_ type: T.Type, key: String) throws -> T? {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "dev.icloudy.credentials", kSecAttrAccount as String: key, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]

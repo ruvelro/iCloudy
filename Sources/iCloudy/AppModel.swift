@@ -253,8 +253,22 @@ final class AppModel: ObservableObject {
             spotlight.refreshFavorites(favorites) { [weak self] id in self?.accounts.first { $0.id == id }.map { self?.accountTitle($0) ?? $0.email } ?? id }
             if account != nil { reload() }
             for account in accounts where account.id != selectedAccountID { refreshStorage(account) }
+            repairKeychainAccessOnce()
         }
     }
+    /// Entries written by earlier builds keep the access list they were born with, which is why macOS asks for the
+    /// keychain password again after every rebuild however often "always allow" is chosen. Rewriting them once binds
+    /// them to the signature in use now. It asks once per entry while it runs, and then stops asking for good.
+    private func repairKeychainAccessOnce() {
+        let done = "keychainAccessRepaired"
+        guard !UserDefaults.standard.bool(forKey: done), !accounts.isEmpty else { return }
+        let keys = ["accounts"] + accounts.filter { !$0.isDemo }.map(\.credentialKey)
+        Task.detached {
+            Vault.refreshAccess(keys: Array(Set(keys)))
+            await MainActor.run { UserDefaults.standard.set(true, forKey: done) }
+        }
+    }
+
     func client(_ account: Account) throws -> CloudAPI {
         if let client = clients[account.id] { return client }
         if account.isDemo && demo == nil { demo = try DemoStore() }
