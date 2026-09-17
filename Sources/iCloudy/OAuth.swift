@@ -133,7 +133,7 @@ final class OAuth {
         case .microsoft: return "https://graph.microsoft.com/v1.0/me?$select=id,displayName,mail,userPrincipalName"
         case .dropbox: return "https://api.dropboxapi.com/2/users/get_current_account"
         case .box: return "https://api.box.com/2.0/users/me"
-        case .webdav, .ftp, .volume, .mega: return ""
+        case .webdav, .ftp, .volume, .mega, .o2: return ""
         }
     }
 
@@ -162,6 +162,28 @@ final class OAuth {
         let credential = Credential(accessToken: signed.sid, refreshToken: "", expires: .distantFuture,
                                     secret: MegaCrypto.encode(signed.masterKey))
         return (account, credential)
+    }
+
+    /// O2 Cloud signs in with the account's own e-mail and password: the platform offers third parties no OAuth.
+    /// The same code serves every operator running this platform, which is why the server is a setting.
+    func signInO2(email: String, password: String, host: String) async throws -> (Account, Credential) {
+        let address = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var server = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let range = server.range(of: "://") { server = String(server[range.upperBound...]) }
+        server = server.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if server.isEmpty { server = "cloud.o2online.es" }
+        guard address.contains("@"), !address.hasPrefix("@"), !password.isEmpty else {
+            throw CloudError.message(L("Escribe el correo y la contraseña de tu cuenta de O2 Cloud."))
+        }
+        guard !server.contains("/"), server.contains(".") else {
+            throw CloudError.message(L("Escribe solo el servidor, por ejemplo cloud.o2online.es"))
+        }
+        // Signing in now proves the credentials before anything is stored.
+        _ = try await O2API.signIn(host: server, email: address, password: password, session: session)
+        let account = Account(id: "o2:\(server):\(address)", cloud: .o2, name: L("O2 Cloud"), email: address,
+                              clientID: "", clientSecret: nil, serverURL: "https://" + server, bookmark: nil,
+                              options: ["host": server])
+        return (account, Credential(accessToken: "", refreshToken: "", expires: .distantFuture, secret: password))
     }
 
     func signInWebDAV(server: String, username: String, password: String) async throws -> (Account, Credential) {

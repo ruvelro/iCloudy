@@ -81,15 +81,16 @@ final class StorageTests: XCTestCase {
             let session = URLSession(configuration: config)
             defer { session.invalidateAndCancel() }
             let account = Account(id: "quota-test", cloud: cloud, name: "Test", email: "test@example.com", clientID: "test", clientSecret: nil,
-                                  serverURL: cloud == .webdav ? "https://dav.example.com/remote.php/dav/files/ana" : nil)
+                                  serverURL: cloud == .webdav ? "https://dav.example.com/remote.php/dav/files/ana" : nil,
+                                  bookmark: nil, options: cloud == .o2 ? ["host": "cloud.o2online.es"] : [:])
             // Mega authenticates with a session identifier in the query string and a master key held in the Keychain,
             // so it needs a stored credential rather than a bearer token.
             let credentials = MemoryCredentials()
             credentials.stored["quota-test"] = Credential(accessToken: "sesión", refreshToken: "", expires: .distantFuture,
-                                                          secret: MegaCrypto.encode(Data(count: 16)))
+                                                          secret: cloud == .o2 ? "contraseña" : MegaCrypto.encode(Data(count: 16)))
             let api = CloudAPI(account: account, session: session, tokenProvider: { "quota-token" }, credentials: credentials)
             StubProtocol.handler = { request in
-                if cloud != .mega {
+                if cloud != .mega, cloud != .o2 {
                     let scheme = cloud == .webdav ? "Basic" : "Bearer"
                     XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "\(scheme) quota-token")
                 }
@@ -127,6 +128,20 @@ final class StorageTests: XCTestCase {
                     let command = try XCTUnwrap(JSONSerialization.jsonObject(with: requestData(request)) as? [[String: Any]])
                     XCTAssertEqual(command.first?["a"] as? String, "uq")
                     return (200, [:], Data(#"[{"cstrg":40,"mstrg":100}]"#.utf8))
+                case .o2:
+                    XCTAssertEqual(url.host, "cloud.o2online.es")
+                    XCTAssertEqual(request.value(forHTTPHeaderField: "Referer"), "https://cloud.o2online.es/",
+                                   "La plataforma rechaza las peticiones sin referer")
+                    // Reading the quota signs in first, because the session is a key the server hands out.
+                    if url.path == "/sapi/login" {
+                        XCTAssertTrue(requestBody(request).contains("password=contrase"), "La contraseña va en el cuerpo")
+                        XCTAssertFalse(url.absoluteString.contains("password"), "y nunca en la dirección")
+                        return (200, [:], Data(#"{"data":{"validationkey":"clave"}}"#.utf8))
+                    }
+                    XCTAssertEqual(url.path, "/sapi/media")
+                    XCTAssertEqual(query?.first { $0.name == "action" }?.value, "get-storage-space")
+                    XCTAssertEqual(query?.first { $0.name == "validationkey" }?.value, "clave")
+                    return (200, [:], Data(#"{"data":{"used":40,"quota":100,"nolimit":false}}"#.utf8))
                 case .ftp, .volume:
                     XCTFail("\(cloud) no llega hasta aquí"); return (500, [:], Data())
                 case .webdav:

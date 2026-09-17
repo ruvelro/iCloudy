@@ -653,6 +653,7 @@ struct ConnectView: View {
                     providerButton(.dropbox, title: "Continuar con Dropbox", subtitle: "Dropbox personal o de equipo", icon: "shippingbox")
                     providerButton(.box, title: "Continuar con Box", subtitle: "Box personal o de empresa", icon: "square.stack.3d.up")
                     providerButton(.mega, title: "Conectar Mega", subtitle: "Cifrado de extremo a extremo, con correo y contraseña", icon: "lock.icloud")
+                    providerButton(.o2, title: "Conectar O2 Cloud", subtitle: "El almacenamiento incluido con tu línea de O2", icon: "antenna.radiowaves.left.and.right")
                 }.disabled(model.connecting)
                 Text("TU PROPIO SERVIDOR").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 VStack(spacing: 10) {
@@ -738,6 +739,7 @@ struct ConnectView: View {
         case .ftp: return .orange
         case .volume: return .brown
         case .mega: return .red
+        case .o2: return .mint
         }
     }
 }
@@ -754,13 +756,15 @@ struct ServerLoginView: View {
     @State private var secureFTP = false
     @State private var nextcloud = false
     @State private var showAdvanced = false
+    @State private var host = "cloud.o2online.es"
 
-    /// Mega identifies the account by e-mail; the other two need a server address first.
-    private var needsServer: Bool { cloud != .mega }
+    /// WebDAV and FTP need a full server address. Mega has only one server, and O2 picks its own below.
+    private var needsServer: Bool { [.webdav, .ftp].contains(cloud) }
     private var icon: String {
         switch cloud {
         case .webdav: return "server.rack"
         case .mega: return "lock.icloud"
+        case .o2: return "antenna.radiowaves.left.and.right"
         default: return "arrow.up.arrow.down.square"
         }
     }
@@ -771,6 +775,7 @@ struct ServerLoginView: View {
         switch cloud {
         case .webdav: return L("Para Nextcloud, ownCloud, Synology, otros NAS y cualquier servidor WebDAV. La dirección es la ruta WebDAV completa.")
         case .mega: return L("Tu contraseña no sale de este Mac: se usa para derivar las claves con las que Mega cifra los nombres y el contenido.")
+        case .o2: return L("El correo y la contraseña de tu cuenta de O2. Se guardan en el Llavero de este Mac y solo se envían al servidor de O2.")
         default: return L("Para servidores FTP propios y NAS. iCloudy usa siempre modo pasivo. Sin FTPS, la contraseña y los archivos viajan sin cifrar.")
         }
     }
@@ -793,7 +798,10 @@ struct ServerLoginView: View {
             }
             Text(explanation).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if cloud.isExperimental {
-                Label("Mega no publica su API ni se compromete a mantenerla. Puede dejar de funcionar sin aviso.", systemImage: "flask")
+                Label(cloud == .mega
+                      ? "Mega no publica su API ni se compromete a mantenerla. Puede dejar de funcionar sin aviso."
+                      : "O2 no publica una API para otras aplicaciones. iCloudy usa la misma que su web, y puede dejar de funcionar sin aviso.",
+                      systemImage: "flask")
                     .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
             }
             if cloud == .ftp {
@@ -813,11 +821,17 @@ struct ServerLoginView: View {
                  ? "Si tu servidor usa verificación en dos pasos, crea una contraseña de aplicación en su configuración."
                  : "Si la cuenta tiene verificación en dos pasos, escribe la contraseña, un espacio y el código de seis dígitos.")
                 .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            if cloud == .webdav {
+            if cloud == .webdav || cloud == .o2 {
                 DisclosureGroup(isExpanded: $showAdvanced) {
-                    Toggle("Servidor Nextcloud u ownCloud", isOn: $nextcloud)
-                    Text("Habilita «Crear enlace público» usando su API de compartición, que WebDAV por sí solo no tiene. Déjalo desactivado si no sabes qué servidor es.")
-                        .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    if cloud == .webdav {
+                        Toggle("Servidor Nextcloud u ownCloud", isOn: $nextcloud)
+                        Text("Habilita «Crear enlace público» usando su API de compartición, que WebDAV por sí solo no tiene. Déjalo desactivado si no sabes qué servidor es.")
+                            .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        TextField("Servidor", text: $host).textFieldStyle(.roundedBorder)
+                        Text("Déjalo como está para O2 España. Otros operadores con la misma plataforma tienen su propio servidor, como cloud.o2.de en Alemania.")
+                            .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
                 } label: {
                     Text("Avanzado").font(.caption)
                 }
@@ -831,7 +845,7 @@ struct ServerLoginView: View {
                 if model.connecting { ProgressView().controlSize(.small) }
                 Button("Conectar") {
                     Task {
-                        await model.connectServer(cloud: cloud, server: address, username: username, password: password,
+                        await model.connectServer(cloud: cloud, server: cloud == .o2 ? host : address, username: username, password: password,
                                                   flavor: cloud == .webdav && nextcloud ? "nextcloud" : nil)
                         password = ""
                         if model.connectionError == nil { dismiss() }

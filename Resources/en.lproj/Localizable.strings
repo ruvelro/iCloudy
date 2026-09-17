@@ -596,3 +596,35 @@
 "Mega no aceptó la subida." = "Mega did not accept the upload.";
 "Mega no confirmó la subida." = "Mega did not confirm the upload.";
 "Mega no devolvió el archivo subido." = "Mega did not return the uploaded file.";
+
+/* O2 Cloud (experimental) */
+"O2 Cloud" = "O2 Cloud";
+"O2 no publica una API para otras aplicaciones. iCloudy usa la misma que su web, y puede dejar de funcionar sin aviso." = "O2 publishes no API for other apps. iCloudy uses the same one its website does, and it can stop working without notice.";
+"El almacenamiento incluido con tu línea de O2" = "The storage included with your O2 line";
+"Conectar O2 Cloud" = "Connect O2 Cloud";
+"El correo y la contraseña de tu cuenta de O2. Se guardan en el Llavero de este Mac y solo se envían al servidor de O2." = "Your O2 account's e-mail and password. They are kept in this Mac's Keychain and sent only to O2's server.";
+"Servidor" = "Server";
+"Déjalo como está para O2 España. Otros operadores con la misma plataforma tienen su propio servidor, como cloud.o2.de en Alemania." = "Leave it as it is for O2 Spain. Other operators on the same platform have their own server, such as cloud.o2.de in Germany.";
+"Escribe el correo y la contraseña de tu cuenta de O2 Cloud." = "Enter your O2 Cloud account's e-mail and password.";
+"Escribe solo el servidor, por ejemplo cloud.o2online.es" = "Enter the server only, for example cloud.o2online.es";
+"O2 Cloud rechazó el correo o la contraseña." = "O2 Cloud rejected the e-mail or the password.";
+"O2 Cloud rechazó la sesión. Vuelve a iniciar sesión." = "O2 Cloud rejected the session. Sign in again.";
+"O2 Cloud no completó el inicio de sesión. Si la cuenta tiene verificación en dos pasos, desactívala o usa su web." = "O2 Cloud did not complete the sign-in. If the account has two-step verification, turn it off or use its website.";
+"La sesión de O2 Cloud ha caducado. Vuelve a iniciar sesión." = "The O2 Cloud session has expired. Sign in again.";
+"La sesión de O2 Cloud se ha renovado." = "The O2 Cloud session has been renewed.";
+"O2 Cloud devolvió el error %@." = "O2 Cloud returned error %@.";
+"O2 Cloud devolvió HTTP %lld." = "O2 Cloud returned HTTP %lld.";
+"O2 Cloud devolvió una respuesta que no se entiende." = "O2 Cloud returned a response that cannot be understood.";
+"O2 Cloud no admite esa operación." = "O2 Cloud does not support that operation.";
+"La cuenta de O2 Cloud no tiene espacio suficiente." = "The O2 Cloud account does not have enough space.";
+"Ese elemento ya no está en O2 Cloud." = "That item is no longer in O2 Cloud.";
+"Ese destino no es una carpeta de O2 Cloud." = "That destination is not an O2 Cloud folder.";
+"Ese elemento de O2 Cloud no es un archivo." = "That O2 Cloud item is not a file.";
+"O2 Cloud no devolvió la carpeta raíz de la cuenta." = "O2 Cloud did not return the account's root folder.";
+"O2 Cloud no devolvió la carpeta creada." = "O2 Cloud did not return the created folder.";
+"O2 Cloud no devolvió la dirección de descarga." = "O2 Cloud did not return the download address.";
+"O2 Cloud no devolvió el enlace de la carpeta." = "O2 Cloud did not return the folder's link.";
+"O2 Cloud crea enlaces de carpetas. Para un archivo suelto, compártelo desde su web." = "O2 Cloud creates folder links. To share a single file, use its website.";
+"O2 Cloud no copia archivos en el servidor. Descárgalo y vuelve a subirlo." = "O2 Cloud does not copy files on the server. Download it and upload it again.";
+"O2 Cloud no tiene búsqueda para otras aplicaciones." = "O2 Cloud has no search for other apps.";
+"No se pudo preparar la subida." = "The upload could not be prepared.";

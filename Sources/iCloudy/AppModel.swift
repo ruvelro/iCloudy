@@ -331,6 +331,7 @@ final class AppModel: ObservableObject {
             case .webdav: result = try await oauth.signInWebDAV(server: server, username: username, password: password)
             case .ftp: result = try await oauth.signInFTP(server: server, username: username, password: password)
             case .mega: result = try await oauth.signInMega(email: username, password: password)
+            case .o2: result = try await oauth.signInO2(email: username, password: password, host: server)
             default: throw CloudError.message(L("\(cloud.title) no se conecta con usuario y contraseña."))
             }
             var (account, credential) = result
@@ -370,6 +371,7 @@ final class AppModel: ObservableObject {
         case .ftp: return .orange
         case .volume: return .gray
         case .mega: return .red
+        case .o2: return .pink
         }
     }
     func accountTitle(_ account: Account) -> String { appearance(for: account).title(for: account) }

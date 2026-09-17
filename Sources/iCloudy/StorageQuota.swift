@@ -80,6 +80,7 @@ extension CloudAPI {
         case .ftp: throw CloudError.message(L("FTP no informa del espacio disponible."))
         case .volume: return try await volumeQuota()
         case .mega: return try await megaQuota()
+        case .o2: return try await o2Quota()
         }
         return try StorageQuota.parse(await json(URL(string: endpoint)!), cloud: account.cloud)
     }

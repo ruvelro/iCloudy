@@ -1,0 +1,344 @@
+import Foundation
+
+/// O2 Cloud, the storage that comes with an O2 line in Spain and Germany. Under the brand it is Funambol
+/// OneMediaHub, whose API O2 neither documents nor promises to keep: what iCloudy speaks is the protocol its own web
+/// client uses. That is why the provider is marked experimental, like Mega.
+///
+/// Two things shape the code. Folders and files live in separate numbering spaces, so a folder 12 and a file 12 are
+/// different things; iCloudy prefixes every identifier to keep them apart. And each file has a media type, picture,
+/// video, audio or file, which decides the endpoint that renames or deletes it.
+final class O2Session {
+    let host: String
+    /// Sent with every request beside the session cookie. The server rotates it and says so with SEC-1003.
+    var validationKey: String
+    var rootFolder: String?
+    init(host: String, validationKey: String) { self.host = host; self.validationKey = validationKey }
+}
+
+/// Which endpoint a file is renamed or deleted through.
+enum O2MediaKind: String {
+    case picture, video, audio, file
+    /// The server names the property, but a listing does not always carry it, so the content type decides as a fallback.
+    static func of(_ values: [String: Any]) -> O2MediaKind {
+        if let named = (values["mediatype"] as? String).flatMap(O2MediaKind.init(rawValue:)) { return named }
+        let type = (values["contenttype"] as? String ?? "").lowercased()
+        if type.hasPrefix("image/") { return .picture }
+        if type.hasPrefix("video/") { return .video }
+        if type.hasPrefix("audio/") { return .audio }
+        return .file
+    }
+}
+
+extension CloudAPI {
+    // MARK: - Identifiers
+
+    /// Folders and files are numbered separately, so the kind travels inside the identifier.
+    nonisolated static func o2FolderID(_ id: String) -> String { "f:" + id }
+    nonisolated static func o2MediaID(_ id: String, kind: O2MediaKind) -> String { "m:\(kind.rawValue):\(id)" }
+    /// Reads one back. A folder gives a nil kind.
+    nonisolated static func o2Split(_ id: String) -> (value: String, kind: O2MediaKind?)? {
+        let parts = id.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
+        if parts.count == 2, parts[0] == "f" { return (parts[1], nil) }
+        if parts.count == 3, parts[0] == "m", let kind = O2MediaKind(rawValue: parts[1]) { return (parts[2], kind) }
+        return nil
+    }
+    private func o2Folder(_ id: String) async throws -> String {
+        if id == "root" { return try await o2Root() }
+        guard let parsed = Self.o2Split(id), parsed.kind == nil else {
+            throw CloudError.message(L("Ese destino no es una carpeta de O2 Cloud."))
+        }
+        return parsed.value
+    }
+    private func o2Media(_ file: CloudFile) throws -> (value: String, kind: O2MediaKind) {
+        guard let parsed = Self.o2Split(file.id), let kind = parsed.kind else {
+            throw CloudError.message(L("Ese elemento de O2 Cloud no es un archivo."))
+        }
+        return (parsed.value, kind)
+    }
+
+    // MARK: - Session
+
+    var o2Host: String { account.options["host"] ?? "cloud.o2online.es" }
+
+    /// Signs in with the stored password. There is no token to refresh: the session is a cookie plus a key the server
+    /// hands out, and both are obtained again whenever the server says they are stale.
+    func o2Session(forcingSignIn force: Bool = false) async throws -> O2Session {
+        guard !invalidated else { throw CancellationError() }
+        if let o2SessionCache, !force { return o2SessionCache }
+        guard let credential = try credentials.read(account.credentialKey), !credential.secret.isEmpty else {
+            throw CloudError.sessionExpired(L("La sesión de O2 Cloud ha caducado. Vuelve a iniciar sesión."))
+        }
+        let session = try await O2API.signIn(host: o2Host, email: account.email, password: credential.secret, session: self.session)
+        o2SessionCache = session
+        return session
+    }
+
+    /// One SAPI call. `body` is sent as JSON when present, which is what the web client does for everything but login.
+    @discardableResult
+    func o2Call(_ path: String, action: String, query: [URLQueryItem] = [], body: [String: Any]? = nil,
+                method: String? = nil, retrying: Bool = true) async throws -> [String: Any] {
+        let state = try await o2Session()
+        do {
+            return try await O2API.call(path, action: action, query: query, body: body, method: method,
+                                        state: state, session: session)
+        } catch let error as O2API.Failure where error.code == "SEC-1003" && retrying {
+            // The key has rotated. The error carries the new one; if it does not, signing in again produces one.
+            if let fresh = error.data, !fresh.isEmpty { state.validationKey = fresh }
+            else { _ = try await o2Session(forcingSignIn: true) }
+            return try await o2Call(path, action: action, query: query, body: body, method: method, retrying: false)
+        } catch let error as O2API.Failure where error.isExpiredSession {
+            expireSession()
+            throw CloudError.sessionExpired(L("La sesión de O2 Cloud ha caducado. Vuelve a iniciar sesión."))
+        }
+    }
+
+    func o2Root() async throws -> String {
+        let state = try await o2Session()
+        if let cached = state.rootFolder { return cached }
+        let answer = try await o2Call("media/folder", action: "get", query: [URLQueryItem(name: "limit", value: "1")])
+        guard let folders = answer["folders"] as? [[String: Any]], let id = O2API.identifier(folders.first?["id"]) else {
+            throw CloudError.message(L("O2 Cloud no devolvió la carpeta raíz de la cuenta."))
+        }
+        state.rootFolder = id
+        return id
+    }
+
+    // MARK: - Browsing
+
+    func o2List(parent: String) async throws -> [CloudFile] {
+        let folder = try await o2Folder(parent)
+        var files: [CloudFile] = []
+
+        // Folders and files come from different endpoints, each paged on its own.
+        var offset = 0
+        while true {
+            let page = try await o2Call("media/folder", action: "list", query: [
+                URLQueryItem(name: "parentid", value: folder),
+                URLQueryItem(name: "limit", value: String(O2API.pageSize)),
+                URLQueryItem(name: "offset", value: String(offset))], method: "GET")
+            let batch = page["folders"] as? [[String: Any]] ?? []
+            files.append(contentsOf: batch.compactMap(Self.o2FolderFile))
+            guard batch.count == O2API.pageSize else { break }
+            offset += batch.count
+            try Task.checkCancellation()
+        }
+
+        offset = 0
+        while true {
+            let page = try await o2Call("media", action: "get", query: [
+                URLQueryItem(name: "folderid", value: folder),
+                URLQueryItem(name: "limit", value: String(O2API.pageSize)),
+                URLQueryItem(name: "offset", value: String(offset))],
+                body: ["data": ["fields": O2API.mediaFields]])
+            let batch = page["media"] as? [[String: Any]] ?? []
+            files.append(contentsOf: batch.compactMap(Self.o2MediaFile))
+            guard page["more"] as? Bool == true, !batch.isEmpty else { break }
+            offset += batch.count
+            try Task.checkCancellation()
+        }
+        return Self.sorted(files)
+    }
+    nonisolated static func o2FolderFile(_ values: [String: Any]) -> CloudFile? {
+        guard let id = O2API.identifier(values["id"]), let name = values["name"] as? String else { return nil }
+        return CloudFile(id: o2FolderID(id), name: name, mime: "application/vnd.google-apps.folder", size: nil,
+                         modified: O2API.date(values["modificationdate"]), webURL: nil, isFolder: true)
+    }
+    nonisolated static func o2MediaFile(_ values: [String: Any]) -> CloudFile? {
+        guard let id = O2API.identifier(values["id"]), let name = values["name"] as? String else { return nil }
+        let size = (values["size"] as? NSNumber)?.int64Value
+        return CloudFile(id: o2MediaID(id, kind: O2MediaKind.of(values)), name: name,
+                         mime: values["contenttype"] as? String ?? mime(forName: name),
+                         size: size, modified: O2API.date(values["modificationdate"]),
+                         webURL: (values["viewurl"] as? String).flatMap(URL.init(string:)), isFolder: false)
+    }
+
+    /// Walks up from a folder to the root. Funambol gives a folder its parent, so this is one request per level.
+    func o2Trail(id: String) async throws -> [CloudFile] {
+        let root = try await o2Root()
+        var current = try await o2Folder(id)
+        var trail: [CloudFile] = []
+        while current != root, trail.count < 64 {
+            let answer = try await o2Call("media/folder", action: "get",
+                                          query: [URLQueryItem(name: "id", value: current)], method: "GET")
+            guard let values = (answer["folders"] as? [[String: Any]])?.first ?? answer["folder"] as? [String: Any],
+                  let file = Self.o2FolderFile(values) else { break }
+            trail.append(file)
+            guard let parent = O2API.identifier(values["parentid"]), parent != current else { break }
+            current = parent
+        }
+        return trail.reversed()
+    }
+
+    func o2Quota() async throws -> StorageQuota {
+        let answer = try await o2Call("media", action: "get-storage-space",
+                                      query: [URLQueryItem(name: "softdeleted", value: "true")], method: "GET")
+        let used = (answer["used"] as? NSNumber)?.int64Value ?? 0
+        let unlimited = answer["nolimit"] as? Bool ?? false
+        let quota = (answer["quota"] as? NSNumber)?.int64Value
+        return StorageQuota(used: used, total: unlimited ? nil : quota)
+    }
+
+    // MARK: - Changing things
+
+    func o2CreateFolder(name: String, parent: String) async throws -> String {
+        let answer = try await o2Call("media/folder", action: "save",
+                                      body: ["data": ["magic": false, "offline": false, "name": name,
+                                                      "parentid": try await o2Folder(parent)]])
+        guard let id = O2API.identifier(answer["id"]) ?? O2API.identifier((answer["folder"] as? [String: Any])?["id"]) else {
+            throw CloudError.message(L("O2 Cloud no devolvió la carpeta creada."))
+        }
+        return Self.o2FolderID(id)
+    }
+    func o2Rename(file: CloudFile, name: String) async throws {
+        if file.isFolder {
+            let id = try await o2Folder(file.id)
+            try await o2Call("media/folder", action: "save", body: ["data": ["id": id, "name": name]])
+        } else {
+            let media = try o2Media(file)
+            try await o2Call("upload/" + media.kind.rawValue, action: "save-metadata",
+                             body: ["data": ["id": media.value, "name": name]])
+        }
+    }
+    func o2Move(file: CloudFile, to destination: String) async throws {
+        let target = try await o2Folder(destination)
+        if file.isFolder {
+            let id = try await o2Folder(file.id)
+            // The name goes along because this endpoint saves the folder rather than patching one field.
+            try await o2Call("media/folder", action: "save",
+                             body: ["data": ["id": id, "parentid": target, "name": file.name]])
+        } else {
+            let media = try o2Media(file)
+            try await o2Call("upload/" + media.kind.rawValue, action: "save-metadata",
+                             body: ["data": ["id": media.value, "folderid": target]])
+        }
+    }
+    /// Deleting is a soft delete, so the item lands in O2's own bin and can be restored from its web interface.
+    func o2Trash(file: CloudFile) async throws {
+        if file.isFolder {
+            let id = try await o2Folder(file.id)
+            try await o2Call("media/folder", action: "softdelete", body: ["data": ["folders": [id]]])
+        } else {
+            let media = try o2Media(file)
+            try await o2Call("media/" + media.kind.rawValue, action: "delete",
+                             query: [URLQueryItem(name: "softdelete", value: "true")],
+                             body: ["data": [media.kind.rawValue + "s": [media.value]]])
+        }
+    }
+    /// O2 shares folders through a link of its own. Single files go through its web interface, which builds a
+    /// shared set first, so iCloudy says so instead of guessing at a two-step flow it cannot verify.
+    func o2PublicLink(for file: CloudFile) async throws -> URL {
+        guard file.isFolder else {
+            throw CloudError.message(L("O2 Cloud crea enlaces de carpetas. Para un archivo suelto, compártelo desde su web."))
+        }
+        let answer = try await o2Call("link/folder", action: "save",
+                                      body: ["data": ["folderid": try await o2Folder(file.id)]])
+        // The field has changed name between versions of the platform, so every plausible one is accepted.
+        for key in ["url", "link", "shorturl", "shortUrl", "publicurl"] {
+            if let text = answer[key] as? String, let url = URL(string: text) { return url }
+        }
+        if let token = (answer["key"] as? String) ?? (answer["token"] as? String) ?? O2API.identifier(answer["id"]),
+           let url = URL(string: "https://\(o2Host)/link/\(token)") {
+            return url
+        }
+        throw CloudError.message(L("O2 Cloud no devolvió el enlace de la carpeta."))
+    }
+
+    // MARK: - Contents
+
+    func o2Download(file: CloudFile, to destination: URL, progress: @escaping (Int64, Int64) -> Void) async throws {
+        let media = try o2Media(file)
+        let answer = try await o2Call("media", action: "get",
+                                      body: ["data": ["ids": [media.value], "fields": ["url", "name", "size"]]])
+        guard let entry = (answer["media"] as? [[String: Any]])?.first,
+              let address = entry["url"] as? String, let url = URL(string: address) else {
+            throw CloudError.message(L("O2 Cloud no devolvió la dirección de descarga."))
+        }
+        var request = URLRequest(url: url)
+        request.setValue("https://\(o2Host)/", forHTTPHeaderField: "Referer")
+        let (temporary, response) = try await session.download(for: request)
+        try HTTP.validate(response, data: Data())
+        try? FileManager.default.removeItem(at: destination)
+        try FileManager.default.moveItem(at: temporary, to: destination)
+        let written = Int64((try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        progress(written, max(written, file.size ?? written))
+    }
+
+    /// One multipart request, which is all the platform offers third parties: there is no resumable upload, so a
+    /// restart begins again. The envelope is built on disk so a large file never sits in memory.
+    func o2Upload(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint,
+                  save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
+        let state = try await o2Session()
+        let folder = try await o2Folder(parent)
+        let total = cursor.total
+        cursor.offset = 0; cursor.url = nil; try save(cursor)
+
+        let boundary = "iCloudy-" + UUID().uuidString
+        let metadata: [String: Any] = ["data": ["name": name, "size": total, "folderid": folder,
+                                                "contenttype": Self.mime(forName: name),
+                                                "modificationdate": O2API.stamp(cursor.modified ?? Date())]]
+        let envelope = try await Self.o2Envelope(local: local, name: name, boundary: boundary, metadata: metadata)
+        defer { try? FileManager.default.removeItem(at: envelope) }
+
+        var request = URLRequest(url: O2API.url(host: o2Host, path: "upload", action: "save", state: state, query: [
+            URLQueryItem(name: "acceptasynchronous", value: "true")]))
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.setValue("https://\(o2Host)/", forHTTPHeaderField: "Referer")
+        let reporter = O2UploadReporter(total: total, progress: progress)
+        let (data, response) = try await session.upload(for: request, fromFile: envelope, delegate: reporter)
+        try HTTP.validate(response, data: data)
+        let answer = try O2API.payload(data)
+
+        cursor.offset = total; cursor.complete = true; try save(cursor); progress(total, total)
+        // Replacing means uploading beside the old copy and then binning it: the platform has no overwrite.
+        if let replacing, let previous = Self.o2Split(replacing), previous.kind != nil {
+            let old = CloudFile(id: replacing, name: name, mime: "", size: nil, modified: nil, webURL: nil, isFolder: false)
+            try? await o2Trash(file: old)
+        }
+        let id = O2API.identifier(answer["id"]) ?? O2API.identifier((answer["media"] as? [[String: Any]])?.first?["id"])
+        // The platform reports no checksum, so there is nothing to compare the upload against.
+        return UploadReceipt(remoteID: id.map { Self.o2MediaID($0, kind: O2MediaKind.of(["contenttype": Self.mime(forName: name)])) },
+                             verification: .unavailable)
+    }
+    /// Writes the multipart body to a temporary file, copying the source in blocks.
+    nonisolated static func o2Envelope(local: URL, name: String, boundary: String, metadata: [String: Any]) async throws -> URL {
+        let target = FileManager.default.temporaryDirectory.appendingPathComponent("o2-" + UUID().uuidString)
+        guard FileManager.default.createFile(atPath: target.path, contents: nil) else {
+            throw CloudError.message(L("No se pudo preparar la subida."))
+        }
+        let output = try FileHandle(forWritingTo: target)
+        defer { try? output.close() }
+        let json = try JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys])
+        var header = Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"data\"\r\nContent-Type: application/json\r\n\r\n".utf8)
+        header.append(json)
+        // A quotation mark in the name would end the header early, so it is the one character replaced.
+        let safe = name.replacingOccurrences(of: "\"", with: "'")
+        header.append(Data("\r\n--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(safe)\"\r\nContent-Type: \(mime(forName: name))\r\n\r\n".utf8))
+        try output.write(contentsOf: header)
+
+        let input = try FileHandle(forReadingFrom: local)
+        defer { try? input.close() }
+        while true {
+            try Task.checkCancellation()
+            let chunk = try await blockingIO { try input.read(upToCount: 4 * 1024 * 1024) ?? Data() }
+            if chunk.isEmpty { break }
+            try await blockingIO { try output.write(contentsOf: chunk) }
+        }
+        try output.write(contentsOf: Data("\r\n--\(boundary)--\r\n".utf8))
+        return target
+    }
+}
+
+/// Reports how much of the upload has left this Mac. Funambol offers no resumable protocol, so this is the only
+/// progress there is.
+final class O2UploadReporter: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let total: Int64
+    private let progress: (Int64, Int64) -> Void
+    init(total: Int64, progress: @escaping (Int64, Int64) -> Void) { self.total = total; self.progress = progress }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64,
+                    totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        let sent = min(totalBytesSent, total)
+        let report = progress
+        Task { @MainActor in report(sent, max(self.total, sent)) }
+    }
+}

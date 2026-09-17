@@ -20,6 +20,8 @@ final class CloudAPI {
     var ftpSession: FTPSession?
     /// Signed-in Mega session and its decrypted tree, kept for as long as this client lives.
     var megaStateCache: MegaState?
+    /// Signed-in O2 Cloud session: its validation key and the account's root folder.
+    var o2SessionCache: O2Session?
     /// Resolved root of a volume account, with its security scope held open while this client exists.
     var volumeRootCache: URL?
     var volumeScopeOpen = false
@@ -31,6 +33,7 @@ final class CloudAPI {
         if volumeScopeOpen, let volumeRootCache { volumeRootCache.stopAccessingSecurityScopedResource() }
         volumeScopeOpen = false; volumeRootCache = nil
         megaStateCache = nil
+        o2SessionCache = nil
     }
     init(account: Account, session: URLSession = .shared, demo: DemoStore? = nil, tokenProvider: (() async throws -> String)? = nil, credentials: CredentialStore = KeychainCredentialStore()) {
         self.demo = demo
@@ -131,7 +134,7 @@ final class CloudAPI {
         let remote = value["remoteItem"] != nil
         return CloudFile(id: id, name: name, mime: remote ? "application/vnd.google-apps.shortcut" : ((value["file"] as? [String: Any])?["mimeType"] as? String ?? "application/octet-stream"), size: (value["size"] as? NSNumber)?.int64Value, modified: date(value["lastModifiedDateTime"] as? String), webURL: (value["webUrl"] as? String).flatMap(URL.init(string:)), isFolder: !remote && value["folder"] != nil)
     }
-    static func date(_ string: String?) -> Date? {
+    nonisolated static func date(_ string: String?) -> Date? {
         guard let string else { return nil }
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -177,6 +180,7 @@ final class CloudAPI {
         case .ftp: return try await ftpList(parent: parent, onPage: onPage)
         case .volume: return try await volumeList(parent: parent)
         case .mega: return try await megaList(parent: parent)
+        case .o2: return try await o2List(parent: parent)
         case .box: return try await boxList(parent: parent, onPage: onPage)
         case .webdav: return try await webdavList(parent: parent, onPage: onPage)
         }
@@ -245,6 +249,7 @@ final class CloudAPI {
         case .ftp: return try await ftpCreateFolder(name: name, parent: parent)
         case .volume: return try await volumeCreateFolder(name: name, parent: parent)
         case .mega: return try await megaCreateFolder(name: name, parent: parent)
+        case .o2: return try await o2CreateFolder(name: name, parent: parent)
         }
         guard let id = result["id"] as? String else { throw CloudError.message(L("No se pudo crear la carpeta.")) }
         return id
@@ -270,7 +275,7 @@ final class CloudAPI {
             return request
         case .webdav:
             return try await request(webdavURL(file.id))
-        case .ftp, .volume, .mega:
+        case .ftp, .volume, .mega, .o2:
             // None of them fetches with a plain request; `download` branches before reaching here.
             throw CloudError.message(L("Este proveedor no usa peticiones HTTP."))
         }
@@ -278,6 +283,10 @@ final class CloudAPI {
 
     func download(file: CloudFile, to destination: URL, exportMime: String? = nil, maxBytes: Int64? = nil, progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws {
         if let demo { try await demo.download(file, to: destination, maxBytes: maxBytes, progress: progress); return }
+        if account.cloud == .o2 {
+            try await o2Download(file: file, to: destination, progress: progress)
+            return
+        }
         if account.cloud == .mega {
             try await megaDownload(file: file, to: destination, progress: progress)
             return

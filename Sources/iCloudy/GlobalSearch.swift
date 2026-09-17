@@ -164,6 +164,7 @@ extension CloudAPI {
         case .ftp: throw CloudError.message(L("FTP no ofrece búsqueda. Navega por las carpetas o usa el filtro de la carpeta actual."))
         case .volume: return try await volumeSearch(term: term)
         case .mega: return try await megaSearch(term: term)
+        case .o2: throw CloudError.message(L("O2 Cloud no tiene búsqueda para otras aplicaciones."))
         case .google, .microsoft: break
         }
         if account.cloud == .google {
@@ -206,6 +207,7 @@ extension CloudAPI {
         case .ftp: return try ftpTrail(id: id)
         case .volume: return try volumeTrail(id: id)
         case .mega: return try await megaTrail(id: id)
+        case .o2: return try await o2Trail(id: id)
         case .box: return try await boxTrail(id: id)
         case .google, .microsoft: break
         }
