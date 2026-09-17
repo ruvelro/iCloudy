@@ -11,6 +11,7 @@
 [![Swift](https://img.shields.io/badge/Swift-5.9-F05138?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![SwiftUI](https://img.shields.io/badge/SwiftUI-nativo-0071e3?style=flat-square)](https://developer.apple.com/xcode/swiftui/)
 [![tests](https://img.shields.io/badge/tests-217%20✓-43c463?style=flat-square)](Tests)
+[![licencia](https://img.shields.io/badge/licencia-GPL--3.0-8a7ee0?style=flat-square)](LICENSE)
 
 </div>
 
@@ -160,7 +161,6 @@ el repositorio no incluye ninguno. La [guía de OAuth](docs/OAUTH.md) explica c�
 - [ ] **Compartir con permisos por persona**, más allá del enlace público de solo lectura
 - [ ] **Mega**: probar el segundo factor y las cuentas anteriores a 2018 contra cuentas reales
 - [ ] **Más idiomas**
-- [ ] **Elegir licencia** *(ahora mismo el repositorio no tiene una, así que todos los derechos quedan reservados)*
 
 <br>
 
@@ -195,8 +195,13 @@ para que la documentación nunca enseñe cuentas ni archivos de nadie.
 
 ## 📄 Licencia
 
-Todavía sin decidir. Hasta que haya un archivo `LICENSE`, todos los derechos quedan reservados: puedes leer el
-código y compilarlo para ti, pero no redistribuirlo.
+**[GNU General Public License v3.0](LICENSE)** — Copyright © 2026 ruvelro.
+
+Eres libre de usar, estudiar, modificar y redistribuir iCloudy. La condición es la de siempre en la GPL: si
+distribuyes una versión modificada, tienes que publicar su código bajo esta misma licencia, para que quien la reciba
+tenga la misma libertad que tú tienes ahora.
+
+Se distribuye con la esperanza de que sea útil, pero **sin garantía de ningún tipo**.
 
 <br>
 
