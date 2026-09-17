@@ -92,28 +92,39 @@ que la API, y abandonar por eso perdía la subida entera por un momento de retra
 
 Un error de red no es Mega diciendo que no. Cuando la petición ni siquiera llegaba, el mensaje que veía el usuario
 era «Se ha agotado el tiempo de espera», que es la redacción del propio sistema: no nombra a Mega, no dice qué
-estaba haciendo la app y no sugiere nada que probar. Borrar un archivo se veía exactamente igual que borrarlo
-estando la cuenta bloqueada.
+estaba haciendo la app y no sugiere nada que probar. Borrar un archivo durante un mal rato de Mega se veía
+exactamente igual que borrarlo con la cuenta bloqueada.
 
-Ahora una petición caída se repite un par de veces antes de darse por perdida, porque una conexión con altibajos no
-debería costar un borrado, y lo que se cuenta al final distingue tres cosas: no hay internet en este Mac, no se
-resuelve el nombre, o no se llega a los servidores de Mega. El tercer caso menciona algo que conviene saber: **hay
-redes y operadores que bloquean mega.nz por completo**, y desde dentro de la app eso es indistinguible de que Mega
-se haya caído. Si las demás cuentas de iCloudy funcionan y solo Mega falla, casi siempre es eso, y se comprueba en
-un terminal:
+Lo que hace Mega cuando va mal, medido contra sus servidores de verdad, no es rechazar la petición: es **no decir
+nada**. En una tanda de seis peticiones, cuatro contestaron en menos de dos segundos y dos se quedaron colgadas
+hasta el tiempo límite, una sin llegar a conectar y otra conectando y sin enviar un solo byte después. Media hora
+más tarde, veinticuatro de veinticuatro, ninguna por encima de 2,8 segundos. Esa es la forma del problema: la API
+está viva, pero se traga una fracción de las peticiones durante un rato y luego se le pasa.
+
+Conviene decir también qué **no** es, porque despista. Mega filtra el ICMP, así que un `ping` con el 100 % de
+pérdida no significa nada, y un `traceroute` que muere en los últimos saltos tampoco. Con esas dos señales es fácil
+concluir que el operador bloquea Mega cuando en realidad solo está teniendo un mal rato. Lo único que vale como
+prueba es una petición completa:
 
 ```bash
-nc -z -G 5 -w 5 g.api.mega.co.nz 443 && echo alcanzable || echo bloqueado
+curl -sS -m 40 -o /dev/null -w '%{http_code} %{time_total}s\n' \
+  -X POST -H 'Content-Type: application/json' --data '[{"a":"us0","user":"nadie@example.com"}]' \
+  'https://g.api.mega.co.nz/cs?id=1'
 ```
 
-Un 5xx o un 429 se tratan igual que el `-3`: se espera y se vuelve a preguntar, en vez de entregarle el fallo al
-usuario al primer intento.
+De ahí sale el resto. Una petición caída se repite hasta tres veces antes de darse por perdida, que con la tasa de
+fallo observada deja la probabilidad de perder un borrado por debajo del dos por ciento. El número de secuencia no
+cambia entre reintentos, que es lo que impide que Mega aplique el mismo cambio dos veces. Un 5xx o un 429 se esperan
+igual que el `-3`, en vez de entregarle el fallo al usuario al primer intento.
 
-Los reintentos tienen todos el mismo reloj. Una petición sin noticias espera 25 segundos, no el minuto que trae el
-sistema por defecto, y una orden completa no puede pasar de 75 segundos sumando esperas, pruebas de trabajo y
-peticiones caídas. El límite solo se mira antes de volver a esperar, así que una transferencia lenta pero sana nunca
-se corta por la mitad. El número de secuencia de la petición no cambia entre reintentos, que es justamente lo que
-impide que Mega aplique dos veces un mismo cambio.
+Los tiempos salen de la misma medición. Una petición sin noticias espera 15 segundos, no el minuto del sistema:
+sano, Mega contesta muy por debajo de tres, así que los otros cincuenta y tantos se gastaban esperando una respuesta
+que no iba a llegar. Una orden completa no pasa de 75 segundos sumando esperas, pruebas de trabajo y reintentos, y
+los cuatro intentos caben dentro de ese reloj, de modo que ninguno se queda sin usar. El límite solo se mira antes
+de volver a esperar, así que una transferencia lenta pero sana nunca se corta por la mitad.
+
+Y el mensaje, cuando aun así no hay manera, dice lo más probable primero: que es un mal momento de Mega y suele
+arreglarse solo. Lo de que hay redes que bloquean mega.nz va después, que es el orden en que ocurren las dos cosas.
 
 ## Las transferencias van por otros servidores
 

@@ -431,7 +431,7 @@ final class MegaProviderTests: XCTestCase {
         } catch {
             let text = error.localizedDescription
             XCTAssertTrue(text.contains("servidores de Mega"), text)
-            XCTAssertTrue(text.contains("bloquean mega.nz"), "Se dice que hay redes que bloquean Mega: \(text)")
+            XCTAssertTrue(text.contains("mal momento de Mega"), "Se dice primero qué es lo más probable: \(text)")
         }
         XCTAssertEqual(attempts, MegaAPI.maxDrops + 1, "Se insiste, pero un número contado de veces")
     }
@@ -470,9 +470,14 @@ final class MegaProviderTests: XCTestCase {
     func testOneCommandCannotFreezeTheWindowForMinutes() {
         // Every repeat above shares one clock, so no combination of proofs, waits and dropped requests can leave the
         // user looking at a spinner for minutes.
-        XCTAssertLessThanOrEqual(MegaAPI.requestTimeout, 30, "Una petición sin noticias no espera un minuto entero")
+        // Medido contra los servidores de verdad: sano, Mega contesta en menos de tres segundos, así que esperar un
+        // minuto entero por una sola petición era tiempo gastado en una respuesta que no iba a llegar.
+        XCTAssertLessThanOrEqual(MegaAPI.requestTimeout, 15, "Una petición sin noticias no espera un minuto entero")
+        XCTAssertGreaterThan(MegaAPI.requestTimeout, 5, "Pero con margen de sobra sobre lo que Mega tarda de verdad")
         XCTAssertLessThanOrEqual(MegaAPI.budget, 120)
-        XCTAssertGreaterThan(MegaAPI.budget, MegaAPI.requestTimeout * 2, "Pero da para reintentar de verdad")
+        let peor = Double(MegaAPI.maxDrops + 1) * MegaAPI.requestTimeout
+            + (0...MegaAPI.maxDrops).reduce(0.0) { $0 + Double(MegaAPI.waitDelay($1)) / 1_000_000_000 }
+        XCTAssertLessThan(peor, MegaAPI.budget, "Todos los reintentos caben en el reloj, ninguno se queda sin usar")
     }
 
     func testAProofOfWorkChallengeIsSolvedAndTheRequestRepeated() async throws {

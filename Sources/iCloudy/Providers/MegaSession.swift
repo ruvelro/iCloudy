@@ -154,9 +154,10 @@ enum MegaAPI {
         case .cannotFindHost, .dnsLookupFailed:
             return .message(L("No se pudo resolver la dirección de Mega. Revisa los DNS de este Mac o del router."))
         default:
-            // Worth saying out loud: Mega is blocked outright on a fair number of networks and by some internet
-            // providers, and from the app that looks exactly like Mega being down.
-            return .message(L("No se pudo conectar con los servidores de Mega: \(error.localizedDescription) Hay redes y operadores que bloquean mega.nz; si las demás cuentas de iCloudy sí funcionan, prueba desde otra red o con una VPN."))
+            // Measured against the real servers: a healthy Mega answers a command in well under three seconds, and
+            // a bad patch does not look like a refusal but like a request that connects and then never says anything.
+            // So the first thing to suggest is waiting, and the network second.
+            return .message(L("No se pudo conectar con los servidores de Mega: \(error.localizedDescription) Suele ser un mal momento de Mega y se arregla solo en unos minutos. Si dura, prueba desde otra red: también hay redes que bloquean mega.nz."))
         }
     }
     /// Failures that a second attempt can plausibly fix. Having no internet at all is not one of them: repeating the
@@ -172,10 +173,12 @@ enum MegaAPI {
     /// How many times a request is repeated for each reason, and how long the waits grow.
     static let maxProofs = 2
     static let maxWaits = 8
-    static let maxDrops = 2
-    /// How long a single request may go without news. The default of a minute meant that a network which silently
-    /// swallows Mega's traffic froze every action for a minute before saying anything.
-    static let requestTimeout: TimeInterval = 25
+    static let maxDrops = 3
+    /// How long a single request may go without news. Measured against the real servers: a healthy Mega answers in
+    /// under three seconds, and a request that is going to be swallowed says nothing at all rather than saying it
+    /// slowly. So the minute the system gives by default was spent almost entirely waiting for an answer that was
+    /// never coming, and fifteen seconds still leaves a wide margin over anything Mega has been seen to take.
+    static let requestTimeout: TimeInterval = 15
     /// And how long one command may take in total, however it is being repeated. Only checked before waiting again,
     /// so a slow but healthy transfer is never cut off in the middle.
     static let budget: TimeInterval = 75
