@@ -633,3 +633,16 @@
 "Mega envió un desafío que no se entiende." = "Mega sent a challenge that cannot be understood.";
 "No se pudo resolver el desafío de Mega." = "Mega's challenge could not be solved.";
 "Mega devolvió una respuesta que no se entiende (HTTP %lld)." = "Mega returned a response that cannot be understood (HTTP %lld).";
+
+/* O2 Cloud sign-in on its own pages */
+"Abriendo el acceso de O2…" = "Opening O2's sign-in…";
+"Sesión iniciada. Cerrando…" = "Signed in. Closing…";
+"No se completó el acceso. Cierra esta ventana y vuelve a intentarlo." = "The sign-in did not finish. Close this window and try again.";
+"En %@" = "At %@";
+"Cargando…" = "Loading…";
+"Escribes tus datos en las páginas de O2. iCloudy no ve la contraseña ni el código: solo guarda la sesión que devuelve el servidor." = "You enter your details on O2's own pages. iCloudy sees neither the password nor the code: it keeps only the session the server returns.";
+"Inicias sesión en las páginas de O2, con tu móvil o tu NIF" = "Sign in on O2's pages, with your mobile or your ID number";
+"Ya he entrado" = "I have signed in";
+"Úsalo solo si has iniciado sesión y esta ventana no se cierra sola" = "Use it only if you have signed in and this window does not close by itself";
+"Todavía no hay sesión. Termina de entrar en la página y vuelve a pulsar." = "There is no session yet. Finish signing in on the page and press again.";
+"El acceso no terminó de completarse. Vuelve a intentarlo desde la página de O2." = "The sign-in did not complete. Try again from O2's page.";

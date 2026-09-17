@@ -21,10 +21,6 @@ final class O2CloudTests: XCTestCase {
             let query = Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { first, _ in first })
             XCTAssertEqual(request.value(forHTTPHeaderField: "Referer"), "https://cloud.o2online.es/")
 
-            if url.path == "/sapi/login" {
-                XCTAssertEqual(request.httpMethod, "POST")
-                return (200, [:], Data(#"{"data":{"validationkey":"clave-1"}}"#.utf8))
-            }
             if url.host == "descargas.ejemplo.com" { return (200, [:], Data("contenido descargado".utf8)) }
 
             let path = String(url.path.dropFirst("/sapi/".count))
@@ -43,8 +39,11 @@ final class O2CloudTests: XCTestCase {
     }
     private func client() -> CloudAPI {
         let store = MemoryCredentials()
-        store.stored["o2:cloud.o2online.es:ana@ejemplo.com"] = Credential(accessToken: "", refreshToken: "",
-                                                                          expires: .distantFuture, secret: "contraseña")
+        let cookie = HTTPCookie(properties: [.name: "JSESSIONID", .value: "abc",
+                                             .domain: "cloud.o2online.es", .path: "/"])!
+        store.stored["o2:cloud.o2online.es:ana@ejemplo.com"] = Credential(
+            accessToken: "", refreshToken: "", expires: .distantFuture,
+            secret: O2API.store(validationKey: "clave-1", cookies: [cookie]))
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubProtocol.self]
         let account = Account(id: "o2:cloud.o2online.es:ana@ejemplo.com", cloud: .o2, name: "O2 Cloud",
@@ -55,54 +54,75 @@ final class O2CloudTests: XCTestCase {
     }
     private func withRoot() { replies["media/folder get"] = ["folders": [["id": 10, "name": "Mi nube"]]] }
 
-    // MARK: - Signing in
+    // MARK: - The session
 
-    func testThePasswordTravelsInTheBodyAndNeverInTheAddress() async throws {
-        var seen: URLRequest?
+    func testTheStoredSessionSurvivesTheKeychainRoundTrip() throws {
+        // There is no password to keep: O2 signs people in on its own pages and hands back a session.
+        let cookie = try XCTUnwrap(HTTPCookie(properties: [.name: "JSESSIONID", .value: "abc",
+                                                           .domain: "cloud.o2online.es", .path: "/", .secure: "TRUE"]))
+        let stored = O2API.store(validationKey: "clave", cookies: [cookie])
+        let restored = try XCTUnwrap(O2API.restore(stored))
+        XCTAssertEqual(restored.validationKey, "clave")
+        XCTAssertEqual(restored.cookies.map(\.name), ["JSESSIONID"])
+        XCTAssertEqual(restored.cookies.first?.value, "abc")
+        XCTAssertEqual(restored.cookies.first?.domain, "cloud.o2online.es")
+        XCTAssertTrue(try XCTUnwrap(restored.cookies.first).isSecure)
+    }
+
+    func testAnEmptyOrBrokenSessionAsksForANewSignInRatherThanFailingVaguely() async throws {
+        XCTAssertNil(O2API.restore(""))
+        XCTAssertNil(O2API.restore("no es json"))
+        XCTAssertNil(O2API.restore(#"{"validationKey":"","cookies":[]}"#), "Sin clave no hay sesión que restaurar")
+
+        let store = MemoryCredentials()
+        store.stored["o2:cloud.o2online.es:ana@ejemplo.com"] = Credential(accessToken: "", refreshToken: "",
+                                                                          expires: .distantFuture, secret: "")
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubProtocol.self]
+        let account = Account(id: "o2:cloud.o2online.es:ana@ejemplo.com", cloud: .o2, name: "O2 Cloud",
+                              email: "ana@ejemplo.com", clientID: "", clientSecret: nil,
+                              serverURL: "https://cloud.o2online.es", bookmark: nil, options: ["host": "cloud.o2online.es"])
+        let api = CloudAPI(account: account, session: URLSession(configuration: configuration), credentials: store)
+        do { _ = try await api.list(parent: "root"); XCTFail("Sin sesión no se puede listar") }
+        catch {
+            guard case CloudError.sessionExpired = error else { return XCTFail("Otro error: \(error)") }
+        }
+    }
+
+    func testEveryCallCarriesTheSessionCookieAndTheValidationKey() async throws {
+        serve(); withRoot()
+        replies["media get-storage-space"] = ["used": 1, "quota": 2, "nolimit": false]
+        var cookieHeader: String?
+        var address: URL?
         StubProtocol.handler = { request in
-            seen = request
-            return (200, [:], Data(#"{"data":{"validationkey":"clave"}}"#.utf8))
+            cookieHeader = request.value(forHTTPHeaderField: "Cookie")
+            address = request.url
+            return (200, [:], Data(#"{"data":{"used":1,"quota":2,"nolimit":false}}"#.utf8))
         }
-        defer { StubProtocol.handler = nil }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
-        let state = try await O2API.signIn(host: "cloud.o2online.es", email: "ana@ejemplo.com", password: "secreta",
-                                           session: URLSession(configuration: configuration))
-        XCTAssertEqual(state.validationKey, "clave")
-        let request = try XCTUnwrap(seen)
-        XCTAssertEqual(request.url?.absoluteString, "https://cloud.o2online.es/sapi/login?action=login")
-        XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/x-www-form-urlencoded")
-        let body = requestBody(request)
-        XCTAssertTrue(body.contains("password=secreta"), body)
-        XCTAssertTrue(body.contains("login=ana%40ejemplo.com"), body)
+        _ = try await client().storageQuota()
+        XCTAssertEqual(cookieHeader, "JSESSIONID=abc", "La sesión viaja en la cookie que devolvió el acceso web")
+        XCTAssertTrue(try XCTUnwrap(address?.absoluteString).contains("validationkey=clave-1"))
     }
 
-    func testARejectedSignInSaysWhichPartWasWrong() async throws {
-        StubProtocol.handler = { _ in (200, [:], Data(#"{"error":{"code":"SEC-1002","message":"Invalid credentials"}}"#.utf8)) }
-        defer { StubProtocol.handler = nil }
+    func testTheIdentityOfTheSessionNamesTheAccount() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubProtocol.self]
-        do {
-            _ = try await O2API.signIn(host: "cloud.o2online.es", email: "ana@ejemplo.com", password: "mala",
-                                       session: URLSession(configuration: configuration))
-            XCTFail("Debe rechazar la contraseña")
-        } catch {
-            XCTAssertTrue(error.localizedDescription.contains("rechazó el correo o la contraseña"), error.localizedDescription)
-        }
-    }
+        let session = URLSession(configuration: configuration)
+        let state = O2Session(host: "cloud.o2online.es", validationKey: "clave")
 
-    func testAnAccountWithTwoStepVerificationIsToldWhyItCannotContinue() async throws {
-        StubProtocol.handler = { _ in (200, [:], Data(#"{"data":{"otprequired":true}}"#.utf8)) }
-        defer { StubProtocol.handler = nil }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
-        do {
-            _ = try await O2API.signIn(host: "cloud.o2online.es", email: "ana@ejemplo.com", password: "buena",
-                                       session: URLSession(configuration: configuration))
-            XCTFail("Sin clave de validación no hay sesión")
-        } catch {
-            XCTAssertTrue(error.localizedDescription.contains("verificación en dos pasos"), error.localizedDescription)
-        }
+        StubProtocol.handler = { _ in (200, [:], Data(#"{"data":{"email":"ana@ejemplo.com","userid":"9"}}"#.utf8)) }
+        let email = try await O2API.identity(host: "cloud.o2online.es", state: state, session: session)
+        XCTAssertEqual(email, "ana@ejemplo.com", "El correo es lo que la persona reconoce")
+
+        // A line with no e-mail on file is named by its number instead.
+        StubProtocol.handler = { _ in (200, [:], Data(#"{"data":{"msisdn":"+34600111222"}}"#.utf8)) }
+        let phone = try await O2API.identity(host: "cloud.o2online.es", state: state, session: session)
+        XCTAssertEqual(phone, "+34600111222")
+
+        StubProtocol.handler = { _ in (200, [:], Data(#"{"data":{}}"#.utf8)) }
+        let fallback = try await O2API.identity(host: "cloud.o2online.es", state: state, session: session)
+        XCTAssertEqual(fallback, "cloud.o2online.es", "Sin ningún dato, al menos se sabe de qué servidor es")
+        StubProtocol.handler = nil
     }
 
     // MARK: - Identifiers
@@ -169,7 +189,6 @@ final class O2CloudTests: XCTestCase {
             let url = try XCTUnwrap(request.url)
             let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
             let query = Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { first, _ in first })
-            if url.path == "/sapi/login" { return (200, [:], Data(#"{"data":{"validationkey":"clave-1"}}"#.utf8)) }
             if query["action"] == "get", url.path == "/sapi/media/folder" {
                 return (200, [:], try JSONSerialization.data(withJSONObject: ["data": ["folders": [["id": 10, "name": "raíz"]]]]))
             }
@@ -196,7 +215,6 @@ final class O2CloudTests: XCTestCase {
         serve()
         StubProtocol.handler = { [self] request in
             let url = try XCTUnwrap(request.url)
-            if url.path == "/sapi/login" { return (200, [:], Data(#"{"data":{"validationkey":"clave-1"}}"#.utf8)) }
             let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
             let query = Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { first, _ in first })
             guard let id = query["id"] else {
@@ -287,6 +305,20 @@ final class O2CloudTests: XCTestCase {
         XCTAssertEqual(call.body["folders"] as? [String], ["21"])
     }
 
+    func testASessionThatCannotBeRenewedAsksForANewSignIn() async throws {
+        serve(); withRoot()
+        StubProtocol.handler = { _ in (200, [:], Data(#"{"error":{"code":"SEC-1003","message":"stale"}}"#.utf8)) }
+        let api = client()
+        var expired = false
+        api.sessionDidExpire = { expired = true }
+        // Without a replacement key there is nothing to retry with: the only way back is signing in again.
+        do { _ = try await api.storageQuota(); XCTFail("Debe pedir un acceso nuevo") }
+        catch {
+            guard case CloudError.sessionExpired = error else { return XCTFail("Otro error: \(error)") }
+        }
+        XCTAssertTrue(expired)
+    }
+
     func testARotatedKeyIsPickedUpAndTheCallRetriedOnce() async throws {
         serve(); withRoot()
         replies["media get-storage-space"] = ["used": 1, "quota": 2, "nolimit": false]
@@ -323,7 +355,6 @@ final class O2CloudTests: XCTestCase {
         var contentType: String?
         StubProtocol.handler = { [self] request in
             let url = try XCTUnwrap(request.url)
-            if url.path == "/sapi/login" { return (200, [:], Data(#"{"data":{"validationkey":"clave-1"}}"#.utf8)) }
             if url.path == "/sapi/upload" {
                 uploaded = requestData(request)
                 contentType = request.value(forHTTPHeaderField: "Content-Type")
@@ -377,7 +408,9 @@ final class O2CloudTests: XCTestCase {
         XCTAssertFalse(o2.checksum)
         XCTAssertFalse(o2.oauth)
         XCTAssertTrue(Cloud.o2.isExperimental)
-        XCTAssertTrue(Cloud.o2.usesPasswordLogin)
+        XCTAssertFalse(Cloud.o2.usesPasswordLogin, "No hay formulario de contraseña: se inicia sesión en las páginas de O2")
+        XCTAssertTrue(Cloud.o2.usesWebLogin)
+        XCTAssertFalse(Cloud.mega.usesWebLogin)
         XCTAssertFalse(Cloud.o2.isSelfHosted, "El servidor es de O2, no del usuario, aunque se pueda cambiar")
     }
 }

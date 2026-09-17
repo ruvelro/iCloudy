@@ -25,6 +25,8 @@ final class AppModel: ObservableObject {
     /// Self-hosted provider whose credentials form is open, if any.
     @Published var serverLogin: Cloud?
     /// True while the advanced sheet for shared drives and document libraries is open.
+    /// Host of the O2 account being connected, which also drives the sign-in window.
+    @Published var o2Login: O2LoginRequest?
     @Published var showAdvanced = false
     @Published var connecting = false
     @Published var connectionError: String?
@@ -313,6 +315,34 @@ final class AppModel: ObservableObject {
             select(account.id); showConnect = false
         } catch { self.error = error.localizedDescription }
     }
+    /// Stores the session O2 handed out on its own pages. iCloudy never saw the password or the code.
+    func completeO2(host: String, validationKey: String, cookies: [HTTPCookie]) async {
+        connectionError = nil; connecting = true
+        defer { connecting = false }
+        do {
+            guard !validationKey.isEmpty else {
+                throw CloudError.message(L("El acceso no terminó de completarse. Vuelve a intentarlo desde la página de O2."))
+            }
+            let state = O2Session(host: host, validationKey: validationKey, cookies: cookies)
+            let probe = URLSession(configuration: .ephemeral)
+            defer { probe.invalidateAndCancel() }
+            // Asking who this is proves the session works before anything is written to the Keychain.
+            let identity = try await O2API.identity(host: host, state: state, session: probe)
+
+            let account = Account(id: "o2:\(host):\(identity)", cloud: .o2, name: L("O2 Cloud"), email: identity,
+                                  clientID: "", clientSecret: nil, serverURL: "https://" + host, bookmark: nil,
+                                  options: ["host": host])
+            let credential = Credential(accessToken: "", refreshToken: "", expires: .distantFuture,
+                                        secret: O2API.store(validationKey: validationKey, cookies: cookies))
+            try Vault.save(credential, key: account.id)
+            var updated = accounts.filter { $0.id != account.id }; updated.append(account)
+            try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
+            accounts = updated; clients[account.id]?.invalidate(); clients[account.id] = nil
+            expiredAccountIDs.remove(account.id)
+            select(account.id); showConnect = false
+        } catch { connectionError = error.localizedDescription }
+    }
+
     /// Opens the Finder's own "Connect to Server" flow. Mounting is not something a sandboxed app may do itself.
     func openFinderConnect() {
         guard let url = URL(string: "smb://") else { return }
@@ -331,7 +361,6 @@ final class AppModel: ObservableObject {
             case .webdav: result = try await oauth.signInWebDAV(server: server, username: username, password: password)
             case .ftp: result = try await oauth.signInFTP(server: server, username: username, password: password)
             case .mega: result = try await oauth.signInMega(email: username, password: password)
-            case .o2: result = try await oauth.signInO2(email: username, password: password, host: server)
             default: throw CloudError.message(L("\(cloud.title) no se conecta con usuario y contraseña."))
             }
             var (account, credential) = result

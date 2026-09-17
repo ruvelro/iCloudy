@@ -87,7 +87,11 @@ final class StorageTests: XCTestCase {
             // so it needs a stored credential rather than a bearer token.
             let credentials = MemoryCredentials()
             credentials.stored["quota-test"] = Credential(accessToken: "sesión", refreshToken: "", expires: .distantFuture,
-                                                          secret: cloud == .o2 ? "contraseña" : MegaCrypto.encode(Data(count: 16)))
+                                                          secret: cloud == .o2
+                                                          ? O2API.store(validationKey: "clave", cookies: [
+                                                                HTTPCookie(properties: [.name: "JSESSIONID", .value: "s1",
+                                                                                        .domain: "cloud.o2online.es", .path: "/"])!])
+                                                          : MegaCrypto.encode(Data(count: 16)))
             let api = CloudAPI(account: account, session: session, tokenProvider: { "quota-token" }, credentials: credentials)
             StubProtocol.handler = { request in
                 if cloud != .mega, cloud != .o2 {
@@ -132,12 +136,6 @@ final class StorageTests: XCTestCase {
                     XCTAssertEqual(url.host, "cloud.o2online.es")
                     XCTAssertEqual(request.value(forHTTPHeaderField: "Referer"), "https://cloud.o2online.es/",
                                    "La plataforma rechaza las peticiones sin referer")
-                    // Reading the quota signs in first, because the session is a key the server hands out.
-                    if url.path == "/sapi/login" {
-                        XCTAssertTrue(requestBody(request).contains("password=contrase"), "La contraseña va en el cuerpo")
-                        XCTAssertFalse(url.absoluteString.contains("password"), "y nunca en la dirección")
-                        return (200, [:], Data(#"{"data":{"validationkey":"clave"}}"#.utf8))
-                    }
                     XCTAssertEqual(url.path, "/sapi/media")
                     XCTAssertEqual(query?.first { $0.name == "action" }?.value, "get-storage-space")
                     XCTAssertEqual(query?.first { $0.name == "validationkey" }?.value, "clave")

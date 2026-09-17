@@ -64,6 +64,8 @@ enum O2API {
         request.httpMethod = method ?? (body == nil ? "POST" : "POST")
         // The platform checks the referer on every call; without it the request is refused as cross-site.
         request.setValue("https://\(state.host)/", forHTTPHeaderField: "Referer")
+        request.httpShouldHandleCookies = false
+        if let header = state.cookieHeader { request.setValue(header, forHTTPHeaderField: "Cookie") }
         if let body {
             request.setValue("application/json;charset=UTF-8", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
@@ -79,25 +81,49 @@ enum O2API {
         return try payload(data)
     }
 
-    /// Signs in with e-mail and password. There is no OAuth for third parties, so the password is kept in the
-    /// Keychain and sent only to the account's own server, over TLS.
-    static func signIn(host: String, email: String, password: String, session: URLSession) async throws -> O2Session {
-        var request = URLRequest(url: url(host: host, path: "login", action: "login", state: nil))
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.setValue("https://\(host)/", forHTTPHeaderField: "Referer")
-        request.httpBody = HTTP.form(["login": email, "password": password])
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw CloudError.message(L("Respuesta HTTP no válida.")) }
-        guard http.statusCode != 401, http.statusCode != 403 else {
-            throw CloudError.message(L("O2 Cloud rechazó el correo o la contraseña."))
+    /// What iCloudy keeps after a web sign-in: the key every later call carries, and the cookies that identify the
+    /// session. There is no password to store, because iCloudy never sees one.
+    struct StoredSession: Codable {
+        var validationKey: String
+        var cookies: [StoredCookie]
+        struct StoredCookie: Codable {
+            var name: String
+            var value: String
+            var domain: String
+            var path: String
+            var secure: Bool
         }
-        let answer = try payload(data)
-        guard let key = answer["validationkey"] as? String, !key.isEmpty else {
-            // An account with a second factor stops here, and the platform gives no way for iCloudy to continue.
-            throw CloudError.message(L("O2 Cloud no completó el inicio de sesión. Si la cuenta tiene verificación en dos pasos, desactívala o usa su web."))
+    }
+    static func store(validationKey: String, cookies: [HTTPCookie]) -> String {
+        let stored = StoredSession(validationKey: validationKey, cookies: cookies.map {
+            StoredSession.StoredCookie(name: $0.name, value: $0.value, domain: $0.domain, path: $0.path, secure: $0.isSecure)
+        })
+        return (try? JSONEncoder().encode(stored)).map { String(decoding: $0, as: UTF8.self) } ?? ""
+    }
+    static func restore(_ text: String) -> (validationKey: String, cookies: [HTTPCookie])? {
+        guard let stored = try? JSONDecoder().decode(StoredSession.self, from: Data(text.utf8)),
+              !stored.validationKey.isEmpty else { return nil }
+        let cookies = stored.cookies.compactMap { value -> HTTPCookie? in
+            HTTPCookie(properties: [.name: value.name, .value: value.value, .domain: value.domain,
+                                    .path: value.path.isEmpty ? "/" : value.path,
+                                    .secure: value.secure ? "TRUE" : "FALSE"])
         }
-        return O2Session(host: host, validationKey: key)
+        return (stored.validationKey, cookies)
+    }
+
+    /// Who the session belongs to, so the account has a name the person recognises.
+    static func identity(host: String, state: O2Session, session: URLSession) async throws -> String {
+        let profile = try await call("profile", action: "get", query: [], body: nil, method: "GET",
+                                     state: state, session: session)
+        for key in ["email", "username", "userid", "msisdn", "phonenumber"] {
+            if let value = profile[key] as? String, !value.isEmpty { return value }
+        }
+        if let user = profile["user"] as? [String: Any] {
+            for key in ["email", "username", "userid"] where (user[key] as? String)?.isEmpty == false {
+                return user[key] as! String
+            }
+        }
+        return host
     }
 
     /// Identifiers arrive as numbers in some responses and as strings in others.

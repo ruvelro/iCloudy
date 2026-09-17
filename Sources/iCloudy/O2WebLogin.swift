@@ -1,0 +1,165 @@
+import SwiftUI
+import WebKit
+
+/// Signing in to O2 Cloud happens on O2's own pages, inside a window of its own.
+///
+/// This is not a shortcut, it is the only way in. The "Acceder" button of O2's web client does nothing but navigate
+/// to `/sapi/oauth/pkce/authorize`, and the server takes it from there: it sends the browser to Telefónica's Mi O2
+/// sign-in, which asks either for a national identity number and a password or for a mobile number and a code sent
+/// by text message, and then brings the session back. None of that can be reproduced from a form inside iCloudy.
+///
+/// It is also the better arrangement for the person using it. The password, or the code, is typed on O2's pages and
+/// iCloudy never sees it. What iCloudy keeps afterwards is the session the server handed out, nothing more.
+/// Which server to sign in to, in the shape a sheet can present.
+struct O2LoginRequest: Identifiable, Hashable {
+    let id: String
+    var host: String { id }
+}
+
+@MainActor
+final class O2WebLoginModel: ObservableObject {
+    let host: String
+    @Published var status: String = L("Abriendo el acceso de O2…")
+    @Published var failed: String?
+    /// Receives the session once O2 has granted one.
+    var onSuccess: (@MainActor (String, [HTTPCookie]) -> Void)?
+    /// A fresh store every time, so signing in again never reuses the previous account's session.
+    let store = WKWebsiteDataStore.nonPersistent()
+    private var watcher: Task<Void, Never>?
+    private var done = false
+    private weak var webView: WKWebView?
+    /// True once O2's pages have taken the person somewhere other than the sign-in, which is when finishing by hand
+    /// makes sense.
+    @Published var canFinishByHand = false
+
+    init(host: String) { self.host = host }
+
+    /// The address O2's own client uses to start the flow. The device identifier is opaque to the server and only
+    /// distinguishes one signed-in client from another.
+    var start: URL {
+        URL(string: "https://\(host)/sapi/oauth/pkce/authorize?platform=web&deviceid=web-icloudy-\(UUID().uuidString.prefix(12))")
+            ?? URL(string: "https://\(host)/")!
+    }
+
+    /// Watches the web view's cookies. The web client stores the key that authorises every later call in a cookie
+    /// called `validationKey`, so its appearance is what says the session is ready.
+    func watch(_ webView: WKWebView) {
+        self.webView = webView
+        guard watcher == nil else { return }
+        watcher = Task { [weak self] in
+            for _ in 0..<600 {
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                guard let self, !self.done else { return }
+                let mine = await self.sessionCookies()
+                self.canFinishByHand = !mine.isEmpty
+                guard let key = mine.first(where: { $0.name == "validationKey" })?.value, !key.isEmpty else { continue }
+                self.done = true
+                self.status = L("Sesión iniciada. Cerrando…")
+                self.onSuccess?(key, mine)
+                return
+            }
+            self?.failed = L("No se completó el acceso. Cierra esta ventana y vuelve a intentarlo.")
+        }
+    }
+    func stop() { watcher?.cancel(); watcher = nil }
+
+    private func sessionCookies() async -> [HTTPCookie] {
+        guard let webView else { return [] }
+        let cookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+        // Only this server's cookies. Whatever the sign-in pages of Telefónica set is theirs and stays there.
+        return cookies.filter { host.hasSuffix($0.domain) || $0.domain.hasSuffix(host) }
+    }
+
+    /// The way out if the session is established but the key never shows up on its own. Nothing is stored unless the
+    /// session really works, because the caller checks it against the server first.
+    func finishByHand() async {
+        guard !done else { return }
+        let cookies = await sessionCookies()
+        guard !cookies.isEmpty else {
+            failed = L("Todavía no hay sesión. Termina de entrar en la página y vuelve a pulsar.")
+            return
+        }
+        done = true
+        onSuccess?(cookies.first { $0.name == "validationKey" }?.value ?? "", cookies)
+    }
+}
+
+/// The web view itself. Navigation is O2's business, so nothing here steers it.
+struct O2WebView: NSViewRepresentable {
+    @ObservedObject var model: O2WebLoginModel
+
+    func makeNSView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = model.store
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = context.coordinator
+        webView.load(URLRequest(url: model.start))
+        model.watch(webView)
+        return webView
+    }
+    func updateNSView(_ webView: WKWebView, context: Context) {}
+    func makeCoordinator() -> Coordinator { Coordinator(model: model) }
+
+    @MainActor
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        let model: O2WebLoginModel
+        init(model: O2WebLoginModel) { self.model = model }
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            model.failed = error.localizedDescription
+        }
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            model.status = webView.url?.host.map { L("En \($0)") } ?? L("Cargando…")
+        }
+    }
+}
+
+struct O2WebLoginView: View {
+    @ObservedObject var model: AppModel
+    @StateObject private var login: O2WebLoginModel
+    @Environment(\.dismiss) private var dismiss
+
+    init(model: AppModel, host: String) {
+        self.model = model
+        _login = StateObject(wrappedValue: O2WebLoginModel(host: host))
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Label("O2 Cloud", systemImage: "antenna.radiowaves.left.and.right").font(.headline)
+                Text("Experimental").font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(.orange.opacity(0.18), in: Capsule()).foregroundStyle(.orange)
+                Spacer()
+                Text(login.failed ?? login.status).font(.caption).foregroundStyle(login.failed == nil ? Color.secondary : Color.red)
+                    .lineLimit(1).truncationMode(.middle)
+                if login.canFinishByHand {
+                    Button("Ya he entrado") { Task { await login.finishByHand() } }
+                        .help("Úsalo solo si has iniciado sesión y esta ventana no se cierra sola")
+                }
+                Button("Cancelar") { finish() }.keyboardShortcut(.cancelAction)
+            }.padding(12)
+            Divider()
+            O2WebView(model: login)
+            Divider()
+            Text("Escribes tus datos en las páginas de O2. iCloudy no ve la contraseña ni el código: solo guarda la sesión que devuelve el servidor.")
+                .font(.caption2).foregroundStyle(.secondary).padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(width: 720, height: 720)
+        .onAppear {
+            login.onSuccess = { key, cookies in
+                Task {
+                    await model.completeO2(host: login.host, validationKey: key, cookies: cookies)
+                    finish()
+                }
+            }
+        }
+        .onDisappear { login.stop() }
+    }
+    private func finish() {
+        login.stop()
+        model.o2Login = nil
+        dismiss()
+    }
+}

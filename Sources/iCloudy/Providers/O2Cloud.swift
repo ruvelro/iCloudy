@@ -11,8 +11,17 @@ final class O2Session {
     let host: String
     /// Sent with every request beside the session cookie. The server rotates it and says so with SEC-1003.
     var validationKey: String
+    /// The cookies the web sign-in produced. They are sent as a header rather than left to URLSession's own jar, so
+    /// the session belongs to this account alone and never leaks into another provider's requests.
+    let cookies: [HTTPCookie]
     var rootFolder: String?
-    init(host: String, validationKey: String) { self.host = host; self.validationKey = validationKey }
+    init(host: String, validationKey: String, cookies: [HTTPCookie] = []) {
+        self.host = host; self.validationKey = validationKey; self.cookies = cookies
+    }
+    var cookieHeader: String? {
+        guard !cookies.isEmpty else { return nil }
+        return cookies.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
+    }
 }
 
 /// Which endpoint a file is renamed or deleted through.
@@ -60,31 +69,35 @@ extension CloudAPI {
 
     var o2Host: String { account.options["host"] ?? "cloud.o2online.es" }
 
-    /// Signs in with the stored password. There is no token to refresh: the session is a cookie plus a key the server
-    /// hands out, and both are obtained again whenever the server says they are stale.
-    func o2Session(forcingSignIn force: Bool = false) async throws -> O2Session {
+    /// Restores the session obtained through O2's own sign-in pages. There is no password to replay and no token to
+    /// refresh: when the session goes, the only way back is signing in again.
+    func o2Session() throws -> O2Session {
         guard !invalidated else { throw CancellationError() }
-        if let o2SessionCache, !force { return o2SessionCache }
-        guard let credential = try credentials.read(account.credentialKey), !credential.secret.isEmpty else {
+        if let o2SessionCache { return o2SessionCache }
+        guard let credential = try credentials.read(account.credentialKey),
+              let restored = O2API.restore(credential.secret) else {
             throw CloudError.sessionExpired(L("La sesión de O2 Cloud ha caducado. Vuelve a iniciar sesión."))
         }
-        let session = try await O2API.signIn(host: o2Host, email: account.email, password: credential.secret, session: self.session)
-        o2SessionCache = session
-        return session
+        let state = O2Session(host: o2Host, validationKey: restored.validationKey, cookies: restored.cookies)
+        o2SessionCache = state
+        return state
     }
 
     /// One SAPI call. `body` is sent as JSON when present, which is what the web client does for everything but login.
     @discardableResult
     func o2Call(_ path: String, action: String, query: [URLQueryItem] = [], body: [String: Any]? = nil,
                 method: String? = nil, retrying: Bool = true) async throws -> [String: Any] {
-        let state = try await o2Session()
+        let state = try o2Session()
         do {
             return try await O2API.call(path, action: action, query: query, body: body, method: method,
                                         state: state, session: session)
         } catch let error as O2API.Failure where error.code == "SEC-1003" && retrying {
-            // The key has rotated. The error carries the new one; if it does not, signing in again produces one.
-            if let fresh = error.data, !fresh.isEmpty { state.validationKey = fresh }
-            else { _ = try await o2Session(forcingSignIn: true) }
+            // The key rotates while the session lives on, and the replacement comes inside the error itself.
+            guard let fresh = error.data, !fresh.isEmpty else {
+                expireSession()
+                throw CloudError.sessionExpired(L("La sesión de O2 Cloud ha caducado. Vuelve a iniciar sesión."))
+            }
+            state.validationKey = fresh
             return try await o2Call(path, action: action, query: query, body: body, method: method, retrying: false)
         } catch let error as O2API.Failure where error.isExpiredSession {
             expireSession()
@@ -93,7 +106,7 @@ extension CloudAPI {
     }
 
     func o2Root() async throws -> String {
-        let state = try await o2Session()
+        let state = try o2Session()
         if let cached = state.rootFolder { return cached }
         let answer = try await o2Call("media/folder", action: "get", query: [URLQueryItem(name: "limit", value: "1")])
         guard let folders = answer["folders"] as? [[String: Any]], let id = O2API.identifier(folders.first?["id"]) else {
@@ -255,6 +268,9 @@ extension CloudAPI {
         }
         var request = URLRequest(url: url)
         request.setValue("https://\(o2Host)/", forHTTPHeaderField: "Referer")
+        // The temporary address is still behind the session, so it needs the same cookies.
+        request.httpShouldHandleCookies = false
+        if let header = (try o2Session()).cookieHeader { request.setValue(header, forHTTPHeaderField: "Cookie") }
         let (temporary, response) = try await session.download(for: request)
         try HTTP.validate(response, data: Data())
         try? FileManager.default.removeItem(at: destination)
@@ -267,7 +283,7 @@ extension CloudAPI {
     /// restart begins again. The envelope is built on disk so a large file never sits in memory.
     func o2Upload(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint,
                   save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
-        let state = try await o2Session()
+        let state = try o2Session()
         let folder = try await o2Folder(parent)
         let total = cursor.total
         cursor.offset = 0; cursor.url = nil; try save(cursor)
@@ -284,6 +300,8 @@ extension CloudAPI {
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.setValue("https://\(o2Host)/", forHTTPHeaderField: "Referer")
+        request.httpShouldHandleCookies = false
+        if let header = state.cookieHeader { request.setValue(header, forHTTPHeaderField: "Cookie") }
         let reporter = O2UploadReporter(total: total, progress: progress)
         let (data, response) = try await session.upload(for: request, fromFile: envelope, delegate: reporter)
         try HTTP.validate(response, data: data)

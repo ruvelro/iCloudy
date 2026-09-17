@@ -31,7 +31,10 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
     /// True when the user brings their own server and credentials instead of signing in at a provider.
     var isSelfHosted: Bool { [.webdav, .ftp, .volume].contains(self) }
     /// True when connecting means typing a server address and credentials, rather than picking a folder or a browser sign-in.
-    var usesPasswordLogin: Bool { [.webdav, .ftp, .mega, .o2].contains(self) }
+    var usesPasswordLogin: Bool { [.webdav, .ftp, .mega].contains(self) }
+    /// True when signing in happens on the provider's own pages, inside a window, because it cannot be reproduced
+    /// from a form: O2 sends the person to Telefónica's sign-in, with a national identity number or a text message.
+    var usesWebLogin: Bool { self == .o2 }
     /// True when the provider works through an API its owner neither documents nor promises to keep. The interface
     /// says so plainly instead of letting a sudden breakage look like a bug in iCloudy.
     var isExperimental: Bool { [.mega, .o2].contains(self) }
