@@ -82,10 +82,17 @@ final class StorageTests: XCTestCase {
             defer { session.invalidateAndCancel() }
             let account = Account(id: "quota-test", cloud: cloud, name: "Test", email: "test@example.com", clientID: "test", clientSecret: nil,
                                   serverURL: cloud == .webdav ? "https://dav.example.com/remote.php/dav/files/ana" : nil)
-            let api = CloudAPI(account: account, session: session, tokenProvider: { "quota-token" })
+            // Mega authenticates with a session identifier in the query string and a master key held in the Keychain,
+            // so it needs a stored credential rather than a bearer token.
+            let credentials = MemoryCredentials()
+            credentials.stored["quota-test"] = Credential(accessToken: "sesión", refreshToken: "", expires: .distantFuture,
+                                                          secret: MegaCrypto.encode(Data(count: 16)))
+            let api = CloudAPI(account: account, session: session, tokenProvider: { "quota-token" }, credentials: credentials)
             StubProtocol.handler = { request in
-                let scheme = cloud == .webdav ? "Basic" : "Bearer"
-                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "\(scheme) quota-token")
+                if cloud != .mega {
+                    let scheme = cloud == .webdav ? "Basic" : "Bearer"
+                    XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "\(scheme) quota-token")
+                }
                 let url = try XCTUnwrap(request.url)
                 let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
                 switch cloud {
@@ -113,6 +120,13 @@ final class StorageTests: XCTestCase {
                     XCTAssertEqual(url.host, "api.box.com")
                     XCTAssertEqual(url.path, "/2.0/users/me")
                     return (200, [:], Data(#"{"space_used":40,"space_amount":100}"#.utf8))
+                case .mega:
+                    XCTAssertEqual(request.httpMethod, "POST")
+                    XCTAssertEqual(url.host, "g.api.mega.co.nz")
+                    XCTAssertEqual(query?.first { $0.name == "sid" }?.value, "sesión", "La sesión viaja en la dirección, no en una cabecera")
+                    let command = try XCTUnwrap(JSONSerialization.jsonObject(with: requestData(request)) as? [[String: Any]])
+                    XCTAssertEqual(command.first?["a"] as? String, "uq")
+                    return (200, [:], Data(#"[{"cstrg":40,"mstrg":100}]"#.utf8))
                 case .ftp, .volume:
                     XCTFail("\(cloud) no llega hasta aquí"); return (500, [:], Data())
                 case .webdav:

@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 enum Cloud: String, Codable, CaseIterable, Identifiable {
-    case google, microsoft, dropbox, box, webdav, ftp, volume
+    case google, microsoft, dropbox, box, webdav, ftp, volume, mega
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -13,6 +13,7 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
         case .webdav: return L("WebDAV")
         case .ftp: return L("FTP")
         case .volume: return L("Volumen")
+        case .mega: return L("Mega")
         }
     }
     var tokenURL: String {
@@ -21,7 +22,7 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
         case .microsoft: return "https://login.microsoftonline.com/common/oauth2/v2.0/token"
         case .dropbox: return "https://api.dropboxapi.com/oauth2/token"
         case .box: return "https://api.box.com/oauth2/token"
-        case .webdav, .ftp, .volume: return "" // no token endpoint: password or file-system access
+        case .webdav, .ftp, .volume, .mega: return "" // no token endpoint: password, file-system access or a session identifier
         }
     }
     /// HTTP authorization scheme for the value stored in `Credential.accessToken`.
@@ -29,11 +30,14 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
     /// True when the user brings their own server and credentials instead of signing in at a provider.
     var isSelfHosted: Bool { [.webdav, .ftp, .volume].contains(self) }
     /// True when connecting means typing a server address and credentials, rather than picking a folder or a browser sign-in.
-    var usesPasswordLogin: Bool { [.webdav, .ftp].contains(self) }
+    var usesPasswordLogin: Bool { [.webdav, .ftp, .mega].contains(self) }
+    /// True when the provider works through an API its owner neither documents nor promises to keep. The interface
+    /// says so plainly instead of letting a sudden breakage look like a bug in iCloudy.
+    var isExperimental: Bool { self == .mega }
     /// Identifier the provider gives to the top of the tree, behind iCloudy's own "root" alias.
     var rootAlias: String {
         switch self {
-        case .google, .microsoft, .webdav, .ftp, .volume: return "root"
+        case .google, .microsoft, .webdav, .ftp, .volume, .mega: return "root"
         case .dropbox: return "" // Dropbox addresses the root as an empty path
         case .box: return "0"
         }
@@ -81,6 +85,11 @@ struct CloudCapabilities {
             // The file system gives search, free space and a real Trash; only sharing links are missing.
             return CloudCapabilities(oauth: false, recents: false, sharedWithMe: false,
                                      publicLinks: false, checksum: false)
+        case .mega:
+            // The whole tree arrives decrypted in one response, so search and breadcrumbs cost nothing. There is no
+            // "recent" or "shared with me" listing, and no checksum to compare after uploading, because the only MAC
+            // Mega stores is the one iCloudy computed itself.
+            return CloudCapabilities(oauth: false, recents: false, sharedWithMe: false, checksum: false)
         }
     }
 }
@@ -127,6 +136,9 @@ struct Credential: Codable {
     var accessToken: String
     var refreshToken: String
     var expires: Date
+    /// Extra material a provider needs beside the token. Mega keeps its master key here: without it the account's own
+    /// session identifier is useless, because every file name and every file key is encrypted under it.
+    var secret: String = ""
 }
 
 struct CloudFile: Identifiable, Hashable, Codable {
@@ -393,13 +405,14 @@ extension Account {
 }
 
 extension Credential {
-    enum CodingKeys: String, CodingKey { case accessToken, refreshToken, expires }
+    enum CodingKeys: String, CodingKey { case accessToken, refreshToken, expires, secret }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         // A missing expiry forces a refresh on first use instead of trusting a stale token.
         self.init(accessToken: try values.decode(String.self, forKey: .accessToken),
                   refreshToken: try values.decode(String.self, forKey: .refreshToken),
-                  expires: try values.decodeIfPresent(Date.self, forKey: .expires) ?? .distantPast)
+                  expires: try values.decodeIfPresent(Date.self, forKey: .expires) ?? .distantPast,
+                  secret: try values.decodeIfPresent(String.self, forKey: .secret) ?? "")
     }
 }
 

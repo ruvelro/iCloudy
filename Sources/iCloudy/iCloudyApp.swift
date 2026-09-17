@@ -652,6 +652,7 @@ struct ConnectView: View {
                     providerButton(.microsoft, title: "Continuar con Microsoft", subtitle: "OneDrive · Outlook, Hotmail o Microsoft 365", icon: "cloud.fill")
                     providerButton(.dropbox, title: "Continuar con Dropbox", subtitle: "Dropbox personal o de equipo", icon: "shippingbox")
                     providerButton(.box, title: "Continuar con Box", subtitle: "Box personal o de empresa", icon: "square.stack.3d.up")
+                    providerButton(.mega, title: "Conectar Mega", subtitle: "Cifrado de extremo a extremo, con correo y contraseña", icon: "lock.icloud")
                 }.disabled(model.connecting)
                 Text("TU PROPIO SERVIDOR").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 VStack(spacing: 10) {
@@ -709,11 +710,19 @@ struct ConnectView: View {
             HStack(spacing: 14) {
                 Image(systemName: icon).font(.title2).foregroundStyle(tint(cloud)).frame(width: 30)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.headline)
+                    HStack(spacing: 6) {
+                        Text(title).font(.headline)
+                        if cloud.isExperimental {
+                            Text("Experimental").font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(.orange.opacity(0.18), in: Capsule())
+                                .foregroundStyle(.orange)
+                        }
+                    }
                     Text(subtitle).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Image(systemName: cloud.isSelfHosted ? "chevron.right" : "arrow.up.right").foregroundStyle(.secondary)
+                Image(systemName: cloud.isSelfHosted || cloud.usesPasswordLogin ? "chevron.right" : "arrow.up.right").foregroundStyle(.secondary)
             }.padding(14).frame(maxWidth: .infinity).contentShape(Rectangle())
                 .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(.quaternary))
@@ -728,6 +737,7 @@ struct ConnectView: View {
         case .webdav: return .gray
         case .ftp: return .orange
         case .volume: return .brown
+        case .mega: return .red
         }
     }
 }
@@ -745,13 +755,24 @@ struct ServerLoginView: View {
     @State private var nextcloud = false
     @State private var showAdvanced = false
 
+    /// Mega identifies the account by e-mail; the other two need a server address first.
+    private var needsServer: Bool { cloud != .mega }
+    private var icon: String {
+        switch cloud {
+        case .webdav: return "server.rack"
+        case .mega: return "lock.icloud"
+        default: return "arrow.up.arrow.down.square"
+        }
+    }
     private var placeholder: String {
         cloud == .webdav ? "https://nube.ejemplo.com/remote.php/dav/files/ana" : "servidor.ejemplo.com/carpeta"
     }
     private var explanation: String {
-        cloud == .webdav
-            ? L("Para Nextcloud, ownCloud, Synology, otros NAS y cualquier servidor WebDAV. La dirección es la ruta WebDAV completa.")
-            : L("Para servidores FTP propios y NAS. iCloudy usa siempre modo pasivo. Sin FTPS, la contraseña y los archivos viajan sin cifrar.")
+        switch cloud {
+        case .webdav: return L("Para Nextcloud, ownCloud, Synology, otros NAS y cualquier servidor WebDAV. La dirección es la ruta WebDAV completa.")
+        case .mega: return L("Tu contraseña no sale de este Mac: se usa para derivar las claves con las que Mega cifra los nombres y el contenido.")
+        default: return L("Para servidores FTP propios y NAS. iCloudy usa siempre modo pasivo. Sin FTPS, la contraseña y los archivos viajan sin cifrar.")
+        }
     }
     private var address: String {
         guard cloud == .ftp else { return server }
@@ -762,8 +783,19 @@ struct ServerLoginView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label(cloud.title, systemImage: cloud == .webdav ? "server.rack" : "arrow.up.arrow.down.square").font(.title2)
+            HStack(spacing: 8) {
+                Label(cloud.title, systemImage: icon).font(.title2)
+                if cloud.isExperimental {
+                    Text("Experimental").font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(.orange.opacity(0.18), in: Capsule()).foregroundStyle(.orange)
+                }
+            }
             Text(explanation).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if cloud.isExperimental {
+                Label("Mega no publica su API ni se compromete a mantenerla. Puede dejar de funcionar sin aviso.", systemImage: "flask")
+                    .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            }
             if cloud == .ftp {
                 Picker("Seguridad", selection: $secureFTP) {
                     Text("FTP sin cifrar").tag(false)
@@ -774,10 +806,12 @@ struct ServerLoginView: View {
                         .font(.caption).foregroundStyle(.orange)
                 }
             }
-            TextField(placeholder, text: $server).textFieldStyle(.roundedBorder)
-            TextField("Usuario", text: $username).textFieldStyle(.roundedBorder)
-            SecureField("Contraseña o contraseña de aplicación", text: $password).textFieldStyle(.roundedBorder)
-            Text("Si tu servidor usa verificación en dos pasos, crea una contraseña de aplicación en su configuración.")
+            if needsServer { TextField(placeholder, text: $server).textFieldStyle(.roundedBorder) }
+            TextField(needsServer ? "Usuario" : "Correo de la cuenta", text: $username).textFieldStyle(.roundedBorder)
+            SecureField(needsServer ? "Contraseña o contraseña de aplicación" : "Contraseña", text: $password).textFieldStyle(.roundedBorder)
+            Text(needsServer
+                 ? "Si tu servidor usa verificación en dos pasos, crea una contraseña de aplicación en su configuración."
+                 : "Si la cuenta tiene verificación en dos pasos, escribe la contraseña, un espacio y el código de seis dígitos.")
                 .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if cloud == .webdav {
                 DisclosureGroup(isExpanded: $showAdvanced) {
@@ -804,7 +838,7 @@ struct ServerLoginView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(model.connecting || server.isEmpty || username.isEmpty || password.isEmpty)
+                .disabled(model.connecting || (needsServer && server.isEmpty) || username.isEmpty || password.isEmpty)
             }
         }.padding(24).frame(width: 470)
     }

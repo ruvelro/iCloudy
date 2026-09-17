@@ -133,12 +133,37 @@ final class OAuth {
         case .microsoft: return "https://graph.microsoft.com/v1.0/me?$select=id,displayName,mail,userPrincipalName"
         case .dropbox: return "https://api.dropboxapi.com/2/users/get_current_account"
         case .box: return "https://api.box.com/2.0/users/me"
-        case .webdav, .ftp, .volume: return ""
+        case .webdav, .ftp, .volume, .mega: return ""
         }
     }
 
     /// WebDAV servers authenticate with a user name and a password, so there is no browser round trip. The credentials
     /// are checked with one PROPFIND before the account is stored, and they only ever reach the server the user typed.
+    /// Mega signs in with the account's own e-mail and password: there is no OAuth and no application registration.
+    /// The password never leaves this Mac. What is sent is a value derived from it, and what comes back is a session
+    /// identifier that only the account's private key can unwrap.
+    func signInMega(email: String, password: String) async throws -> (Account, Credential) {
+        let address = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard address.contains("@"), !address.hasPrefix("@"), !password.isEmpty else {
+            throw CloudError.message(L("Escribe el correo y la contraseña de tu cuenta de Mega."))
+        }
+        // A second-factor code is typed after the password, separated by a space, because Mega asks for both at once.
+        var secret = password
+        var code: String?
+        if let space = password.lastIndex(of: " ") {
+            let tail = String(password[password.index(after: space)...])
+            if tail.count == 6, tail.allSatisfy(\.isNumber) {
+                code = tail
+                secret = String(password[password.startIndex..<space])
+            }
+        }
+        let signed = try await MegaAPI.signIn(email: address, password: secret, code: code, session: session)
+        let account = Account(id: "mega:" + address, cloud: .mega, name: L("Mega"), email: address, clientID: "", clientSecret: nil)
+        let credential = Credential(accessToken: signed.sid, refreshToken: "", expires: .distantFuture,
+                                    secret: MegaCrypto.encode(signed.masterKey))
+        return (account, credential)
+    }
+
     func signInWebDAV(server: String, username: String, password: String) async throws -> (Account, Credential) {
         let trimmed = server.trimmingCharacters(in: .whitespacesAndNewlines)
         guard var components = URLComponents(string: trimmed.contains("://") ? trimmed : "https://" + trimmed),

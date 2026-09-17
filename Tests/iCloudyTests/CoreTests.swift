@@ -18,9 +18,11 @@ final class StubProtocol: URLProtocol {
 }
 
 /// URLProtocol receives POST bodies as a stream, not as `httpBody`.
-func requestBody(_ request: URLRequest) -> String {
-    if let data = request.httpBody { return String(decoding: data, as: UTF8.self) }
-    guard let stream = request.httpBodyStream else { return "" }
+func requestBody(_ request: URLRequest) -> String { String(decoding: requestData(request), as: UTF8.self) }
+/// The same, for bodies that are not text: an encrypted upload, for instance.
+func requestData(_ request: URLRequest) -> Data {
+    if let data = request.httpBody { return data }
+    guard let stream = request.httpBodyStream else { return Data() }
     stream.open(); defer { stream.close() }
     var data = Data(); var buffer = [UInt8](repeating: 0, count: 4096)
     while stream.hasBytesAvailable {
@@ -28,7 +30,7 @@ func requestBody(_ request: URLRequest) -> String {
         guard read > 0 else { break }
         data.append(buffer, count: read)
     }
-    return String(decoding: data, as: UTF8.self)
+    return data
 }
 
 final class CoreTests: XCTestCase {

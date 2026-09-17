@@ -21,6 +21,7 @@ extension CloudAPI {
         case .dropbox: try await dropboxRename(file: file, name: name)
         case .ftp: try await ftpRename(file: file, name: name)
         case .volume: try await volumeRename(file: file, name: name)
+        case .mega: try await megaRename(file: file, name: name)
         case .box: _ = try await boxUpdate(file, body: ["name": name])
         case .webdav: try await webdavRename(file: file, name: name)
         }
@@ -45,6 +46,7 @@ extension CloudAPI {
         case .dropbox: try await dropboxMove(file: file, to: destination); return
         case .ftp: try await ftpMove(file: file, to: destination); return
         case .volume: try await volumeMove(file: file, to: destination); return
+        case .mega: try await megaMove(file: file, to: destination); return
         case .webdav: try await webdavMove(file: file, to: destination); return
         case .box: _ = try await boxUpdate(file, body: ["parent": ["id": boxID(destination)]]); return
         case .google, .microsoft: break
@@ -69,6 +71,7 @@ extension CloudAPI {
         case .dropbox: try await dropboxCopy(file: file, to: destination); return
         case .ftp: throw CloudError.message(L("FTP no puede copiar en el servidor. Descarga el archivo y vuelve a subirlo."))
         case .volume: try await volumeCopy(file: file, to: destination); return
+        case .mega: try await megaCopy(file: file, to: destination); return
         case .webdav: try await webdavCopy(file: file, to: destination); return
         case .box: try await boxCopy(file: file, to: destination); return
         case .google, .microsoft: break
@@ -93,6 +96,7 @@ extension CloudAPI {
         case .webdav: try await webdavDelete(file: file); return
         case .ftp: try await ftpDelete(file: file); return
         case .volume: try await volumeTrash(file: file); return
+        case .mega: try await megaTrash(file: file); return
         case .google, .microsoft: break
         }
         if account.cloud == .google {
@@ -119,6 +123,7 @@ extension CloudAPI {
             return try await nextcloudPublicLink(for: file)
         case .ftp: throw CloudError.message(L("FTP no tiene enlaces públicos."))
         case .volume: throw CloudError.message(L("Un volumen no tiene enlaces públicos. Compártelo desde el Finder."))
+        case .mega: return try await megaPublicLink(for: file)
         case .google, .microsoft: break
         }
         if account.cloud == .google {
@@ -159,6 +164,8 @@ extension CloudAPI {
             return try await ftpUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
         case .volume:
             return try await volumeUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+        case .mega:
+            return try await megaUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
         }
     }
 

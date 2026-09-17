@@ -6,9 +6,9 @@ final class CloudAPI {
     let session: URLSession
     let demo: DemoStore?
     private let tokenProvider: (() async throws -> String)?
-    private let credentials: CredentialStore
+    let credentials: CredentialStore
     private var refreshTask: Task<String, Error>?
-    private var invalidated = false
+    private(set) var invalidated = false
     /// Set once the provider rejects the stored credential. Only reconnecting the account, which replaces this client, clears it.
     private(set) var sessionExpired = false
     var sessionDidExpire: (() -> Void)?
@@ -18,6 +18,8 @@ final class CloudAPI {
     var rootIDCache: String?
     /// Live FTP control connection, created on first use and reused until the account is disconnected.
     var ftpSession: FTPSession?
+    /// Signed-in Mega session and its decrypted tree, kept for as long as this client lives.
+    var megaStateCache: MegaState?
     /// Resolved root of a volume account, with its security scope held open while this client exists.
     var volumeRootCache: URL?
     var volumeScopeOpen = false
@@ -28,6 +30,7 @@ final class CloudAPI {
         ftpSession = nil
         if volumeScopeOpen, let volumeRootCache { volumeRootCache.stopAccessingSecurityScopedResource() }
         volumeScopeOpen = false; volumeRootCache = nil
+        megaStateCache = nil
     }
     init(account: Account, session: URLSession = .shared, demo: DemoStore? = nil, tokenProvider: (() async throws -> String)? = nil, credentials: CredentialStore = KeychainCredentialStore()) {
         self.demo = demo
@@ -173,6 +176,7 @@ final class CloudAPI {
         case .dropbox: return try await dropboxList(parent: parent, onPage: onPage)
         case .ftp: return try await ftpList(parent: parent, onPage: onPage)
         case .volume: return try await volumeList(parent: parent)
+        case .mega: return try await megaList(parent: parent)
         case .box: return try await boxList(parent: parent, onPage: onPage)
         case .webdav: return try await webdavList(parent: parent, onPage: onPage)
         }
@@ -240,6 +244,7 @@ final class CloudAPI {
         case .webdav: return try await webdavCreateFolder(name: name, parent: parent)
         case .ftp: return try await ftpCreateFolder(name: name, parent: parent)
         case .volume: return try await volumeCreateFolder(name: name, parent: parent)
+        case .mega: return try await megaCreateFolder(name: name, parent: parent)
         }
         guard let id = result["id"] as? String else { throw CloudError.message(L("No se pudo crear la carpeta.")) }
         return id
@@ -265,14 +270,18 @@ final class CloudAPI {
             return request
         case .webdav:
             return try await request(webdavURL(file.id))
-        case .ftp, .volume:
-            // Neither goes through URLSession; `download` branches before reaching here.
+        case .ftp, .volume, .mega:
+            // None of them fetches with a plain request; `download` branches before reaching here.
             throw CloudError.message(L("Este proveedor no usa peticiones HTTP."))
         }
     }
 
     func download(file: CloudFile, to destination: URL, exportMime: String? = nil, maxBytes: Int64? = nil, progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws {
         if let demo { try await demo.download(file, to: destination, maxBytes: maxBytes, progress: progress); return }
+        if account.cloud == .mega {
+            try await megaDownload(file: file, to: destination, progress: progress)
+            return
+        }
         if account.cloud == .volume {
             try await volumeDownload(file: file, to: destination, progress: progress)
             if let maxBytes, Int64((try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > maxBytes {
