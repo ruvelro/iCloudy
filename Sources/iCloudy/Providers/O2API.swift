@@ -36,6 +36,12 @@ enum O2API {
         return components.url!
     }
 
+    /// The error code alone, for the diagnostic record. Never the message, which can quote a file name.
+    static func errorCode(_ data: Data) -> String? {
+        guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let error = body["error"] as? [String: Any] else { return nil }
+        return error["code"] as? String ?? "?"
+    }
     /// Reads the envelope. An error in the body is turned into a Failure even though the status was 200.
     static func payload(_ data: Data) throws -> [String: Any] {
         guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
@@ -80,9 +86,16 @@ enum O2API {
         let sent = state.validationKey
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw CloudError.message(L("Respuesta HTTP no válida.")) }
+        var arrived: [HTTPCookie] = []
         if let fields = http.allHeaderFields as? [String: String], let address = request.url {
-            state.absorb(HTTPCookie.cookies(withResponseHeaderFields: fields, for: address))
+            arrived = HTTPCookie.cookies(withResponseHeaderFields: fields, for: address)
+            state.absorb(arrived)
         }
+        // Only the shape of the exchange, never its contents. See O2Log for what is and is not written.
+        O2Log.record(O2Log.describe(path: path, action: action, status: http.statusCode,
+                                    error: errorCode(data),
+                                    keyChanged: state.validationKey != sent,
+                                    cookieNames: arrived.map(\.name)))
         guard http.statusCode != 401, http.statusCode != 403 else {
             throw Failure(code: "SEC-1002", message: L("O2 Cloud rechazó la sesión. Vuelve a iniciar sesión."), data: nil,
                           origin: "\(path) \(action)")

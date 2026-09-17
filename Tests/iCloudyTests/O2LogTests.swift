@@ -1,0 +1,40 @@
+import XCTest
+@testable import iCloudy
+
+/// The diagnostic record exists because O2 documents nothing and its sessions die for reasons that are not visible
+/// from the app. That makes it worth being strict about two things: it must never write anything private, and it
+/// must never grow without bound on someone's disk.
+final class O2LogTests: XCTestCase {
+    func testTheRecordNamesCookiesButNeverRepeatsTheirValues() {
+        let line = O2Log.describe(path: "media", action: "get-storage-space", status: 200, error: "SEC-1003",
+                                  keyChanged: true, cookieNames: ["JSESSIONID", "validationKey"])
+        XCTAssertTrue(line.contains("media get-storage-space"))
+        XCTAssertTrue(line.contains("HTTP 200"))
+        XCTAssertTrue(line.contains("SEC-1003"))
+        XCTAssertTrue(line.contains("clave renovada"))
+        XCTAssertTrue(line.contains("JSESSIONID"), "El nombre sí, para saber qué renovó el servidor")
+        XCTAssertFalse(line.contains("="), "Pero nunca un valor: eso sería la sesión en un archivo de texto")
+    }
+
+    func testAQuietCallSaysSoWithoutInventingAnError() {
+        let line = O2Log.describe(path: "media/folder", action: "list", status: 200, error: nil,
+                                  keyChanged: false, cookieNames: [])
+        XCTAssertFalse(line.contains("error"))
+        XCTAssertFalse(line.contains("clave renovada"))
+        XCTAssertTrue(line.contains("ninguna"))
+    }
+
+    func testTheFileStopsGrowingInsteadOfFillingTheDisk() throws {
+        try? FileManager.default.removeItem(at: O2Log.url)
+        defer { try? FileManager.default.removeItem(at: O2Log.url) }
+        for index in 0..<450 { O2Log.record("linea \(index)") }
+        let written = try String(contentsOf: O2Log.url, encoding: .utf8)
+        let lines = written.split(separator: "\n", omittingEmptySubsequences: true)
+        XCTAssertLessThanOrEqual(lines.count, 400)
+        XCTAssertTrue(written.contains("linea 449"), "Se conserva lo último, que es lo que interesa")
+        XCTAssertFalse(written.contains("linea 0 "), "Y se tira lo más viejo")
+
+        let attributes = try FileManager.default.attributesOfItem(atPath: O2Log.url.path)
+        XCTAssertEqual(attributes[.posixPermissions] as? NSNumber, 0o600, "Solo lo lee su dueño")
+    }
+}
