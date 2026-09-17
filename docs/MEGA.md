@@ -74,6 +74,16 @@ Eso hacía que el árbol de la cuenta no cargase nunca, porque justo después de
 `-3` al pedirlo, y que renombrar y mover fallasen aunque hubieran funcionado. Se permiten fragmentos, y hay una
 prueba que falla si alguien quita esa opción.
 
+## Las transferencias van por otros servidores
+
+Los archivos no se descargan ni se suben contra la API, sino contra una flota aparte cuya dirección da Mega en cada
+transferencia. Esa dirección llega en HTTP sin cifrar salvo que se pida lo contrario, y macOS se niega a cargarla,
+con razón: aunque el contenido ya viaje cifrado, la dirección, el tamaño y el momento no lo harían.
+
+Se pide cifrada, con el mismo indicador que usan sus propios clientes, y además se eleva el esquema de cualquier
+dirección que llegue en claro. No se ha tocado la política de seguridad de transporte de la app: relajarla habría
+sido tapar el problema en vez de resolverlo, y para todas las conexiones, no solo para esta.
+
 ## Verificación en dos pasos
 
 Mega pide la contraseña y el código en la misma petición, así que se escriben juntos: la contraseña, un

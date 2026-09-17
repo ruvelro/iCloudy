@@ -101,6 +101,9 @@ enum MegaAPI {
         throw CloudError.message(L("Mega sigue ocupado. Vuelve a intentarlo dentro de un momento."))
     }
 
+    /// Value Mega's own clients send to get transfer addresses over TLS.
+    static let useTLS = 2
+
     /// Reads Mega's challenge and spends the work it asks for. The format is version, easiness, when it was issued,
     /// and the token to hash; only the easiness and the token take part in the answer.
     static func solve(_ challenge: String) async throws -> String {

@@ -134,6 +134,15 @@ final class CloudAPI {
         let remote = value["remoteItem"] != nil
         return CloudFile(id: id, name: name, mime: remote ? "application/vnd.google-apps.shortcut" : ((value["file"] as? [String: Any])?["mimeType"] as? String ?? "application/octet-stream"), size: (value["size"] as? NSNumber)?.int64Value, modified: date(value["lastModifiedDateTime"] as? String), webURL: (value["webUrl"] as? String).flatMap(URL.init(string:)), isFolder: !remote && value["folder"] != nil)
     }
+    /// Transfer addresses often come from a different fleet of servers than the API, and more than one provider
+    /// hands them out over plain HTTP. macOS refuses to load those, and rightly so: even when the bytes are already
+    /// encrypted, the address, the size and the timing would travel in the clear. Every provider here is reachable
+    /// over TLS, so an address that arrives without it is upgraded rather than attempted as it came.
+    nonisolated static func secureURL(_ address: String) -> URL? {
+        guard var components = URLComponents(string: address), components.host?.isEmpty == false else { return nil }
+        if components.scheme?.lowercased() == "http" { components.scheme = "https" }
+        return components.url
+    }
     nonisolated static func date(_ string: String?) -> Date? {
         guard let string else { return nil }
         let formatter = ISO8601DateFormatter()

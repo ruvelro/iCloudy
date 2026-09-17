@@ -262,8 +262,10 @@ extension CloudAPI {
         let media = try o2Media(file)
         let answer = try await o2Call("media", action: "get",
                                       body: ["data": ["ids": [media.value], "fields": ["url", "name", "size"]]])
+        // Its own clients are served over TLS, so an address that arrives without it is upgraded rather than
+        // attempted in the clear, which macOS would refuse anyway.
         guard let entry = (answer["media"] as? [[String: Any]])?.first,
-              let address = entry["url"] as? String, let url = URL(string: address) else {
+              let address = entry["url"] as? String, let url = CloudAPI.secureURL(address) else {
             throw CloudError.message(L("O2 Cloud no devolvió la dirección de descarga."))
         }
         var request = URLRequest(url: url)

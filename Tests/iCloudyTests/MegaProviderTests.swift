@@ -62,9 +62,11 @@ final class MegaProviderTests: XCTestCase {
                 case "f":
                     return (200, [:], try JSONSerialization.data(withJSONObject: [["f": try tree(), "sn": "xyz"]]))
                 case "g":
-                    return (200, [:], try JSONSerialization.data(withJSONObject: [["g": "https://descarga.ejemplo.com/token", "s": contents.count]]))
+                    XCTAssertEqual(command["ssl"] as? Int, 2, "Se pide la dirección de transferencia cifrada")
+                    return (200, [:], try JSONSerialization.data(withJSONObject: [["g": "http://descarga.ejemplo.com/token", "s": contents.count]]))
                 case "u":
-                    return (200, [:], try JSONSerialization.data(withJSONObject: [["p": "https://subida.ejemplo.com/destino"]]))
+                    XCTAssertEqual(command["ssl"] as? Int, 2)
+                    return (200, [:], try JSONSerialization.data(withJSONObject: [["p": "http://subida.ejemplo.com/destino"]]))
                 case "p":
                     registered = (command["n"] as? [[String: Any]])?.first
                     return (200, [:], try JSONSerialization.data(withJSONObject: [["f": [["h": "NUEVO", "t": 0]]]]))
@@ -77,6 +79,7 @@ final class MegaProviderTests: XCTestCase {
                 }
             }
             if url.host == "descarga.ejemplo.com" {
+                XCTAssertEqual(url.scheme, "https", "Una dirección en claro se eleva antes de usarse")
                 // The path carries the byte range, the way Mega's temporary links work.
                 let range = url.lastPathComponent.split(separator: "-").compactMap { Int($0) }
                 let bounds = try XCTUnwrap(range.count == 2 ? range : nil)
@@ -86,6 +89,7 @@ final class MegaProviderTests: XCTestCase {
                 return (200, [:], cipher)
             }
             if url.host == "subida.ejemplo.com" {
+                XCTAssertEqual(url.scheme, "https")
                 let offset = Int64(url.lastPathComponent) ?? -1
                 let body = requestData(request)
                 lastUpload = (offset, (lastUpload?.body ?? Data()) + body)
@@ -390,6 +394,17 @@ final class MegaProviderTests: XCTestCase {
             guard case CloudError.sessionExpired = error else { return XCTFail("Otro error: \(error)") }
         }
         XCTAssertTrue(expired, "La cuenta queda marcada para volver a iniciar sesión")
+    }
+
+    func testTransferAddressesAreAlwaysRaisedToTLS() {
+        // Mega hands out transfer addresses in the clear unless asked otherwise, and macOS refuses to load those.
+        XCTAssertEqual(CloudAPI.secureURL("http://gfs1.ejemplo.com/dl/abc")?.absoluteString, "https://gfs1.ejemplo.com/dl/abc")
+        XCTAssertEqual(CloudAPI.secureURL("HTTP://gfs1.ejemplo.com/dl")?.scheme, "https", "El esquema puede venir en mayúsculas")
+        XCTAssertEqual(CloudAPI.secureURL("https://ya.ejemplo.com/dl")?.absoluteString, "https://ya.ejemplo.com/dl")
+        XCTAssertEqual(CloudAPI.secureURL("http://ejemplo.com:8080/dl?x=1")?.absoluteString, "https://ejemplo.com:8080/dl?x=1",
+                       "El puerto y los parámetros se conservan")
+        XCTAssertNil(CloudAPI.secureURL(""))
+        XCTAssertNil(CloudAPI.secureURL("/solo/una/ruta"), "Sin servidor no hay nada que descargar")
     }
 
     func testCapabilitiesSayWhatMegaCanAndCannotDo() {

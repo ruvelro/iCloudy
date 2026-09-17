@@ -200,8 +200,8 @@ extension CloudAPI {
         guard !node.isFolder, let parts = MegaCrypto.unpack(fileKey: node.key) else {
             throw CloudError.message(L("Este archivo de Mega no se puede descargar porque su clave no es de esta cuenta."))
         }
-        guard let answer = try await megaCall(["a": "g", "g": 1, "n": node.handle]) as? [String: Any],
-              let address = answer["g"] as? String else {
+        guard let answer = try await megaCall(["a": "g", "g": 1, "ssl": MegaAPI.useTLS, "n": node.handle]) as? [String: Any],
+              let address = answer["g"] as? String, let base = CloudAPI.secureURL(address) else {
             throw CloudError.message(L("Mega no devolvió la dirección de descarga."))
         }
         let size = (answer["s"] as? Double).map { Int64($0) } ?? node.size ?? 0
@@ -214,7 +214,7 @@ extension CloudAPI {
         var macs: [Data] = []
         for chunk in MegaCrypto.chunks(of: size) {
             try Task.checkCancellation()
-            guard let url = URL(string: "\(address)/\(chunk.offset)-\(chunk.offset + chunk.length - 1)") else {
+            guard let url = URL(string: "\(base.absoluteString)/\(chunk.offset)-\(chunk.offset + chunk.length - 1)") else {
                 throw CloudError.message(L("Mega no devolvió la dirección de descarga."))
             }
             let (data, response) = try await session.data(from: url)
@@ -243,8 +243,8 @@ extension CloudAPI {
         let state = try await megaTree()
         let target = try megaHandle(parent, in: state)
         let total = cursor.total
-        guard let answer = try await megaCall(["a": "u", "s": total]) as? [String: Any],
-              let address = answer["p"] as? String else {
+        guard let answer = try await megaCall(["a": "u", "s": total, "ssl": MegaAPI.useTLS]) as? [String: Any],
+              let address = (answer["p"] as? String).flatMap(CloudAPI.secureURL) else {
             throw CloudError.message(L("Mega no aceptó la subida."))
         }
         // Mega has no resumable upload for third parties, so a restart begins again from zero.
@@ -268,7 +268,9 @@ extension CloudAPI {
             let cipher = try await blockingIO { try MegaCrypto.ctr(plain, key: key, nonce: nonce, blockOffset: UInt64(offset / 16)) }
             if !plain.isEmpty { macs.append(try await blockingIO { try MegaCrypto.chunkMAC(plain, key: key, nonce: nonce) }) }
 
-            guard let url = URL(string: "\(address)/\(chunk.offset)") else { throw CloudError.message(L("Mega no aceptó la subida.")) }
+            guard let url = URL(string: "\(address.absoluteString)/\(chunk.offset)") else {
+                throw CloudError.message(L("Mega no aceptó la subida."))
+            }
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
