@@ -23,8 +23,11 @@ final class O2WebLoginModel: ObservableObject {
     @Published var failed: String?
     /// Receives the session once O2 has granted one.
     var onSuccess: (@MainActor (String, [HTTPCookie], String?) -> Void)?
-    /// A fresh store every time, so signing in again never reuses the previous account's session.
-    let store = WKWebsiteDataStore.nonPersistent()
+    /// The persistent store, on purpose. O2's server ends a session after about an hour of silence, so a Mac that
+    /// spends the night switched off always comes back to a dead one. What survives that is the sign-in at
+    /// Telefónica, and it only survives if its cookies are kept, exactly as a browser keeps them. With them, renewing
+    /// the session needs no typing, and usually no window at all.
+    let store = WKWebsiteDataStore.default()
     private var watcher: Task<Void, Never>?
     private var done = false
     private weak var webView: WKWebView?
@@ -169,5 +172,52 @@ struct O2WebLoginView: View {
         login.stop()
         model.o2Login = nil
         dismiss()
+    }
+}
+
+/// Renews an O2 session without asking the person anything.
+///
+/// O2's server ends a session after about an hour without requests, so a Mac that was switched off overnight always
+/// finds a dead one in the morning. Having to sign in by hand every day would make the provider useless.
+///
+/// What makes this possible is that the sign-in at Telefónica outlives the session at O2. Loading the same address
+/// the web client uses, with the cookies from the last sign-in, ends with the server handing out a new session and
+/// no interaction at all. Nothing is typed, nothing is stored beyond what a browser would store, and if Telefónica
+/// does want to see the person again, this simply fails and the window is shown instead.
+@MainActor
+final class O2SilentRenewal {
+    private var webView: WKWebView?
+    private let host: String
+    init(host: String) { self.host = host }
+
+    /// Returns the new session, or nil when it could not be had without the person taking part.
+    func attempt(timeout: TimeInterval = 25) async -> (key: String, cookies: [HTTPCookie], userAgent: String?)? {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = WKWebsiteDataStore.default()
+        let webView = WKWebView(frame: .init(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
+        self.webView = webView
+        defer { self.webView = nil }
+
+        let start = URL(string: "https://\(host)/sapi/oauth/pkce/authorize?platform=web&deviceid=web-icloudy-\(UUID().uuidString.prefix(12))")
+        guard let start else { return nil }
+        // The key from the dead session is still in the store. Clearing it first means that seeing one again can
+        // only mean the server has just handed out a new one, rather than this reading its own leftovers.
+        let jar = configuration.websiteDataStore.httpCookieStore
+        for cookie in await jar.allCookies() where cookie.name == "validationKey" {
+            await jar.deleteCookie(cookie)
+        }
+        webView.load(URLRequest(url: start))
+
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            let cookies = await configuration.websiteDataStore.httpCookieStore.allCookies()
+            let mine = cookies.filter { host.hasSuffix($0.domain) || $0.domain.hasSuffix(host) }
+            if let key = mine.first(where: { $0.name == "validationKey" })?.value, !key.isEmpty {
+                let agent = (try? await webView.evaluateJavaScript("navigator.userAgent")) as? String
+                return (key, mine, agent)
+            }
+        }
+        return nil
     }
 }

@@ -77,6 +77,8 @@ final class AppModel: ObservableObject {
     private var favoriteKeys: Set<String> = []
     private var subscription: AnyCancellable?
     private var keepAlive: Task<Void, Never>?
+    /// Accounts whose session is being renewed in the background, so it is only attempted once at a time.
+    private var renewingAccountIDs: Set<String> = []
     private var editContext: (Account, String)?
     private let favoritesURL = LocalStore.directory.appendingPathComponent("favorites.json")
     /// Opening folders refreshes the quota at most this often; explicit requests and finished transfers always do.
@@ -281,6 +283,7 @@ final class AppModel: ObservableObject {
         client.sessionDidExpire = { [weak self] reason in
             self?.expiredAccountIDs.insert(account.id)
             if let reason { self?.expiryReasons[account.id] = reason }
+            self?.renewSilently(account)
         }
         clients[account.id] = client
         return client
@@ -343,8 +346,27 @@ final class AppModel: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     /// Stores the session O2 handed out on its own pages. iCloudy never saw the password or the code.
-    func completeO2(host: String, validationKey: String, cookies: [HTTPCookie], userAgent: String?) async {
-        connectionError = nil; connecting = true
+    /// Tries to get a new session without involving the person. Only worth attempting for a provider whose sign-in
+    /// outlives its session, which is O2: its server gives up after an hour of silence, so a Mac that spent the
+    /// night off always wakes to a dead one. Failing here is normal and simply leaves the account marked expired.
+    private func renewSilently(_ account: Account) {
+        guard account.cloud.usesWebLogin, !renewingAccountIDs.contains(account.id) else { return }
+        renewingAccountIDs.insert(account.id)
+        let host = account.options["host"] ?? "cloud.o2online.es"
+        Task { [weak self] in
+            let renewed = await O2SilentRenewal(host: host).attempt()
+            guard let self else { return }
+            renewingAccountIDs.remove(account.id)
+            guard let renewed else { return }
+            await completeO2(host: host, validationKey: renewed.key, cookies: renewed.cookies,
+                             userAgent: renewed.userAgent, select: false)
+        }
+    }
+
+    func completeO2(host: String, validationKey: String, cookies: [HTTPCookie], userAgent: String?,
+                    select shouldSelect: Bool = true) async {
+        connectionError = nil
+        connecting = shouldSelect
         defer { connecting = false }
         do {
             guard !validationKey.isEmpty else {
@@ -367,7 +389,8 @@ final class AppModel: ObservableObject {
             try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
             accounts = updated; clients[account.id]?.invalidate(); clients[account.id] = nil
             expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
-            select(account.id); showConnect = false
+            if shouldSelect { select(account.id); showConnect = false }
+            else if selectedAccountID == account.id { reload() }
         } catch { connectionError = error.localizedDescription }
     }
 
