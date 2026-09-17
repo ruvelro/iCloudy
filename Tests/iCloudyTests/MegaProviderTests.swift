@@ -367,6 +367,35 @@ final class MegaProviderTests: XCTestCase {
         XCTAssertEqual(quota.used, 5)
     }
 
+    func testWaitingAndProvingWorkHaveSeparateBudgets() async throws {
+        // Both make the same request again, but for different reasons. Sharing one counter meant that solving a
+        // proof of work spent the patience meant for a server that had only said "wait", and a delete would report
+        // -3 to the user and then work fine when they retried it by hand.
+        XCTAssertGreaterThan(MegaAPI.maxWaits, MegaAPI.maxProofs, "Esperar es barato; la prueba de trabajo no")
+        let total = (0..<MegaAPI.maxWaits).reduce(0.0) { $0 + Double(MegaAPI.waitDelay($1)) / 1_000_000_000 }
+        XCTAssertGreaterThan(total, 20, "Medio segundo cinco veces se quedaba muy corto")
+        XCTAssertLessThan(total, 90, "Pero una sola llamada no puede colgarse minutos")
+        XCTAssertLessThan(MegaAPI.waitDelay(0), MegaAPI.waitDelay(1), "La espera crece")
+        XCTAssertEqual(MegaAPI.waitDelay(20), MegaAPI.waitDelay(21), "Y tiene tope")
+    }
+
+    func testABusyServerIsWaitedOutInsteadOfReportedAsAnError() async throws {
+        // What the user saw: deleting a file reported -3 several times before finally working.
+        var attempts = 0
+        serve { action, _ in
+            guard action == "m" else { return nil }
+            attempts += 1
+            return attempts < 4 ? (200, Data("-3".utf8)) : (200, Data("0".utf8))
+        }
+        let api = client()
+        let listed = try await api.list(parent: "root")
+        let file = try XCTUnwrap(listed.first { $0.id == "ARCHIVO" })
+        try await api.trash(file: file)
+        XCTAssertEqual(attempts, 4, "Se espera y se repite hasta que el servidor está listo")
+        let after = try await api.list(parent: "root")
+        XCTAssertNil(after.first { $0.id == "ARCHIVO" }, "Y el borrado se refleja")
+    }
+
     func testAProofOfWorkChallengeIsSolvedAndTheRequestRepeated() async throws {
         // Mega guards its account endpoints with a 402 and an empty body. Before this was handled, every sign-in
         // failed with "a response that cannot be understood", which said nothing about what to do.

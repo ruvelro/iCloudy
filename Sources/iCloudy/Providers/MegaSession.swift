@@ -43,6 +43,7 @@ enum MegaAPI {
     /// Turns Mega's numeric failures into something a person can act on. The codes are the ones its own clients use.
     static func failure(_ code: Int) -> CloudError {
         switch code {
+        case -3: return .message(L("Mega sigue ocupado con esa operación. Espera unos segundos y vuelve a intentarlo."))
         case -2: return .message(L("Mega rechazó la petición por incorrecta."))
         case -6, -4: return .message(L("Demasiadas peticiones a Mega. Espera un momento y vuelve a intentarlo."))
         case -8, -15: return .sessionExpired(L("La sesión de Mega ha caducado. Vuelve a iniciar sesión."))
@@ -70,13 +71,16 @@ enum MegaAPI {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: [payload])
 
+        // Two different reasons to send the same request again, each with its own budget. Sharing one counter meant
+        // that solving a proof of work ate the patience meant for a server that had merely said "wait".
         var proofs = 0
-        for attempt in 0..<6 {
+        var waits = 0
+        while true {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw CloudError.message(L("Respuesta HTTP no válida.")) }
             // Mega guards its account endpoints with a proof of work: 402 with a challenge and an empty body, which
             // the client has to solve before the same request is accepted.
-            if http.statusCode == 402, let challenge = http.value(forHTTPHeaderField: "X-Hashcash"), proofs < 2 {
+            if http.statusCode == 402, let challenge = http.value(forHTTPHeaderField: "X-Hashcash"), proofs < Self.maxProofs {
                 proofs += 1
                 request.setValue(try await solve(challenge), forHTTPHeaderField: "X-Hashcash")
                 continue
@@ -89,8 +93,11 @@ enum MegaAPI {
             var result: Any? = body
             if let list = body as? [Any] { result = list.first }
             if let code = result as? Int, code < 0 {
-                guard code == -3, attempt < 5 else { throw failure(code) }
-                try await Task.sleep(nanoseconds: UInt64(attempt + 1) * 500_000_000)
+                guard code == -3, waits < Self.maxWaits else { throw failure(code) }
+                // Mega's own clients back off and keep asking. Half a second five times was not nearly enough: a
+                // delete would surface "-3" to the user and work fine the moment they tried it again by hand.
+                try await Task.sleep(nanoseconds: Self.waitDelay(waits))
+                waits += 1
                 continue
             }
             guard let result else {
@@ -103,6 +110,16 @@ enum MegaAPI {
 
     /// Value Mega's own clients send to get transfer addresses over TLS.
     static let useTLS = 2
+
+    /// How many times a request is repeated for each reason, and how long the waits grow.
+    static let maxProofs = 2
+    static let maxWaits = 8
+    /// Doubling from a third of a second, capped so a single call cannot hang for minutes. About half a minute in
+    /// total, which is the order Mega's own clients wait before giving up.
+    static func waitDelay(_ attempt: Int) -> UInt64 {
+        let seconds = min(8.0, 0.3 * pow(2.0, Double(attempt)))
+        return UInt64(seconds * 1_000_000_000)
+    }
 
     /// Reads Mega's challenge and spends the work it asks for. The format is version, easiness, when it was issued,
     /// and the token to hash; only the easiness and the token take part in the answer.

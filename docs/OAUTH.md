@@ -156,6 +156,27 @@ El archivo se copia a `Contents/Resources/OAuth.plist` antes de firmar. Se puede
 
 Los elementos del Llavero quedan ligados a la identidad que firmó la app. Una firma ad hoc (`-`) cambia en cada compilación, así que macOS trata cada compilación como una aplicación distinta y vuelve a pedir permiso para leer las cuentas guardadas, o directamente lo niega. Con una identidad estable el requisito designado no cambia y el permiso concedido una vez sigue valiendo.
 
+Comprobado, no supuesto: firmando dos binarios **distintos** con el mismo certificado y el mismo identificador, el
+segundo lee un elemento escrito por el primero sin que aparezca ninguna petición. Es decir, recompilar no vuelve a
+preguntar.
+
+### Si aun así pide la contraseña una y otra vez
+
+El diálogo tiene tres botones y solo uno sirve. **«Permitir» autoriza ese acceso y nada más**, así que vuelve a
+aparecer a la siguiente. El que hay que pulsar es **«Permitir siempre»**, que añade la app a la lista de la entrada
+y ya no pregunta más, ni siquiera tras recompilar.
+
+Los elementos creados por compilaciones anteriores a la existencia del certificado conservan la lista de entonces,
+así que preguntarán una vez cada uno hasta que se les diga «Permitir siempre». Con una cuenta por elemento, eso son
+varias preguntas seguidas la primera vez, y ninguna después.
+
+### Por qué no se usa el Llavero moderno, que no pregunta nunca
+
+El llavero con protección de datos no tiene listas de acceso ni diálogos: el acceso se decide por el identificador
+de equipo de la firma. Sería mejor, pero exige una cuenta de desarrollador de Apple. Probado con el certificado
+local: `SecItemAdd` devuelve `-34018`, falta el derecho. Sin cuenta de Apple no es una opción, y por eso iCloudy
+sigue en el llavero clásico.
+
 ```sh
 bash scripts/make-signing-cert.sh
 bash scripts/build-app.sh
