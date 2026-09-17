@@ -228,8 +228,16 @@ struct ExplorerView: View {
                         }
                         if let account = model.account, model.isExpired(account) {
                             HStack {
-                                Label("La sesión de esta cuenta ha caducado o se ha revocado. Los archivos no se pueden consultar hasta volver a conectarla.", systemImage: "exclamationmark.triangle.fill")
-                                    .font(.caption).fixedSize(horizontal: false, vertical: true)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Label("La sesión de esta cuenta ha caducado o se ha revocado. Los archivos no se pueden consultar hasta volver a conectarla.", systemImage: "exclamationmark.triangle.fill")
+                                        .font(.caption).fixedSize(horizontal: false, vertical: true)
+                                    // What the provider said, when it said anything. Without this, a provider that
+                                    // drops sessions for its own reasons is impossible to diagnose from a report.
+                                    if let reason = model.expiryReason(account) {
+                                        Text(reason).font(.caption2).foregroundStyle(.secondary)
+                                            .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
                                 Spacer()
                                 Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.connecting)
                             }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))

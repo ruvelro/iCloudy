@@ -391,7 +391,7 @@ final class MegaProviderTests: XCTestCase {
         serve { action, _ in action == "f" ? (200, Data("[-15]".utf8)) : nil }
         let api = client()
         var expired = false
-        api.sessionDidExpire = { expired = true }
+        api.sessionDidExpire = { _ in expired = true }
         do { _ = try await api.list(parent: "root"); XCTFail("Debe avisar de la sesión") }
         catch {
             guard case CloudError.sessionExpired = error else { return XCTFail("Otro error: \(error)") }

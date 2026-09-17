@@ -57,7 +57,7 @@ final class TokenTests: XCTestCase {
         }
         let api = client(store)
         var notifications = 0
-        api.sessionDidExpire = { notifications += 1 }
+        api.sessionDidExpire = { _ in notifications += 1 }
         do { _ = try await api.token(); XCTFail("Expected an expired session") }
         catch let error as CloudError {
             XCTAssertTrue(error.isSessionExpired)
@@ -106,7 +106,7 @@ final class TokenTests: XCTestCase {
         }
         let api = client(store)
         var notifications = 0
-        api.sessionDidExpire = { notifications += 1 }
+        api.sessionDidExpire = { _ in notifications += 1 }
         do { _ = try await api.json(URL(string: "https://www.googleapis.com/drive/v3/files")!); XCTFail("Expected an expired session") }
         catch let error as CloudError { XCTAssertTrue(error.isSessionExpired) }
         XCTAssertEqual(dataRequests, 2); XCTAssertEqual(refreshes, 1); XCTAssertEqual(notifications, 1)

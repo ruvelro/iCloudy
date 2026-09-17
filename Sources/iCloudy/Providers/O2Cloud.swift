@@ -131,16 +131,18 @@ extension CloudAPI {
         } catch let error as O2API.Failure where error.code == "SEC-1003" && retrying {
             // The key rotates while the session lives on, and the replacement comes inside the error itself.
             guard let fresh = error.data, !fresh.isEmpty else {
-                expireSession()
-                throw CloudError.sessionExpired(L("La sesión de O2 Cloud ha caducado (SEC-1003 en \(error.origin ?? "?")). Vuelve a iniciar sesión."))
+                let detail = L("SEC-1003 sin clave nueva, en \(error.origin ?? "?")")
+                expireSession(detail)
+                throw CloudError.sessionExpired(L("La sesión de O2 Cloud ha caducado (\(detail)). Vuelve a iniciar sesión."))
             }
             state.validationKey = fresh
             state.renewed = true
             o2Persist(state)
             return try await o2Call(path, action: action, query: query, body: body, method: method, retrying: false)
         } catch let error as O2API.Failure where error.isExpiredSession {
-            expireSession()
-            throw CloudError.sessionExpired(L("La sesión de O2 Cloud ha caducado (\(error.code) en \(error.origin ?? "?")). Vuelve a iniciar sesión."))
+            let detail = L("\(error.code) en \(error.origin ?? "?")")
+            expireSession(detail)
+            throw CloudError.sessionExpired(L("La sesión de O2 Cloud ha caducado (\(detail)). Vuelve a iniciar sesión."))
         }
     }
 

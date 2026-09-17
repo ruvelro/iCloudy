@@ -11,7 +11,10 @@ final class CloudAPI {
     private(set) var invalidated = false
     /// Set once the provider rejects the stored credential. Only reconnecting the account, which replaces this client, clears it.
     private(set) var sessionExpired = false
-    var sessionDidExpire: (() -> Void)?
+    /// Reports that the account needs signing in again, and why when the provider said something useful. The reason
+    /// is shown to the user: an undocumented provider that drops sessions is impossible to diagnose from a report
+    /// that only says "expired".
+    var sessionDidExpire: ((String?) -> Void)?
     /// Keychain reads are synchronous and comparatively slow; the credential is read once per client and kept current here.
     private var cachedCredential: Credential?
     /// Real id behind the "root" alias, needed where the providers reject the alias (parents, parentReference).
@@ -39,10 +42,10 @@ final class CloudAPI {
         self.demo = demo
         self.account = account; self.session = session; self.tokenProvider = tokenProvider; self.credentials = credentials
     }
-    func expireSession() {
+    func expireSession(_ reason: String? = nil) {
         guard !sessionExpired else { return }
         sessionExpired = true
-        sessionDidExpire?()
+        sessionDidExpire?(reason)
     }
 
     /// `force` renews even when the local clock still considers the token valid, e.g. after a 401.

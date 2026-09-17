@@ -31,7 +31,7 @@ extension CloudAPI {
         let state = try await megaSession()
         do { return try await MegaAPI.call(payload, sid: state.sid, sequence: state.next(), session: session) }
         catch {
-            if case CloudError.sessionExpired = error { expireSession() }
+            if case CloudError.sessionExpired(let reason) = error { expireSession(reason) }
             throw error
         }
     }

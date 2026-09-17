@@ -132,7 +132,7 @@ final class O2CloudTests: XCTestCase {
         }
         let (api, _) = clientAndStore()
         var expired = false
-        api.sessionDidExpire = { expired = true }
+        api.sessionDidExpire = { _ in expired = true }
         let quota = try await api.storageQuota()
         XCTAssertEqual(quota.used, 4)
         XCTAssertEqual(attempts, 2, "Se repite con la clave nueva en vez de rendirse")
@@ -412,13 +412,19 @@ final class O2CloudTests: XCTestCase {
         StubProtocol.handler = { _ in (200, [:], Data(#"{"error":{"code":"SEC-1003","message":"stale"}}"#.utf8)) }
         let api = client()
         var expired = false
-        api.sessionDidExpire = { expired = true }
+        var reason: String?
+        api.sessionDidExpire = { expired = true; reason = $0 }
         // Without a replacement key there is nothing to retry with: the only way back is signing in again.
         do { _ = try await api.storageQuota(); XCTFail("Debe pedir un acceso nuevo") }
         catch {
             guard case CloudError.sessionExpired = error else { return XCTFail("Otro error: \(error)") }
         }
         XCTAssertTrue(expired)
+        // The reason reaches the interface. A provider that drops sessions for its own reasons cannot be diagnosed
+        // from a report that only says the account expired.
+        let detail = try XCTUnwrap(reason)
+        XCTAssertTrue(detail.contains("SEC-1003"), detail)
+        XCTAssertTrue(detail.contains("media get-storage-space"), detail)
     }
 
     func testARotatedKeyIsPickedUpAndTheCallRetriedOnce() async throws {

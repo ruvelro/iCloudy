@@ -41,6 +41,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var storageQuotas: [String: StorageQuotaState] = [:]
     /// Accounts whose provider rejected the stored credential. Shown in the sidebar until the user reconnects.
     @Published private(set) var expiredAccountIDs: Set<String> = []
+    /// Why each of them ended, when the provider said anything worth repeating.
+    @Published private(set) var expiryReasons: [String: String] = [:]
     @Published var viewMode = UserDefaults.standard.string(forKey: "viewMode") ?? "list" { didSet { UserDefaults.standard.set(viewMode, forKey: "viewMode") } }
     @Published var sortMode = "name" { didSet { updateVisibleFiles() } }
     @Published var showNameDialog = false
@@ -257,11 +259,16 @@ final class AppModel: ObservableObject {
         if let client = clients[account.id] { return client }
         if account.isDemo && demo == nil { demo = try DemoStore() }
         let client = CloudAPI(account: account, demo: account.isDemo ? demo : nil)
-        client.sessionDidExpire = { [weak self] in self?.expiredAccountIDs.insert(account.id) }
+        client.sessionDidExpire = { [weak self] reason in
+            self?.expiredAccountIDs.insert(account.id)
+            if let reason { self?.expiryReasons[account.id] = reason }
+        }
         clients[account.id] = client
         return client
     }
     func isExpired(_ account: Account) -> Bool { expiredAccountIDs.contains(account.id) }
+    /// What the provider said when it dropped the session, if anything.
+    func expiryReason(_ account: Account) -> String? { expiryReasons[account.id] }
     /// Top-level views this account's provider can actually produce. Static because it depends only on the account,
     /// and because the header's layout rests on this never being empty, which is worth testing on its own.
     static func collections(for account: Account) -> [Collection] {
@@ -298,7 +305,7 @@ final class AppModel: ObservableObject {
             var updated = accounts.filter { $0.id != account.id }; updated.append(account)
             try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
             accounts = updated; clients[account.id]?.invalidate(); clients[account.id] = nil
-            expiredAccountIDs.remove(account.id)
+            expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
             select(account.id); showConnect = false
         } catch { connectionError = error.localizedDescription }
     }
@@ -340,7 +347,7 @@ final class AppModel: ObservableObject {
             var updated = accounts.filter { $0.id != account.id }; updated.append(account)
             try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
             accounts = updated; clients[account.id]?.invalidate(); clients[account.id] = nil
-            expiredAccountIDs.remove(account.id)
+            expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
             select(account.id); showConnect = false
         } catch { connectionError = error.localizedDescription }
     }
@@ -371,7 +378,7 @@ final class AppModel: ObservableObject {
             var updated = accounts.filter { $0.id != account.id }; updated.append(account)
             try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
             accounts = updated; clients[account.id]?.invalidate(); clients[account.id] = nil
-            expiredAccountIDs.remove(account.id)
+            expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
             serverLogin = nil
             select(account.id); showConnect = false
         } catch { connectionError = error.localizedDescription }
@@ -436,7 +443,7 @@ final class AppModel: ObservableObject {
             var updated = accounts.filter { $0.id != account.id }; updated.append(account)
             try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
             accounts = updated; clients[account.id]?.invalidate(); clients[account.id] = nil
-            expiredAccountIDs.remove(account.id)
+            expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
             select(account.id); showConnect = false
         } catch is CancellationError {} catch { connectionError = error.localizedDescription }
     }
@@ -456,7 +463,7 @@ final class AppModel: ObservableObject {
             quotaTasks.removeValue(forKey: account.id)?.cancel()
             quotaRequestIDs[account.id] = nil; storageQuotas[account.id] = nil
             clients[account.id]?.invalidate(); clients[account.id] = nil
-            expiredAccountIDs.remove(account.id)
+            expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
             listings.removeAll(accountID: account.id)
             mirrors.removeAll(accountID: account.id)
             spotlight.removeAccount(account.id)
