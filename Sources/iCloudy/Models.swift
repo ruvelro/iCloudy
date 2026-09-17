@@ -35,6 +35,11 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
     /// True when signing in happens on the provider's own pages, inside a window, because it cannot be reproduced
     /// from a form: O2 sends the person to Telefónica's sign-in, with a national identity number or a text message.
     var usesWebLogin: Bool { self == .o2 }
+    /// True when the provider ends a session that goes unused, rather than one that has simply lasted too long.
+    /// O2's server does this after about an hour, measured from its own behaviour: it survived 43 minutes of silence
+    /// and was gone after 80. Its web client never notices, because an open browser tab keeps asking; an app sitting
+    /// idle on someone's Mac does notice, and the account looked broken.
+    var needsKeepAlive: Bool { self == .o2 }
     /// True when the provider works through an API its owner neither documents nor promises to keep. The interface
     /// says so plainly instead of letting a sudden breakage look like a bug in iCloudy.
     var isExperimental: Bool { [.mega, .o2].contains(self) }

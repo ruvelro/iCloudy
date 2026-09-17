@@ -76,10 +76,14 @@ final class AppModel: ObservableObject {
     private var quotaFetched: [String: Date] = [:]
     private var favoriteKeys: Set<String> = []
     private var subscription: AnyCancellable?
+    private var keepAlive: Task<Void, Never>?
     private var editContext: (Account, String)?
     private let favoritesURL = LocalStore.directory.appendingPathComponent("favorites.json")
     /// Opening folders refreshes the quota at most this often; explicit requests and finished transfers always do.
     static let quotaRefreshInterval: TimeInterval = 300
+    /// How often a provider that drops idle sessions is touched. Well inside the hour O2's server allows, with room
+    /// for a missed round because the Mac was asleep.
+    static let keepAliveInterval: TimeInterval = 20 * 60
 
     var account: Account? { accounts.first { $0.id == selectedAccountID } }
     var folderID: String { path.last?.id ?? collection.rootID }
@@ -254,6 +258,7 @@ final class AppModel: ObservableObject {
             if account != nil { reload() }
             for account in accounts where account.id != selectedAccountID { refreshStorage(account) }
             repairKeychainAccessOnce()
+            startKeepAlive()
         }
     }
     /// Entries written by earlier builds keep the access list they were born with, which is why macOS asks for the
@@ -487,6 +492,23 @@ final class AppModel: ObservableObject {
             if selectedAccountID == account.id { select(accounts.first?.id) }
         } catch { self.error = error.localizedDescription }
     }
+    /// Keeps sessions alive for the providers that end them out of boredom. The cheapest call that proves the
+    /// session still works is the one that reads how much space is left, and it has the side benefit of keeping that
+    /// number current.
+    private func startKeepAlive() {
+        keepAlive?.cancel()
+        guard accounts.contains(where: { $0.cloud.needsKeepAlive }) else { return }
+        keepAlive = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(Self.keepAliveInterval * 1_000_000_000))
+                guard let self, !Task.isCancelled else { return }
+                for account in accounts where account.cloud.needsKeepAlive && !isExpired(account) {
+                    refreshStorage(account, force: true)
+                }
+            }
+        }
+    }
+
     func refreshStorage(_ account: Account, force: Bool = false) {
         guard accounts.contains(where: { $0.id == account.id }) else { return }
         // Asking a provider that has no quota command would only produce a pointless error every time.

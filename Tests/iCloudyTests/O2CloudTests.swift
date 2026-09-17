@@ -95,6 +95,32 @@ final class O2CloudTests: XCTestCase {
         XCTAssertEqual(sent, ["JSESSIONID=abc", "JSESSIONID=abc"], "La sesión buena se conserva")
     }
 
+    func testARefusalDoesNotReplaceTheSessionWithAnAnonymousOne() async throws {
+        // Measured from the real server: it answers a dead session with 401 and a fresh JSESSIONID of its own.
+        // Storing that would swap a stale session for one that was never signed in, and hide why it failed.
+        var sent: [String?] = []
+        StubProtocol.handler = { request in
+            sent.append(request.value(forHTTPHeaderField: "Cookie"))
+            return (401, ["Set-Cookie": "JSESSIONID=anonima; Path=/"], Data())
+        }
+        let (api, store) = clientAndStore()
+        _ = try? await api.storageQuota()
+        _ = try? await api.storageQuota()
+        XCTAssertEqual(sent, ["JSESSIONID=abc", "JSESSIONID=abc"], "Se sigue presentando la sesión propia")
+        let saved = try XCTUnwrap(O2API.restore(try XCTUnwrap(store.stored["o2:cloud.o2online.es:ana@ejemplo.com"]).secret))
+        XCTAssertEqual(saved.cookies.first { $0.name == "JSESSIONID" }?.value, "abc", "Y no se guarda la del servidor")
+    }
+
+    func testOnlyTheProvidersThatDropIdleSessionsAreKeptAlive() {
+        XCTAssertTrue(Cloud.o2.needsKeepAlive, "Su servidor cierra la sesión sobre la hora de silencio")
+        for cloud in Cloud.allCases where cloud != .o2 {
+            XCTAssertFalse(cloud.needsKeepAlive, "\(cloud) no necesita que se le hable sin motivo")
+        }
+        // Three touches per hour against a limit measured at more than 43 minutes and less than 80.
+        XCTAssertLessThan(AppModel.keepAliveInterval, 40 * 60, "Con margen para una ronda perdida por un Mac dormido")
+        XCTAssertGreaterThan(AppModel.keepAliveInterval, 5 * 60, "Sin machacar un servidor ajeno")
+    }
+
     func testARenewedKeyArrivesInACookieAndIsKept() async throws {
         // This is how the platform renews a session, and ignoring it is what made accounts expire after a few
         // minutes of ordinary use. Its own client reads the cookie for exactly this reason.

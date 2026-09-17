@@ -89,7 +89,9 @@ enum O2API {
         var arrived: [HTTPCookie] = []
         if let fields = http.allHeaderFields as? [String: String], let address = request.url {
             arrived = HTTPCookie.cookies(withResponseHeaderFields: fields, for: address)
-            state.absorb(arrived)
+            // A refusal comes with a brand-new anonymous session. Keeping it would replace a session that is merely
+            // stale with one that was never signed in, and bury the reason.
+            if http.statusCode != 401, http.statusCode != 403 { state.absorb(arrived) }
         }
         // Only the shape of the exchange, never its contents. See O2Log for what is and is not written.
         O2Log.record(O2Log.describe(path: path, action: action, status: http.statusCode,
