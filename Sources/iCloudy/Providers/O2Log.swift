@@ -11,22 +11,29 @@ import Foundation
 enum O2Log {
     static var url: URL { LocalStore.directory.appendingPathComponent("o2-diagnostico.txt") }
     /// Roughly a session's worth of calls. Older lines are dropped, newest kept.
-    private static let keep = 400
+    static let keep = 400
+    /// True while the test suite runs. The suite is not sandboxed, so without this the file would pile up in the
+    /// real Application Support folder of whoever ran it. A diagnostic has no business leaving residue there.
+    private static var underTest: Bool { NSClassFromString("XCTestCase") != nil }
 
     static func record(_ line: String) {
-        let stamp = ISO8601DateFormatter().string(from: Date())
-        let entry = "\(stamp) \(line)\n"
+        guard !underTest else { return }
+        let entry = "\(ISO8601DateFormatter().string(from: Date())) \(line)\n"
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
                                                     attributes: [.posixPermissions: 0o700])
             let previous = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-            var lines = (previous + entry).split(separator: "\n", omittingEmptySubsequences: false)
-            if lines.count > keep { lines = Array(lines.suffix(keep)) }
-            try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+            try capped(previous + entry).write(to: url, atomically: true, encoding: .utf8)
             try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         } catch {
             // A diagnostic that breaks the thing it is diagnosing would be worse than no diagnostic.
         }
+    }
+    /// Keeps only the most recent lines, so the file cannot grow without bound.
+    static func capped(_ text: String) -> String {
+        var lines = text.split(separator: "\n", omittingEmptySubsequences: true)
+        if lines.count > keep { lines = Array(lines.suffix(keep)) }
+        return lines.joined(separator: "\n")
     }
     /// Describes a response without repeating anything private.
     static func describe(path: String, action: String, status: Int, error: String?, keyChanged: Bool,

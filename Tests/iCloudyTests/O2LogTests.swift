@@ -24,17 +24,23 @@ final class O2LogTests: XCTestCase {
         XCTAssertTrue(line.contains("ninguna"))
     }
 
+    func testTheRecordWritesNothingWhileTheTestsRun() {
+        // The suite is not sandboxed, so without this the diagnostic would pile up in the real Application Support
+        // folder of whoever ran it. It did, until this was noticed.
+        try? FileManager.default.removeItem(at: O2Log.url)
+        O2Log.record("no debería aparecer")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: O2Log.url.path),
+                       "Las pruebas no dejan rastro en la carpeta de datos de nadie")
+    }
+
     func testTheFileStopsGrowingInsteadOfFillingTheDisk() throws {
+        // Exercises the capping directly, since recording is off while the suite runs.
         try? FileManager.default.removeItem(at: O2Log.url)
         defer { try? FileManager.default.removeItem(at: O2Log.url) }
-        for index in 0..<450 { O2Log.record("linea \(index)") }
-        let written = try String(contentsOf: O2Log.url, encoding: .utf8)
+        let written = O2Log.capped((0..<450).map { "linea \($0)" }.joined(separator: "\n"))
         let lines = written.split(separator: "\n", omittingEmptySubsequences: true)
-        XCTAssertLessThanOrEqual(lines.count, 400)
+        XCTAssertEqual(lines.count, 400)
         XCTAssertTrue(written.contains("linea 449"), "Se conserva lo último, que es lo que interesa")
-        XCTAssertFalse(written.contains("linea 0 "), "Y se tira lo más viejo")
-
-        let attributes = try FileManager.default.attributesOfItem(atPath: O2Log.url.path)
-        XCTAssertEqual(attributes[.posixPermissions] as? NSNumber, 0o600, "Solo lo lee su dueño")
+        XCTAssertFalse(written.contains("linea 0\n"), "Y se tira lo más viejo")
     }
 }
