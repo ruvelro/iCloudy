@@ -133,7 +133,7 @@ final class OAuth {
         case .microsoft: return "https://graph.microsoft.com/v1.0/me?$select=id,displayName,mail,userPrincipalName"
         case .dropbox: return "https://api.dropboxapi.com/2/users/get_current_account"
         case .box: return "https://api.box.com/2.0/users/me"
-        case .webdav, .ftp: return ""
+        case .webdav, .ftp, .volume: return ""
         }
     }
 

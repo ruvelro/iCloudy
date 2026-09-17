@@ -657,7 +657,11 @@ struct ConnectView: View {
                 VStack(spacing: 10) {
                     providerButton(.webdav, title: "Conectar WebDAV", subtitle: "Nextcloud, ownCloud, Synology y otros NAS", icon: "server.rack")
                     providerButton(.ftp, title: "Conectar FTP", subtitle: "FTP y FTPS implícito, con usuario y contraseña", icon: "arrow.up.arrow.down.square")
+                    providerButton(.volume, title: "Conectar un volumen o carpeta", subtitle: "SMB, AFP, NFS, discos externos y carpetas del Mac", icon: "externaldrive.connected.to.line.below")
                 }.disabled(model.connecting)
+                Button("Conectar a un servidor en el Finder…") { model.openFinderConnect() }
+                    .buttonStyle(.link).font(.caption)
+                    .help("Monta el recurso de red y vuelve aquí para elegir su carpeta")
                 Button("Probar demo local sin iniciar sesión") { model.enableDemo() }.disabled(model.connecting)
                 if let error = model.connectionError, model.serverLogin == nil {
                     Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
@@ -678,7 +682,8 @@ struct ConnectView: View {
     private func providerButton(_ cloud: Cloud, title: String, subtitle: String, icon: String) -> some View {
         Button {
             // A self-hosted provider needs an address and credentials before anything can be attempted.
-            if cloud.isSelfHosted { model.connectionError = nil; model.serverLogin = cloud }
+            if cloud == .volume { Task { await model.connectVolume() } }
+            else if cloud.usesPasswordLogin { model.connectionError = nil; model.serverLogin = cloud }
             else { Task { await model.connect(cloud: cloud) } }
         } label: {
             HStack(spacing: 14) {
@@ -702,6 +707,7 @@ struct ConnectView: View {
         case .box: return .cyan
         case .webdav: return .gray
         case .ftp: return .orange
+        case .volume: return .brown
         }
     }
 }

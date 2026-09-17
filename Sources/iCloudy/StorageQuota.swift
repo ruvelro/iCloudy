@@ -78,6 +78,7 @@ extension CloudAPI {
         case .box: return try await boxQuota()
         case .webdav: return try await webdavQuota()
         case .ftp: throw CloudError.message(L("FTP no informa del espacio disponible."))
+        case .volume: return try await volumeQuota()
         }
         return try StorageQuota.parse(await json(URL(string: endpoint)!), cloud: account.cloud)
     }

@@ -510,3 +510,20 @@
 "%@ no usa OAuth: introduce la dirección del servidor y tus credenciales." = "%@ does not use OAuth: enter the server address and your credentials.";
 "%@ no se conecta con usuario y contraseña." = "%@ does not connect with a user name and password.";
 "%@ no permite copiar desde iCloudy." = "%@ does not allow copying from iCloudy.";
+
+/* Mounted volumes. */
+"Volumen" = "Volume";
+"Conectar un volumen o carpeta" = "Connect a volume or folder";
+"SMB, AFP, NFS, discos externos y carpetas del Mac" = "SMB, AFP, NFS, external disks and folders on the Mac";
+"Conectar a un servidor en el Finder…" = "Connect to a server in the Finder…";
+"Monta el recurso de red y vuelve aquí para elegir su carpeta" = "Mount the network share and come back to pick its folder";
+"Elige la carpeta o el volumen que quieres usar como nube. Para un recurso de red, conéctalo antes en el Finder con ⌘K." = "Choose the folder or volume you want to use as a cloud. For a network share, connect it first in the Finder with ⌘K.";
+"Esta cuenta de volumen no tiene una carpeta válida. Vuelve a conectarla." = "This volume account has no valid folder. Connect it again.";
+"Ese elemento está fuera de la carpeta conectada." = "That item is outside the connected folder.";
+"El volumen no está montado. Conéctalo en el Finder y vuelve a intentarlo." = "The volume is not mounted. Connect it in the Finder and try again.";
+"Ya existe un elemento con ese nombre en el destino." = "An item with that name already exists at the destination.";
+"Este volumen no admite papelera. Elimina el elemento desde el Finder si quieres borrarlo definitivamente." = "This volume has no Trash. Delete the item from the Finder if you want to remove it for good.";
+"El sistema no informa del espacio de este volumen." = "The system does not report this volume's storage.";
+"No se pudo crear el archivo de destino." = "The destination file could not be created.";
+"Un volumen no tiene enlaces públicos. Compártelo desde el Finder." = "A volume has no public links. Share it from the Finder.";
+"Este proveedor no usa peticiones HTTP." = "This provider does not use HTTP requests.";

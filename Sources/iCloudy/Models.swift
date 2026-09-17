@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 enum Cloud: String, Codable, CaseIterable, Identifiable {
-    case google, microsoft, dropbox, box, webdav, ftp
+    case google, microsoft, dropbox, box, webdav, ftp, volume
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -12,6 +12,7 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
         case .box: return L("Box")
         case .webdav: return L("WebDAV")
         case .ftp: return L("FTP")
+        case .volume: return L("Volumen")
         }
     }
     var tokenURL: String {
@@ -20,17 +21,19 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
         case .microsoft: return "https://login.microsoftonline.com/common/oauth2/v2.0/token"
         case .dropbox: return "https://api.dropboxapi.com/oauth2/token"
         case .box: return "https://api.box.com/oauth2/token"
-        case .webdav, .ftp: return "" // password-based; there is no token endpoint
+        case .webdav, .ftp, .volume: return "" // no token endpoint: password or file-system access
         }
     }
     /// HTTP authorization scheme for the value stored in `Credential.accessToken`.
     var authorizationScheme: String { [.webdav, .ftp].contains(self) ? "Basic" : "Bearer" }
     /// True when the user brings their own server and credentials instead of signing in at a provider.
-    var isSelfHosted: Bool { [.webdav, .ftp].contains(self) }
+    var isSelfHosted: Bool { [.webdav, .ftp, .volume].contains(self) }
+    /// True when connecting means typing a server address and credentials, rather than picking a folder or a browser sign-in.
+    var usesPasswordLogin: Bool { [.webdav, .ftp].contains(self) }
     /// Identifier the provider gives to the top of the tree, behind iCloudy's own "root" alias.
     var rootAlias: String {
         switch self {
-        case .google, .microsoft, .webdav, .ftp: return "root"
+        case .google, .microsoft, .webdav, .ftp, .volume: return "root"
         case .dropbox: return "" // Dropbox addresses the root as an empty path
         case .box: return "0"
         }
@@ -74,6 +77,10 @@ struct CloudCapabilities {
             return CloudCapabilities(oauth: false, search: false, recents: false, sharedWithMe: false,
                                      publicLinks: false, copy: false, quota: false,
                                      reversibleTrash: false, checksum: false)
+        case .volume:
+            // The file system gives search, free space and a real Trash; only sharing links are missing.
+            return CloudCapabilities(oauth: false, recents: false, sharedWithMe: false,
+                                     publicLinks: false, checksum: false)
         }
     }
 }
@@ -85,8 +92,10 @@ struct Account: Codable, Identifiable, Hashable {
     let email: String
     let clientID: String
     let clientSecret: String?
-    /// Base URL of the WebDAV server, including any path prefix. Unused by the OAuth providers.
+    /// Base URL of the WebDAV or FTP server, or the folder path of a volume. Unused by the OAuth providers.
     var serverURL: String?
+    /// Security-scoped bookmark to that folder, for volume accounts under the sandbox.
+    var bookmark: Data?
     var isDemo: Bool { id.hasPrefix("demo:") }
     var capabilities: CloudCapabilities { isDemo ? CloudCapabilities(oauth: false, publicLinks: true) : cloud.capabilities }
     static let demo = Account(id: "demo:local", cloud: .google, name: "Demo local", email: "Sin conexión · datos de prueba", clientID: "", clientSecret: nil)
@@ -345,7 +354,7 @@ enum FileNames {
 // defaults, so adding a property never invalidates an existing file. Renaming or removing one still needs a migration.
 
 extension Account {
-    enum CodingKeys: String, CodingKey { case id, cloud, name, email, clientID, clientSecret, serverURL }
+    enum CodingKeys: String, CodingKey { case id, cloud, name, email, clientID, clientSecret, serverURL, bookmark }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let email = try values.decodeIfPresent(String.self, forKey: .email) ?? ""
@@ -355,7 +364,8 @@ extension Account {
                   email: email,
                   clientID: try values.decodeIfPresent(String.self, forKey: .clientID) ?? "",
                   clientSecret: try values.decodeIfPresent(String.self, forKey: .clientSecret),
-                  serverURL: try values.decodeIfPresent(String.self, forKey: .serverURL))
+                  serverURL: try values.decodeIfPresent(String.self, forKey: .serverURL),
+                  bookmark: try values.decodeIfPresent(Data.self, forKey: .bookmark))
     }
 }
 

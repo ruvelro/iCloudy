@@ -269,6 +269,40 @@ final class AppModel: ObservableObject {
             }
         }
     }
+    /// Connects a folder of this Mac or of a mounted volume. macOS does the SMB, AFP or NFS work; iCloudy only needs
+    /// the user to point at the folder once, which is also what grants access under the sandbox.
+    func connectVolume() async {
+        guard !connecting else { return }
+        connectionError = nil
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true; panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false; panel.canCreateDirectories = false
+        panel.prompt = L("Conectar")
+        panel.message = L("Elige la carpeta o el volumen que quieres usar como nube. Para un recurso de red, conéctalo antes en el Finder con ⌘K.")
+        guard await panel.begin() == .OK, let folder = panel.url else { return }
+        connecting = true
+        defer { connecting = false }
+        do {
+            let standardized = folder.standardizedFileURL
+            let values = try? standardized.resourceValues(forKeys: [.volumeNameKey, .volumeIsRemovableKey])
+            let account = Account(id: "volume:" + standardized.path, cloud: .volume,
+                                  name: standardized.lastPathComponent,
+                                  email: values?.volumeName.map { $0 + " · " + standardized.path } ?? standardized.path,
+                                  clientID: "", clientSecret: nil, serverURL: standardized.path,
+                                  bookmark: try TransferQueue.bookmark(folder))
+            var updated = accounts.filter { $0.id != account.id }; updated.append(account)
+            try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
+            accounts = updated; clients[account.id]?.invalidate(); clients[account.id] = nil
+            expiredAccountIDs.remove(account.id)
+            select(account.id); showConnect = false
+        } catch { connectionError = error.localizedDescription }
+    }
+    /// Opens the Finder's own "Connect to Server" flow. Mounting is not something a sandboxed app may do itself.
+    func openFinderConnect() {
+        guard let url = URL(string: "smb://") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
     /// Connects a server the user hosts: WebDAV or FTP. The password goes straight to the Keychain and never leaves
     /// this Mac except to that server.
     func connectServer(cloud: Cloud, server: String, username: String, password: String) async {
@@ -316,6 +350,7 @@ final class AppModel: ObservableObject {
         case .box: return .teal
         case .webdav: return .gray
         case .ftp: return .orange
+        case .volume: return .gray
         }
     }
     func accountTitle(_ account: Account) -> String { appearance(for: account).title(for: account) }

@@ -86,6 +86,7 @@ struct AccountIcon: View {
         case .box: return "square.stack.3d.up.fill"
         case .webdav: return "server.rack"
         case .ftp: return "arrow.up.arrow.down.square.fill"
+        case .volume: return "externaldrive.connected.to.line.below.fill"
         }
     }
     var body: some View {

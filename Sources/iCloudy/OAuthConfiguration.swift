@@ -45,7 +45,7 @@ struct OAuthConfiguration: Codable {
         case .microsoft: raw = microsoftClientID; secret = ""
         case .dropbox: raw = dropboxAppKey; secret = ""
         case .box: raw = boxClientID; secret = boxClientSecret
-        case .webdav, .ftp: raw = ""; secret = ""
+        case .webdav, .ftp, .volume: raw = ""; secret = ""
         }
         let id = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let valid: Bool
@@ -55,7 +55,7 @@ struct OAuthConfiguration: Codable {
         // Dropbox app keys and Box client ids are opaque alphanumeric strings.
         case .dropbox: valid = id.count >= 10 && id.allSatisfy { $0.isLetter || $0.isNumber }
         case .box: valid = id.count >= 20 && id.allSatisfy { $0.isLetter || $0.isNumber }
-        case .webdav, .ftp: valid = false
+        case .webdav, .ftp, .volume: valid = false
         }
         guard valid else {
             throw CloudError.message(L("La conexión con \(cloud.title) todavía no está habilitada en esta versión de iCloudy. No necesitas configurar nada en tu cuenta."))
@@ -76,7 +76,7 @@ enum OAuthRequest {
         case .microsoft: return "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
         case .dropbox: return "https://www.dropbox.com/oauth2/authorize"
         case .box: return "https://account.box.com/api/oauth2/authorize"
-        case .webdav, .ftp: return ""
+        case .webdav, .ftp, .volume: return ""
         }
     }
     static func authorizationURL(cloud: Cloud, clientID: String, state: String, challenge: String, port: UInt16 = defaultPort) -> URL {

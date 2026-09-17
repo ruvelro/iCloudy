@@ -162,6 +162,7 @@ extension CloudAPI {
         case .box: return try await boxSearch(term: term, cursor: cursor)
         case .webdav: throw CloudError.message(L("WebDAV no ofrece búsqueda. Navega por las carpetas o usa el filtro de la carpeta actual."))
         case .ftp: throw CloudError.message(L("FTP no ofrece búsqueda. Navega por las carpetas o usa el filtro de la carpeta actual."))
+        case .volume: return try await volumeSearch(term: term)
         case .google, .microsoft: break
         }
         if account.cloud == .google {
@@ -201,6 +202,7 @@ extension CloudAPI {
         case .dropbox: return dropboxTrail(id: id)
         case .webdav: return webdavTrail(id: id)
         case .ftp: return try ftpTrail(id: id)
+        case .volume: return try volumeTrail(id: id)
         case .box: return try await boxTrail(id: id)
         case .google, .microsoft: break
         }

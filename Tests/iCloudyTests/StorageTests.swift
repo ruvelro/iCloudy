@@ -56,6 +56,18 @@ final class StorageTests: XCTestCase {
     @MainActor func testQuotaRequestsAreAuthenticatedAndReadOnly() async throws {
         defer { StubProtocol.handler = nil }
         for cloud in Cloud.allCases {
+            // A volume reports free space from the file system, without any request to authenticate.
+            if cloud == .volume {
+                StubProtocol.handler = { _ in XCTFail("Un volumen no consulta la cuota por HTTP"); return (500, [:], Data()) }
+                let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                defer { try? FileManager.default.removeItem(at: folder) }
+                let api = CloudAPI(account: Account(id: "volumen", cloud: .volume, name: "V", email: "v", clientID: "", clientSecret: nil,
+                                                    serverURL: folder.standardizedFileURL.path))
+                let quota = try await api.storageQuota()
+                XCTAssertGreaterThan(quota.total ?? 0, 0)
+                continue
+            }
             // A provider with no quota command is expected to say so instead of inventing a number.
             guard cloud.capabilities.quota else {
                 let api = CloudAPI(account: Account(id: "sin-cuota", cloud: cloud, name: "T", email: "t@example.com", clientID: "", clientSecret: nil, serverURL: "ftp://127.0.0.1/"),
@@ -101,8 +113,8 @@ final class StorageTests: XCTestCase {
                     XCTAssertEqual(url.host, "api.box.com")
                     XCTAssertEqual(url.path, "/2.0/users/me")
                     return (200, [:], Data(#"{"space_used":40,"space_amount":100}"#.utf8))
-                case .ftp:
-                    XCTFail("FTP no llega hasta aquí"); return (500, [:], Data())
+                case .ftp, .volume:
+                    XCTFail("\(cloud) no llega hasta aquí"); return (500, [:], Data())
                 case .webdav:
                     XCTAssertEqual(request.httpMethod, "PROPFIND")
                     XCTAssertEqual(request.value(forHTTPHeaderField: "Depth"), "0")

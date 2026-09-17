@@ -20,6 +20,7 @@ extension CloudAPI {
             _ = try await json(URL(string: "https://graph.microsoft.com/v1.0/me/drive/items/" + Self.segment(file.id))!, method: "PATCH", body: ["name": name])
         case .dropbox: try await dropboxRename(file: file, name: name)
         case .ftp: try await ftpRename(file: file, name: name)
+        case .volume: try await volumeRename(file: file, name: name)
         case .box: _ = try await boxUpdate(file, body: ["name": name])
         case .webdav: try await webdavRename(file: file, name: name)
         }
@@ -42,6 +43,7 @@ extension CloudAPI {
         switch account.cloud {
         case .dropbox: try await dropboxMove(file: file, to: destination); return
         case .ftp: try await ftpMove(file: file, to: destination); return
+        case .volume: try await volumeMove(file: file, to: destination); return
         case .webdav: try await webdavMove(file: file, to: destination); return
         case .box: _ = try await boxUpdate(file, body: ["parent": ["id": boxID(destination)]]); return
         case .google, .microsoft: break
@@ -65,6 +67,7 @@ extension CloudAPI {
         switch account.cloud {
         case .dropbox: try await dropboxCopy(file: file, to: destination); return
         case .ftp: throw CloudError.message(L("FTP no puede copiar en el servidor. Descarga el archivo y vuelve a subirlo."))
+        case .volume: try await volumeCopy(file: file, to: destination); return
         case .webdav: try await webdavCopy(file: file, to: destination); return
         case .box: try await boxCopy(file: file, to: destination); return
         case .google, .microsoft: break
@@ -88,6 +91,7 @@ extension CloudAPI {
         case .box: try await boxTrash(file: file); return
         case .webdav: try await webdavDelete(file: file); return
         case .ftp: try await ftpDelete(file: file); return
+        case .volume: try await volumeTrash(file: file); return
         case .google, .microsoft: break
         }
         if account.cloud == .google {
@@ -109,6 +113,7 @@ extension CloudAPI {
         case .box: return try await boxPublicLink(for: file)
         case .webdav: throw CloudError.message(L("Este servidor WebDAV no admite enlaces públicos desde iCloudy. Créalos en su interfaz web."))
         case .ftp: throw CloudError.message(L("FTP no tiene enlaces públicos."))
+        case .volume: throw CloudError.message(L("Un volumen no tiene enlaces públicos. Compártelo desde el Finder."))
         case .google, .microsoft: break
         }
         if account.cloud == .google {
@@ -147,6 +152,8 @@ extension CloudAPI {
             return try await webdavUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
         case .ftp:
             return try await ftpUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+        case .volume:
+            return try await volumeUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
         }
     }
 

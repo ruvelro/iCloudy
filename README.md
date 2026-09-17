@@ -1,6 +1,6 @@
 # iCloudy — MVP para macOS
 
-Explorador nativo de Google Drive, OneDrive, Dropbox, Box, WebDAV (Nextcloud, ownCloud, Synology y otros NAS) y FTP/FTPS, escrito con SwiftUI, para macOS 14 o superior. Conexión directa desde el Mac a los proveedores; no requiere un backend propio ni instala componentes de sincronización.
+Explorador nativo de Google Drive, OneDrive, Dropbox, Box, WebDAV (Nextcloud, ownCloud, Synology y otros NAS), FTP/FTPS y volúmenes montados (SMB, AFP, NFS, discos externos), escrito con SwiftUI, para macOS 14 o superior. Conexión directa desde el Mac a los proveedores; no requiere un backend propio ni instala componentes de sincronización.
 
 ## Ejecutar
 
@@ -17,6 +17,7 @@ También puedes abrir `Package.swift` en Xcode o ejecutar `swift run iCloudy` pa
 ## Funciones
 
 - Varias cuentas de Google, Microsoft, Dropbox, Box, WebDAV y FTP, con selección independiente en la barra lateral. Cada proveedor declara lo que admite y la interfaz oculta o explica lo que falta: WebDAV no tiene búsqueda, enlaces públicos ni papelera, y Dropbox y Box no tienen «Recientes» ni «Compartido conmigo» en esta versión.
+- Volúmenes y carpetas como proveedor: SMB, AFP, NFS, discos externos y cualquier carpeta del Mac. iCloudy no implementa SMB, lo monta macOS: conectas el recurso en el Finder, eliges la carpeta una vez y se guarda un marcador de seguridad. Es el proveedor con mejores capacidades, porque vienen del sistema de archivos: papelera reversible de verdad con `trashItem`, espacio libre real del volumen y búsqueda recursiva inmediata. Los identificadores se validan contra la carpeta conectada, así que ningún elemento puede salir de ella, y los enlaces simbólicos se listan pero nunca se recorren como carpetas. Si el volumen se desmonta, la cuenta lo dice en lugar de fallar de forma oscura.
 - La hoja de conexión separa los servicios con OAuth de los servidores propios. WebDAV y FTP tienen su propia sección y su propio formulario de dirección, usuario y contraseña, con un selector de FTP sin cifrar o FTPS implícito.
 - FTP y FTPS implícito en modo pasivo, con `MLSD` cuando el servidor lo anuncia y análisis de `LIST` en formato Unix y DOS cuando no. Sin búsqueda, enlaces públicos, papelera, cuota ni sumas de verificación, porque el protocolo no los tiene; borrar es definitivo y el diálogo lo advierte. El FTPS explícito y SFTP quedan fuera por ahora: los motivos y lo que costaría añadirlos están en [FTP](docs/FTP.md).
 - Los proveedores se conectan con OAuth y PKCE salvo WebDAV y FTP, que piden dirección del servidor, usuario y contraseña (o contraseña de aplicación) y los guarda en el Llavero. Dropbox usa rutas como identificador, Box ids numéricos y WebDAV rutas del servidor; las migas de pan de esos tres se resuelven sin peticiones adicionales o con una sola.
