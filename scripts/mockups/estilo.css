@@ -1,0 +1,76 @@
+/* Estilo compartido por las maquetas del README. Reproduce la interfaz real de iCloudy con datos inventados:
+   ninguna captura del README sale de una cuenta de verdad. */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  width: 1200px; height: 780px; overflow: hidden;
+  font: 13px/1.4 -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+  background: radial-gradient(120% 120% at 20% 0%, #2f3446 0%, #16181f 55%, #0d0e13 100%);
+  display: flex; align-items: center; justify-content: center;
+  -webkit-font-smoothing: antialiased;
+}
+.ventana {
+  width: 1136px; height: 716px; border-radius: 12px; overflow: hidden; display: flex; flex-direction: column;
+  background: #1f2027; color: #e9eaee;
+  box-shadow: 0 30px 70px rgba(0,0,0,.55), 0 0 0 .5px rgba(255,255,255,.09);
+}
+.barra { height: 46px; flex: none; display: flex; align-items: center; padding: 0 16px; gap: 8px;
+  background: #24262e; border-bottom: .5px solid rgba(255,255,255,.07); }
+.semaforo { width: 12px; height: 12px; border-radius: 50%; }
+.rojo { background: #ff5f57 } .ambar { background: #febc2e } .verde { background: #28c840 }
+.barra .titulo { margin-left: 10px; font-size: 13px; font-weight: 600; color: #9aa0ad; }
+.herramientas { margin-left: auto; display: flex; gap: 14px; color: #8b91a0; }
+.herramientas svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round; }
+.cuerpo { flex: 1; display: flex; min-height: 0; }
+
+/* Barra lateral */
+.lateral { width: 286px; flex: none; background: #1a1b21; border-right: .5px solid rgba(255,255,255,.07);
+  display: flex; flex-direction: column; padding: 14px 0 0; }
+.marca { display: flex; align-items: center; justify-content: center; gap: 8px; padding-bottom: 14px;
+  font-size: 17px; font-weight: 600; letter-spacing: -.2px; color: #f2f3f6; }
+.marca svg { width: 22px; height: 22px; fill: #7aa7ff; }
+.buscador { margin: 0 14px 12px; display: flex; align-items: center; gap: 7px; color: #7d8492; font-size: 12.5px; }
+.buscador svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+.cuentas { flex: 1; overflow: hidden; padding: 0 10px; display: flex; flex-direction: column; gap: 2px; }
+.cuenta { display: flex; gap: 10px; padding: 8px 8px; border-radius: 8px; align-items: flex-start; }
+.cuenta.activa { background: rgba(122,167,255,.13); box-shadow: inset 2px 0 0 #6f9dff; }
+.chapa { width: 26px; height: 26px; border-radius: 50%; flex: none; display: flex; align-items: center;
+  justify-content: center; font-size: 11px; font-weight: 700; color: #fff; }
+.cuenta .texto { min-width: 0; flex: 1; }
+.cuenta .nombre { font-size: 12.5px; font-weight: 600; }
+.cuenta .correo { font-size: 11px; color: #757c8a; margin-top: 1px; }
+.medida { margin-top: 6px; display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: #757c8a; }
+.carril { flex: 1; height: 3px; border-radius: 2px; background: rgba(255,255,255,.1); overflow: hidden; }
+.carril i { display: block; height: 100%; border-radius: 2px; }
+.pie-lateral { border-top: .5px solid rgba(255,255,255,.07); padding: 10px 18px; display: flex;
+  flex-direction: column; gap: 9px; font-size: 12px; color: #8b91a0; }
+.pie-lateral .fila { display: flex; align-items: center; gap: 8px; }
+.pie-lateral svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.7; }
+.nota { font-size: 10.5px; color: #5f6673; }
+
+/* Zona principal */
+.principal { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.cabecera { padding: 18px 22px 0; }
+.cabecera h1 { font-size: 24px; font-weight: 700; letter-spacing: -.4px; }
+.cabecera .sub { font-size: 12px; color: #757c8a; margin-top: 2px; }
+.controles { display: flex; align-items: center; gap: 10px; padding: 14px 22px 12px; }
+.miga { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #c3c8d2; }
+.chip { padding: 3px 9px; border-radius: 6px; background: rgba(255,255,255,.07); }
+.campo { margin-left: auto; width: 210px; padding: 5px 10px; border-radius: 6px; font-size: 12px;
+  color: #6e7583; background: rgba(255,255,255,.055); border: .5px solid rgba(255,255,255,.08); }
+.orden { padding: 5px 10px; border-radius: 6px; font-size: 12px; color: #c3c8d2;
+  background: rgba(255,255,255,.055); border: .5px solid rgba(255,255,255,.08); }
+table { width: 100%; border-collapse: collapse; }
+thead th { text-align: left; font-size: 11px; font-weight: 600; color: #757c8a; padding: 7px 10px;
+  border-top: .5px solid rgba(255,255,255,.07); border-bottom: .5px solid rgba(255,255,255,.07); }
+.lista { padding: 0 12px; flex: 1; overflow: hidden; }
+tbody td { padding: 7px 10px; font-size: 12.5px; border-bottom: .5px solid rgba(255,255,255,.035); }
+tbody tr.sel td { background: rgba(122,167,255,.14); }
+tbody tr.sel td:first-child { border-radius: 6px 0 0 6px } tbody tr.sel td:last-child { border-radius: 0 6px 6px 0 }
+.nom { display: flex; align-items: center; gap: 9px; }
+.estado { width: 13px; height: 13px; flex: none; }
+.num { color: #8b91a0; white-space: nowrap; }
+.pie { height: 34px; flex: none; display: flex; align-items: center; padding: 0 22px; gap: 10px;
+  font-size: 11.5px; color: #757c8a; border-top: .5px solid rgba(255,255,255,.07); background: #1c1d23; }
+.pie .der { margin-left: auto; }
+.verdecito { color: #43c463; }
