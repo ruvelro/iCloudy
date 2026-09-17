@@ -262,8 +262,9 @@ final class AppModel: ObservableObject {
         return client
     }
     func isExpired(_ account: Account) -> Bool { expiredAccountIDs.contains(account.id) }
-    /// Top-level views this account's provider can actually produce.
-    func collections(for account: Account) -> [Collection] {
+    /// Top-level views this account's provider can actually produce. Static because it depends only on the account,
+    /// and because the header's layout rests on this never being empty, which is worth testing on its own.
+    static func collections(for account: Account) -> [Collection] {
         let capabilities = account.capabilities
         return Collection.allCases.filter {
             switch $0 {
@@ -494,7 +495,7 @@ final class AppModel: ObservableObject {
     func select(_ id: String?) { preview.close(); globalSearch.cancel(); showGlobalSearch = false; selectedAccountID = id; collection = .files; path = []; search = ""; files = []; reload() }
     func show(_ target: Collection) {
         guard let account, target != collection || !path.isEmpty else { return }
-        guard collections(for: account).contains(target) else { return }
+        guard Self.collections(for: account).contains(target) else { return }
         preview.close(); collection = target; path = []; search = ""; files = []
         // Recents only make sense in time order; the user can switch back afterwards.
         if target == .recent { sortMode = "date" } else if sortMode == "date" && target == .files { sortMode = "name" }

@@ -90,9 +90,6 @@ enum Layout {
     static let footerHeight: CGFloat = 38
     /// Width of the transfers drawer on the right.
     static let transferDrawer: CGFloat = 330
-    /// Height kept for the collection picker whether or not the provider has more than one collection, so switching
-    /// clouds never moves the file list up or down.
-    static let collectionRow: CGFloat = 24
 }
 
 struct ExplorerView: View {
@@ -388,6 +385,11 @@ struct ExplorerView: View {
         }
     }
 
+    /// What the collection picker offers. Never empty, so the row it lives in always has the same height.
+    private var collectionChoices: [Collection] {
+        model.account.map { AppModel.collections(for: $0) } ?? [.files]
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -402,15 +404,7 @@ struct ExplorerView: View {
                 }
                 if model.loading { ProgressView().controlSize(.small) }
             }
-            // The row is always here, with or without a picker in it. Providers differ in how many collections they
-            // offer, and letting that shift everything below made switching clouds feel like the window moved.
-            Group {
-                if let account = model.account, model.collections(for: account).count > 1 {
-                    Picker("Vista", selection: Binding(get: { model.collection }, set: { model.show($0) })) {
-                        ForEach(model.collections(for: account)) { Label($0.title, systemImage: $0.icon).tag($0) }
-                    }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 420)
-                }
-            }.frame(height: Layout.collectionRow, alignment: .leading)
+            CollectionPicker(choices: collectionChoices, selection: model.collection) { model.show($0) }
             HStack {
                 Button { model.back(to: max(0, model.path.count - 1)) } label: { Image(systemName: "chevron.left") }.disabled(model.path.isEmpty)
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -598,6 +592,30 @@ struct ExplorerView: View {
 }
 
 /// Observes the queue directly: progress ticks re-render this panel only, not the whole explorer.
+/// The row that picks between a provider's collections. It is a view of its own for one reason: its height has to
+/// be the same for every provider, and that is worth a test rather than an assumption.
+///
+/// Providers differ in how many collections they have. Google Drive has three, a WebDAV server has one. Leaving the
+/// row out for the ones with a single collection moved everything below it, so changing account looked like the
+/// window had shifted. The picker is therefore always built, and merely invisible when there is nothing to choose:
+/// opacity never affects layout, while omitting the row, or reserving a guessed height for it, does.
+struct CollectionPicker: View {
+    let choices: [Collection]
+    let selection: Collection
+    let select: (Collection) -> Void
+    private var choosable: Bool { choices.count > 1 }
+
+    var body: some View {
+        Picker("Vista", selection: Binding(get: { selection }, set: select)) {
+            ForEach(choices) { Label($0.title, systemImage: $0.icon).tag($0) }
+        }
+        .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 420)
+        .opacity(choosable ? 1 : 0)
+        .allowsHitTesting(choosable)
+        .accessibilityHidden(!choosable)
+    }
+}
+
 struct TransferPanel: View {
     let model: AppModel
     @ObservedObject var queue: TransferQueue
