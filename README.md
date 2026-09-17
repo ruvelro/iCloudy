@@ -57,7 +57,7 @@ También puedes abrir `Package.swift` en Xcode o ejecutar `swift run iCloudy` pa
 
 ## Configuración real de cuentas
 
-La configuración corresponde al desarrollador y se hace una sola vez, salvo WebDAV: ese lo conecta cada usuario con su propio servidor y no necesita registro. Los usuarios del binario oficial solo eligen una cuenta y autorizan el acceso. **Todavía hacen falta los registros reales de iCloudy en Google y Microsoft**; no se incluyen IDs inventados ni un login simulado.
+La configuración corresponde al desarrollador y se hace una sola vez, salvo WebDAV: ese lo conecta cada usuario con su propio servidor y no necesita registro. Los usuarios del binario oficial solo eligen una cuenta y autorizan el acceso. El repositorio no incluye ningún identificador: la configuración vive en un archivo local ignorado por Git, así que quien clone esto registra los suyos siguiendo [OAuth](docs/OAUTH.md). No hay IDs inventados ni login simulado. Registrar una aplicación de Microsoft exige además un directorio de Entra, y desde 2024 una cuenta personal ya no basta; la guía explica cuál es la única vía que funciona hoy.
 
 Consulta [la guía de registro, GitHub y App Store](docs/OAUTH.md). Una vez registrados los clientes:
 

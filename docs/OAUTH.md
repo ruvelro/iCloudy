@@ -200,10 +200,11 @@ Esta app conecta cuentas externas para acceder a sus contenidos y no crea una cu
 
 ## Prueba de aceptación con cuentas reales
 
-1. Compila con ambos clientes y abre el `.app`.
+1. Compila con `--require-oauth` y abre el `.app`. La primera línea de la compilación dice qué proveedores están configurados.
 2. Pulsa Google: selector de cuenta → consentimiento → regreso a iCloudy → listado de Drive.
 3. Añade otra cuenta Google y verifica que se mantienen separadas.
 4. Repite con una cuenta Outlook/Hotmail y, si procede, Microsoft 365.
+5. Repite con Dropbox y con Box. En los dos, el fallo más probable no es el código sino la dirección de vuelta sin registrar, que se reconoce por un error de `redirect_uri` con el identificador de cliente correcto dentro.
 5. Reinicia la app: las cuentas deben seguir presentes y los tokens renovarse cuando caduquen.
 6. Prueba cancelar el consentimiento y volver a conectar.
 7. Selecciona una carpeta local con el diálogo del sistema y prueba subida y descarga bajo el sandbox.
