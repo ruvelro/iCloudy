@@ -28,6 +28,35 @@ Testing sirve para la PoC; no es una configuración de distribución. El scope `
 
 ## 2. Microsoft: OneDrive, Outlook y Hotmail
 
+### Antes de empezar: hace falta un directorio
+
+Desde junio de 2024 **toda aplicación nueva tiene que registrarse dentro de un directorio**. Una cuenta personal de
+Microsoft, de las de Outlook o Hotmail, ya no puede registrar aplicaciones por su cuenta: el portal responde que
+«la capacidad de crear aplicaciones fuera de un directorio está en desuso». Es un cambio permanente y de un solo
+sentido. Las aplicaciones registradas así antes siguen funcionando, pero no se pueden mover a un directorio ni se
+pueden crear nuevas.
+
+Conseguir ese directorio tiene una sola vía duradera hoy, y conviene saberlo antes de perder la tarde:
+
+| Vía | Sirve | Por qué |
+|---|---|---|
+| Crear un inquilino desde el portal de Entra | **No** | Microsoft lo reserva a clientes de pago. Con una cuenta gratuita el portal lo rechaza |
+| Programa para desarrolladores de M365 | **No** | Exige una suscripción de Visual Studio Professional o Enterprise, o ser socio, o tener soporte Premier. Además pide una cuenta de facturación que, en sus palabras, no se puede saltar, y los inquilinos caducan |
+| Cuenta gratuita de Azure | **Sí** | Crea un directorio propio donde eres administrador global. No cobra nada, pero pide una tarjeta no prepago para verificar identidad, con una retención temporal de un euro |
+| Pruebas de M365, External ID, Power Apps | **No** | O piden tarjeta igual, o son inquilinos que se borran a los 30 días, o rechazan direcciones personales |
+
+Si la tarjeta es un no rotundo, **hoy no hay forma soportada de registrar una aplicación de Microsoft**. Todo lo
+gratuito sin tarjeta es un inquilino desechable de 30 días, que no es sitio para una aplicación que va a durar.
+
+Una advertencia sobre el alta en Azure: crea un directorio nuevo solo si ese correo no es ya miembro, propietario o
+invitado de algún inquilino. El seudoinquilino que Entra muestra a las cuentas personales no cuenta como tal, así
+que una cuenta limpia de Outlook obtiene su directorio.
+
+El directorio es solo la casa del registro. Para que la cuenta personal pueda iniciar sesión en iCloudy, lo que
+importa es la audiencia del registro y el punto de acceso `/common`, no el inquilino donde viva.
+
+### El registro
+
 En [Microsoft Entra admin center](https://entra.microsoft.com/):
 
 1. Abre **Entra ID → App registrations → New registration**. El portal ya no pasa por «Identity» ni «Applications».
