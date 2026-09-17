@@ -49,6 +49,21 @@ contraseña. Eso tiene dos consecuencias buenas y una mala.
 La aritmética de números grandes es propia, porque hacía falta una sola exponenciación modular y no merecía
 una dependencia. Usa multiplicación de Montgomery en vez de división, que es la parte fácil de equivocar.
 
+## La prueba de trabajo
+
+Desde 2025 Mega protege los puntos finales de cuenta con una prueba de trabajo. En vez de contestar, devuelve un
+402 con el cuerpo vacío y una cabecera `X-Hashcash` que dice versión, dificultad, cuándo se emitió y un token de 48
+bytes. La petición no se acepta hasta que el cliente encuentra un prefijo de cuatro bytes tal que el SHA-256 de ese
+prefijo seguido del token repetido 262 144 veces empieza por un número menor que el umbral que marca la dificultad.
+
+Con la dificultad que usa hoy al iniciar sesión hacen falta unos 256 intentos, y cada intento son 12,5 MB de
+SHA-256. Ronda el segundo en este Mac, fuera del hilo principal. El algoritmo está comprobado contra los propios
+servidores de Mega: resolver el desafío convierte su 402 en un 200.
+
+Esto fue durante un tiempo la causa de que el proveedor no funcionase en absoluto. El cuerpo venía vacío y el
+mensaje que veía el usuario era «Mega devolvió una respuesta que no se entiende», que no decía nada útil. Ahora el
+mensaje incluye el código HTTP, por si vuelve a aparecer algo así.
+
 ## Verificación en dos pasos
 
 Mega pide la contraseña y el código en la misma petición, así que se escriben juntos: la contraseña, un

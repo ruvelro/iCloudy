@@ -1,4 +1,5 @@
 import XCTest
+import CryptoKit
 @testable import iCloudy
 
 /// Mega is end-to-end encrypted, so these primitives are not an implementation detail: if any of them is wrong the
@@ -75,6 +76,46 @@ final class MegaCryptoTests: XCTestCase {
         let hash = try MegaCrypto.legacyHash("ana@ejemplo.com", key: first)
         XCTAssertEqual(MegaCrypto.decode(hash).count, 8)
         XCTAssertNotEqual(hash, try MegaCrypto.legacyHash("otra@ejemplo.com", key: first))
+    }
+
+    /// The token of a real challenge Mega issued, kept so the layout cannot drift.
+    private let challengeToken = "mH7V46ouyOeSYe2ni_kuk9Ec9wgmW3PxVUu-p8TX6aCgBK05XddtJ-ioehg5FB8W"
+
+    func testTheProofOfWorkThresholdMatchesMegaFormula() {
+        // The easiness byte packs two numbers: the low six bits scale the threshold, the top two shift it.
+        XCTAssertEqual(MegaCrypto.threshold(easiness: 192), 16_777_216, "La dificultad que Mega usa hoy al iniciar sesión")
+        XCTAssertEqual(MegaCrypto.threshold(easiness: 255), 2_130_706_432, "La más fácil posible")
+        XCTAssertEqual(MegaCrypto.threshold(easiness: 0), 8, "La más difícil posible")
+        XCTAssertGreaterThan(MegaCrypto.threshold(easiness: 255), MegaCrypto.threshold(easiness: 192),
+                             "Más «easiness» significa menos trabajo")
+    }
+
+    func testTheProofOfWorkReproducesAKnownAnswer() throws {
+        // Verified against Mega's own servers: solving a challenge this way turns their 402 into a 200.
+        XCTAssertEqual(try MegaCrypto.hashcash(token: challengeToken, easiness: 255), "AQAAAA")
+        XCTAssertEqual(try MegaCrypto.hashcash(token: challengeToken, easiness: 216), "AgAAAA")
+    }
+
+    func testTheProofOfWorkAnswerActuallyClearsTheThreshold() throws {
+        // Independently of the stored answer, the prefix has to satisfy what the server will check.
+        let easiness = 246
+        let prefix = try MegaCrypto.hashcash(token: challengeToken, easiness: easiness)
+        var buffer = MegaCrypto.decode(prefix)
+        XCTAssertEqual(buffer.count, 4, "El prefijo son cuatro bytes")
+        let seed = MegaCrypto.decode(challengeToken)
+        for _ in 0..<262_144 { buffer.append(seed) }
+        let digest = [UInt8](SHA256.hash(data: buffer))
+        let head = UInt32(digest[0]) << 24 | UInt32(digest[1]) << 16 | UInt32(digest[2]) << 8 | UInt32(digest[3])
+        XCTAssertLessThanOrEqual(head, MegaCrypto.threshold(easiness: easiness))
+    }
+
+    func testAMalformedChallengeIsRefusedInsteadOfHashedForever() async {
+        for bad in ["", "1:192", "2:192:0:" + challengeToken, "1:999:0:" + challengeToken, "1:192:0:corto"] {
+            do { _ = try await MegaAPI.solve(bad); XCTFail("Aceptó «\(bad)»") }
+            catch { XCTAssertTrue(error.localizedDescription.contains("no se entiende"), error.localizedDescription) }
+        }
+        let good = try? await MegaAPI.solve("1:255:0:" + challengeToken)
+        XCTAssertEqual(good, "1:\(challengeToken):AQAAAA", "La cabecera lleva la versión, el token y el prefijo")
     }
 
     func testAFileKeyUnpacksIntoItsThreeParts() throws {

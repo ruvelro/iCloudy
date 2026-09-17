@@ -340,6 +340,26 @@ final class MegaProviderTests: XCTestCase {
         catch { XCTAssertTrue(error.localizedDescription.contains("ya no está en Mega"), error.localizedDescription) }
     }
 
+    func testAProofOfWorkChallengeIsSolvedAndTheRequestRepeated() async throws {
+        // Mega guards its account endpoints with a 402 and an empty body. Before this was handled, every sign-in
+        // failed with "a response that cannot be understood", which said nothing about what to do.
+        let token = "mH7V46ouyOeSYe2ni_kuk9Ec9wgmW3PxVUu-p8TX6aCgBK05XddtJ-ioehg5FB8W"
+        var asked = 0
+        var proof: String?
+        StubProtocol.handler = { request in
+            asked += 1
+            guard let header = request.value(forHTTPHeaderField: "X-Hashcash") else {
+                return (402, ["X-Hashcash": "1:255:1789625745:\(token)"], Data())
+            }
+            proof = header
+            return (200, [:], Data(#"[{"cstrg":7,"mstrg":9}]"#.utf8))
+        }
+        let quota = try await client().storageQuota()
+        XCTAssertEqual(asked, 2, "La misma petición se repite una vez con la prueba resuelta")
+        XCTAssertEqual(proof, "1:\(token):AQAAAA")
+        XCTAssertEqual(quota.used, 7)
+    }
+
     func testAnExpiredSessionIsReportedAsSuchAndNotAsAnUnknownError() async throws {
         serve { action, _ in action == "f" ? (200, Data("[-15]".utf8)) : nil }
         let api = client()

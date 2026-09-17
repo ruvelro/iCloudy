@@ -1,5 +1,6 @@
 import Foundation
 import CommonCrypto
+import CryptoKit
 
 /// Everything Mega encrypts on the client. Mega is end-to-end encrypted, so unlike every other provider here the
 /// server never sees a file name: names, keys and contents are decrypted on this Mac with keys derived from the
@@ -193,6 +194,50 @@ enum MegaCrypto {
         let bytes = [UInt8](file)
         return Data((0..<4).map { bytes[$0] ^ bytes[$0 + 4] } + (0..<4).map { bytes[$0 + 8] ^ bytes[$0 + 12] })
     }
+    // MARK: - Proof of work
+
+    /// Mega answers some requests with HTTP 402 and a challenge instead of a result, and only accepts the request
+    /// once the client has spent a measurable amount of work on it. It is an anti-abuse measure, not a payment: the
+    /// server picks how hard, the client searches for a four-byte prefix whose hash falls under a threshold.
+    ///
+    /// The layout is Mega's and has to match exactly: the prefix, then the 48-byte token repeated 262144 times, all
+    /// of it hashed with SHA-256 on every attempt.
+    static func hashcash(token: String, easiness: Int) throws -> String {
+        let seed = decode(token)
+        guard seed.count == 48 else { throw CloudError.message(L("Mega envió un desafío que no se entiende.")) }
+        let threshold = Self.threshold(easiness: easiness)
+        var buffer = [UInt8](repeating: 0, count: 4 + 262_144 * 48)
+        seed.withUnsafeBytes { raw in
+            buffer.withUnsafeMutableBufferPointer { out in
+                guard let source = raw.bindMemory(to: UInt8.self).baseAddress, let start = out.baseAddress else { return }
+                for index in 0..<262_144 { (start + 4 + index * 48).update(from: source, count: 48) }
+            }
+        }
+        // The prefix is a counter over the first four bytes. The bound is far beyond what any easiness needs, and
+        // exists so a change on Mega's side cannot turn this into an endless loop.
+        for _ in 0..<(1 << 22) {
+            try Task.checkCancellation()
+            var index = 0
+            while true {
+                buffer[index] &+= 1
+                if buffer[index] != 0 { break }
+                index += 1
+            }
+            let digest = SHA256.hash(data: buffer)
+            let head = digest.withUnsafeBytes { raw -> UInt32 in
+                let bytes = raw.bindMemory(to: UInt8.self)
+                return UInt32(bytes[0]) << 24 | UInt32(bytes[1]) << 16 | UInt32(bytes[2]) << 8 | UInt32(bytes[3])
+            }
+            if head <= threshold { return encode(Data(buffer[0..<4])) }
+        }
+        throw CloudError.message(L("No se pudo resolver el desafío de Mega."))
+    }
+    /// How large the first four bytes of the hash may be. The higher the easiness, the larger the threshold and the
+    /// fewer attempts it takes.
+    static func threshold(easiness: Int) -> UInt32 {
+        UInt32(truncatingIfNeeded: (((easiness & 63) << 1) + 1) << ((easiness >> 6) * 7 + 3))
+    }
+
     static func randomKey(count: Int = 32) -> Data {
         var bytes = Data(count: count)
         _ = bytes.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, count, $0.baseAddress!) }

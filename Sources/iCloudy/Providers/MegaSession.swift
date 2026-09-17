@@ -70,22 +70,44 @@ enum MegaAPI {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: [payload])
 
-        for attempt in 0..<4 {
+        var proofs = 0
+        for attempt in 0..<6 {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw CloudError.message(L("Respuesta HTTP no válida.")) }
+            // Mega guards its account endpoints with a proof of work: 402 with a challenge and an empty body, which
+            // the client has to solve before the same request is accepted.
+            if http.statusCode == 402, let challenge = http.value(forHTTPHeaderField: "X-Hashcash"), proofs < 2 {
+                proofs += 1
+                request.setValue(try await solve(challenge), forHTTPHeaderField: "X-Hashcash")
+                continue
+            }
             guard http.statusCode != 500 else { throw CloudError.message(L("Mega no está disponible en este momento.")) }
             let body = try? JSONSerialization.jsonObject(with: data)
             var result: Any? = body
             if let list = body as? [Any] { result = list.first }
             if let code = result as? Int, code < 0 {
-                guard code == -3, attempt < 3 else { throw failure(code) }
+                guard code == -3, attempt < 5 else { throw failure(code) }
                 try await Task.sleep(nanoseconds: UInt64(attempt + 1) * 500_000_000)
                 continue
             }
-            guard let result else { throw CloudError.message(L("Mega devolvió una respuesta que no se entiende.")) }
+            guard let result else {
+                throw CloudError.message(L("Mega devolvió una respuesta que no se entiende (HTTP \(http.statusCode))."))
+            }
             return result
         }
         throw CloudError.message(L("Mega sigue ocupado. Vuelve a intentarlo dentro de un momento."))
+    }
+
+    /// Reads Mega's challenge and spends the work it asks for. The format is version, easiness, when it was issued,
+    /// and the token to hash; only the easiness and the token take part in the answer.
+    static func solve(_ challenge: String) async throws -> String {
+        let parts = challenge.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 4, parts[0] == "1", let easiness = Int(parts[1]), (0..<256).contains(easiness) else {
+            throw CloudError.message(L("Mega envió un desafío que no se entiende."))
+        }
+        let token = parts[3]
+        let prefix = try await blockingIO { try MegaCrypto.hashcash(token: token, easiness: easiness) }
+        return "1:\(token):\(prefix)"
     }
 
     /// Signs in and derives the session identifier. The last step is an RSA decryption: Mega hands back a challenge

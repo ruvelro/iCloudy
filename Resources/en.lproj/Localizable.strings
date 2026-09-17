@@ -628,3 +628,8 @@
 "O2 Cloud no copia archivos en el servidor. Descárgalo y vuelve a subirlo." = "O2 Cloud does not copy files on the server. Download it and upload it again.";
 "O2 Cloud no tiene búsqueda para otras aplicaciones." = "O2 Cloud has no search for other apps.";
 "No se pudo preparar la subida." = "The upload could not be prepared.";
+
+/* Mega's proof of work */
+"Mega envió un desafío que no se entiende." = "Mega sent a challenge that cannot be understood.";
+"No se pudo resolver el desafío de Mega." = "Mega's challenge could not be solved.";
+"Mega devolvió una respuesta que no se entiende (HTTP %lld)." = "Mega returned a response that cannot be understood (HTTP %lld).";
