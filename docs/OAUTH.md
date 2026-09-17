@@ -71,7 +71,23 @@ En [Box Developer Console](https://app.box.com/developers/console):
 swift scripts/configure-oauth.swift --box CLIENT_ID:CLIENT_SECRET
 ```
 
-## 5. WebDAV, Nextcloud y NAS
+## 5. Lo que no se registra en ninguna parte
+
+Cinco de los proveedores no necesitan que el desarrollador dé de alta nada. Si solo vas a usar estos, no hace falta
+tocar `Configuration/OAuth.local.plist`.
+
+| Proveedor | Cómo entra el usuario |
+|---|---|
+| WebDAV | Dirección del servidor, usuario y contraseña |
+| FTP y FTPS | Dirección, usuario y contraseña |
+| Volúmenes y carpetas | Elige una carpeta; macOS ya hizo el montaje |
+| Mega | Correo y contraseña de la cuenta |
+| O2 Cloud | Inicia sesión en las páginas de O2, dentro de una ventana |
+
+Mega y O2 no tienen registro para terceros ni siquiera si se quisiera: ninguno de los dos publica una API para otras
+aplicaciones, y por eso van marcados como experimentales. Los detalles están en [Mega](MEGA.md) y [O2 Cloud](O2.md).
+
+### WebDAV, Nextcloud y NAS
 
 No hay nada que registrar. Cada usuario escribe en iCloudy la dirección de su servidor, su usuario y su contraseña, que se guardan en el Llavero de este Mac y solo viajan a ese servidor. La dirección es la ruta WebDAV completa; en Nextcloud y ownCloud es `https://servidor/remote.php/dav/files/USUARIO`. Con verificación en dos pasos hay que crear una contraseña de aplicación.
 
