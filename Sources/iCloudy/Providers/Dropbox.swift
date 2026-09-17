@@ -124,7 +124,7 @@ extension CloudAPI {
     }
 
     /// Upload sessions take 4 MiB blocks, the same size Dropbox's content hash is defined over.
-    static let dropboxChunk: Int64 = 4 * 1024 * 1024
+    nonisolated static let dropboxChunk: Int64 = 4 * 1024 * 1024
 
     func dropboxUpload(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint,
                        save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {

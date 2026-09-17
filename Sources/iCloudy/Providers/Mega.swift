@@ -229,7 +229,8 @@ extension CloudAPI {
             progress(chunk.offset + chunk.length, size)
         }
         // The expected MAC travels inside the file's own key, so a corrupted or tampered download is caught here.
-        let computed = try await blockingIO { try MegaCrypto.metaMAC(chunks: macs, key: parts.key) }
+        let collected = macs
+        let computed = try await blockingIO { try MegaCrypto.metaMAC(chunks: collected, key: parts.key) }
         guard computed == parts.mac else {
             try? output.close()
             try? FileManager.default.removeItem(at: destination)
