@@ -88,6 +88,33 @@ recarga. Hay pruebas que cuentan las peticiones de árbol y fallan si vuelve a h
 Las subidas también se reintentan trozo a trozo. Los servidores de almacenamiento contestan `-3`, «espera», igual
 que la API, y abandonar por eso perdía la subida entera por un momento de retraso.
 
+## Cuando no se llega a Mega
+
+Un error de red no es Mega diciendo que no. Cuando la petición ni siquiera llegaba, el mensaje que veía el usuario
+era «Se ha agotado el tiempo de espera», que es la redacción del propio sistema: no nombra a Mega, no dice qué
+estaba haciendo la app y no sugiere nada que probar. Borrar un archivo se veía exactamente igual que borrarlo
+estando la cuenta bloqueada.
+
+Ahora una petición caída se repite un par de veces antes de darse por perdida, porque una conexión con altibajos no
+debería costar un borrado, y lo que se cuenta al final distingue tres cosas: no hay internet en este Mac, no se
+resuelve el nombre, o no se llega a los servidores de Mega. El tercer caso menciona algo que conviene saber: **hay
+redes y operadores que bloquean mega.nz por completo**, y desde dentro de la app eso es indistinguible de que Mega
+se haya caído. Si las demás cuentas de iCloudy funcionan y solo Mega falla, casi siempre es eso, y se comprueba en
+un terminal:
+
+```bash
+nc -z -G 5 -w 5 g.api.mega.co.nz 443 && echo alcanzable || echo bloqueado
+```
+
+Un 5xx o un 429 se tratan igual que el `-3`: se espera y se vuelve a preguntar, en vez de entregarle el fallo al
+usuario al primer intento.
+
+Los reintentos tienen todos el mismo reloj. Una petición sin noticias espera 25 segundos, no el minuto que trae el
+sistema por defecto, y una orden completa no puede pasar de 75 segundos sumando esperas, pruebas de trabajo y
+peticiones caídas. El límite solo se mira antes de volver a esperar, así que una transferencia lenta pero sana nunca
+se corta por la mitad. El número de secuencia de la petición no cambia entre reintentos, que es justamente lo que
+impide que Mega aplique dos veces un mismo cambio.
+
 ## Las transferencias van por otros servidores
 
 Los archivos no se descargan ni se suben contra la API, sino contra una flota aparte cuya dirección da Mega en cada

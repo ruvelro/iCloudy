@@ -396,6 +396,85 @@ final class MegaProviderTests: XCTestCase {
         XCTAssertNil(after.first { $0.id == "ARCHIVO" }, "Y el borrado se refleja")
     }
 
+    func testADroppedRequestIsRepeatedInsteadOfLosingTheDelete() async throws {
+        // A request that never gets an answer is not Mega saying no. Borrar fallaba a la primera en una conexión
+        // con altibajos, y volver a intentarlo a mano funcionaba.
+        var attempts = 0
+        serve { action, _ in
+            guard action == "m" else { return nil }
+            attempts += 1
+            if attempts < 3 { throw URLError(.networkConnectionLost) }
+            return (200, Data("0".utf8))
+        }
+        let api = client()
+        let listed = try await api.list(parent: "root")
+        try await api.trash(file: try XCTUnwrap(listed.first { $0.id == "ARCHIVO" }))
+        XCTAssertEqual(attempts, 3, "Se repite la petición caída")
+        let after = try await api.list(parent: "root")
+        XCTAssertNil(after.first { $0.id == "ARCHIVO" }, "Y el borrado se refleja")
+    }
+
+    func testAnUnreachableMegaIsSaidSoAndNotAsASystemTimeout() async throws {
+        // This is the message the user actually saw: «Se ha agotado el tiempo de espera», the system's own wording
+        // for a timeout, which mentions neither Mega nor anything the user can try.
+        var attempts = 0
+        serve { action, _ in
+            guard action == "m" else { return nil }
+            attempts += 1
+            throw URLError(.cannotConnectToHost)
+        }
+        let api = client()
+        let listed = try await api.list(parent: "root")
+        do {
+            try await api.trash(file: try XCTUnwrap(listed.first { $0.id == "ARCHIVO" }))
+            XCTFail("Debe fallar cuando no se llega a Mega")
+        } catch {
+            let text = error.localizedDescription
+            XCTAssertTrue(text.contains("servidores de Mega"), text)
+            XCTAssertTrue(text.contains("bloquean mega.nz"), "Se dice que hay redes que bloquean Mega: \(text)")
+        }
+        XCTAssertEqual(attempts, MegaAPI.maxDrops + 1, "Se insiste, pero un número contado de veces")
+    }
+
+    func testWithoutInternetMegaIsNotAskedAgainAndAgain() async throws {
+        var attempts = 0
+        serve { action, _ in
+            guard action == "m" else { return nil }
+            attempts += 1
+            throw URLError(.notConnectedToInternet)
+        }
+        let api = client()
+        let listed = try await api.list(parent: "root")
+        do {
+            try await api.trash(file: try XCTUnwrap(listed.first { $0.id == "ARCHIVO" }))
+            XCTFail("Debe fallar sin conexión")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("no tiene conexión a internet"), error.localizedDescription)
+        }
+        XCTAssertEqual(attempts, 1, "Repetir sin conexión solo hace esperar más para el mismo resultado")
+    }
+
+    func testAServerErrorIsWaitedOutTheSameWayAsABusyOne() async throws {
+        var attempts = 0
+        serve { action, _ in
+            guard action == "m" else { return nil }
+            attempts += 1
+            return attempts < 3 ? (503, Data()) : (200, Data("0".utf8))
+        }
+        let api = client()
+        let listed = try await api.list(parent: "root")
+        try await api.trash(file: try XCTUnwrap(listed.first { $0.id == "ARCHIVO" }))
+        XCTAssertEqual(attempts, 3, "Un 5xx es un mal momento de Mega, no un fallo de la cuenta")
+    }
+
+    func testOneCommandCannotFreezeTheWindowForMinutes() {
+        // Every repeat above shares one clock, so no combination of proofs, waits and dropped requests can leave the
+        // user looking at a spinner for minutes.
+        XCTAssertLessThanOrEqual(MegaAPI.requestTimeout, 30, "Una petición sin noticias no espera un minuto entero")
+        XCTAssertLessThanOrEqual(MegaAPI.budget, 120)
+        XCTAssertGreaterThan(MegaAPI.budget, MegaAPI.requestTimeout * 2, "Pero da para reintentar de verdad")
+    }
+
     func testAProofOfWorkChallengeIsSolvedAndTheRequestRepeated() async throws {
         // Mega guards its account endpoints with a 402 and an empty body. Before this was handled, every sign-in
         // failed with "a response that cannot be understood", which said nothing about what to do.

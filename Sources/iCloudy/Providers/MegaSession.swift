@@ -60,7 +60,8 @@ enum MegaAPI {
     }
 
     /// Sends one command. Mega answers -3 when a value is not ready yet and expects the client to wait and ask again,
-    /// so that case is retried here rather than shown to the user.
+    /// so that case is retried here rather than shown to the user. A request that never gets an answer at all is
+    /// retried too, and then reported as what it is instead of as the system's own wording for a timeout.
     static func call(_ payload: [String: Any], sid: String?, sequence: Int,
                      session: URLSession = .shared) async throws -> Any {
         var components = URLComponents(string: endpoint)!
@@ -68,24 +69,57 @@ enum MegaAPI {
             + (sid.map { [URLQueryItem(name: "sid", value: $0)] } ?? [])
         var request = URLRequest(url: components.url!)
         request.httpMethod = "POST"
+        request.timeoutInterval = Self.requestTimeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: [payload])
 
-        // Two different reasons to send the same request again, each with its own budget. Sharing one counter meant
-        // that solving a proof of work ate the patience meant for a server that had merely said "wait".
+        // Three different reasons to send the same request again, each with its own budget. Sharing one counter meant
+        // that solving a proof of work ate the patience meant for a server that had merely said "wait". The number in
+        // the query stays the same across all of them, which is what stops Mega from applying a repeated change twice.
         var proofs = 0
         var waits = 0
+        var drops = 0
+        let deadline = Date().addingTimeInterval(Self.budget)
+        /// Waits before asking again, and gives up when the command has already had its share of the clock. Without
+        /// this, a network that swallows requests turned every action into minutes of a frozen window.
+        func pause(_ delay: UInt64, _ giveUp: @autoclosure () -> Error) async throws {
+            guard Date().addingTimeInterval(Double(delay) / 1_000_000_000) < deadline else { throw giveUp() }
+            try await Task.sleep(nanoseconds: delay)
+        }
         while true {
-            let (data, response) = try await session.data(for: request)
+            try Task.checkCancellation()
+            let data: Data, response: URLResponse
+            do { (data, response) = try await session.data(for: request) }
+            catch let error as URLError {
+                guard error.code != .cancelled else { throw CancellationError() }
+                guard Self.worthRepeating(error.code), drops < Self.maxDrops else { throw unreachable(error) }
+                try await pause(Self.waitDelay(drops), unreachable(error))
+                drops += 1
+                continue
+            }
             guard let http = response as? HTTPURLResponse else { throw CloudError.message(L("Respuesta HTTP no válida.")) }
             // Mega guards its account endpoints with a proof of work: 402 with a challenge and an empty body, which
             // the client has to solve before the same request is accepted.
-            if http.statusCode == 402, let challenge = http.value(forHTTPHeaderField: "X-Hashcash"), proofs < Self.maxProofs {
+            if http.statusCode == 402, let challenge = http.value(forHTTPHeaderField: "X-Hashcash") {
+                guard proofs < Self.maxProofs else {
+                    throw CloudError.message(L("Mega sigue pidiendo una prueba de trabajo después de resolverla. Vuelve a intentarlo dentro de un momento."))
+                }
                 proofs += 1
                 request.setValue(try await solve(challenge), forHTTPHeaderField: "X-Hashcash")
                 continue
             }
-            guard http.statusCode != 500 else { throw CloudError.message(L("Mega no está disponible en este momento.")) }
+            // A 5xx or a 429 is Mega having a moment, not the account doing anything wrong, so it is waited out the
+            // same way a dropped request is rather than handed to the user on the first try.
+            if (500..<600).contains(http.statusCode) || http.statusCode == 429 {
+                let unavailable = CloudError.message(L("Mega no está disponible en este momento."))
+                guard drops < Self.maxDrops else { throw unavailable }
+                try await pause(Self.waitDelay(drops), unavailable)
+                drops += 1
+                continue
+            }
+            guard (200..<300).contains(http.statusCode) else {
+                throw CloudError.message(L("Mega rechazó la petición con el código HTTP \(http.statusCode)."))
+            }
             // Mega answers plenty of commands with a bare number: 0 after a rename or a move, a negative code on
             // failure. That is a JSON fragment, which the strict parser refuses, so fragments have to be allowed or
             // every one of those replies looks like a broken response.
@@ -96,7 +130,7 @@ enum MegaAPI {
                 guard code == -3, waits < Self.maxWaits else { throw failure(code) }
                 // Mega's own clients back off and keep asking. Half a second five times was not nearly enough: a
                 // delete would surface "-3" to the user and work fine the moment they tried it again by hand.
-                try await Task.sleep(nanoseconds: Self.waitDelay(waits))
+                try await pause(Self.waitDelay(waits), failure(code))
                 waits += 1
                 continue
             }
@@ -105,7 +139,31 @@ enum MegaAPI {
             }
             return result
         }
-        throw CloudError.message(L("Mega sigue ocupado. Vuelve a intentarlo dentro de un momento."))
+    }
+
+    /// Turns a request that never arrived into something that names Mega and says what to try.
+    ///
+    /// This is the message the user actually saw when Mega was unreachable: «Se ha agotado el tiempo de espera», the
+    /// system's own wording, which mentions neither what was being reached nor anything to do about it. A code from
+    /// Mega is about the account and the user can act on it; this is about the network in between, and blaming the
+    /// wrong one of the two sends people looking in the wrong place.
+    static func unreachable(_ error: URLError) -> CloudError {
+        switch error.code {
+        case .notConnectedToInternet:
+            return .message(L("Este Mac no tiene conexión a internet, así que no se pudo hablar con Mega."))
+        case .cannotFindHost, .dnsLookupFailed:
+            return .message(L("No se pudo resolver la dirección de Mega. Revisa los DNS de este Mac o del router."))
+        default:
+            // Worth saying out loud: Mega is blocked outright on a fair number of networks and by some internet
+            // providers, and from the app that looks exactly like Mega being down.
+            return .message(L("No se pudo conectar con los servidores de Mega: \(error.localizedDescription) Hay redes y operadores que bloquean mega.nz; si las demás cuentas de iCloudy sí funcionan, prueba desde otra red o con una VPN."))
+        }
+    }
+    /// Failures that a second attempt can plausibly fix. Having no internet at all is not one of them: repeating the
+    /// request only makes the user wait longer for the same answer.
+    static func worthRepeating(_ code: URLError.Code) -> Bool {
+        [.timedOut, .networkConnectionLost, .cannotConnectToHost, .secureConnectionFailed,
+         .cannotFindHost, .dnsLookupFailed].contains(code)
     }
 
     /// Value Mega's own clients send to get transfer addresses over TLS.
@@ -114,6 +172,13 @@ enum MegaAPI {
     /// How many times a request is repeated for each reason, and how long the waits grow.
     static let maxProofs = 2
     static let maxWaits = 8
+    static let maxDrops = 2
+    /// How long a single request may go without news. The default of a minute meant that a network which silently
+    /// swallows Mega's traffic froze every action for a minute before saying anything.
+    static let requestTimeout: TimeInterval = 25
+    /// And how long one command may take in total, however it is being repeated. Only checked before waiting again,
+    /// so a slow but healthy transfer is never cut off in the middle.
+    static let budget: TimeInterval = 75
     /// Doubling from a third of a second, capped so a single call cannot hang for minutes. About half a minute in
     /// total, which is the order Mega's own clients wait before giving up.
     static func waitDelay(_ attempt: Int) -> UInt64 {
