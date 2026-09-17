@@ -17,6 +17,7 @@ private struct GeneralSettings: View {
     @AppStorage(Prefs.previewFollowsSelection) private var previewFollows = true
     @AppStorage(Prefs.previewConsentMB) private var previewConsent = 100
     @AppStorage(Prefs.listingCache) private var listingCache = true
+    @AppStorage(Prefs.storageStyle) private var storageStyle = StorageStyle.pie.rawValue
 
     var body: some View {
         Form {
@@ -35,6 +36,13 @@ private struct GeneralSettings: View {
                     }
                 }
                 Text("Se aplica a la vista previa. Un archivo de tamaño desconocido siempre pide confirmación.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Section {
+                Picker("Espacio de cada cuenta", selection: $storageStyle) {
+                    ForEach(StorageStyle.allCases) { Text($0.title).tag($0.rawValue) }
+                }.pickerStyle(.segmented)
+                Text("Cómo se dibuja el espacio en la barra lateral. Las dos formas muestran lo mismo —archivos, papelera y otros servicios— y las barras tienen todas el mismo ancho, así que se pueden comparar de un vistazo.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Section {

@@ -7,6 +7,7 @@ enum Prefs {
     static let previewConsentMB = "previewConsentMB"
     static let listingCache = "listingCacheEnabled"
     static let historyLimit = "historyLimit"
+    static let storageStyle = "storageStyle"
 
     static func bool(_ key: String, default value: Bool) -> Bool {
         UserDefaults.standard.object(forKey: key) as? Bool ?? value

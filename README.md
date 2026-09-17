@@ -82,6 +82,15 @@ responde cada proveedor y errores independientes: que Dropbox falle no te deja s
 
 ![Panel de transferencias](docs/images/transferencias.png)
 
+### ⭐ Nubes y favoritos, sin scroll
+
+La barra lateral se parte en dos. En **Nubes** están las cuentas, cada una con su icono y con el espacio dibujado
+como gráfico o como barra, a elegir en Ajustes. En **Favoritos** están las cosas que marcas, y cada una lleva el
+icono de la nube donde vive: con seis cuentas conectadas, saber de cuál es un favorito importa más que volver a ver
+una estrella.
+
+![Favoritos en la barra lateral](docs/images/favoritos.png)
+
 ### 👀 Ver antes de bajar
 
 Vista previa con la barra espaciadora: PDF, imágenes, texto y código, audio, vídeo, documentos de Office e iWork vía
@@ -96,7 +105,8 @@ cancelable y limpieza al cerrar.
 | **Reflejos de carpeta** | Eliges una carpeta del Mac y se mantiene subida y al día. Unidireccional y sin borrados: lo que borres en el Mac no desaparece de la nube. |
 | **Modo sin conexión** | Se detecta la caída, se pausan las transferencias con el motivo a la vista y se sigue mostrando el último listado conocido. |
 | **Personalización por cuenta** | Alias, ocho colores e iconos propios, para distinguir la cuenta del trabajo de la de casa de un golpe de vista. |
-| **Espacio de verdad** | Gráfico y desglose por cuenta: archivos, papelera y —en Google— el resto de servicios. Si el proveedor no da cuota, no se inventa un porcentaje. |
+| **Iconos por tipo de archivo** | Un PDF es rojo, una hoja de cálculo verde, un vídeo índigo. El ojo encuentra el archivo antes de que el cerebro lea el nombre. |
+| **Espacio de verdad** | Gráfico circular o barra, a tu gusto, con el desglose por cuenta: archivos, papelera y —en Google— el resto de servicios. Si el proveedor no da cuota, no se inventa un porcentaje. |
 | **Integrado en macOS** | Icono en la barra de menús, «Subir a iCloudy» en el menú Servicios, soltar en el Dock, Spotlight, Atajos y Automatizador. |
 | **Unidades compartidas** | Unidades compartidas de Google y bibliotecas de SharePoint, sin volver a iniciar sesión. |
 | **En dos idiomas** | Castellano e inglés, y añadir otro es soltar un `.lproj`. |
@@ -182,14 +192,16 @@ el repositorio no incluye ninguno. La [guía de OAuth](docs/OAUTH.md) explica c�
 ```bash
 swift test                       # 217 pruebas, sin red: todas las respuestas HTTP están simuladas
 swift run iCloudy                # iterar sobre la interfaz
-swift scripts/render-mockups.swift # regenerar las capturas del README
+python3 scripts/mockups/generar.py  # rehacer las maquetas del README
+swift scripts/render-mockups.swift  # y convertirlas en PNG
 ```
 
 Sin dependencias externas: solo SwiftUI y las bibliotecas del sistema. Las pruebas cubren desde el flujo OAuth
 completo con un navegador simulado por TCP hasta la criptografía de Mega contrastada con OpenSSL.
 
-Las capturas de este README son **maquetas**, no capturas reales: viven en `scripts/mockups` y se renderizan a PNG,
-para que la documentación nunca enseñe cuentas ni archivos de nadie.
+Las capturas de este README son **maquetas**, no capturas reales: viven en `scripts/mockups` y se renderizan a PNG
+en un WKWebView, para que la documentación nunca enseñe cuentas ni archivos de nadie. Los iconos de archivo y de
+nube que dibujan son los mismos trazos y los mismos colores que usa la app, así que no prometen nada que no haga.
 
 <br>
 

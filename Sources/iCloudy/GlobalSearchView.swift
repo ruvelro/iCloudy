@@ -32,7 +32,7 @@ struct GlobalSearchView: View {
             }.padding(22)
             Divider()
             Table(search.visibleHits, selection: $selected) {
-                TableColumn("Nombre") { hit in Label(hit.file.name, systemImage: hit.file.icon).lineLimit(1) }.width(min: 180, ideal: 280)
+                TableColumn("Nombre") { hit in HStack(spacing: 7) { FileIcon(file: hit.file); Text(hit.file.name).lineLimit(1) } }.width(min: 180, ideal: 280)
                 TableColumn("Cuenta") { hit in
                     if let account = model.accounts.first(where: { $0.id == hit.accountID }) {
                         HStack(spacing: 7) {

@@ -10,9 +10,15 @@ func render(_ size: Int) -> Data {
     let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
         let inset = rect.insetBy(dx: rect.width * 0.06, dy: rect.height * 0.06)
         let background = NSBezierPath(roundedRect: inset, xRadius: inset.width * 0.22, yRadius: inset.width * 0.22)
-        NSGradient(starting: NSColor(calibratedRed: 0.16, green: 0.50, blue: 0.96, alpha: 1), ending: NSColor(calibratedRed: 0.05, green: 0.27, blue: 0.68, alpha: 1))!
+        // The blue of the mark in the sidebar and in the README, rather than the flatter one this started with:
+        // lighter at the top so the rounded square reads as lit from above, the way macOS icons do.
+        NSGradient(starting: NSColor(calibratedRed: 0.62, green: 0.74, blue: 1.0, alpha: 1), ending: NSColor(calibratedRed: 0.20, green: 0.38, blue: 0.85, alpha: 1))!
             .draw(in: background, angle: -90)
-        let configuration = NSImage.SymbolConfiguration(pointSize: CGFloat(size) * 0.46, weight: .semibold)
+        // A hairline of the same family keeps the shape from dissolving into a light desktop at 16 pt.
+        NSColor(calibratedRed: 0.16, green: 0.32, blue: 0.74, alpha: 0.55).setStroke()
+        background.lineWidth = max(1, CGFloat(size) * 0.008)
+        background.stroke()
+        let configuration = NSImage.SymbolConfiguration(pointSize: CGFloat(size) * 0.50, weight: .semibold)
         guard let symbol = NSImage(systemSymbolName: "cloud.fill", accessibilityDescription: nil)?.withSymbolConfiguration(configuration) else { return false }
         let tinted = NSImage(size: symbol.size, flipped: false) { symbolRect in
             symbol.draw(in: symbolRect)
@@ -20,6 +26,11 @@ func render(_ size: Int) -> Data {
             return true
         }
         let target = NSRect(x: rect.midX - tinted.size.width / 2, y: rect.midY - tinted.size.height / 2, width: tinted.size.width, height: tinted.size.height)
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor(calibratedRed: 0.08, green: 0.18, blue: 0.45, alpha: 0.30)
+        shadow.shadowBlurRadius = CGFloat(size) * 0.035
+        shadow.shadowOffset = NSSize(width: 0, height: -CGFloat(size) * 0.012)
+        shadow.set()
         tinted.draw(in: target)
         return true
     }

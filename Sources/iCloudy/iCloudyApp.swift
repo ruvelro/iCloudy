@@ -112,6 +112,9 @@ struct ExplorerView: View {
     @State private var disconnectTarget: Account?
     @State private var previewFollow: Task<Void, Never>?
     @State private var sidebarVisible = true
+    /// Which half of the sidebar is showing. Favourites used to live under every account, so reaching them on a Mac
+    /// with six clouds connected meant scrolling past all of them.
+    @State private var sidebarTab = SidebarTab.clouds
     @FocusState private var gridFocused: Bool
 
     private var navigation: some View {
@@ -127,7 +130,13 @@ struct ExplorerView: View {
                     Label("Buscar en todas las nubes", systemImage: "magnifyingglass").frame(maxWidth: .infinity, alignment: .leading).padding(Layout.sidebarInner)
                         .background(model.showGlobalSearch ? Color.accentColor.opacity(0.13) : .clear, in: RoundedRectangle(cornerRadius: 9))
                 }.buttonStyle(.plain)
+                Picker("", selection: $sidebarTab) {
+                    ForEach(SidebarTab.allCases) { tab in
+                        Text(tab == .favourites && !model.favorites.isEmpty ? "\(tab.title) (\(model.favorites.count))" : tab.title).tag(tab)
+                    }
+                }.pickerStyle(.segmented).labelsHidden()
                 ScrollView {
+                  if sidebarTab == .clouds {
                     VStack(spacing: 5) {
                         ForEach(model.accounts) { account in
                             Button { model.select(account.id) } label: {
@@ -169,22 +178,28 @@ struct ExplorerView: View {
                             }.padding(Layout.sidebarInner)
                         }
                         if !model.mirrors.mirrors.isEmpty { MirrorList(model: model, mirrors: model.mirrors, disconnectTarget: $disconnectTarget) }
-                        if !model.favorites.isEmpty {
-                            Divider().padding(.vertical, 8)
-                            Text("FAVORITOS").font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
-                            ForEach(model.favorites) { favorite in
-                                Button { model.openFavorite(favorite) } label: {
-                                    Label(favorite.file.name, systemImage: "star.fill").lineLimit(1).frame(maxWidth: .infinity, alignment: .leading).padding(8)
-                                }.buttonStyle(.plain).help(model.accounts.first(where: { $0.id == favorite.accountID })?.email ?? "Cuenta desconectada")
-                            }
-                        }
                     }
+                  } else {
+                    FavoritesList(model: model)
+                  }
                 }
                 Spacer(minLength: 0)
-                Button { model.showConnect = true } label: { Label("Añadir cuenta", systemImage: "plus.circle") }.buttonStyle(.plain).padding(Layout.sidebarInner)
-                SettingsLink { Label("Configuración", systemImage: "gearshape") }
-                    .buttonStyle(.plain).padding(.horizontal, Layout.sidebarInner)
-                    .help("Abrir Configuración (⌘,)")
+                // Two small, quiet actions, kept apart from the list by a rule so they read as the edge of the
+                // sidebar rather than as two more rows of it.
+                Divider().padding(.top, 4)
+                VStack(alignment: .leading, spacing: 2) {
+                    Button { model.showConnect = true } label: {
+                        Label("Añadir cuenta", systemImage: "plus.circle").font(.callout)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).padding(.vertical, 5)
+                            .contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                    SettingsLink {
+                        Label("Configuración", systemImage: "gearshape").font(.callout)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).padding(.vertical, 5)
+                            .contentShape(Rectangle())
+                    }.buttonStyle(.plain).help("Abrir Configuración (⌘,)")
+                }.foregroundStyle(.secondary)
+
             }.padding(.horizontal, Layout.sidebarOuter).padding(.bottom, 16)
                 Divider()
                 Label(model.isOnline ? L("Solo se descarga lo que eliges") : L("Sin conexión"), systemImage: model.isOnline ? "internaldrive" : "wifi.slash")
@@ -426,13 +441,14 @@ struct ExplorerView: View {
             HStack {
                 Button { model.back(to: max(0, model.path.count - 1)) } label: { Image(systemName: "chevron.left") }.disabled(model.path.isEmpty)
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 7) {
-                        Button(model.collection == .files ? "Inicio" : model.collection.title) { model.back(to: 0) }.buttonStyle(.link)
+                    HStack(spacing: 5) {
+                        Crumb(title: model.collection == .files ? L("Inicio") : model.collection.title,
+                              symbol: model.collection.icon, current: model.path.isEmpty) { model.back(to: 0) }
                         ForEach(Array(model.path.enumerated()), id: \.element.id) { index, folder in
                             Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
-                            Button(folder.name) { model.back(to: index + 1) }.buttonStyle(.link)
+                            Crumb(title: folder.name, symbol: nil, current: index == model.path.count - 1) { model.back(to: index + 1) }
                         }
-                    }
+                    }.padding(.vertical, 1)
                 }
                 TextField("Filtrar esta carpeta", text: $model.search).textFieldStyle(.roundedBorder).frame(width: 210)
                 Picker("Orden", selection: $model.sortMode) { Text("Nombre").tag("name"); Text("Más recientes").tag("date"); Text("Mayor tamaño").tag("size") }.labelsHidden().frame(width: 130)
@@ -467,7 +483,7 @@ struct ExplorerView: View {
                     Group {
                         if file.isFolder { Color.clear } else { LocalCopyBadge(status: model.localStatus(file)) }
                     }.frame(width: 15)
-                    Image(systemName: file.icon).foregroundStyle(file.isFolder ? Color.accentColor : Color.secondary).frame(width: 20)
+                    FileIcon(file: file)
                     Text(file.name).lineLimit(1)
                     if model.isFavorite(file) { Image(systemName: "star.fill").font(.caption).foregroundStyle(.yellow) }
                 }.padding(.vertical, 5)
@@ -516,7 +532,7 @@ struct ExplorerView: View {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 16)], spacing: 18) {
                         ForEach(model.visibleFiles) { file in
                             VStack(spacing: 10) {
-                                Image(systemName: file.icon).font(.system(size: 42)).foregroundStyle(file.isFolder ? Color.accentColor : .secondary)
+                                FileIcon(file: file, size: 42)
                                     .overlay(alignment: .bottomTrailing) {
                                         if !file.isFolder {
                                             LocalCopyBadge(status: model.localStatus(file), size: 14)
@@ -639,6 +655,11 @@ struct TransferPanel: View {
     @ObservedObject var queue: TransferQueue
     @ObservedObject var history: TransferHistory
     @State private var showHistory = false
+
+    private var finishedToday: [HistoryEntry] {
+        let today = Calendar.current.startOfDay(for: Date())
+        return history.entries.filter { $0.finishedAt >= today }.prefix(6).map { $0 }
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // A narrow column, so the actions are icons with their names in the tooltip rather than a row of links
@@ -667,46 +688,36 @@ struct TransferPanel: View {
             // Queue order, oldest first: the running job sits on top and waiting jobs can be dragged to re-prioritise.
             List {
                 ForEach(queue.items) { transfer in
-                    HStack(alignment: .top) {
-                        Image(systemName: transfer.failed ? "exclamationmark.circle.fill" : (transfer.finished ? "checkmark.circle.fill" : (transfer.direction == .transfer ? "cloud.fill" : "arrow.up.arrow.down.circle")))
-                            .foregroundStyle(transfer.failed ? .red : (transfer.finished ? .green : .secondary))
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(transfer.name).fontWeight(.medium)
-                            Text(transfer.destination).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
-                            Text(transfer.status).foregroundStyle(transfer.failed ? .red : .secondary).textSelection(.enabled)
-                            Text(transfer.metrics).monospacedDigit().foregroundStyle(.secondary)
-                            if !transfer.finished {
-                                if transfer.progress > 0 { ProgressView(value: transfer.progress) }
-                                else if transfer.status != "En cola" { ProgressView().controlSize(.mini) }
-                            }
-                            // A column is narrow, so the actions go under the text rather than beside it.
-                            HStack(spacing: 8) {
-                                if [.failed, .paused, .cancelled].contains(transfer.state) {
-                                    Button(transfer.state == .failed ? "Reintentar" : "Reanudar") { queue.retry(transfer.id) }
-                                }
-                                if queue.isMovable(transfer) {
-                                    Button { queue.prioritize(transfer.id) } label: { Image(systemName: "arrow.up.to.line") }
-                                        .help("Pasar al principio de la cola")
-                                }
-                                if [.running, .queued].contains(transfer.state) {
-                                    Button { queue.cancel(transfer.id, pause: true) } label: { Image(systemName: "pause.circle") }.help("Pausar")
-                                    Button { queue.cancel(transfer.id) } label: { Image(systemName: "xmark.circle") }.help("Cancelar")
-                                    if queue.pendingBatchMates(of: transfer.id) > 0 {
-                                        Button("Cancelar el resto") { queue.cancelBatch(transfer.batchID) }
-                                            .help("Cancela este elemento y los \(queue.pendingBatchMates(of: transfer.id)) pendientes que se añadieron con él")
-                                    }
-                                }
-                            }.buttonStyle(.borderless).padding(.top, 1)
-                        }.font(.caption)
-                        Spacer(minLength: 0)
-                    }
-                    .moveDisabled(!queue.isMovable(transfer))
-                    .listRowSeparator(.hidden)
+                    TransferCard(model: model, queue: queue, transfer: transfer)
+                        .moveDisabled(!queue.isMovable(transfer))
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 3, leading: 0, bottom: 3, trailing: 0))
                 }
                 .onMove { from, to in queue.move(fromOffsets: from, toOffset: to) }
+
+                // What finished today, kept short. The full history is a sheet away; this is only so the panel does
+                // not look empty the moment the last transfer ends.
+                if !finishedToday.isEmpty {
+                    Section {
+                        ForEach(finishedToday) { entry in
+                            HStack(spacing: 7) {
+                                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).font(.caption)
+                                Text(entry.name).lineLimit(1).truncationMode(.middle)
+                                Spacer(minLength: 4)
+                                Text(entry.finishedAt.formatted(date: .omitted, time: .shortened))
+                                    .foregroundStyle(.tertiary).monospacedDigit()
+                            }.font(.caption2)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 2, leading: 2, bottom: 2, trailing: 2))
+                                .help(entry.summary.isEmpty ? entry.destination : entry.summary)
+                        }
+                    } header: {
+                        Text("Completadas hoy").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                    }
+                }
             }.listStyle(.plain).scrollContentBackground(.hidden).frame(maxHeight: .infinity)
                 .overlay {
-                    if queue.items.isEmpty {
+                    if queue.items.isEmpty && finishedToday.isEmpty {
                         VStack(spacing: 6) {
                             Image(systemName: "arrow.up.arrow.down.circle").font(.largeTitle).foregroundStyle(.tertiary)
                             Text("No hay transferencias").font(.callout).foregroundStyle(.secondary)
@@ -728,6 +739,112 @@ struct TransferPanel: View {
         }.padding(.horizontal, 14).padding(.vertical, 14)
             .frame(maxHeight: .infinity, alignment: .top)
             .background(.quaternary.opacity(0.4))
+    }
+}
+
+/// One transfer, as a card.
+///
+/// The old row was a stack of five short lines of grey text and a bare progress bar, which at the width of this
+/// column read as a paragraph rather than as a thing in motion. A card gives it an edge, puts the percentage where
+/// the eye already goes, and — the part that was missing altogether — shows the icon of the cloud the bytes are
+/// going to, so a queue with three accounts in it can be read without opening anything.
+struct TransferCard: View {
+    let model: AppModel
+    @ObservedObject var queue: TransferQueue
+    let transfer: Transfer
+
+    /// Where the bytes end up: the far account of a cross-cloud copy, the target of an upload, and for a download
+    /// the source, because that is the only cloud involved.
+    private var cloud: Account? {
+        let id = transfer.targetAccountID ?? transfer.accountID
+        return model.accounts.first { $0.id == id }
+    }
+    private var accent: Color {
+        if transfer.failed { return .red }
+        if transfer.state == .completed { return .green }
+        if transfer.state == .paused { return .orange }
+        return .accentColor
+    }
+    private var badge: String {
+        switch transfer.direction {
+        case .upload: return "arrow.up"
+        case .download: return "arrow.down"
+        case .transfer: return "arrow.left.arrow.right"
+        }
+    }
+    private var header: some View {
+        HStack(spacing: 7) {
+            ZStack(alignment: .bottomTrailing) {
+                if let cloud {
+                    AccountIcon(account: cloud, appearance: model.appearance(for: cloud), size: 20)
+                } else {
+                    Image(systemName: "cloud.fill").font(.caption).foregroundStyle(.tertiary).frame(width: 20)
+                }
+                Image(systemName: badge)
+                    .font(.system(size: 7, weight: .bold)).foregroundStyle(.white)
+                    .padding(2).background(accent, in: Circle())
+                    .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 1))
+                    .offset(x: 3, y: 2)
+            }
+            Text(transfer.name).fontWeight(.medium).lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 4)
+            if transfer.finished {
+                Image(systemName: transfer.failed ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                    .foregroundStyle(transfer.failed ? .red : .green)
+            } else if transfer.progress > 0 {
+                Text(transfer.progress.formatted(.percent.precision(.fractionLength(0))))
+                    .monospacedDigit().foregroundStyle(.secondary)
+            }
+        }
+    }
+    private var actions: some View {
+        HStack(spacing: 8) {
+            if [.failed, .paused, .cancelled].contains(transfer.state) {
+                Button(transfer.state == .failed ? "Reintentar" : "Reanudar") { queue.retry(transfer.id) }
+            }
+            if queue.isMovable(transfer) {
+                Button { queue.prioritize(transfer.id) } label: { Image(systemName: "arrow.up.to.line") }
+                    .help("Pasar al principio de la cola")
+            }
+            if [.running, .queued].contains(transfer.state) {
+                Button { queue.cancel(transfer.id, pause: true) } label: { Image(systemName: "pause.circle") }.help("Pausar")
+                Button { queue.cancel(transfer.id) } label: { Image(systemName: "xmark.circle") }.help("Cancelar")
+                if queue.pendingBatchMates(of: transfer.id) > 0 {
+                    Button("Cancelar el resto") { queue.cancelBatch(transfer.batchID) }
+                        .help("Cancela este elemento y los \(queue.pendingBatchMates(of: transfer.id)) pendientes que se añadieron con él")
+                }
+            }
+        }.buttonStyle(.borderless)
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            header
+            Text(transfer.destination).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
+            HStack(spacing: 5) {
+                Text(transfer.status).foregroundStyle(transfer.failed ? .red : .secondary).lineLimit(2)
+                Spacer(minLength: 0)
+                Text(transfer.metrics).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
+            }
+            if !transfer.finished {
+                // A rail is always drawn, so a queued item has the same height as a running one and the list does
+                // not jump every time one starts.
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.secondary.opacity(0.22)).frame(height: 4)
+                    GeometryReader { geometry in
+                        Capsule().fill(accent).frame(width: geometry.size.width * transfer.progress, height: 4)
+                    }.frame(height: 4)
+                }
+            }
+            if !actionsAreEmpty { actions.padding(.top, 1) }
+        }
+        .font(.caption)
+        .padding(9)
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(accent.opacity(transfer.state == .running ? 0.35 : 0.14), lineWidth: 1))
+        .textSelection(.enabled)
+    }
+    private var actionsAreEmpty: Bool {
+        transfer.state == .completed && !queue.isMovable(transfer)
     }
 }
 
@@ -1000,6 +1117,53 @@ struct TransferHistoryView: View {
     }
 }
 
+
+/// The favourites half of the sidebar.
+///
+/// The old list marked every row with the same star, which said "this is a favourite" — something the list already
+/// said by existing. What it never said is which cloud the item lives in, and that is exactly what you need when six
+/// of them are connected, so the star gives way to the account's own icon.
+struct FavoritesList: View {
+    @ObservedObject var model: AppModel
+
+    private var empty: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "star").font(.title2).foregroundStyle(.tertiary)
+            Text("Sin favoritos").font(.callout).foregroundStyle(.secondary)
+            Text("Marca una carpeta o un archivo con la estrella y aparecerá aquí, sea de la nube que sea.")
+                .font(.caption2).foregroundStyle(.tertiary).multilineTextAlignment(.center)
+        }.padding(.horizontal, 10).padding(.top, 28)
+    }
+    @ViewBuilder private func row(_ favorite: Favorite) -> some View {
+        let account = model.accounts.first { $0.id == favorite.accountID }
+        HStack(spacing: 9) {
+            if let account {
+                AccountIcon(account: account, appearance: model.appearance(for: account), size: 18)
+            } else {
+                Image(systemName: "questionmark.circle").frame(width: 18).foregroundStyle(.tertiary)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(favorite.file.name).lineLimit(1)
+                Text(account.map { model.accountTitle($0) } ?? L("Cuenta desconectada"))
+                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            if !favorite.file.isFolder { FileIcon(file: favorite.file, size: 11) }
+        }
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .contentShape(Rectangle())
+    }
+    var body: some View {
+        VStack(spacing: 3) {
+            if model.favorites.isEmpty { empty }
+            ForEach(model.favorites) { favorite in
+                Button { model.openFavorite(favorite) } label: { row(favorite) }
+                    .buttonStyle(.plain)
+                    .help(model.accounts.first { $0.id == favorite.accountID }?.email ?? L("Cuenta desconectada"))
+            }
+        }
+    }
+}
 
 /// Sidebar section with every mirrored folder and its state; observes the manager so status lines stay current.
 struct MirrorList: View {

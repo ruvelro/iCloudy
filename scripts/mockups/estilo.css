@@ -33,20 +33,33 @@ body {
 .buscador svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.8; }
 .cuentas { flex: 1; overflow: hidden; padding: 0 10px; display: flex; flex-direction: column; gap: 2px; }
 .cuenta { display: flex; gap: 10px; padding: 8px 8px; border-radius: 8px; align-items: flex-start; }
-.cuenta.activa { background: rgba(122,167,255,.13); box-shadow: inset 2px 0 0 #6f9dff; }
-.chapa { width: 26px; height: 26px; border-radius: 50%; flex: none; display: flex; align-items: center;
-  justify-content: center; font-size: 11px; font-weight: 700; color: #fff; }
+/* Sin filo a la izquierda: dentro de un rectángulo redondeado, una barra recta no encaja con la esquina y se ve
+   como un defecto. El fondo teñido ya dice cuál está seleccionada, y un borde del mismo tono lo remata. */
+.cuenta.activa { background: rgba(122,167,255,.14); box-shadow: inset 0 0 0 .5px rgba(122,167,255,.35); }
+.chapa { width: 26px; height: 26px; flex: none; display: flex; align-items: center; justify-content: center; }
+.chapa svg { width: 100%; height: 100%; display: block; }
+.chapa.chica { width: 19px; height: 19px; }
+
+/* Las dos mitades de la barra lateral, para no tener que bajar más allá de seis nubes para llegar a un favorito. */
+.pestanas { margin: 0 14px 10px; display: flex; gap: 2px; padding: 2px; border-radius: 7px;
+  background: rgba(255,255,255,.06); }
+.pestana { flex: 1; text-align: center; font-size: 11.5px; padding: 3px 0; border-radius: 5px; color: #8b91a0; }
+.pestana.sel { background: rgba(255,255,255,.12); color: #e9eaee; font-weight: 600; }
+.favorito { display: flex; gap: 9px; align-items: center; padding: 6px 8px; border-radius: 8px; }
+.fnombre { font-size: 12.5px; }
 .cuenta .texto { min-width: 0; flex: 1; }
 .cuenta .nombre { font-size: 12.5px; font-weight: 600; }
 .cuenta .correo { font-size: 11px; color: #757c8a; margin-top: 1px; }
 .medida { margin-top: 6px; display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: #757c8a; }
-.carril { flex: 1; height: 3px; border-radius: 2px; background: rgba(255,255,255,.1); overflow: hidden; }
+.carril { width: 78px; flex: none; height: 4px; border-radius: 2px; background: rgba(255,255,255,.14); overflow: hidden; }
 .carril i { display: block; height: 100%; border-radius: 2px; }
-.pie-lateral { border-top: .5px solid rgba(255,255,255,.07); padding: 10px 18px; display: flex;
-  flex-direction: column; gap: 9px; font-size: 12px; color: #8b91a0; }
-.pie-lateral .fila { display: flex; align-items: center; gap: 8px; }
-.pie-lateral svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.7; }
-.nota { font-size: 10.5px; color: #5f6673; }
+/* Dos acciones pequeñas y calladas, separadas de la lista por una línea para que se lean como el borde de la barra
+   lateral y no como dos filas más. */
+.pie-lateral { border-top: .5px solid rgba(255,255,255,.08); padding: 8px 12px 6px; display: flex;
+  flex-direction: column; gap: 2px; font-size: 11.5px; color: #8b91a0; }
+.pie-lateral .fila { display: flex; align-items: center; gap: 7px; padding: 4px 6px; border-radius: 6px; }
+.pie-lateral svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.7; }
+.nota { font-size: 10.5px; color: #5f6673; padding: 0 18px 12px; }
 
 /* Zona principal */
 .principal { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -74,3 +87,32 @@ tbody tr.sel td:first-child { border-radius: 6px 0 0 6px } tbody tr.sel td:last-
   font-size: 11.5px; color: #757c8a; border-top: .5px solid rgba(255,255,255,.07); background: #1c1d23; }
 .pie .der { margin-left: auto; }
 .verdecito { color: #43c463; }
+
+/* Cajón de transferencias: una tarjeta por transferencia, con el icono de la nube a la que van los bytes. */
+.cajon { width: 302px; flex: none; border-left: .5px solid rgba(255,255,255,.07); background: #1a1b21;
+  padding: 14px 12px; overflow: hidden; }
+.cjcab { display: flex; align-items: center; margin-bottom: 11px; }
+.cjtit { font-size: 14px; font-weight: 700; }
+.cjnum { margin-left: auto; font-size: 11px; color: #757c8a; }
+.tarjeta { padding: 9px 10px; border-radius: 9px; background: rgba(255,255,255,.05); margin-bottom: 7px;
+  border: .5px solid rgba(255,255,255,.07); }
+.tarjeta.viva { border-color: rgba(111,157,255,.38); background: rgba(111,157,255,.08); }
+.tcab { display: flex; align-items: center; gap: 8px; }
+.tnube { position: relative; width: 21px; height: 21px; flex: none; }
+.tnube > svg { width: 21px; height: 21px; display: block; }
+.sello { position: absolute; right: -3px; bottom: -3px; width: 12px; height: 12px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 1.5px #1a1b21; }
+.sello svg { width: 7px; height: 7px; }
+.tnom { flex: 1; font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pct { font-size: 11px; color: #9aa0ad; font-variant-numeric: tabular-nums; }
+.tsub { font-size: 11px; color: #757c8a; margin-top: 4px; }
+.tmeta { display: flex; font-size: 10.5px; color: #656c7a; margin-top: 2px; }
+.tmeta .der { margin-left: auto; }
+.rail { height: 4px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; margin-top: 7px; }
+.rail i { display: block; height: 100%; border-radius: 3px; }
+.hoy { margin-top: 13px; padding-top: 11px; border-top: .5px solid rgba(255,255,255,.08); }
+.hoytit { font-size: 10px; font-weight: 700; color: #757c8a; letter-spacing: .4px; margin-bottom: 8px; }
+.hoyfila { display: flex; gap: 7px; align-items: center; font-size: 11.5px; margin-bottom: 6px; }
+.hoyfila .ok { color: #43c463; }
+.hnom { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hhora { font-size: 10px; color: #5f6673; font-variant-numeric: tabular-nums; }
