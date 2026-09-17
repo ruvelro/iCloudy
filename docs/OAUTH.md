@@ -30,13 +30,17 @@ Testing sirve para la PoC; no es una configuración de distribución. El scope `
 
 En [Microsoft Entra admin center](https://entra.microsoft.com/):
 
-1. Abre **Identity → Applications → App registrations → New registration** en el tenant del desarrollador.
+1. Abre **Entra ID → App registrations → New registration**. El portal ya no pasa por «Identity» ni «Applications».
 2. Nombre: **iCloudy**.
-3. Supported account types: **Accounts in any organizational directory and personal Microsoft accounts**. La audiencia del manifiesto es `AzureADandPersonalMicrosoftAccount`. Esto admite Outlook/Hotmail y Microsoft 365; no uses una app single-tenant.
-4. Configura un redirect de **Mobile and desktop applications / cliente público**: `http://127.0.0.1:53682/callback`. No lo registres como Web o SPA. Microsoft exige que el puerto coincida con el registrado, por eso con esta cuenta iCloudy no recurre a un puerto alternativo: si el 53682 está ocupado, pide cerrar la otra instancia.
-5. La interfaz del portal puede rechazar una URI HTTP con IP loopback. En ese caso añade la URI a `publicClient.redirectUris` en el manifiesto de Microsoft Graph; en una vista de manifiesto legado aparece como `replyUrlsWithType` con `type: InstalledClient`. Conserva los redirects existentes. El nombre del campo depende de la versión del manifiesto del portal. [Restricciones de redirects](https://learn.microsoft.com/en-us/entra/identity-platform/reply-url).
-6. En **API permissions → Microsoft Graph → Delegated permissions**, añade **User.Read** y **Files.ReadWrite**. La app solicita además `openid profile email offline_access`. No se necesitan permisos de correo ni permisos Application.
-7. Copia el **Application (client) ID**, no el Directory (tenant) ID. No crees un client secret para este cliente de escritorio.
+3. Supported account types es un desplegable. Elige **Any Entra ID Tenant + Personal Microsoft accounts**, la opción que admite Outlook, Hotmail y Microsoft 365 a la vez. En el manifiesto es `AzureADandPersonalMicrosoftAccount`, y con esa audiencia `requestedAccessTokenVersion` tiene que ser `2`. Elígela bien a la primera: después no se puede cambiar desde la interfaz, solo editando el manifiesto.
+4. En **Manage → Authentication → Add a platform** elige **Mobile and desktop applications**. No lo registres como Web ni como SPA.
+5. **El portal rechazará `http://127.0.0.1:53682/callback` en el cuadro de texto.** No es un fallo tuyo: Microsoft documenta que ese campo no acepta el esquema `http` con la IP de loopback, y que hay que meterlo por el manifiesto. Ve a **Manage → Manifest** y añade la dirección conservando las que ya haya:
+   - Manifiesto en formato Azure AD Graph, que es el que ven las apps registradas con una cuenta personal: `"replyUrlsWithType": [{"url": "http://127.0.0.1:53682/callback", "type": "InstalledClient"}]`.
+   - Manifiesto en formato Microsoft Graph: `publicClient.redirectUris`.
+
+   El cuadro de texto sí acepta `http://localhost:53682/callback`, pero iCloudy no la usa: su servidor de vuelta escucha solo en `127.0.0.1`, y `localhost` puede resolverse a `::1` y dejar al navegador sin nadie al otro lado. Google además recomienda la IP literal frente a `localhost` para clientes nativos. El puerto debe coincidir exactamente; la tolerancia de puerto que Microsoft concede es solo para `localhost`. [Restricciones de redirects](https://learn.microsoft.com/en-us/entra/identity-platform/reply-url).
+6. En **API permissions → Microsoft Graph → Delegated permissions**, añade **User.Read** y **Files.ReadWrite**. La app solicita además `openid profile email offline_access`. **No añadas `Files.ReadWrite.All`**: no hace falta para la unidad del propio usuario y solo amplía el acceso a todo lo que esa persona alcance. Ninguno de los dos exige consentimiento de administrador en cuentas personales. No se necesitan permisos de correo ni permisos Application.
+7. Copia el **Application (client) ID**, no el Directory (tenant) ID. No crees un client secret: un cliente público no puede tener secretos, y Microsoft lo dice así de claro.
 
 ```sh
 swift scripts/configure-oauth.swift --microsoft EL_APPLICATION_CLIENT_ID
@@ -48,10 +52,12 @@ El endpoint `/common` del código acepta cuentas personales y empresariales seg�
 
 En [Dropbox App Console](https://www.dropbox.com/developers/apps):
 
-1. **Create app** → **Scoped access** → **Full Dropbox** (o **App folder** si prefieres limitar iCloudy a su propia carpeta).
+1. **Create app**, y elige el acceso con scopes. En **Content Access**, **Full Dropbox** (o **App folder** si prefieres limitar iCloudy a su propia carpeta).
 2. En **Permissions**, marca `account_info.read`, `files.metadata.read`, `files.content.read`, `files.content.write`, `sharing.read` y `sharing.write`. Guarda antes de salir de esa pestaña.
 3. En **Settings → OAuth 2 → Redirect URIs**, añade `http://127.0.0.1:53682/callback`.
 4. Copia la **App key**. No hace falta el App secret: iCloudy usa PKCE y pide `token_access_type=offline` para obtener un refresh token.
+
+Una aplicación en estado de desarrollo sirve de sobra para probar, pero tiene un reloj en marcha: admite hasta 500 cuentas enlazadas, y en cuanto llega a 50 quedan dos semanas para conseguir el estado de producción o dejan de poder enlazarse cuentas nuevas. Dropbox no revisa la solicitud antes de esas 50. Conviene saberlo antes de repartir el binario, no después. Y una vez en producción, la aplicación ya no se puede renombrar.
 
 ```sh
 swift scripts/configure-oauth.swift --dropbox LA_APP_KEY
@@ -61,11 +67,13 @@ swift scripts/configure-oauth.swift --dropbox LA_APP_KEY
 
 En [Box Developer Console](https://app.box.com/developers/console):
 
-1. **Create Platform App** → **Custom App** → método de autenticación **User Authentication (OAuth 2.0)**.
+1. **New App** → tipo **User** → **Create**. Box ha renombrado este flujo: ya no hay «Create Platform App» ni «Custom App». Una aplicación de autenticación de usuario no se puede convertir después en una de servidor.
 2. En **Configuration → OAuth 2.0 Redirect URIs**, añade `http://127.0.0.1:53682/callback`.
 3. En **Application Scopes**, deja al menos lectura y escritura de todos los archivos y carpetas. iCloudy no envía un parámetro `scope`: usa los permisos configurados aquí.
-4. Copia **Client ID** y **Client Secret**. Box exige el secreto al canjear el código incluso con PKCE; es metadato de un cliente instalado, extraíble del binario, igual que el de Google.
-5. Si la cuenta es de empresa, un administrador debe autorizar la aplicación en **Admin Console → Apps → Custom Apps Manager**.
+4. Copia **Client ID** y **Client Secret**. **Box es el único de los cuatro que no admite PKCE**: no documenta `code_challenge` en ninguna parte y exige el secreto al canjear el código. Así que con Box el secreto viaja dentro del binario, como en cualquier otro cliente de escritorio de Box. Es metadato de un cliente instalado, no una credencial de servidor, pero conviene no contarlo como si fuera un cliente público de verdad.
+5. Las aplicaciones creadas por una cuenta gratuita de desarrollador se autorizan solas. Si la cuenta es de empresa, un administrador debe aprobarla en **Admin Console → Apps → Platform Apps Manager**, y hay que volver a autorizarla cada vez que cambien los permisos.
+
+Box acepta explícitamente `http://` en loopback, y además tolera que cambie el puerto mientras coincidan esquema, dominio y ruta. Es el más permisivo de los cuatro en esto.
 
 ```sh
 swift scripts/configure-oauth.swift --box CLIENT_ID:CLIENT_SECRET
