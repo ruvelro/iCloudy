@@ -24,6 +24,8 @@ final class AppModel: ObservableObject {
     @Published var crossCloud: CrossCloudRequest?
     /// Self-hosted provider whose credentials form is open, if any.
     @Published var serverLogin: Cloud?
+    /// True while the advanced sheet for shared drives and document libraries is open.
+    @Published var showAdvanced = false
     @Published var connecting = false
     @Published var connectionError: String?
     @Published var showConnect = false
@@ -297,6 +299,20 @@ final class AppModel: ObservableObject {
             select(account.id); showConnect = false
         } catch { connectionError = error.localizedDescription }
     }
+    /// Accounts that can host a shared drive or a document library.
+    var driveHosts: [Account] { accounts.filter { [.google, .microsoft].contains($0.cloud) && $0.driveID == nil } }
+    /// Adds the shared drive as its own account. It borrows the credential of the account it came from, so there is no
+    /// second sign-in and no second copy of the tokens.
+    func addScopedDrive(_ drive: RemoteDrive, from parent: Account) {
+        let account = Account.scoped(to: drive.id, named: drive.name, from: parent)
+        do {
+            var updated = accounts.filter { $0.id != account.id }; updated.append(account)
+            try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
+            accounts = updated; clients[account.id]?.invalidate(); clients[account.id] = nil
+            showAdvanced = false
+            select(account.id); showConnect = false
+        } catch { self.error = error.localizedDescription }
+    }
     /// Opens the Finder's own "Connect to Server" flow. Mounting is not something a sandboxed app may do itself.
     func openFinderConnect() {
         guard let url = URL(string: "smb://") else { return }
@@ -305,7 +321,7 @@ final class AppModel: ObservableObject {
 
     /// Connects a server the user hosts: WebDAV or FTP. The password goes straight to the Keychain and never leaves
     /// this Mac except to that server.
-    func connectServer(cloud: Cloud, server: String, username: String, password: String) async {
+    func connectServer(cloud: Cloud, server: String, username: String, password: String, flavor: String? = nil) async {
         guard !connecting else { return }
         connectionError = nil; connecting = true
         defer { connecting = false }
@@ -316,7 +332,8 @@ final class AppModel: ObservableObject {
             case .ftp: result = try await oauth.signInFTP(server: server, username: username, password: password)
             default: throw CloudError.message(L("\(cloud.title) no se conecta con usuario y contraseña."))
             }
-            let (account, credential) = result
+            var (account, credential) = result
+            if let flavor { account.options["flavor"] = flavor }
             try Vault.save(credential, key: account.id)
             var updated = accounts.filter { $0.id != account.id }; updated.append(account)
             try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")

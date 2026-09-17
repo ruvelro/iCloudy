@@ -96,8 +96,30 @@ struct Account: Codable, Identifiable, Hashable {
     var serverURL: String?
     /// Security-scoped bookmark to that folder, for volume accounts under the sandbox.
     var bookmark: Data?
+    /// Extra settings that only some accounts need, kept out of the main fields: the shared drive or document library
+    /// this account is scoped to, whose credential it borrows, and provider flavours such as Nextcloud.
+    var options: [String: String] = [:]
+    /// Shared drive (Google) or document library (SharePoint) this account is restricted to, if any.
+    var driveID: String? { options["driveID"] }
+    /// Keychain key holding the credential. A scoped account reuses the credential of the account it was derived from.
+    var credentialKey: String { options["credentialSource"] ?? id }
+    /// Server dialect, for providers that share a protocol but not their extensions.
+    var flavor: String? { options["flavor"] }
     var isDemo: Bool { id.hasPrefix("demo:") }
-    var capabilities: CloudCapabilities { isDemo ? CloudCapabilities(oauth: false, publicLinks: true) : cloud.capabilities }
+    var capabilities: CloudCapabilities {
+        guard !isDemo else { return CloudCapabilities(oauth: false, publicLinks: true) }
+        var base = cloud.capabilities
+        // Plain WebDAV cannot share, but Nextcloud and ownCloud add their own API for it on top.
+        if cloud == .webdav, flavor == "nextcloud" { base.publicLinks = true }
+        return base
+    }
+    /// An account restricted to one shared drive or document library. It is a view of the parent account rather than a
+    /// new sign-in: the identifier keeps the parent's prefix and the credential stays in the parent's Keychain entry.
+    static func scoped(to driveID: String, named name: String, from parent: Account) -> Account {
+        Account(id: parent.id + "/drive:" + driveID, cloud: parent.cloud, name: name,
+                email: parent.email + " · " + name, clientID: parent.clientID, clientSecret: parent.clientSecret,
+                serverURL: nil, bookmark: nil, options: ["driveID": driveID, "credentialSource": parent.id])
+    }
     static let demo = Account(id: "demo:local", cloud: .google, name: "Demo local", email: "Sin conexión · datos de prueba", clientID: "", clientSecret: nil)
 }
 
@@ -354,7 +376,7 @@ enum FileNames {
 // defaults, so adding a property never invalidates an existing file. Renaming or removing one still needs a migration.
 
 extension Account {
-    enum CodingKeys: String, CodingKey { case id, cloud, name, email, clientID, clientSecret, serverURL, bookmark }
+    enum CodingKeys: String, CodingKey { case id, cloud, name, email, clientID, clientSecret, serverURL, bookmark, options }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let email = try values.decodeIfPresent(String.self, forKey: .email) ?? ""
@@ -365,7 +387,8 @@ extension Account {
                   clientID: try values.decodeIfPresent(String.self, forKey: .clientID) ?? "",
                   clientSecret: try values.decodeIfPresent(String.self, forKey: .clientSecret),
                   serverURL: try values.decodeIfPresent(String.self, forKey: .serverURL),
-                  bookmark: try values.decodeIfPresent(Data.self, forKey: .bookmark))
+                  bookmark: try values.decodeIfPresent(Data.self, forKey: .bookmark),
+                  options: try values.decodeIfPresent([String: String].self, forKey: .options) ?? [:])
     }
 }
 

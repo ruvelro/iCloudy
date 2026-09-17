@@ -45,7 +45,7 @@ final class CloudAPI {
         if let tokenProvider { return try await tokenProvider() }
         guard !sessionExpired else { throw CloudError.sessionExpired(nil) }
         if let refreshTask { return try await refreshTask.value }
-        if cachedCredential == nil { cachedCredential = try credentials.read(account.id) }
+        if cachedCredential == nil { cachedCredential = try credentials.read(account.credentialKey) }
         guard let credential = cachedCredential else { expireSession(); throw CloudError.sessionExpired(nil) }
         if !force, credential.expires.timeIntervalSinceNow > 90 { return credential.accessToken }
         // A self-hosted password has no refresh endpoint: if the server stops accepting it, only new credentials help.
@@ -69,7 +69,7 @@ final class CloudAPI {
             guard !self.invalidated else { throw CancellationError() }
             guard let access = result["access_token"] as? String else { throw CloudError.message(L("No se pudo renovar la sesión. Vuelve a conectar la cuenta.")) }
             let updated = Credential(accessToken: access, refreshToken: result["refresh_token"] as? String ?? credential.refreshToken, expires: Date().addingTimeInterval(result["expires_in"] as? Double ?? 3600))
-            try credentials.save(updated, key: account.id)
+            try credentials.save(updated, key: account.credentialKey)
             self.cachedCredential = updated
             return access
         }
@@ -134,6 +134,31 @@ final class CloudAPI {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.date(from: string) ?? ISO8601DateFormatter().date(from: string)
     }
+    /// Base of every Graph call: the signed-in user's own drive, or the document library this account is scoped to.
+    var graphDrive: String {
+        account.driveID.map { "https://graph.microsoft.com/v1.0/drives/" + Self.segment($0) } ?? "https://graph.microsoft.com/v1.0/me/drive"
+    }
+    /// Every Drive API call touching an item of a shared drive must opt in, or the server pretends it does not exist.
+    var googleAllDrives: [URLQueryItem] {
+        account.driveID == nil ? [] : [URLQueryItem(name: "supportsAllDrives", value: "true")]
+    }
+    /// Drive API calls of a shared-drive account must opt in explicitly, or the server pretends the items do not exist.
+    func googleURL(_ string: String) -> URL {
+        guard account.driveID != nil, var components = URLComponents(string: string) else { return URL(string: string)! }
+        components.queryItems = (components.queryItems ?? []) + googleAllDrives
+        return components.url ?? URL(string: string)!
+    }
+    /// Query items that restrict a listing or a search to the shared drive this account represents.
+    var googleDriveScope: [URLQueryItem] {
+        guard let drive = account.driveID else { return [] }
+        return [URLQueryItem(name: "corpora", value: "drive"), URLQueryItem(name: "driveId", value: drive),
+                URLQueryItem(name: "includeItemsFromAllDrives", value: "true"), URLQueryItem(name: "supportsAllDrives", value: "true")]
+    }
+    /// The identifier a shared drive uses for its own top level is the drive id itself.
+    func googleParent(_ parent: String) -> String {
+        parent == "root" ? (account.driveID ?? "root") : parent
+    }
+
     func graphItem(_ id: String) -> String { id == "root" ? "root" : "items/" + Self.segment(id) }
     static func segment(_ value: String) -> String { value.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~")))! }
 
@@ -166,9 +191,10 @@ final class CloudAPI {
             case Collection.shared.rootID:
                 url.queryItems = [URLQueryItem(name: "q", value: "sharedWithMe = true and trashed = false"), URLQueryItem(name: "pageSize", value: "1000"), URLQueryItem(name: "fields", value: fields), URLQueryItem(name: "pageToken", value: page)]
             default:
-                let escaped = parent.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+                let escaped = googleParent(parent).replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
                 url.queryItems = [URLQueryItem(name: "q", value: "'\(escaped)' in parents and trashed = false"), URLQueryItem(name: "pageSize", value: "1000"), URLQueryItem(name: "fields", value: fields), URLQueryItem(name: "pageToken", value: page)]
             }
+            url.queryItems = (url.queryItems ?? []) + googleDriveScope
             let result = try await json(url.url!)
             files += (result["files"] as? [[String: Any]] ?? []).compactMap(Self.googleFile)
             page = parent == Collection.recent.rootID ? nil : result["nextPageToken"] as? String
@@ -186,7 +212,7 @@ final class CloudAPI {
         case Collection.shared.rootID: route = "sharedWithMe?\(select)"
         default: route = "\(graphItem(parent))/children?$top=200&\(select)"
         }
-        var next: URL? = URL(string: "https://graph.microsoft.com/v1.0/me/drive/\(route)")!
+        var next: URL? = URL(string: "\(graphDrive)/\(route)")!
         while let url = next {
             guard url.scheme == "https", url.host == "graph.microsoft.com" else { throw CloudError.message(L("Paginación no válida.")) }
             let result = try await json(url)
@@ -205,9 +231,9 @@ final class CloudAPI {
         let result: [String: Any]
         switch account.cloud {
         case .google:
-            result = try await json(URL(string: "https://www.googleapis.com/drive/v3/files")!, method: "POST", body: ["name": name, "mimeType": "application/vnd.google-apps.folder", "parents": [parent]])
+            result = try await json(googleURL("https://www.googleapis.com/drive/v3/files"), method: "POST", body: ["name": name, "mimeType": "application/vnd.google-apps.folder", "parents": [googleParent(parent)]])
         case .microsoft:
-            result = try await json(URL(string: "https://graph.microsoft.com/v1.0/me/drive/\(graphItem(parent))/children")!, method: "POST", body: ["name": name, "folder": [:], "@microsoft.graph.conflictBehavior": "rename"])
+            result = try await json(URL(string: "\(graphDrive)/\(graphItem(parent))/children")!, method: "POST", body: ["name": name, "folder": [:], "@microsoft.graph.conflictBehavior": "rename"])
         case .dropbox: return try await dropboxCreateFolder(name: name, parent: parent)
         case .box:
             result = try await json(URL(string: "https://api.box.com/2.0/folders")!, method: "POST", body: ["name": name, "parent": ["id": boxID(parent)]])
@@ -227,10 +253,10 @@ final class CloudAPI {
         switch account.cloud {
         case .google:
             var parts = URLComponents(string: "https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))" + (exportMime == nil ? "" : "/export"))!
-            parts.queryItems = [URLQueryItem(name: exportMime == nil ? "alt" : "mimeType", value: exportMime ?? "media")]
+            parts.queryItems = [URLQueryItem(name: exportMime == nil ? "alt" : "mimeType", value: exportMime ?? "media")] + googleAllDrives
             return try await request(parts.url!)
         case .microsoft:
-            return try await request(URL(string: "https://graph.microsoft.com/v1.0/me/drive/items/\(Self.segment(file.id))/content")!)
+            return try await request(URL(string: "\(graphDrive)/items/\(Self.segment(file.id))/content")!)
         case .box:
             return try await request(URL(string: "https://api.box.com/2.0/files/\(Self.segment(file.id))/content")!)
         case .dropbox:

@@ -662,6 +662,25 @@ struct ConnectView: View {
                 Button("Conectar a un servidor en el Finder…") { model.openFinderConnect() }
                     .buttonStyle(.link).font(.caption)
                     .help("Monta el recurso de red y vuelve aquí para elegir su carpeta")
+                Text("AVANZADOS").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Button {
+                    model.connectionError = nil; model.showAdvanced = true
+                } label: {
+                    HStack(spacing: 14) {
+                        Image(systemName: "person.2.badge.gearshape").font(.title2).foregroundStyle(.secondary).frame(width: 30)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Unidad compartida o biblioteca").font(.headline)
+                            Text("Unidades compartidas de Google y bibliotecas de SharePoint").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                    }.padding(14).frame(maxWidth: .infinity).contentShape(Rectangle())
+                        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(.quaternary))
+                }.buttonStyle(.plain).disabled(model.driveHosts.isEmpty || model.connecting)
+                if model.driveHosts.isEmpty {
+                    Text("Conecta antes una cuenta de Google o de Microsoft.").font(.caption2).foregroundStyle(.secondary)
+                }
                 Button("Probar demo local sin iniciar sesión") { model.enableDemo() }.disabled(model.connecting)
                 if let error = model.connectionError, model.serverLogin == nil {
                     Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
@@ -677,6 +696,7 @@ struct ConnectView: View {
         }.frame(width: 470, height: 640).interactiveDismissDisabled(model.connecting)
             .onAppear { model.connectionError = nil }
             .sheet(item: $model.serverLogin) { cloud in ServerLoginView(model: model, cloud: cloud) }
+            .sheet(isPresented: $model.showAdvanced) { AdvancedDriveView(model: model) }
     }
 
     private func providerButton(_ cloud: Cloud, title: String, subtitle: String, icon: String) -> some View {
@@ -722,6 +742,8 @@ struct ServerLoginView: View {
     @State private var username = ""
     @State private var password = ""
     @State private var secureFTP = false
+    @State private var nextcloud = false
+    @State private var showAdvanced = false
 
     private var placeholder: String {
         cloud == .webdav ? "https://nube.ejemplo.com/remote.php/dav/files/ana" : "servidor.ejemplo.com/carpeta"
@@ -757,6 +779,15 @@ struct ServerLoginView: View {
             SecureField("Contraseña o contraseña de aplicación", text: $password).textFieldStyle(.roundedBorder)
             Text("Si tu servidor usa verificación en dos pasos, crea una contraseña de aplicación en su configuración.")
                 .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if cloud == .webdav {
+                DisclosureGroup(isExpanded: $showAdvanced) {
+                    Toggle("Servidor Nextcloud u ownCloud", isOn: $nextcloud)
+                    Text("Habilita «Crear enlace público» usando su API de compartición, que WebDAV por sí solo no tiene. Déjalo desactivado si no sabes qué servidor es.")
+                        .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                } label: {
+                    Text("Avanzado").font(.caption)
+                }
+            }
             if let error = model.connectionError {
                 Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             }
@@ -766,7 +797,8 @@ struct ServerLoginView: View {
                 if model.connecting { ProgressView().controlSize(.small) }
                 Button("Conectar") {
                     Task {
-                        await model.connectServer(cloud: cloud, server: address, username: username, password: password)
+                        await model.connectServer(cloud: cloud, server: address, username: username, password: password,
+                                                  flavor: cloud == .webdav && nextcloud ? "nextcloud" : nil)
                         password = ""
                         if model.connectionError == nil { dismiss() }
                     }
@@ -867,5 +899,58 @@ struct MirrorList: View {
             Button("Dejar de reflejar", role: .destructive) { if let removing { mirrors.remove(removing.id) }; removing = nil }
             Button("Cancelar", role: .cancel) { removing = nil }
         } message: { Text("Se deja de vigilar la carpeta. No se borra nada, ni en el Mac ni en la nube.") }
+    }
+}
+
+
+/// Picks a shared drive or a document library from an account that is already connected. Kept out of the main list
+/// because most people never need one, and it needs an existing sign-in rather than a new one.
+struct AdvancedDriveView: View {
+    @ObservedObject var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var host: Account?
+    @State private var drives: [RemoteDrive] = []
+    @State private var loading = false
+    @State private var failure: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Unidad compartida o biblioteca").font(.title2)
+            Text("Se añade como una nube más, reutilizando la sesión de la cuenta elegida. No hay que iniciar sesión otra vez.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Picker("Cuenta", selection: Binding(get: { host }, set: { host = $0; Task { await load() } })) {
+                Text("Elige una cuenta").tag(Account?.none)
+                ForEach(model.driveHosts) { account in
+                    Text(model.accountTitle(account) + " · " + account.email).tag(Account?.some(account))
+                }
+            }.labelsHidden()
+            List(drives) { drive in
+                HStack(spacing: 10) {
+                    Image(systemName: "externaldrive.badge.person.crop").foregroundStyle(.secondary)
+                    VStack(alignment: .leading) {
+                        Text(drive.name).fontWeight(.medium)
+                        Text(drive.detail).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "plus.circle")
+                }.contentShape(Rectangle())
+                    .onTapGesture { if let host { model.addScopedDrive(drive, from: host); dismiss() } }
+            }
+            .frame(minHeight: 200)
+            .overlay {
+                if loading { ProgressView() }
+                else if host == nil { Text("Elige primero una cuenta.").foregroundStyle(.secondary).font(.callout) }
+                else if drives.isEmpty { Text("Esa cuenta no tiene unidades compartidas ni bibliotecas disponibles.").foregroundStyle(.secondary).font(.callout).multilineTextAlignment(.center).padding() }
+            }
+            if let failure { Text(failure).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
+            HStack { Spacer(); Button("Cerrar") { model.showAdvanced = false; dismiss() }.keyboardShortcut(.cancelAction) }
+        }.padding(24).frame(width: 520)
+    }
+    private func load() async {
+        guard let host else { return }
+        loading = true; failure = nil; drives = []
+        do { drives = try await model.client(host).availableDrives() }
+        catch { failure = error.localizedDescription }
+        loading = false
     }
 }

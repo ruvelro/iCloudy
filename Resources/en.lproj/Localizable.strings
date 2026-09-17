@@ -527,3 +527,20 @@
 "No se pudo crear el archivo de destino." = "The destination file could not be created.";
 "Un volumen no tiene enlaces públicos. Compártelo desde el Finder." = "A volume has no public links. Share it from the Finder.";
 "Este proveedor no usa peticiones HTTP." = "This provider does not use HTTP requests.";
+
+/* Advanced providers: shared drives, SharePoint libraries and Nextcloud sharing */
+"AVANZADOS" = "ADVANCED";
+"Unidad compartida o biblioteca" = "Shared drive or library";
+"Unidades compartidas de Google y bibliotecas de SharePoint" = "Google shared drives and SharePoint libraries";
+"Conecta antes una cuenta de Google o de Microsoft." = "Connect a Google or Microsoft account first.";
+"Elige una cuenta" = "Choose an account";
+"Elige primero una cuenta." = "Choose an account first.";
+"Esa cuenta no tiene unidades compartidas ni bibliotecas disponibles." = "That account has no shared drives or libraries available.";
+"Se añade como una nube más, reutilizando la sesión de la cuenta elegida. No hay que iniciar sesión otra vez." = "It is added like any other cloud, reusing the chosen account's session. There is no need to sign in again.";
+"Unidad compartida de Google Drive" = "Google Drive shared drive";
+"Sitio principal" = "Main site";
+"Avanzado" = "Advanced";
+"Servidor Nextcloud u ownCloud" = "Nextcloud or ownCloud server";
+"Habilita «Crear enlace público» usando su API de compartición, que WebDAV por sí solo no tiene. Déjalo desactivado si no sabes qué servidor es." = "Enables “Create public link” through its sharing API, which WebDAV alone does not have. Leave it off if you are unsure which server it is.";
+"No se pudo construir la dirección de compartición." = "The sharing address could not be built.";
+"El servidor no devolvió el enlace. Comprueba que compartir está habilitado." = "The server did not return the link. Check that sharing is enabled.";

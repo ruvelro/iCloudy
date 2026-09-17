@@ -175,16 +175,17 @@ extension CloudAPI {
                 URLQueryItem(name: "spaces", value: "drive"), URLQueryItem(name: "corpora", value: "user"),
                 URLQueryItem(name: "pageSize", value: "100"), URLQueryItem(name: "pageToken", value: cursor),
                 URLQueryItem(name: "fields", value: "nextPageToken,incompleteSearch,files(id,name,mimeType,size,modifiedTime,webViewLink,parents,driveId)")
-            ]
+            ] + googleDriveScope
             let response = try await json(url.url!)
             let hits = (response["files"] as? [[String: Any]] ?? []).compactMap { value -> SearchHit? in
-                guard value["driveId"] == nil, let file = Self.googleFile(value) else { return nil }
+                // A personal account cannot browse shared-drive items; a scoped account sees nothing else.
+                guard account.driveID != nil || value["driveId"] == nil, let file = Self.googleFile(value) else { return nil }
                 return SearchHit(accountID: account.id, file: file, parentID: (value["parents"] as? [String])?.first)
             }
             return SearchPage(hits: hits, next: response["nextPageToken"] as? String, incomplete: response["incompleteSearch"] as? Bool ?? false)
         }
         let encoded = Self.segment(term.replacingOccurrences(of: "'", with: "''"))
-        guard let url = URL(string: cursor ?? "https://graph.microsoft.com/v1.0/me/drive/root/search(q='\(encoded)')?$top=100&$select=id,name,size,folder,file,remoteItem,webUrl,lastModifiedDateTime,parentReference"),
+        guard let url = URL(string: cursor ?? "\(graphDrive)/root/search(q='\(encoded)')?$top=100&$select=id,name,size,folder,file,remoteItem,webUrl,lastModifiedDateTime,parentReference"),
               url.scheme == "https", url.host == "graph.microsoft.com", url.user == nil, url.password == nil, url.port == nil || url.port == 443 else {
             throw CloudError.message(L("Paginación de búsqueda no válida."))
         }
@@ -209,18 +210,18 @@ extension CloudAPI {
         var result: [CloudFile] = [], current: String? = id, seen: Set<String> = []
         let googleRoot: String?
         if account.cloud == .google {
-            googleRoot = try await json(URL(string: "https://www.googleapis.com/drive/v3/files/root?fields=id")!)["id"] as? String
+            googleRoot = try await json(googleURL("https://www.googleapis.com/drive/v3/files/root?fields=id"))["id"] as? String
         } else { googleRoot = nil }
-        while let folderID = current, folderID != "root", folderID != googleRoot {
+        while let folderID = current, folderID != "root", folderID != googleRoot, folderID != account.driveID {
             try Task.checkCancellation()
             guard seen.insert(folderID).inserted, seen.count <= 64 else { throw CloudError.message(L("No se pudo resolver la ruta de la carpeta.")) }
             let value: [String: Any]
             let file: CloudFile?
             if account.cloud == .google {
-                value = try await json(URL(string: "https://www.googleapis.com/drive/v3/files/\(Self.segment(folderID))?fields=id,name,mimeType,parents,webViewLink")!)
+                value = try await json(googleURL("https://www.googleapis.com/drive/v3/files/\(Self.segment(folderID))?fields=id,name,mimeType,parents,webViewLink"))
                 file = Self.googleFile(value); current = (value["parents"] as? [String])?.first
             } else {
-                value = try await json(URL(string: "https://graph.microsoft.com/v1.0/me/drive/items/\(Self.segment(folderID))?$select=id,name,folder,root,parentReference,webUrl")!)
+                value = try await json(URL(string: "\(graphDrive)/items/\(Self.segment(folderID))?$select=id,name,folder,root,parentReference,webUrl")!)
                 if value["root"] != nil { break }
                 file = Self.microsoftFile(value); current = (value["parentReference"] as? [String: Any])?["id"] as? String
             }

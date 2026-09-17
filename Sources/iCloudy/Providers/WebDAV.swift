@@ -36,8 +36,7 @@ extension CloudAPI {
             request.httpBody = Data(body.utf8)
             request.setValue("application/xml; charset=utf-8", forHTTPHeaderField: "Content-Type")
         }
-        var mutable = request
-        let (data, response) = try await send(&mutable)
+        let (data, response) = try await send(&request)
         return (data, response)
     }
 
@@ -112,6 +111,36 @@ extension CloudAPI {
             let path = "/" + parts[0...index].joined(separator: "/")
             return CloudFile(id: path, name: parts[index], mime: "application/vnd.google-apps.folder", size: nil, modified: nil, webURL: nil, isFolder: true)
         }
+    }
+
+    /// Nextcloud and ownCloud share files through their own OCS API, which lives beside the WebDAV path rather than
+    /// inside it: everything before `/remote.php` is the installation's root, so subdirectory installs work too.
+    func nextcloudSharesURL() throws -> URL {
+        var components = try webdavBase()
+        let path = components.path
+        if let marker = path.range(of: "/remote.php") { components.path = String(path[path.startIndex..<marker.lowerBound]) }
+        components.path += "/ocs/v2.php/apps/files_sharing/api/v1/shares"
+        components.queryItems = [URLQueryItem(name: "format", value: "json")]
+        guard let url = components.url else { throw CloudError.message(L("No se pudo construir la dirección de compartición.")) }
+        return url
+    }
+
+    func nextcloudPublicLink(for file: CloudFile) async throws -> URL {
+        var request = try await request(try nextcloudSharesURL(), method: "POST")
+        request.setValue("true", forHTTPHeaderField: "OCS-APIRequest")
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        // shareType 3 is a public link; permission 1 is read only.
+        request.httpBody = HTTP.form(["path": Self.webdavNormalize(file.id), "shareType": "3", "permissions": "1"])
+        var mutable = request
+        let (data, response) = try await send(&mutable)
+        try HTTP.validate(response, data: data)
+        let body = try HTTP.json(data)
+        guard let ocs = body["ocs"] as? [String: Any], let payload = ocs["data"] as? [String: Any],
+              let link = (payload["url"] as? String).flatMap(URL.init(string:)) else {
+            let message = ((body["ocs"] as? [String: Any])?["meta"] as? [String: Any])?["message"] as? String
+            throw CloudError.message(message ?? L("El servidor no devolvió el enlace. Comprueba que compartir está habilitado."))
+        }
+        return link
     }
 
     /// WebDAV has no resumable protocol: a PUT either lands whole or is repeated. The file is streamed from disk.

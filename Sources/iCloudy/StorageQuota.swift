@@ -73,7 +73,7 @@ extension CloudAPI {
         let endpoint: String
         switch account.cloud {
         case .google: endpoint = "https://www.googleapis.com/drive/v3/about?fields=storageQuota"
-        case .microsoft: endpoint = "https://graph.microsoft.com/v1.0/me/drive?$select=quota"
+        case .microsoft: endpoint = "\(graphDrive)?$select=quota"
         case .dropbox: return try await dropboxQuota()
         case .box: return try await boxQuota()
         case .webdav: return try await webdavQuota()
