@@ -4,10 +4,10 @@ import Foundation
 /// and build breadcrumbs without asking the server anything.
 struct MegaNode: Hashable {
     let handle: String
-    let parent: String
+    var parent: String
     /// 0 file, 1 folder, 2 the account's root, 3 inbox, 4 trash.
     let kind: Int
-    let name: String
+    var name: String
     let size: Int64?
     let modified: Date?
     /// Decrypted node key: 32 bytes for a file, 16 for a folder. Empty when the node was shared with a key that this
@@ -182,8 +182,10 @@ enum MegaAPI {
         let field = node["k"] as? String ?? ""
         let attributes = node["a"] as? String ?? ""
         for part in field.split(separator: "/") {
-            guard let colon = part.firstIndex(of: ":") else { continue }
-            let blob = MegaCrypto.decode(String(part[part.index(after: colon)...]))
+            // Normally "owner:key". A bare key is accepted too, because that is the shape a request carries and some
+            // answers echo it back unchanged.
+            let text = part.firstIndex(of: ":").map { String(part[part.index(after: $0)...]) } ?? String(part)
+            let blob = MegaCrypto.decode(text)
             guard blob.count == (kind == 0 ? 32 : 16), let key = try? MegaCrypto.ecb(blob, key: masterKey) else { continue }
             let content = kind == 0 ? (MegaCrypto.unpack(fileKey: key)?.key ?? Data()) : key
             guard let values = MegaCrypto.attributes(MegaCrypto.decode(attributes), key: content),
@@ -193,6 +195,24 @@ enum MegaAPI {
         return nil
     }
 
+    /// Turns one entry of an `f` or `p` response into a node.
+    static func node(from entry: [String: Any], masterKey: Data) -> MegaNode? {
+        guard let handle = entry["h"] as? String else { return nil }
+        let kind = entry["t"] as? Int ?? 0
+        let decrypted = kind < 2 ? decrypt(node: entry, masterKey: masterKey) : nil
+        let name: String
+        switch kind {
+        case 2: name = L("Mi nube")
+        case 3: name = L("Entrada")
+        case 4: name = L("Papelera")
+        default: name = decrypted?.name ?? L("Elemento sin acceso")
+        }
+        let size = entry["s"] as? Int64 ?? (entry["s"] as? Int).map(Int64.init)
+        return MegaNode(handle: handle, parent: entry["p"] as? String ?? "", kind: kind, name: name,
+                        size: kind == 0 ? size : nil,
+                        modified: (entry["ts"] as? Double).map { Date(timeIntervalSince1970: $0) },
+                        key: decrypted?.key ?? Data())
+    }
     /// Builds the tree from an `f` response, keeping the order Mega sends so parents are known before children.
     static func tree(_ files: [[String: Any]], masterKey: Data) -> MegaState.Tree {
         var nodes: [String: MegaNode] = [:]
@@ -200,23 +220,11 @@ enum MegaAPI {
         var root = ""
         var trash = ""
         for entry in files {
-            guard let handle = entry["h"] as? String else { continue }
-            let kind = entry["t"] as? Int ?? 0
-            let parent = entry["p"] as? String ?? ""
-            let decrypted = kind < 2 ? decrypt(node: entry, masterKey: masterKey) : nil
-            let name: String
-            switch kind {
-            case 2: name = L("Mi nube"); root = handle
-            case 3: name = L("Entrada")
-            case 4: name = L("Papelera"); trash = handle
-            default: name = decrypted?.name ?? L("Elemento sin acceso")
-            }
-            let size = entry["s"] as? Int64 ?? (entry["s"] as? Int).map(Int64.init)
-            nodes[handle] = MegaNode(handle: handle, parent: parent, kind: kind, name: name,
-                                     size: kind == 0 ? size : nil,
-                                     modified: (entry["ts"] as? Double).map { Date(timeIntervalSince1970: $0) },
-                                     key: decrypted?.key ?? Data())
-            children[parent, default: []].append(handle)
+            guard let node = node(from: entry, masterKey: masterKey) else { continue }
+            if node.kind == 2 { root = node.handle }
+            if node.kind == 4 { trash = node.handle }
+            nodes[node.handle] = node
+            children[node.parent, default: []].append(node.handle)
         }
         return MegaState.Tree(nodes: nodes, children: children, root: root, trash: trash)
     }
@@ -230,4 +238,36 @@ extension MegaState {
         loaded = true
     }
     func next() -> Int { sequence += 1; return sequence }
+
+    // MARK: - Keeping the tree current
+    //
+    // Mega sends the whole account in a single response, so fetching it again after every rename or move is slow and
+    // pointless when the outcome is already known. Each change is applied here instead, and only something that
+    // cannot be applied falls back to reloading.
+
+    func rename(_ handle: String, to name: String) {
+        guard var node = nodes[handle] else { loaded = false; return }
+        node.name = name
+        nodes[handle] = node
+    }
+    func reparent(_ handle: String, to parent: String) {
+        guard var node = nodes[handle], nodes[parent] != nil else { loaded = false; return }
+        children[node.parent]?.removeAll { $0 == handle }
+        node.parent = parent
+        nodes[handle] = node
+        place(node)
+    }
+    /// Adds what a `p` response created. Anything that cannot be read forces a reload rather than a hole in the tree.
+    func insert(_ entries: [[String: Any]]) {
+        guard !entries.isEmpty else { loaded = false; return }
+        for entry in entries {
+            guard let node = MegaAPI.node(from: entry, masterKey: masterKey) else { loaded = false; continue }
+            nodes[node.handle] = node
+            place(node)
+        }
+    }
+    private func place(_ node: MegaNode) {
+        children[node.parent, default: []].removeAll { $0 == node.handle }
+        children[node.parent, default: []].append(node.handle)
+    }
 }

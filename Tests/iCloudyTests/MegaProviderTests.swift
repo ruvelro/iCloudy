@@ -12,6 +12,8 @@ final class MegaProviderTests: XCTestCase {
     private lazy var contents = Data((0..<200_000).map { UInt8($0 % 251) })
     private var fileKey = Data()
     private var lastUpload: (offset: Int64, body: Data)?
+    /// How many times the stand-in storage server should answer "wait" before accepting a piece.
+    private var uploadRefusals = 0
     private var registered: [String: Any]?
 
     override func setUpWithError() throws {
@@ -90,6 +92,7 @@ final class MegaProviderTests: XCTestCase {
             }
             if url.host == "subida.ejemplo.com" {
                 XCTAssertEqual(url.scheme, "https")
+                if uploadRefusals > 0 { uploadRefusals -= 1; return (200, [:], Data("-3".utf8)) }
                 let offset = Int64(url.lastPathComponent) ?? -1
                 let body = requestData(request)
                 lastUpload = (offset, (lastUpload?.body ?? Data()) + body)
@@ -405,6 +408,80 @@ final class MegaProviderTests: XCTestCase {
                        "El puerto y los parámetros se conservan")
         XCTAssertNil(CloudAPI.secureURL(""))
         XCTAssertNil(CloudAPI.secureURL("/solo/una/ruta"), "Sin servidor no hay nada que descargar")
+    }
+
+    func testAChangeIsAppliedToTheTreeInsteadOfReloadingTheWholeAccount() async throws {
+        // Mega sends the entire account in one response. Asking for it again after every rename or move is what made
+        // the explorer crawl after each change, so the outcome is applied to what is already here.
+        var trees = 0
+        serve { action, _ in
+            if action == "f" { trees += 1 }
+            return nil
+        }
+        let api = client()
+        var files = try await api.list(parent: "root")
+        XCTAssertEqual(trees, 1)
+
+        let file = try XCTUnwrap(files.first { $0.id == "ARCHIVO" })
+        try await api.rename(file: file, name: "informe final.pdf")
+        files = try await api.list(parent: "root")
+        XCTAssertEqual(files.first { $0.id == "ARCHIVO" }?.name, "informe final.pdf")
+        XCTAssertEqual(trees, 1, "Renombrar no vuelve a pedir la cuenta entera")
+
+        let renamed = try XCTUnwrap(files.first { $0.id == "ARCHIVO" })
+        try await api.move(file: renamed, to: "CARPETA")
+        files = try await api.list(parent: "root")
+        XCTAssertNil(files.first { $0.id == "ARCHIVO" }, "Se ha ido de la raíz")
+        let inside = try await api.list(parent: "CARPETA")
+        XCTAssertEqual(inside.map(\.id), ["ARCHIVO"], "Y está dentro de la carpeta")
+        XCTAssertEqual(trees, 1)
+
+        let moved = try XCTUnwrap(inside.first)
+        try await api.trash(file: moved)
+        let afterTrash = try await api.list(parent: "CARPETA")
+        XCTAssertTrue(afterTrash.isEmpty, "Borrar lo saca de la carpeta")
+        XCTAssertEqual(trees, 1, "Tampoco mover ni borrar recargan nada")
+    }
+
+    func testACreatedFolderAppearsWithoutAskingForTheAccountAgain() async throws {
+        var trees = 0
+        serve { action, command in
+            if action == "f" { trees += 1 }
+            guard action == "p" else { return nil }
+            // Mega answers with the node it created, which is everything needed to place it in the tree.
+            let entry = (command["n"] as? [[String: Any]])?.first ?? [:]
+            // The real answer carries the key prefixed with the owner's handle, as every node does.
+            return (200, try JSONSerialization.data(withJSONObject: [[
+                "f": [["h": "NUEVA", "p": command["t"] as? String ?? "", "t": 1,
+                       "a": entry["a"] as? String ?? "", "k": "PROPIA:" + (entry["k"] as? String ?? ""),
+                       "ts": 1_700_000_100]]]]))
+        }
+        let api = client()
+        _ = try await api.list(parent: "root")
+        let handle = try await api.createFolder(name: "Contratos", parent: "root")
+        XCTAssertEqual(handle, "NUEVA")
+        let files = try await api.list(parent: "root")
+        XCTAssertEqual(files.first { $0.id == "NUEVA" }?.name, "Contratos", "El nombre se descifra de lo que devolvió")
+        XCTAssertTrue(try XCTUnwrap(files.first { $0.id == "NUEVA" }).isFolder)
+        XCTAssertEqual(trees, 1)
+    }
+
+    func testAnUploadPieceIsRetriedWhenTheStorageServerSaysWait() async throws {
+        // The storage servers answer -3 the same way the API does. Giving up on that loses the whole upload over a
+        // moment's delay, which is what the transfer list was showing as a failure.
+        serve()
+        uploadRefusals = 1
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let payload = Data("un archivo pequeño".utf8)
+        try payload.write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let stamp = try source.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        let checkpoint = UploadCheckpoint(total: Int64(payload.count), modified: stamp)
+
+        let receipt = try await client().resumableUpload(local: source, parent: "root", name: "nota.txt", replacing: nil,
+                                                         checkpoint: checkpoint, save: { _ in }, progress: { _, _ in })
+        XCTAssertEqual(uploadRefusals, 0, "El trozo se reenvió después de la espera")
+        XCTAssertEqual(receipt.remoteID, "NUEVO")
     }
 
     func testCapabilitiesSayWhatMegaCanAndCannotDo() {

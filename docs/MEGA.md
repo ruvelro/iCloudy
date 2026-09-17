@@ -74,6 +74,20 @@ Eso hacía que el árbol de la cuenta no cargase nunca, porque justo después de
 `-3` al pedirlo, y que renombrar y mover fallasen aunque hubieran funcionado. Se permiten fragmentos, y hay una
 prueba que falla si alguien quita esa opción.
 
+## El árbol se actualiza en memoria, no recargando
+
+Mega manda la cuenta entera en una sola respuesta. Eso es lo que hace que buscar salga gratis, pero también
+significa que volver a pedirla después de cada cambio es caro: en una cuenta con muchos archivos, renombrar algo
+tardaba lo que tarda descargar y descifrar todo otra vez.
+
+Ahora cada cambio se aplica sobre lo que ya está cargado. Renombrar cambia un nombre, mover cambia un padre, borrar
+mueve a la papelera, y crear una carpeta o subir un archivo insertan el nodo que devuelve la propia respuesta, que
+trae todo lo necesario. Solo lo que no se puede aplicar, porque la respuesta no trae lo que debía, fuerza una
+recarga. Hay pruebas que cuentan las peticiones de árbol y fallan si vuelve a haber más de una.
+
+Las subidas también se reintentan trozo a trozo. Los servidores de almacenamiento contestan `-3`, «espera», igual
+que la API, y abandonar por eso perdía la subida entera por un momento de retraso.
+
 ## Las transferencias van por otros servidores
 
 Los archivos no se descargan ni se suben contra la API, sino contra una flota aparte cuya dirección da Mega en cada

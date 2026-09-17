@@ -49,9 +49,6 @@ extension CloudAPI {
         guard !state.root.isEmpty else { throw CloudError.message(L("No se encontró la raíz de la cuenta de Mega.")) }
         return state
     }
-    /// Anything that changes the tree invalidates it: the next listing fetches it again rather than guessing.
-    func megaChanged() { megaStateCache?.loaded = false }
-
     func megaHandle(_ id: String, in state: MegaState) throws -> String {
         let handle = id == "root" ? state.root : id
         guard !handle.isEmpty else { throw CloudError.message(L("Ese elemento de Mega ya no existe.")) }
@@ -131,9 +128,9 @@ extension CloudAPI {
                                    "a": MegaCrypto.encode(try MegaCrypto.encodeAttributes(["n": name], key: key)),
                                    "k": MegaCrypto.encode(try MegaCrypto.ecb(key, key: state.masterKey, encrypt: true))]
         let answer = try await megaCall(["a": "p", "t": target, "n": [node]])
-        megaChanged()
-        guard let created = ((answer as? [String: Any])?["f"] as? [[String: Any]])?.first,
-              let handle = created["h"] as? String else {
+        let created = (answer as? [String: Any])?["f"] as? [[String: Any]] ?? []
+        state.insert(created)
+        guard let handle = created.first?["h"] as? String else {
             throw CloudError.message(L("Mega no devolvió la carpeta creada."))
         }
         return handle
@@ -146,13 +143,14 @@ extension CloudAPI {
         _ = try await megaCall(["a": "a", "n": node.handle,
                                 "attr": MegaCrypto.encode(attributes),
                                 "key": MegaCrypto.encode(try MegaCrypto.ecb(node.key, key: state.masterKey, encrypt: true))])
-        megaChanged()
+        state.rename(node.handle, to: name)
     }
     func megaMove(file: CloudFile, to destination: String) async throws {
         let state = try await megaTree()
         let node = try megaNode(file.id, in: state)
-        _ = try await megaCall(["a": "m", "n": node.handle, "t": try megaHandle(destination, in: state)])
-        megaChanged()
+        let target = try megaHandle(destination, in: state)
+        _ = try await megaCall(["a": "m", "n": node.handle, "t": target])
+        state.reparent(node.handle, to: target)
     }
     /// Mega copies without moving any bytes: the same encrypted content is attached to a second node.
     func megaCopy(file: CloudFile, to destination: String) async throws {
@@ -163,8 +161,8 @@ extension CloudAPI {
         let entry: [String: Any] = ["h": node.handle, "t": 0,
                                     "a": MegaCrypto.encode(try MegaCrypto.encodeAttributes(["n": node.name], key: node.contentKey)),
                                     "k": MegaCrypto.encode(try MegaCrypto.ecb(node.key, key: state.masterKey, encrypt: true))]
-        _ = try await megaCall(["a": "p", "t": try megaHandle(destination, in: state), "n": [entry]])
-        megaChanged()
+        let answer = try await megaCall(["a": "p", "t": try megaHandle(destination, in: state), "n": [entry]])
+        state.insert((answer as? [String: Any])?["f"] as? [[String: Any]] ?? [])
     }
     /// Deleting means moving to Mega's own bin, which the user can undo from mega.nz.
     func megaTrash(file: CloudFile) async throws {
@@ -175,7 +173,7 @@ extension CloudAPI {
             throw CloudError.message(L("Ese elemento ya está en la papelera. Vacíala desde mega.nz."))
         }
         _ = try await megaCall(["a": "m", "n": node.handle, "t": state.trash])
-        megaChanged()
+        state.reparent(node.handle, to: state.trash)
     }
     func megaPublicLink(for file: CloudFile) async throws -> URL {
         let state = try await megaTree()
@@ -274,13 +272,20 @@ extension CloudAPI {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-            let (data, response) = try await session.upload(for: request, from: cipher)
-            try HTTP.validate(response, data: data)
-            // The last chunk answers with the token that turns the uploaded bytes into a node.
-            if let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
-                guard !text.hasPrefix("-") else { throw MegaAPI.failure(Int(text) ?? -1) }
-                token = text
+            // The storage servers answer -3 when they are not ready for a piece, exactly as the API does. Giving up
+            // on that would lose the whole upload over a moment's delay.
+            var text = ""
+            for attempt in 0..<5 {
+                let (data, response) = try await session.upload(for: request, from: cipher)
+                try HTTP.validate(response, data: data)
+                text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard text.hasPrefix("-") else { break }
+                let code = Int(text) ?? -1
+                guard code == -3, attempt < 4 else { throw MegaAPI.failure(code) }
+                try await Task.sleep(nanoseconds: UInt64(attempt + 1) * 1_000_000_000)
             }
+            // The last chunk answers with the token that turns the uploaded bytes into a node.
+            if !text.isEmpty, !text.hasPrefix("-") { token = text }
             sent += chunk.length
             cursor.offset = sent; try save(cursor)
             progress(sent, total)
@@ -293,14 +298,15 @@ extension CloudAPI {
                                     "a": MegaCrypto.encode(try MegaCrypto.encodeAttributes(["n": name], key: key)),
                                     "k": MegaCrypto.encode(try MegaCrypto.ecb(packed, key: state.masterKey, encrypt: true))]
         let created = try await megaCall(["a": "p", "t": target, "n": [entry]])
-        megaChanged()
-        guard let node = ((created as? [String: Any])?["f"] as? [[String: Any]])?.first,
-              let handle = node["h"] as? String else {
+        let entries = (created as? [String: Any])?["f"] as? [[String: Any]] ?? []
+        state.insert(entries)
+        guard let handle = entries.first?["h"] as? String else {
             throw CloudError.message(L("Mega no devolvió el archivo subido."))
         }
         // Mega never overwrites, so the previous version is replaced by putting it in the bin, where it is recoverable.
         if let replacing, let old = state.nodes[replacing], !state.trash.isEmpty, old.parent != state.trash {
             _ = try? await megaCall(["a": "m", "n": old.handle, "t": state.trash])
+            state.reparent(old.handle, to: state.trash)
         }
         cursor.offset = total; cursor.complete = true; try save(cursor)
         // Mega stores the MAC that iCloudy itself computed, so there is no independent value to compare against.

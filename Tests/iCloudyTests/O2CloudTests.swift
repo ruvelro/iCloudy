@@ -37,6 +37,66 @@ final class O2CloudTests: XCTestCase {
             return (200, [:], try JSONSerialization.data(withJSONObject: ["data": reply]))
         }
     }
+    private func clientAndStore() -> (CloudAPI, MemoryCredentials) {
+        let store = MemoryCredentials()
+        let cookie = HTTPCookie(properties: [.name: "JSESSIONID", .value: "abc",
+                                             .domain: "cloud.o2online.es", .path: "/"])!
+        store.stored["o2:cloud.o2online.es:ana@ejemplo.com"] = Credential(
+            accessToken: "", refreshToken: "", expires: .distantFuture,
+            secret: O2API.store(validationKey: "clave-1", cookies: [cookie]))
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubProtocol.self]
+        let account = Account(id: "o2:cloud.o2online.es:ana@ejemplo.com", cloud: .o2, name: "O2 Cloud",
+                              email: "ana@ejemplo.com", clientID: "", clientSecret: nil,
+                              serverURL: "https://cloud.o2online.es", bookmark: nil,
+                              options: ["host": "cloud.o2online.es"])
+        return (CloudAPI(account: account, session: URLSession(configuration: configuration), credentials: store), store)
+    }
+
+    func testARenewedKeyArrivesInACookieAndIsKept() async throws {
+        // This is how the platform renews a session, and ignoring it is what made accounts expire after a few
+        // minutes of ordinary use. Its own client reads the cookie for exactly this reason.
+        var keys: [String] = []
+        StubProtocol.handler = { request in
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            keys.append(items.first { $0.name == "validationkey" }?.value ?? "")
+            return (200, ["Set-Cookie": "validationKey=clave-2; Path=/"],
+                    Data(#"{"data":{"used":1,"quota":2,"nolimit":false}}"#.utf8))
+        }
+        let (api, store) = clientAndStore()
+        _ = try await api.storageQuota()
+        _ = try await api.storageQuota()
+        XCTAssertEqual(keys, ["clave-1", "clave-2"], "La segunda llamada ya usa la clave que renovó el servidor")
+
+        let saved = try XCTUnwrap(O2API.restore(try XCTUnwrap(store.stored["o2:cloud.o2online.es:ana@ejemplo.com"]).secret))
+        XCTAssertEqual(saved.validationKey, "clave-2", "Y queda guardada, o al abrir la app estaría caducada otra vez")
+        XCTAssertEqual(saved.cookies.first { $0.name == "JSESSIONID" }?.value, "abc", "Sin perder el resto de la sesión")
+    }
+
+    func testAStaleKeyIsRecoveredFromTheCookieWhenTheErrorDoesNotCarryIt() async throws {
+        // The platform sometimes reports the key as stale without saying what replaced it. Its own client then
+        // compares what it sent with what the cookie now holds, and so does this.
+        var attempts = 0
+        StubProtocol.handler = { request in
+            attempts += 1
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            let sent = items.first { $0.name == "validationkey" }?.value
+            if sent == "clave-1" {
+                return (200, ["Set-Cookie": "validationKey=clave-3; Path=/"],
+                        Data(#"{"error":{"code":"SEC-1003","message":"stale"}}"#.utf8))
+            }
+            XCTAssertEqual(sent, "clave-3")
+            return (200, [:], Data(#"{"data":{"used":4,"quota":8,"nolimit":false}}"#.utf8))
+        }
+        let (api, _) = clientAndStore()
+        var expired = false
+        api.sessionDidExpire = { expired = true }
+        let quota = try await api.storageQuota()
+        XCTAssertEqual(quota.used, 4)
+        XCTAssertEqual(attempts, 2, "Se repite con la clave nueva en vez de rendirse")
+        XCTAssertFalse(expired, "La sesión sigue viva: solo había rotado la clave")
+    }
+
     private func client() -> CloudAPI {
         let store = MemoryCredentials()
         let cookie = HTTPCookie(properties: [.name: "JSESSIONID", .value: "abc",

@@ -12,11 +12,30 @@ final class O2Session {
     /// Sent with every request beside the session cookie. The server rotates it and says so with SEC-1003.
     var validationKey: String
     /// The cookies the web sign-in produced. They are sent as a header rather than left to URLSession's own jar, so
-    /// the session belongs to this account alone and never leaks into another provider's requests.
-    let cookies: [HTTPCookie]
+    /// the session belongs to this account alone and never leaks into another provider's requests. That also means
+    /// following `Set-Cookie` by hand, which matters: this is how the server renews the session.
+    private(set) var cookies: [HTTPCookie]
+    /// Set when the server renewed something, so the caller knows the Keychain copy is behind.
+    var renewed = false
     var rootFolder: String?
     init(host: String, validationKey: String, cookies: [HTTPCookie] = []) {
         self.host = host; self.validationKey = validationKey; self.cookies = cookies
+    }
+    /// Takes in whatever the server just set. The platform renews the key through the cookie rather than through the
+    /// body, so ignoring this is what made sessions die after a few minutes of use.
+    func absorb(_ fresh: [HTTPCookie]) {
+        guard !fresh.isEmpty else { return }
+        var merged = cookies
+        for cookie in fresh {
+            merged.removeAll { $0.name == cookie.name }
+            merged.append(cookie)
+            if cookie.name == "validationKey", !cookie.value.isEmpty, cookie.value != validationKey {
+                validationKey = cookie.value
+                renewed = true
+            }
+        }
+        if merged.count != cookies.count || renewed { renewed = true }
+        cookies = merged
     }
     var cookieHeader: String? {
         guard !cookies.isEmpty else { return nil }
@@ -91,8 +110,10 @@ extension CloudAPI {
                 method: String? = nil, retrying: Bool = true) async throws -> [String: Any] {
         let state = try o2Session()
         do {
-            return try await O2API.call(path, action: action, query: query, body: body, method: method,
-                                        state: state, session: session)
+            let answer = try await O2API.call(path, action: action, query: query, body: body, method: method,
+                                              state: state, session: session)
+            o2Persist(state)
+            return answer
         } catch let error as O2API.Failure where error.code == "SEC-1003" && retrying {
             // The key rotates while the session lives on, and the replacement comes inside the error itself.
             guard let fresh = error.data, !fresh.isEmpty else {
@@ -100,11 +121,23 @@ extension CloudAPI {
                 throw CloudError.sessionExpired(L("La sesión de O2 Cloud ha caducado. Vuelve a iniciar sesión."))
             }
             state.validationKey = fresh
+            state.renewed = true
+            o2Persist(state)
             return try await o2Call(path, action: action, query: query, body: body, method: method, retrying: false)
         } catch let error as O2API.Failure where error.isExpiredSession {
             expireSession()
             throw CloudError.sessionExpired(L("La sesión de O2 Cloud ha caducado. Vuelve a iniciar sesión."))
         }
+    }
+
+    /// Writes a renewed session back to the Keychain. Without this the next launch would start from a key the
+    /// server had already replaced, and the account would look expired before doing anything.
+    func o2Persist(_ state: O2Session) {
+        guard state.renewed else { return }
+        state.renewed = false
+        guard var credential = try? credentials.read(account.credentialKey) else { return }
+        credential.secret = O2API.store(validationKey: state.validationKey, cookies: state.cookies)
+        try? credentials.save(credential, key: account.credentialKey)
     }
 
     func o2Root() async throws -> String {

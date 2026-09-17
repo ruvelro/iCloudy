@@ -15,7 +15,7 @@ enum O2API {
         let code: String
         let message: String?
         /// Some errors carry a replacement value, such as a rotated validation key.
-        let data: String?
+        var data: String?
         /// Which call produced it. Without this an undocumented platform is very hard to debug from a report.
         var origin: String?
         var errorDescription: String? {
@@ -80,8 +80,12 @@ enum O2API {
             request.setValue("application/json;charset=UTF-8", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
         }
+        let sent = state.validationKey
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw CloudError.message(L("Respuesta HTTP no válida.")) }
+        if let fields = http.allHeaderFields as? [String: String], let address = request.url {
+            state.absorb(HTTPCookie.cookies(withResponseHeaderFields: fields, for: address))
+        }
         guard http.statusCode != 401, http.statusCode != 403 else {
             throw Failure(code: "SEC-1002", message: L("O2 Cloud rechazó la sesión. Vuelve a iniciar sesión."), data: nil,
                           origin: "\(path) \(action)")
@@ -92,6 +96,11 @@ enum O2API {
         do { return try payload(data) }
         catch var failure as Failure {
             failure.origin = "\(path) \(action)"
+            // The platform's own client, when told the key is stale and given no replacement, looks at the cookie:
+            // if it no longer matches what was sent, that is the new key. Same thing here.
+            if failure.code == "SEC-1003", failure.data == nil, state.validationKey != sent {
+                failure.data = state.validationKey
+            }
             throw failure
         }
     }

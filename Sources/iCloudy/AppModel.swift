@@ -375,8 +375,21 @@ final class AppModel: ObservableObject {
         } catch { connectionError = error.localizedDescription }
     }
     /// Starts the provider's sign-in for the same cloud; signing in with the same identity replaces the expired session.
+    /// Reconnecting has to take the same road the account was created by. Sending a provider that never used OAuth
+    /// down the OAuth path produced a message about configuration that had nothing to do with the problem.
     func reconnect(_ account: Account) async {
-        await connect(cloud: account.cloud)
+        connectionError = nil
+        switch account.cloud {
+        case .volume:
+            await connectVolume()
+        case let cloud where cloud.usesWebLogin || cloud.usesPasswordLogin:
+            // These two sign in from inside the connection sheet, so it has to be on screen to present them.
+            showConnect = true
+            if cloud.usesWebLogin { o2Login = O2LoginRequest(id: account.options["host"] ?? "cloud.o2online.es") }
+            else { serverLogin = cloud }
+        default:
+            await connect(cloud: account.cloud)
+        }
         if let message = connectionError, !showConnect { error = message; connectionError = nil }
     }
     func enableDemo(select shouldSelect: Bool = true) {
