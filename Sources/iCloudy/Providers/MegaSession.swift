@@ -82,7 +82,10 @@ enum MegaAPI {
                 continue
             }
             guard http.statusCode != 500 else { throw CloudError.message(L("Mega no está disponible en este momento.")) }
-            let body = try? JSONSerialization.jsonObject(with: data)
+            // Mega answers plenty of commands with a bare number: 0 after a rename or a move, a negative code on
+            // failure. That is a JSON fragment, which the strict parser refuses, so fragments have to be allowed or
+            // every one of those replies looks like a broken response.
+            let body = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
             var result: Any? = body
             if let list = body as? [Any] { result = list.first }
             if let code = result as? Int, code < 0 {

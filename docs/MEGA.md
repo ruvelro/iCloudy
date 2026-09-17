@@ -64,6 +64,16 @@ Esto fue durante un tiempo la causa de que el proveedor no funcionase en absolut
 mensaje que veía el usuario era «Mega devolvió una respuesta que no se entiende», que no decía nada útil. Ahora el
 mensaje incluye el código HTTP, por si vuelve a aparecer algo así.
 
+## Números sueltos como respuesta
+
+Mega contesta a bastantes órdenes con un número y nada más: un `0` después de renombrar o mover, un código negativo
+cuando algo falla, y un `-3` que significa «espera, todavía no está listo». Un número suelto es un fragmento de
+JSON, y el analizador estricto de Foundation lo rechaza por no ser ni objeto ni lista.
+
+Eso hacía que el árbol de la cuenta no cargase nunca, porque justo después de iniciar sesión Mega suele contestar
+`-3` al pedirlo, y que renombrar y mover fallasen aunque hubieran funcionado. Se permiten fragmentos, y hay una
+prueba que falla si alguien quita esa opción.
+
 ## Verificación en dos pasos
 
 Mega pide la contraseña y el código en la misma petición, así que se escriben juntos: la contraseña, un

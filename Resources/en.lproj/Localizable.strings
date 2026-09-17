@@ -646,3 +646,5 @@
 "Úsalo solo si has iniciado sesión y esta ventana no se cierra sola" = "Use it only if you have signed in and this window does not close by itself";
 "Todavía no hay sesión. Termina de entrar en la página y vuelve a pulsar." = "There is no session yet. Finish signing in on the page and press again.";
 "El acceso no terminó de completarse. Vuelve a intentarlo desde la página de O2." = "The sign-in did not complete. Try again from O2's page.";
+"O2 Cloud rechazó un parámetro de la petición." = "O2 Cloud rejected one of the request's parameters.";
+"O2 Cloud devolvió HTTP %1$lld en %2$@ %3$@." = "O2 Cloud returned HTTP %1$lld at %2$@ %3$@.";

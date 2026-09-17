@@ -27,10 +27,12 @@ final class O2Session {
 /// Which endpoint a file is renamed or deleted through.
 enum O2MediaKind: String {
     case picture, video, audio, file
-    /// The server names the property, but a listing does not always carry it, so the content type decides as a fallback.
-    static func of(_ values: [String: Any]) -> O2MediaKind {
+    /// The server names the property itself, but neither it nor the content type can be requested as fields, so a
+    /// listing may carry neither. The name then decides, which is enough because the four kinds map onto media types.
+    static func of(_ values: [String: Any], name: String = "") -> O2MediaKind {
         if let named = (values["mediatype"] as? String).flatMap(O2MediaKind.init(rawValue:)) { return named }
-        let type = (values["contenttype"] as? String ?? "").lowercased()
+        var type = (values["contenttype"] as? String ?? "").lowercased()
+        if type.isEmpty, !name.isEmpty { type = CloudAPI.mime(forName: name).lowercased() }
         if type.hasPrefix("image/") { return .picture }
         if type.hasPrefix("video/") { return .video }
         if type.hasPrefix("audio/") { return .audio }
@@ -127,8 +129,7 @@ extension CloudAPI {
         while true {
             let page = try await o2Call("media/folder", action: "list", query: [
                 URLQueryItem(name: "parentid", value: folder),
-                URLQueryItem(name: "limit", value: String(O2API.pageSize)),
-                URLQueryItem(name: "offset", value: String(offset))], method: "GET")
+                URLQueryItem(name: "limit", value: String(O2API.pageSize))] + O2API.skip(offset), method: "GET")
             let batch = page["folders"] as? [[String: Any]] ?? []
             files.append(contentsOf: batch.compactMap(Self.o2FolderFile))
             guard batch.count == O2API.pageSize else { break }
@@ -140,8 +141,7 @@ extension CloudAPI {
         while true {
             let page = try await o2Call("media", action: "get", query: [
                 URLQueryItem(name: "folderid", value: folder),
-                URLQueryItem(name: "limit", value: String(O2API.pageSize)),
-                URLQueryItem(name: "offset", value: String(offset))],
+                URLQueryItem(name: "limit", value: String(O2API.pageSize))] + O2API.skip(offset),
                 body: ["data": ["fields": O2API.mediaFields]])
             let batch = page["media"] as? [[String: Any]] ?? []
             files.append(contentsOf: batch.compactMap(Self.o2MediaFile))
@@ -158,8 +158,8 @@ extension CloudAPI {
     }
     nonisolated static func o2MediaFile(_ values: [String: Any]) -> CloudFile? {
         guard let id = O2API.identifier(values["id"]), let name = values["name"] as? String else { return nil }
-        let size = (values["size"] as? NSNumber)?.int64Value
-        return CloudFile(id: o2MediaID(id, kind: O2MediaKind.of(values)), name: name,
+        let size = O2API.number(values["size"])
+        return CloudFile(id: o2MediaID(id, kind: O2MediaKind.of(values, name: name)), name: name,
                          mime: values["contenttype"] as? String ?? mime(forName: name),
                          size: size, modified: O2API.date(values["modificationdate"]),
                          webURL: (values["viewurl"] as? String).flatMap(URL.init(string:)), isFolder: false)
@@ -185,9 +185,9 @@ extension CloudAPI {
     func o2Quota() async throws -> StorageQuota {
         let answer = try await o2Call("media", action: "get-storage-space",
                                       query: [URLQueryItem(name: "softdeleted", value: "true")], method: "GET")
-        let used = (answer["used"] as? NSNumber)?.int64Value ?? 0
-        let unlimited = answer["nolimit"] as? Bool ?? false
-        let quota = (answer["quota"] as? NSNumber)?.int64Value
+        let used = O2API.number(answer["used"]) ?? 0
+        let unlimited = answer["nolimit"] as? Bool ?? (answer["nolimit"] as? String == "true")
+        let quota = O2API.number(answer["quota"])
         return StorageQuota(used: used, total: unlimited ? nil : quota)
     }
 
@@ -315,7 +315,7 @@ extension CloudAPI {
         }
         let id = O2API.identifier(answer["id"]) ?? O2API.identifier((answer["media"] as? [[String: Any]])?.first?["id"])
         // The platform reports no checksum, so there is nothing to compare the upload against.
-        return UploadReceipt(remoteID: id.map { Self.o2MediaID($0, kind: O2MediaKind.of(["contenttype": Self.mime(forName: name)])) },
+        return UploadReceipt(remoteID: id.map { Self.o2MediaID($0, kind: O2MediaKind.of([:], name: name)) },
                              verification: .unavailable)
     }
     /// Writes the multipart body to a temporary file, copying the source in blocks.

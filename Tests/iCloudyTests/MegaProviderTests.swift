@@ -340,6 +340,26 @@ final class MegaProviderTests: XCTestCase {
         catch { XCTAssertTrue(error.localizedDescription.contains("ya no está en Mega"), error.localizedDescription) }
     }
 
+    func testABareNumberIsAValidAnswerAndNotABrokenResponse() async throws {
+        // Mega replies to a rename or a move with the number 0 on its own, and reports "wait" as -3 on its own too.
+        // Neither is an array or an object, so a strict JSON parser rejects both and the account looks broken.
+        serve { action, _ in action == "a" ? (200, Data("0".utf8)) : nil }
+        let api = client()
+        let listed = try await api.list(parent: "root")
+        let file = try XCTUnwrap(listed.first { $0.id == "ARCHIVO" })
+        try await api.rename(file: file, name: "informe nuevo.pdf")
+
+        var attempts = 0
+        serve { action, _ in
+            guard action == "uq" else { return nil }
+            attempts += 1
+            return attempts < 2 ? (200, Data("-3".utf8)) : (200, Data(#"[{"cstrg":5,"mstrg":6}]"#.utf8))
+        }
+        let quota = try await api.storageQuota()
+        XCTAssertEqual(attempts, 2, "Un -3 suelto significa «espera», no «respuesta ilegible»")
+        XCTAssertEqual(quota.used, 5)
+    }
+
     func testAProofOfWorkChallengeIsSolvedAndTheRequestRepeated() async throws {
         // Mega guards its account endpoints with a 402 and an empty body. Before this was handled, every sign-in
         // failed with "a response that cannot be understood", which said nothing about what to do.

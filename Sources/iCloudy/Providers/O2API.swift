@@ -4,8 +4,11 @@ import Foundation
 /// worked, an `error` object with a code when it did not, and HTTP 200 in both cases. So the status code says almost
 /// nothing and the body says everything.
 enum O2API {
-    /// What the web client asks for in a listing, plus the two fields iCloudy needs to know how to address a file.
-    static let mediaFields = ["name", "size", "modificationdate", "contenttype", "mediatype", "viewurl"]
+    /// Exactly what the platform's own clients ask for. The name of a field is checked, and an invented one fails
+    /// the whole call with "Invalid parameter value", so nothing goes in here that has not been seen in use.
+    /// The kind of media and the content type are not on this list because they are not requestable: the server
+    /// returns them by itself, alongside the identifier.
+    static let mediaFields = ["name", "modificationdate", "size"]
     static let pageSize = 200
 
     struct Failure: Error, LocalizedError {
@@ -13,7 +16,12 @@ enum O2API {
         let message: String?
         /// Some errors carry a replacement value, such as a rotated validation key.
         let data: String?
-        var errorDescription: String? { message ?? L("O2 Cloud devolvió el error \(code).") }
+        /// Which call produced it. Without this an undocumented platform is very hard to debug from a report.
+        var origin: String?
+        var errorDescription: String? {
+            let detail = message ?? L("O2 Cloud devolvió el error \(code).")
+            return origin.map { "\(detail) (\($0))" } ?? detail
+        }
         /// The session is gone rather than merely stale, so signing in again is the only way forward.
         var isExpiredSession: Bool { ["SEC-1001", "SEC-1002", "SEC-1004", "SEC-1005"].contains(code) }
     }
@@ -36,7 +44,7 @@ enum O2API {
         if let error = body["error"] as? [String: Any] {
             let code = error["code"] as? String ?? "?"
             throw Failure(code: code, message: friendly(code: code, server: error["message"] as? String),
-                          data: error["data"] as? String)
+                          data: error["data"] as? String, origin: nil)
         }
         return body["data"] as? [String: Any] ?? body
     }
@@ -49,6 +57,8 @@ enum O2API {
             return L("La sesión de O2 Cloud se ha renovado.")
         case "COM-1005":
             return L("O2 Cloud no admite esa operación.")
+        case "COM-1004", "COM-1002":
+            return L("O2 Cloud rechazó un parámetro de la petición.")
         case "PRO-1000", "PRO-1001":
             return L("La cuenta de O2 Cloud no tiene espacio suficiente.")
         case "MED-1006", "MED-1007":
@@ -73,12 +83,17 @@ enum O2API {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw CloudError.message(L("Respuesta HTTP no válida.")) }
         guard http.statusCode != 401, http.statusCode != 403 else {
-            throw Failure(code: "SEC-1002", message: L("O2 Cloud rechazó la sesión. Vuelve a iniciar sesión."), data: nil)
+            throw Failure(code: "SEC-1002", message: L("O2 Cloud rechazó la sesión. Vuelve a iniciar sesión."), data: nil,
+                          origin: "\(path) \(action)")
         }
         guard (200..<300).contains(http.statusCode) else {
-            throw CloudError.message(L("O2 Cloud devolvió HTTP \(http.statusCode)."))
+            throw CloudError.message(L("O2 Cloud devolvió HTTP \(http.statusCode) en \(path) \(action)."))
         }
-        return try payload(data)
+        do { return try payload(data) }
+        catch var failure as Failure {
+            failure.origin = "\(path) \(action)"
+            throw failure
+        }
     }
 
     /// What iCloudy keeps after a web sign-in: the key every later call carries, and the cookies that identify the
@@ -126,20 +141,34 @@ enum O2API {
         return host
     }
 
+    /// The platform's own clients leave the offset out of the first page, so iCloudy does the same.
+    static func skip(_ offset: Int) -> [URLQueryItem] {
+        offset > 0 ? [URLQueryItem(name: "offset", value: String(offset))] : []
+    }
+    /// Sizes and counts arrive as numbers in some responses and as strings in others.
+    static func number(_ value: Any?) -> Int64? {
+        if let number = value as? NSNumber { return number.int64Value }
+        if let text = value as? String { return Int64(text) }
+        return nil
+    }
     /// Identifiers arrive as numbers in some responses and as strings in others.
     static func identifier(_ value: Any?) -> String? {
         if let text = value as? String { return text.isEmpty ? nil : text }
         if let number = value as? NSNumber { return number.stringValue }
         return nil
     }
-    /// Dates arrive as `20240115T101530Z`, and occasionally as milliseconds since 1970.
+    /// Dates arrive in the platform's compact form, occasionally as an ordinary timestamp, and occasionally as
+    /// milliseconds since 1970. All three are accepted rather than assuming which one a given server sends.
     static func date(_ value: Any?) -> Date? {
         if let text = value as? String, !text.isEmpty {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
-            formatter.timeZone = TimeZone(identifier: "UTC")
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            if let parsed = formatter.date(from: text) { return parsed }
+            for format in ["yyyyMMdd'T'HHmmss'Z'", "EEE, dd MMM yyyy HH:mm:ss zzz", "yyyy-MM-dd'T'HH:mm:ss'Z'"] {
+                let formatter = DateFormatter()
+                formatter.dateFormat = format
+                formatter.timeZone = TimeZone(identifier: "UTC")
+                formatter.locale = Locale(identifier: "en_US_POSIX")
+                if let parsed = formatter.date(from: text) { return parsed }
+            }
+            if let seconds = Double(text) { return date(NSNumber(value: seconds)) }
             return CloudAPI.date(text)
         }
         if let number = value as? NSNumber {
