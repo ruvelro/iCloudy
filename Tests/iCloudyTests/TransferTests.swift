@@ -260,6 +260,92 @@ final class TransferTests: XCTestCase {
         XCTAssertTrue(queue.items.isEmpty)
     }
 
+    func testTheErrorTabIsClearedByHalvesOrWhole() async throws {
+        // Fallidas y canceladas comparten pestaña, y cada filtro limpia lo suyo sin llevarse lo otro por delante.
+        let (root, demo, queue) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let good = root.appendingPathComponent("bien.txt"); try Data("bien".utf8).write(to: good)
+        try queue.add([upload(good)]); try await wait { !queue.isWorking }
+        demo.offline = true
+        let bad = root.appendingPathComponent("mal.txt"); try Data("mal".utf8).write(to: bad)
+        try queue.add([upload(bad)]); try await wait { !queue.isWorking }
+        demo.offline = false
+        let stopped = upload(root.appendingPathComponent("parada.txt"))
+        try Data("parada".utf8).write(to: stopped.localURL)
+        try queue.add([stopped]); queue.cancel(stopped.id)
+        try await wait { !queue.isWorking }
+        XCTAssertEqual(queue.items.map(\.state), [.completed, .failed, .cancelled])
+
+        queue.clearCancelled()
+        XCTAssertEqual(queue.items.map(\.state), [.completed, .failed], "Limpiar las canceladas deja la que falló")
+        queue.clearErrored()
+        XCTAssertEqual(queue.items.map(\.state), [.completed], "Y el botón sin filtro se lleva las dos mitades")
+    }
+
+    func testClearingTheInProgressTabStopsEverythingAndLeavesNothingBehind() async throws {
+        // Cancelar sin más dejaría las paradas en la pestaña de error, así que "limpiar" habría que pulsarlo dos
+        // veces para que una sola lista desapareciera.
+        let (root, demo, queue) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        demo.latency = .milliseconds(20)
+        let done = root.appendingPathComponent("hecha.txt"); try Data("hecha".utf8).write(to: done)
+        try queue.add([upload(done)]); try await wait { !queue.isWorking }
+        var jobs: [Transfer] = []
+        for name in ["a.dat", "b.dat", "c.dat"] {
+            let url = root.appendingPathComponent(name); try Data(repeating: 1, count: 2 * 1024 * 1024).write(to: url)
+            jobs.append(upload(url))
+        }
+        try queue.add(jobs)
+        try await wait { queue.items.contains { $0.state == .running } }
+        queue.cancel(jobs[2].id, pause: true)
+
+        XCTAssertEqual(queue.cancelActive(), 3, "Lo que corre, lo que espera y lo que está en pausa")
+        try await wait { !queue.isWorking }
+        XCTAssertEqual(queue.items.map(\.name), ["hecha.txt"], "Sólo sobrevive lo que ya había terminado")
+        XCTAssertEqual(TransferQueue(storeURL: queue.storeURL).items.map(\.name), ["hecha.txt"], "Y así queda en disco")
+    }
+
+    func testDraggingAWaitingJobCountsOnlyTheJobsThatTabShows() async throws {
+        // La pestaña "En curso" no enseña las terminadas, así que sus índices no son los de la cola entera.
+        let (root, demo, queue) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let done = root.appendingPathComponent("hecha.txt"); try Data("hecha".utf8).write(to: done)
+        try queue.add([upload(done)]); try await wait { !queue.isWorking }
+        demo.latency = .milliseconds(50)
+        var jobs: [Transfer] = []
+        for name in ["a", "b", "c"] {
+            let url = root.appendingPathComponent(name); try Data(repeating: 1, count: 512 * 1024).write(to: url)
+            jobs.append(upload(url))
+        }
+        try queue.add(jobs)
+        queue.pauseAll(); try await wait { !queue.isWorking }
+        XCTAssertEqual(queue.items.map(\.name), ["hecha.txt", "a", "b", "c"])
+
+        queue.moveActive(fromOffsets: IndexSet(integer: 2), toOffset: 0)
+        XCTAssertEqual(queue.items.map(\.name), ["hecha.txt", "c", "a", "b"], "El tercero de la pestaña es «c», no «b»")
+        queue.moveActive(fromOffsets: IndexSet(integer: 0), toOffset: 3)
+        XCTAssertEqual(queue.items.map(\.name), ["hecha.txt", "a", "b", "c"], "Y el final de la pestaña es el final de la cola")
+        queue.moveActive(fromOffsets: IndexSet(integer: 3), toOffset: 0)
+        XCTAssertEqual(queue.items.map(\.name), ["hecha.txt", "a", "b", "c"], "Un índice que la pestaña no tiene no mueve nada")
+    }
+
+    func testTodaysHistoryCanBeClearedWithoutLosingTheRest() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = root.appendingPathComponent("history.json")
+        let job = Transfer(name: "x", destination: "Demo", accountID: Account.demo.id, direction: .upload, localURL: root)
+        let today = HistoryEntry(transfer: job)
+        let older = HistoryEntry(transfer: job, finishedAt: Date(timeIntervalSinceNow: -60 * 60 * 30))
+        try LocalStore.save([today, older], to: store)
+        let history = TransferHistory(storeURL: store)
+        XCTAssertEqual(history.entries.count, 2)
+
+        history.clearToday()
+        XCTAssertEqual(history.entries.map(\.id), [older.id], "Sólo se va lo de hoy")
+        XCTAssertEqual(TransferHistory(storeURL: store).entries.map(\.id), [older.id], "Y el recorte se guarda")
+    }
+
     func testLosingTheNetworkPausesAndRecoveringResumesWithoutUserAction() async throws {
         let (root, demo, queue) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }

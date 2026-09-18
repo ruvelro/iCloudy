@@ -160,6 +160,16 @@ final class TransferQueue: ObservableObject {
         do { try persist() } catch { persistenceError = error.localizedDescription }
         stateChanges.send()
     }
+    /// The same drag, but with offsets that count only the unfinished jobs, which is all the in-progress tab shows.
+    /// Without the translation, dropping the third waiting job would reorder the third job of the whole queue — a
+    /// different one as soon as anything above it has finished.
+    func moveActive(fromOffsets source: IndexSet, toOffset destination: Int) {
+        let active = items.indices.filter { !items[$0].finished }
+        guard source.allSatisfy({ active.indices.contains($0) }), (0...active.count).contains(destination) else { return }
+        let last = active.last.map { $0 + 1 } ?? items.count
+        move(fromOffsets: IndexSet(source.map { active[$0] }),
+             toOffset: destination < active.count ? active[destination] : last)
+    }
     /// Puts a waiting job in front of every other waiting job, right after whatever is running or already finished.
     func prioritize(_ id: UUID) {
         guard let from = index(id), isMovable(items[from]) else { return }
@@ -188,8 +198,21 @@ final class TransferQueue: ObservableObject {
     /// Failed transfers are never retried on their own, so without a way to clear them they pile up in the panel and
     /// bury whatever is actually running.
     func clearFailed() { clear { $0.state == .failed } }
+    /// What the user stopped by hand. It sits beside the failures in the panel, and it is cleared the same way.
+    func clearCancelled() { clear { $0.state == .cancelled } }
+    /// Both halves of the error tab at once.
+    func clearErrored() { clear { [.failed, .cancelled].contains($0.state) } }
     /// Everything that is over, however it ended. The history keeps its own record either way.
     func clearFinished() { clear(\.finished) }
+    /// Empties the in-progress tab: everything waiting, running or paused is cancelled and then dropped outright.
+    /// Leaving the cancellations behind would move them to the error tab, so "limpiar" would have to be pressed
+    /// twice to make one list go away. Returns how many were stopped.
+    @discardableResult func cancelActive() -> Int {
+        let ids = Set(items.filter { !$0.finished }.map(\.id))
+        for id in ids { cancel(id) }
+        clear { ids.contains($0.id) && $0.state == .cancelled }
+        return ids.count
+    }
     private func clear(_ matches: (Transfer) -> Bool) {
         items.removeAll(where: matches)
         do { try persist() } catch { persistenceError = error.localizedDescription }

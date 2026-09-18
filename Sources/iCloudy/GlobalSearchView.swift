@@ -10,21 +10,23 @@ struct GlobalSearchView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Buscar en todas las nubes").font(.system(size: 27, weight: .semibold))
                 Text("Archivos y carpetas de tus cuentas, sin descargar contenido.").foregroundStyle(.secondary)
+                // The same height as the explorer's own header, so moving between the two does not change the size
+                // of the chrome under the title.
                 HStack {
-                    TextField("Nombre o texto que buscar…", text: $search.query).textFieldStyle(.roundedBorder).onSubmit { run() }
+                    ChromeField("Nombre o texto que buscar…", text: $search.query) { run() }
                     Button("Buscar") { run() }.buttonStyle(.borderedProminent).disabled(search.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.accounts.isEmpty)
                     if !search.loadingIDs.isEmpty { Button("Cancelar") { search.cancel() } }
-                }
+                }.controlSize(.large)
                 HStack {
                     Picker("Tipo", selection: $search.filters.type) { ForEach(SearchFileType.allCases) { Text(LocalizedStringKey($0.rawValue)).tag($0) } }
                     Picker("Fecha", selection: $search.filters.age) { ForEach(SearchAge.allCases) { Text($0.title).tag($0) } }
                     Picker("Tamaño", selection: $search.filters.size) { ForEach(SearchSize.allCases) { Text(LocalizedStringKey($0.rawValue)).tag($0) } }
-                }.labelsHidden()
+                }.labelsHidden().controlSize(.large)
                 HStack {
                     Picker("Cuenta", selection: $search.filters.accountID) {
                         Text("Todas las cuentas").tag("")
                         ForEach(model.accounts) { Text(model.accountTitle($0) + " · " + $0.email).tag($0.id) }
-                    }.frame(maxWidth: 360)
+                    }.controlSize(.large).frame(maxWidth: 360)
                     Button("Quitar filtros") { search.filters = SearchFilters() }.buttonStyle(.link)
                     Spacer()
                     if !search.submittedQuery.isEmpty { Text("Resultados para «\(search.submittedQuery)»").font(.caption).lineLimit(1) }

@@ -79,6 +79,8 @@ responde cada proveedor y errores independientes: que Dropbox falle no te deja s
 - **Nube a nube**: copia archivos o carpetas enteras de una cuenta a otra. Se descarga a una carpeta temporal
   privada, se sube verificado y se borra. No queda nada en el Mac.
 - **Cola persistente**: sobrevive al cierre de la app, se pausa sola cuando se cae la red y se reanuda cuando vuelve.
+- **El cajón va por pestañas**: En curso, Finalizadas, Error e Historial. Cada una se limpia por su cuenta, y ni las
+  fallidas de ayer ni lo que ya terminó tapan lo que está subiendo ahora.
 
 ![Panel de transferencias](docs/images/transferencias.png)
 

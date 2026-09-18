@@ -71,6 +71,12 @@ final class TransferHistory: ObservableObject {
         persist()
     }
     func clear() { entries = []; persist() }
+    /// Only what finished today, so the panel's "Hoy" filter can be emptied without losing the rest of the record.
+    func clearToday(now: Date = Date()) {
+        let start = Calendar.current.startOfDay(for: now)
+        entries.removeAll { $0.finishedAt >= start }
+        persist()
+    }
     private func persist() {
         do { try LocalStore.save(entries, to: storeURL); persistenceError = nil }
         catch { persistenceError = L("No se pudo guardar el historial: \(error.localizedDescription)") }

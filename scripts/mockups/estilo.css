@@ -18,7 +18,9 @@ body {
 .semaforo { width: 12px; height: 12px; border-radius: 50%; }
 .rojo { background: #ff5f57 } .ambar { background: #febc2e } .verde { background: #28c840 }
 .barra .titulo { margin-left: 10px; font-size: 13px; font-weight: 600; color: #9aa0ad; }
-.herramientas { margin-left: auto; display: flex; gap: 14px; color: #8b91a0; }
+.herramientas { margin-left: auto; display: flex; align-items: center; gap: 12px; color: #8b91a0; }
+/* La regla entre grupos de botones: Configuración | archivos | modo de lista | transferencias. */
+.herramientas .sep { width: 1px; height: 16px; background: rgba(255,255,255,.16); flex: none; }
 .herramientas svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6;
   stroke-linecap: round; stroke-linejoin: round; }
 .cuerpo { flex: 1; display: flex; min-height: 0; }
@@ -43,7 +45,9 @@ body {
 /* Las dos mitades de la barra lateral, para no tener que bajar más allá de seis nubes para llegar a un favorito. */
 .pestanas { margin: 0 14px 10px; display: flex; gap: 2px; padding: 2px; border-radius: 7px;
   background: rgba(255,255,255,.06); }
-.pestana { flex: 1; text-align: center; font-size: 11.5px; padding: 3px 0; border-radius: 5px; color: #8b91a0; }
+/* Alto fijo: en la app estas pestañas, la fila de colecciones, las migas y el filtro miden los mismos 28 pt. */
+.pestana { flex: 1; display: flex; align-items: center; justify-content: center; height: 24px;
+  font-size: 11.5px; border-radius: 5px; color: #8b91a0; }
 .pestana.sel { background: rgba(255,255,255,.12); color: #e9eaee; font-weight: 600; }
 .favorito { display: flex; gap: 9px; align-items: center; padding: 6px 8px; border-radius: 8px; }
 .fnombre { font-size: 12.5px; }
@@ -66,13 +70,20 @@ body {
 .cabecera { padding: 18px 22px 0; }
 .cabecera h1 { font-size: 24px; font-weight: 700; letter-spacing: -.4px; }
 .cabecera .sub { font-size: 12px; color: #757c8a; margin-top: 2px; }
+/* La fila de colecciones del proveedor. Ocupa su sitio exista o no, así que la maqueta también la dibuja. */
+.pestanas.cols { margin: 12px 22px 0; max-width: 420px; }
 .controles { display: flex; align-items: center; gap: 10px; padding: 14px 22px 12px; }
 .miga { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #c3c8d2; }
-.chip { padding: 3px 9px; border-radius: 6px; background: rgba(255,255,255,.07); }
-.campo { margin-left: auto; width: 210px; padding: 5px 10px; border-radius: 6px; font-size: 12px;
-  color: #6e7583; background: rgba(255,255,255,.055); border: .5px solid rgba(255,255,255,.08); }
-.orden { padding: 5px 10px; border-radius: 6px; font-size: 12px; color: #c3c8d2;
-  background: rgba(255,255,255,.055); border: .5px solid rgba(255,255,255,.08); }
+.chip { display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 7px;
+  background: rgba(255,255,255,.07); }
+.campo { margin-left: auto; display: flex; align-items: center; gap: 6px; width: 210px; height: 28px;
+  padding: 0 9px; border-radius: 7px; font-size: 12px; box-sizing: border-box;
+  color: #6e7583; background: rgba(255,255,255,.055); border: .5px solid rgba(255,255,255,.12); }
+.campo svg { width: 12px; height: 12px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; opacity: .75; }
+.orden { display: flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 7px; font-size: 12px;
+  box-sizing: border-box; color: #c3c8d2;
+  background: rgba(255,255,255,.055); border: .5px solid rgba(255,255,255,.12); }
 table { width: 100%; border-collapse: collapse; }
 thead th { text-align: left; font-size: 11px; font-weight: 600; color: #757c8a; padding: 7px 10px;
   border-top: .5px solid rgba(255,255,255,.07); border-bottom: .5px solid rgba(255,255,255,.07); }
@@ -87,13 +98,23 @@ tbody tr.sel td:first-child { border-radius: 6px 0 0 6px } tbody tr.sel td:last-
   font-size: 11.5px; color: #757c8a; border-top: .5px solid rgba(255,255,255,.07); background: #1c1d23; }
 .pie .der { margin-left: auto; }
 .verdecito { color: #43c463; }
+/* Lo seleccionado se cuenta en el pie, y se lee antes que el resto de la línea. */
+.pie .fuerte { color: #d7dbe3; }
 
 /* Cajón de transferencias: una tarjeta por transferencia, con el icono de la nube a la que van los bytes. */
-.cajon { width: 302px; flex: none; border-left: .5px solid rgba(255,255,255,.07); background: #1a1b21;
+.cajon { width: 330px; flex: none; border-left: .5px solid rgba(255,255,255,.07); background: #1a1b21;
   padding: 14px 12px; overflow: hidden; }
-.cjcab { display: flex; align-items: center; margin-bottom: 11px; }
+.cjcab { display: flex; align-items: center; margin-bottom: 9px; }
 .cjtit { font-size: 14px; font-weight: 700; }
 .cjnum { margin-left: auto; font-size: 11px; color: #757c8a; }
+/* Las pestañas del cajón son las mismas que las de la barra lateral, sin su margen. */
+.pestanas.cjt { margin: 0 0 9px; }
+.pestanas.cjt .pestana { font-size: 11px; height: 16px; }
+/* Cada pestaña cuenta lo suyo y trae su propia escoba, que sólo vacía esa lista. */
+.cjbar { display: flex; align-items: center; font-size: 10.5px; color: #757c8a; margin-bottom: 9px; }
+.cjbar .der { margin-left: auto; display: flex; gap: 9px; }
+.cjbar svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round; }
 .tarjeta { padding: 9px 10px; border-radius: 9px; background: rgba(255,255,255,.05); margin-bottom: 7px;
   border: .5px solid rgba(255,255,255,.07); }
 .tarjeta.viva { border-color: rgba(111,157,255,.38); background: rgba(111,157,255,.08); }

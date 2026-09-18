@@ -135,15 +135,74 @@ struct Crumb: View {
             }
             .font(.callout)
             .foregroundStyle(current ? Color.primary : Color.secondary)
-            .padding(.horizontal, 9).padding(.vertical, 3.5)
+            // The same height as the collection row above it and the filter field beside it, so the three read as
+            // one band of chrome instead of three sizes of box.
+            .padding(.horizontal, 10).frame(height: Layout.controlHeight)
             .background(current ? Color.primary.opacity(0.10) : (hovering ? Color.primary.opacity(0.07) : .clear),
-                        in: RoundedRectangle(cornerRadius: 6))
-            .contentShape(RoundedRectangle(cornerRadius: 6))
+                        in: RoundedRectangle(cornerRadius: 7))
+            .contentShape(RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
         .disabled(current)
         .onHover { hovering = $0 && !current }
         .help(title)
+    }
+}
+
+/// A text field the height of the buttons around it.
+///
+/// `.textFieldStyle(.roundedBorder)` ignores the control size, so next to a large picker it sat four points short
+/// and the row looked misaligned. The box is drawn here instead: the corner radius of a breadcrumb, a ring while it
+/// holds the keyboard, and the cross that every other search field on this Mac has.
+struct ChromeField: View {
+    let placeholder: String
+    let symbol: String
+    @Binding var text: String
+    var onSubmit: () -> Void = {}
+    @FocusState private var focused: Bool
+
+    init(_ placeholder: String, symbol: String = "magnifyingglass", text: Binding<String>, onSubmit: @escaping () -> Void = {}) {
+        self.placeholder = placeholder; self.symbol = symbol; self._text = text; self.onSubmit = onSubmit
+    }
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol).font(.caption).foregroundStyle(.tertiary)
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.plain).focused($focused).onSubmit(onSubmit)
+            if !text.isEmpty {
+                Button { text = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
+                    .buttonStyle(.plain).help("Limpiar")
+            }
+        }
+        .padding(.horizontal, 8).frame(height: Layout.controlHeight)
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
+        .overlay(RoundedRectangle(cornerRadius: 7)
+            .strokeBorder(focused ? Color.accentColor : Color.primary.opacity(0.13), lineWidth: focused ? 2 : 1))
+        .contentShape(RoundedRectangle(cornerRadius: 7))
+        .onTapGesture { focused = true }
+    }
+}
+
+/// A row of the sidebar that lights up under the pointer.
+///
+/// Until now the only row with a background was the selected one — that is, the one you are least likely to want to
+/// click. Everything else was flat text, and nothing said the rest of the list answered to the mouse at all.
+struct SidebarRow: ViewModifier {
+    let selected: Bool
+    let tint: Color
+    @State private var hovering = false
+
+    func body(content: Content) -> some View {
+        content
+            .background(selected ? tint.opacity(0.13) : (hovering ? Color.primary.opacity(0.06) : .clear),
+                        in: RoundedRectangle(cornerRadius: 9))
+            .onHover { hovering = $0 }
+    }
+}
+
+extension View {
+    func sidebarRow(selected: Bool, tint: Color = .accentColor) -> some View {
+        modifier(SidebarRow(selected: selected, tint: tint))
     }
 }
 
