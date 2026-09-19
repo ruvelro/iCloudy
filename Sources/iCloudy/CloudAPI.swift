@@ -63,6 +63,8 @@ final class CloudAPI {
     var ftpSession: FTPSession?
     /// Signed-in Mega session and its decrypted tree, kept for as long as this client lives.
     var megaStateCache: MegaState?
+    /// The tree fetch in flight, so two listings started at once do not both download and decrypt the whole account.
+    var megaTreeTask: Task<MegaState, Error>?
     /// Signed-in O2 Cloud session: its validation key and the account's root folder.
     var o2SessionCache: O2Session?
     /// Resolved root of a volume account, with its security scope held open while this client exists.
@@ -80,6 +82,7 @@ final class CloudAPI {
         ftpSession = nil
         if volumeScopeOpen, let volumeRootCache { volumeRootCache.stopAccessingSecurityScopedResource() }
         volumeScopeOpen = false; volumeRootCache = nil
+        megaTreeTask?.cancel(); megaTreeTask = nil
         megaStateCache = nil
         o2SessionCache = nil
     }

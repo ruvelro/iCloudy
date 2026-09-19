@@ -39,17 +39,30 @@ extension CloudAPI {
     /// what other devices do, so a tree this old is fetched again on the next listing.
     static let megaTreeMaxAge: TimeInterval = 5 * 60
     /// The whole tree, fetched once and kept until something changes it, "Actualizar" asks for it, or it grows old.
+    ///
+    /// Only one fetch runs at a time. Opening the app starts a listing and a quota check together, and both wanted
+    /// the tree: on a large account that meant downloading and decrypting the whole thing twice, side by side.
     @discardableResult
     func megaTree() async throws -> MegaState {
         let state = try await megaSession()
         let stale = state.loadedAt.map { Date().timeIntervalSince($0) > Self.megaTreeMaxAge } ?? true
         guard !state.loaded || stale else { return state }
+        if let running = megaTreeTask { return try await running.value }
+        let task = Task { try await megaFetchTree(state) }
+        megaTreeTask = task
+        defer { megaTreeTask = nil }
+        return try await task.value
+    }
+    private func megaFetchTree(_ state: MegaState) async throws -> MegaState {
         guard let answer = try await megaCall(["a": "f", "c": 1, "r": 1]) as? [String: Any],
               let files = answer["f"] as? [[String: Any]] else {
             throw CloudError.message(L("Mega no devolvió el contenido de la cuenta."))
         }
+        // `ok` carries the keys of the folders other accounts have shared in. Without them those items decrypt to
+        // nothing and every one of them reads as unavailable.
+        let shares = answer["ok"] as? [[String: Any]] ?? []
         let masterKey = state.masterKey
-        state.adopt(try await blockingIO { MegaAPI.tree(files, masterKey: masterKey) })
+        state.adopt(try await blockingIO { MegaAPI.tree(files, masterKey: masterKey, shares: shares) })
         guard !state.root.isEmpty else { throw CloudError.message(L("No se encontró la raíz de la cuenta de Mega.")) }
         return state
     }
@@ -127,7 +140,7 @@ extension CloudAPI {
     func megaCreateFolder(name: String, parent: String) async throws -> String {
         let state = try await megaTree()
         let target = try megaHandle(parent, in: state)
-        let key = MegaCrypto.randomKey(count: 16)
+        let key = try MegaCrypto.randomKey(count: 16)
         let node: [String: Any] = ["h": "xxxxxxxx", "t": 1,
                                    "a": MegaCrypto.encode(try MegaCrypto.encodeAttributes(["n": name], key: key)),
                                    "k": MegaCrypto.encode(try MegaCrypto.ecb(key, key: state.masterKey, encrypt: true))]
@@ -185,12 +198,18 @@ extension CloudAPI {
         let state = try await megaTree()
         let node = try megaNode(file.id, in: state)
         guard node.isReadable else { throw CloudError.message(L("Este elemento no se puede compartir porque su clave no es de esta cuenta.")) }
+        // A folder is not shared the way a file is. Mega creates a share with its own key, re-encrypts every child
+        // key under it and puts that key in the link; the folder's own key, which is what this used to publish,
+        // opens nothing. It is a flow that cannot be checked without a real account, so rather than hand out a link
+        // that probably does not work, iCloudy says what it cannot do.
+        guard !node.isFolder else {
+            throw CloudError.message(L("Mega comparte una carpeta con una clave de compartición aparte, un paso que iCloudy todavía no sabe dar. Crea el enlace de la carpeta desde mega.nz; los archivos sueltos sí se comparten desde aquí."))
+        }
         guard let handle = try await megaCall(["a": "l", "n": node.handle]) as? String else {
             throw CloudError.message(L("Mega no devolvió el enlace."))
         }
         // The key goes in the fragment, which browsers never send to the server: without it the link is unreadable.
-        let kind = node.isFolder ? "folder" : "file"
-        guard let url = URL(string: "https://mega.nz/\(kind)/\(handle)#\(MegaCrypto.encode(node.key))") else {
+        guard let url = URL(string: "https://mega.nz/file/\(handle)#\(MegaCrypto.encode(node.key))") else {
             throw CloudError.message(L("Mega no devolvió el enlace."))
         }
         return url
@@ -204,11 +223,7 @@ extension CloudAPI {
         guard !node.isFolder, let parts = MegaCrypto.unpack(fileKey: node.key) else {
             throw CloudError.message(L("Este archivo de Mega no se puede descargar porque su clave no es de esta cuenta."))
         }
-        guard let answer = try await megaCall(["a": "g", "g": 1, "ssl": MegaAPI.useTLS, "n": node.handle]) as? [String: Any],
-              let address = answer["g"] as? String, let base = CloudAPI.secureURL(address) else {
-            throw CloudError.message(L("Mega no devolvió la dirección de descarga."))
-        }
-        let size = (answer["s"] as? Double).map { Int64($0) } ?? node.size ?? 0
+        var (base, size) = try await megaTransferAddress(node)
         guard FileManager.default.createFile(atPath: destination.path, contents: nil) else {
             throw CloudError.message(L("No se pudo crear el archivo de destino."))
         }
@@ -218,14 +233,7 @@ extension CloudAPI {
         var macs: [Data] = []
         for chunk in MegaCrypto.chunks(of: size) {
             try Task.checkCancellation()
-            guard let url = URL(string: "\(base.absoluteString)/\(chunk.offset)-\(chunk.offset + chunk.length - 1)") else {
-                throw CloudError.message(L("Mega no devolvió la dirección de descarga."))
-            }
-            let (data, response) = try await session.data(from: url)
-            try HTTP.validate(response, data: data)
-            guard data.count == Int(chunk.length) else {
-                throw CloudError.message(L("Mega envió un trozo incompleto del archivo."))
-            }
+            let data = try await megaChunk(chunk, from: &base, of: node)
             let offset = chunk.offset
             let plain = try await blockingIO { try MegaCrypto.ctr(data, key: parts.key, nonce: parts.nonce, blockOffset: UInt64(offset / 16)) }
             try output.write(contentsOf: plain)
@@ -242,6 +250,44 @@ extension CloudAPI {
         }
     }
 
+    /// Where the bytes of a file live right now, and how many there are. The address is temporary: Mega hands out one
+    /// that stops working after a while, which is long enough for most files and not for a large one.
+    private func megaTransferAddress(_ node: MegaNode) async throws -> (URL, Int64) {
+        guard let answer = try await megaCall(["a": "g", "g": 1, "ssl": MegaAPI.useTLS, "n": node.handle]) as? [String: Any],
+              let address = answer["g"] as? String, let base = CloudAPI.secureURL(address) else {
+            throw CloudError.message(L("Mega no devolvió la dirección de descarga."))
+        }
+        return (base, (answer["s"] as? Double).map { Int64($0) } ?? node.size ?? 0)
+    }
+    /// One chunk, with the patience the rest of this provider already has. A download used to fail outright on a
+    /// moment's trouble: no retry, no way to notice the address had expired, and a transfer quota that had run out
+    /// arrived as a bare HTTP code.
+    private func megaChunk(_ chunk: (offset: Int64, length: Int64), from address: inout URL, of node: MegaNode) async throws -> Data {
+        for attempt in 0..<4 {
+            try Task.checkCancellation()
+            guard let url = URL(string: "\(address.absoluteString)/\(chunk.offset)-\(chunk.offset + chunk.length - 1)") else {
+                throw CloudError.message(L("Mega no devolvió la dirección de descarga."))
+            }
+            do {
+                let (data, response) = try await session.data(from: url)
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                // 509 is Mega's own code for a free account that has spent its transfer allowance for the day.
+                guard status != 509 else {
+                    throw CloudError.message(L("La cuenta de Mega ha agotado su cuota de transferencia. Espera a que se renueve o descarga el archivo desde mega.nz."))
+                }
+                guard (200..<300).contains(status) else { throw URLError(.badServerResponse) }
+                guard data.count == Int(chunk.length) else { throw URLError(.networkConnectionLost) }
+                return data
+            } catch let error as URLError {
+                guard attempt < 3 else { throw MegaAPI.unreachable(error) }
+                // The address has a life of its own, shorter than a large download, so the next try asks for another.
+                if let refreshed = try? await megaTransferAddress(node).0 { address = refreshed }
+                try await Task.sleep(nanoseconds: MegaAPI.waitDelay(attempt))
+            }
+        }
+        throw CloudError.message(L("Mega no entregó una parte de «\(node.name)» después de varios intentos."))
+    }
+
     func megaUpload(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint,
                     save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
         let state = try await megaTree()
@@ -254,7 +300,7 @@ extension CloudAPI {
         // Mega has no resumable upload for third parties, so a restart begins again from zero.
         cursor.offset = 0; cursor.url = nil; try save(cursor)
 
-        let material = MegaCrypto.randomKey(count: 24)
+        let material = try MegaCrypto.randomKey(count: 24)
         let key = Data(material.prefix(16))
         let nonce = Data(material.suffix(8))
         let input = try FileHandle(forReadingFrom: local)
@@ -293,7 +339,8 @@ extension CloudAPI {
             // The last chunk answers with the token that turns the uploaded bytes into a node.
             if !text.isEmpty, !text.hasPrefix("-") { token = text }
             sent += chunk.length
-            cursor.offset = sent; try save(cursor)
+            // No checkpoint in between: Mega has no resumable upload for third parties, so writing an offset here
+            // would promise a restart that begins again from zero anyway.
             progress(sent, total)
         }
         guard let token else { throw CloudError.message(L("Mega no confirmó la subida.")) }

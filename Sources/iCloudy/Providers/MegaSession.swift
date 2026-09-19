@@ -38,6 +38,10 @@ final class MegaState {
     var children: [String: [String]] = [:]
     var root = ""
     var trash = ""
+    /// Keys of the folders other accounts have shared into this one, by the handle of the share. A node that arrived
+    /// that way is wrapped with one of these and not with the master key, so without them every shared item showed
+    /// up as "Elemento sin acceso".
+    var shareKeys: [String: Data] = [:]
     /// When the tree was last fetched. Mega does not push changes made elsewhere, so a tree older than
     /// `CloudAPI.megaTreeMaxAge` is fetched again on the next listing; until then changes are applied in place.
     var loadedAt: Date?
@@ -54,13 +58,18 @@ enum MegaAPI {
     static let endpoint = "https://g.api.mega.co.nz/cs"
 
     /// Turns Mega's numeric failures into something a person can act on. The codes are the ones its own clients use.
-    static func failure(_ code: Int) -> CloudError {
+    static func failure(_ code: Int, command: String = "") -> CloudError {
         switch code {
         case -3: return .message(L("Mega sigue ocupado con esa operación. Espera unos segundos y vuelve a intentarlo."))
         case -2: return .message(L("Mega rechazó la petición por incorrecta."))
         case -6, -4: return .message(L("Demasiadas peticiones a Mega. Espera un momento y vuelve a intentarlo."))
         case -8, -15: return .sessionExpired(L("La sesión de Mega ha caducado. Vuelve a iniciar sesión."))
-        case -9: return .message(L("Ese elemento ya no está en Mega."))
+        case -9:
+            // Signing in, -9 means Mega has never heard of that address. Everywhere else it means the item is gone,
+            // and saying that to somebody who just mistyped their e-mail sent them looking for a deleted file.
+            return .message(["us0", "us"].contains(command)
+                            ? L("Mega no reconoce ese correo. Comprueba la dirección de la cuenta.")
+                            : L("Ese elemento ya no está en Mega."))
         case -11: return .message(L("La cuenta no tiene permiso para esa operación."))
         case -12: return .message(L("Ya existe un elemento con ese nombre."))
         case -13: return .message(L("La operación quedó incompleta. Vuelve a intentarlo."))
@@ -80,9 +89,12 @@ enum MegaAPI {
         var components = URLComponents(string: endpoint)!
         components.queryItems = [URLQueryItem(name: "id", value: String(sequence))]
             + (sid.map { [URLQueryItem(name: "sid", value: $0)] } ?? [])
+        let command = payload["a"] as? String ?? ""
         var request = URLRequest(url: components.url!)
         request.httpMethod = "POST"
-        request.timeoutInterval = Self.requestTimeout
+        // Fetching the whole account is the one command whose answer Mega takes its time to start producing, and on
+        // a large account the ordinary margin cut it off before the first byte arrived.
+        request.timeoutInterval = command == "f" ? Self.treeTimeout : Self.requestTimeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: [payload])
 
@@ -140,10 +152,10 @@ enum MegaAPI {
             var result: Any? = body
             if let list = body as? [Any] { result = list.first }
             if let code = result as? Int, code < 0 {
-                guard code == -3, waits < Self.maxWaits else { throw failure(code) }
+                guard code == -3, waits < Self.maxWaits else { throw failure(code, command: command) }
                 // Mega's own clients back off and keep asking. Half a second five times was not nearly enough: a
                 // delete would surface "-3" to the user and work fine the moment they tried it again by hand.
-                try await pause(Self.waitDelay(waits), failure(code))
+                try await pause(Self.waitDelay(waits), failure(code, command: command))
                 waits += 1
                 continue
             }
@@ -192,6 +204,8 @@ enum MegaAPI {
     /// slowly. So the minute the system gives by default was spent almost entirely waiting for an answer that was
     /// never coming, and fifteen seconds still leaves a wide margin over anything Mega has been seen to take.
     static let requestTimeout: TimeInterval = 15
+    /// The exception: an account with hundreds of thousands of nodes takes a while before it starts answering `f`.
+    static let treeTimeout: TimeInterval = 60
     /// And how long one command may take in total, however it is being repeated. Only checked before waiting again,
     /// so a slow but healthy transfer is never cut off in the middle.
     static let budget: TimeInterval = 75
@@ -275,16 +289,33 @@ enum MegaAPI {
 
     /// Unwraps a node key. A node may carry several copies of its key, one per account it was shared with, so every
     /// candidate is tried and the one whose attributes decode is the right one.
-    static func decrypt(node: [String: Any], masterKey: Data) -> (key: Data, name: String, attributes: [String: Any])? {
+    /// The keys of the folders other accounts have shared into this one, unwrapped with the master key. They arrive
+    /// in the `ok` array of the same response that carries the tree.
+    static func shareKeys(_ entries: [[String: Any]], masterKey: Data) -> [String: Data] {
+        var keys: [String: Data] = [:]
+        for entry in entries {
+            guard let handle = entry["h"] as? String, let wrapped = entry["k"] as? String else { continue }
+            let blob = MegaCrypto.decode(wrapped)
+            guard blob.count == 16, let key = try? MegaCrypto.ecb(blob, key: masterKey) else { continue }
+            keys[handle] = key
+        }
+        return keys
+    }
+    static func decrypt(node: [String: Any], masterKey: Data,
+                        shareKeys: [String: Data] = [:]) -> (key: Data, name: String, attributes: [String: Any])? {
         let kind = node["t"] as? Int ?? 0
         let field = node["k"] as? String ?? ""
         let attributes = node["a"] as? String ?? ""
         for part in field.split(separator: "/") {
             // Normally "owner:key". A bare key is accepted too, because that is the shape a request carries and some
             // answers echo it back unchanged.
-            let text = part.firstIndex(of: ":").map { String(part[part.index(after: $0)...]) } ?? String(part)
+            let pieces = part.split(separator: ":", maxSplits: 1).map(String.init)
+            let text = pieces.count == 2 ? pieces[1] : String(part)
+            // An item shared into this account is wrapped with the key of the share it arrived in, not with the
+            // master key, which is why all of them used to read as unavailable.
+            let unwrapping = (pieces.count == 2 ? shareKeys[pieces[0]] : nil) ?? masterKey
             let blob = MegaCrypto.decode(text)
-            guard blob.count == (kind == 0 ? 32 : 16), let key = try? MegaCrypto.ecb(blob, key: masterKey) else { continue }
+            guard blob.count == (kind == 0 ? 32 : 16), let key = try? MegaCrypto.ecb(blob, key: unwrapping) else { continue }
             let content = kind == 0 ? (MegaCrypto.unpack(fileKey: key)?.key ?? Data()) : key
             guard let values = MegaCrypto.attributes(MegaCrypto.decode(attributes), key: content),
                   let name = values["n"] as? String, !name.isEmpty else { continue }
@@ -294,10 +325,10 @@ enum MegaAPI {
     }
 
     /// Turns one entry of an `f` or `p` response into a node.
-    static func node(from entry: [String: Any], masterKey: Data) -> MegaNode? {
+    static func node(from entry: [String: Any], masterKey: Data, shareKeys: [String: Data] = [:]) -> MegaNode? {
         guard let handle = entry["h"] as? String else { return nil }
         let kind = entry["t"] as? Int ?? 0
-        let decrypted = kind < 2 ? decrypt(node: entry, masterKey: masterKey) : nil
+        let decrypted = kind < 2 ? decrypt(node: entry, masterKey: masterKey, shareKeys: shareKeys) : nil
         let name: String
         switch kind {
         case 2: name = L("Mi nube")
@@ -313,27 +344,32 @@ enum MegaAPI {
                         attributeJSON: decrypted.flatMap { try? JSONSerialization.data(withJSONObject: $0.attributes, options: [.sortedKeys]) } ?? Data())
     }
     /// Builds the tree from an `f` response, keeping the order Mega sends so parents are known before children.
-    static func tree(_ files: [[String: Any]], masterKey: Data) -> MegaState.Tree {
+    static func tree(_ files: [[String: Any]], masterKey: Data, shares: [[String: Any]] = []) -> MegaState.Tree {
         var nodes: [String: MegaNode] = [:]
         var children: [String: [String]] = [:]
         var root = ""
         var trash = ""
+        let keys = shareKeys(shares, masterKey: masterKey)
         for entry in files {
-            guard let node = node(from: entry, masterKey: masterKey) else { continue }
+            guard let node = node(from: entry, masterKey: masterKey, shareKeys: keys) else { continue }
             if node.kind == 2 { root = node.handle }
             if node.kind == 4 { trash = node.handle }
             nodes[node.handle] = node
             children[node.parent, default: []].append(node.handle)
         }
-        return MegaState.Tree(nodes: nodes, children: children, root: root, trash: trash)
+        return MegaState.Tree(nodes: nodes, children: children, root: root, trash: trash, shareKeys: keys)
     }
 }
 
 extension MegaState {
-    struct Tree { let nodes: [String: MegaNode]; let children: [String: [String]]; let root: String; let trash: String }
+    struct Tree {
+        let nodes: [String: MegaNode]; let children: [String: [String]]
+        let root: String; let trash: String
+        var shareKeys: [String: Data] = [:]
+    }
     func adopt(_ tree: Tree) {
         nodes = tree.nodes; children = tree.children
-        root = tree.root; trash = tree.trash
+        root = tree.root; trash = tree.trash; shareKeys = tree.shareKeys
         loaded = true; loadedAt = Date()
     }
     /// Forgets the tree without forgetting the session, so the next listing fetches the account again.
@@ -363,7 +399,7 @@ extension MegaState {
     func insert(_ entries: [[String: Any]]) {
         guard !entries.isEmpty else { loaded = false; return }
         for entry in entries {
-            guard let node = MegaAPI.node(from: entry, masterKey: masterKey) else { loaded = false; continue }
+            guard let node = MegaAPI.node(from: entry, masterKey: masterKey, shareKeys: shareKeys) else { loaded = false; continue }
             nodes[node.handle] = node
             place(node)
         }

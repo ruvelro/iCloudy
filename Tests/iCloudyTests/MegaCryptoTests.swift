@@ -119,7 +119,7 @@ final class MegaCryptoTests: XCTestCase {
     }
 
     func testAFileKeyUnpacksIntoItsThreeParts() throws {
-        let packed = MegaCrypto.randomKey()
+        let packed = try MegaCrypto.randomKey()
         let parts = try XCTUnwrap(MegaCrypto.unpack(fileKey: packed))
         XCTAssertEqual(parts.key.count, 16)
         XCTAssertEqual(parts.nonce.count, 8)

@@ -10,7 +10,7 @@
 [![macOS](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-5.9-F05138?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![SwiftUI](https://img.shields.io/badge/SwiftUI-nativo-0071e3?style=flat-square)](https://developer.apple.com/xcode/swiftui/)
-[![tests](https://img.shields.io/badge/tests-270%20✓-43c463?style=flat-square)](Tests)
+[![tests](https://img.shields.io/badge/tests-278%20✓-43c463?style=flat-square)](Tests)
 [![licencia](https://img.shields.io/badge/licencia-GPL--3.0-8a7ee0?style=flat-square)](LICENSE)
 
 </div>
@@ -48,13 +48,14 @@ terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga 
 | **WebDAV** | Usuario y contraseña | — | ✅¹ | — | — | Estable |
 | **Volúmenes y carpetas** | Carpeta del Mac | ✅ | — | ✅² | — | Estable |
 | **FTP / FTPS** | Usuario y contraseña | — | — | — | — | Estable |
-| **Mega** | Correo y contraseña | ✅ | ✅ | ✅ | MAC propio³ | 🧪 Experimental |
+| **Mega** | Correo y contraseña | ✅ | ✅⁴ | ✅ | MAC propio³ | 🧪 Experimental |
 | **O2 Cloud** | Sesión de Mi O2 | — | — | ✅ | — | 🧪 Experimental |
 
 <sub>
 ¹ Enlaces públicos en Nextcloud y ownCloud, activando la API OCS al conectar.
 ² Papelera real y reversible del sistema, vía <code>trashItem</code>.
 ³ Cifrado de extremo a extremo: cada descarga se verifica contra el resumen que lleva dentro la clave del archivo.
+<br>⁴ En Mega, enlaces de archivo. Una carpeta se comparte con una clave aparte que iCloudy todavía no sabe crear, y lo dice.
 </sub>
 
 **WebDAV** cubre Nextcloud, ownCloud, Synology y casi cualquier NAS. **Volúmenes** cubre SMB, AFP, NFS, discos
@@ -193,7 +194,7 @@ el repositorio no incluye ninguno. La [guía de OAuth](docs/OAUTH.md) explica c�
 ## 🛠️ Desarrollo
 
 ```bash
-swift test                       # 270 pruebas, sin red: todas las respuestas HTTP están simuladas
+swift test                       # 278 pruebas, sin red: todas las respuestas HTTP están simuladas
 swift run iCloudy                # iterar sobre la interfaz
 python3 scripts/mockups/generar.py  # rehacer las maquetas del README
 swift scripts/render-mockups.swift  # y convertirlas en PNG

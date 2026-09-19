@@ -147,39 +147,25 @@ extension CloudAPI {
         guard !needle.isEmpty else { return SearchPage(hits: [], next: nil) }
         let accountID = account.id
         let limit = 500, scanLimit = Self.volumeSearchScanLimit
-        // The walk runs off the main actor, and `blockingIO` is detached, so it never sees the caller's cancellation
-        // by itself. The flag is what carries it across: closing the search stops the walk instead of leaving it
-        // grinding through a network share nobody is waiting on any more.
-        let stop = VolumeSearchStop()
-        return try await withTaskCancellationHandler {
-            try await blockingIO {
-                var hits: [SearchHit] = []
-                var truncated = false
-                var scanned = 0
-                let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey],
-                                                                options: [.skipsPackageDescendants])
-                while let url = enumerator?.nextObject() as? URL {
-                    scanned += 1
-                    if stop.isStopped { throw CancellationError() }
-                    if hits.count >= limit || scanned > scanLimit { truncated = true; break }
-                    guard url.lastPathComponent.localizedCaseInsensitiveContains(needle), let file = Self.volumeFile(url) else { continue }
-                    hits.append(SearchHit(accountID: accountID, file: file,
-                                          parentID: url.deletingLastPathComponent().standardizedFileURL.path))
-                }
-                return SearchPage(hits: hits, next: nil, incomplete: truncated)
+        // Closing the search stops the walk instead of leaving it grinding through a network share nobody is waiting
+        // on any more. `blockingIO` passes the cancellation on to the work it runs off the main actor.
+        return try await blockingIO {
+            var hits: [SearchHit] = []
+            var truncated = false
+            var scanned = 0
+            let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey],
+                                                            options: [.skipsPackageDescendants])
+            while let url = enumerator?.nextObject() as? URL {
+                scanned += 1
+                try Task.checkCancellation()
+                if hits.count >= limit || scanned > scanLimit { truncated = true; break }
+                guard url.lastPathComponent.localizedCaseInsensitiveContains(needle), let file = Self.volumeFile(url) else { continue }
+                hits.append(SearchHit(accountID: accountID, file: file,
+                                      parentID: url.deletingLastPathComponent().standardizedFileURL.path))
             }
-        } onCancel: {
-            stop.stop()
+            return SearchPage(hits: hits, next: nil, incomplete: truncated)
         }
     }
-    /// Carries a cancellation into the detached walk, which cannot see the calling task's own.
-    final class VolumeSearchStop: @unchecked Sendable {
-        private let lock = NSLock()
-        private var stopped = false
-        var isStopped: Bool { lock.withLock { stopped } }
-        func stop() { lock.withLock { stopped = true } }
-    }
-
     func volumeTrail(id: String) throws -> [CloudFile] {
         let root = try volumeRoot().standardizedFileURL.path
         let target = try volumeURL(id).standardizedFileURL.path

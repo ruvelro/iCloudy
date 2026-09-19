@@ -31,16 +31,23 @@ final class MegaProviderTests: XCTestCase {
 
     /// Attributes beside the name that a node may carry, the way MEGAsync writes its fingerprint.
     private var extraAttributes: [String: [String: Any]] = [:]
+    /// The key of a folder another account shared in, and the key that folder's contents are wrapped with.
+    private let shareKey = Data((40...55).map(UInt8.init))
+    private let sharedFolderKey = Data((60...75).map(UInt8.init))
     private func entry(_ handle: String, parent: String, kind: Int, name: String, key: Data,
-                       size: Int? = nil, master: Data? = nil) throws -> [String: Any] {
+                       size: Int? = nil, master: Data? = nil, owner: String = "PROPIA") throws -> [String: Any] {
         let content = kind == 0 ? (MegaCrypto.unpack(fileKey: key)?.key ?? Data()) : key
         var attributes: [String: Any] = extraAttributes[handle] ?? [:]
         attributes["n"] = name
         var node: [String: Any] = ["h": handle, "p": parent, "t": kind, "ts": 1_700_000_000,
                                    "a": MegaCrypto.encode(try MegaCrypto.encodeAttributes(attributes, key: content)),
-                                   "k": "PROPIA:" + MegaCrypto.encode(try MegaCrypto.ecb(key, key: master ?? masterKey, encrypt: true))]
+                                   "k": owner + ":" + MegaCrypto.encode(try MegaCrypto.ecb(key, key: master ?? masterKey, encrypt: true))]
         if let size { node["s"] = size }
         return node
+    }
+    /// The `ok` array of an `f` response: the share keys, each wrapped with the account's master key.
+    private func shares() throws -> [[String: Any]] {
+        [["h": "ORIGEN", "k": MegaCrypto.encode(try MegaCrypto.ecb(shareKey, key: masterKey, encrypt: true))]]
     }
     private func tree() throws -> [[String: Any]] {
         [["h": "RAIZ", "p": "", "t": 2, "ts": 1_700_000_000],
@@ -48,8 +55,11 @@ final class MegaProviderTests: XCTestCase {
          try entry("CARPETA", parent: "RAIZ", kind: 1, name: "Documentos", key: Data((1...16).map { UInt8($0 * 3) })),
          try entry("ARCHIVO", parent: "RAIZ", kind: 0, name: "informe.pdf", key: fileKey, size: contents.count),
          // Shared into the account with a key this account cannot unwrap.
-         try entry("AJENO", parent: "RAIZ", kind: 0, name: "de otro.txt", key: MegaCrypto.randomKey(),
+         try entry("AJENO", parent: "RAIZ", kind: 0, name: "de otro.txt", key: try MegaCrypto.randomKey(),
                    size: 10, master: Data(repeating: 9, count: 16)),
+         // Shared into the account: wrapped with the key of the share it arrived in, not with the master key.
+         try entry("COMPARTIDO", parent: "RAIZ", kind: 1, name: "De Ana", key: sharedFolderKey,
+                   master: shareKey, owner: "ORIGEN"),
          try entry("BORRADO", parent: "PAPELERA", kind: 0, name: "informe viejo.pdf", key: fileKey, size: 3)]
     }
     /// One handler for the whole protocol: the command endpoint, the download host and the upload host.
@@ -66,7 +76,7 @@ final class MegaProviderTests: XCTestCase {
                 if let answer = try extra(action, command) { return (answer.0, [:], answer.1) }
                 switch action {
                 case "f":
-                    return (200, [:], try JSONSerialization.data(withJSONObject: [["f": try tree(), "sn": "xyz"]]))
+                    return (200, [:], try JSONSerialization.data(withJSONObject: [["f": try tree(), "ok": try shares(), "sn": "xyz"]]))
                 case "g":
                     XCTAssertEqual(command["ssl"] as? Int, 2, "Se pide la dirección de transferencia cifrada")
                     return (200, [:], try JSONSerialization.data(withJSONObject: [["g": "http://descarga.ejemplo.com/token", "s": contents.count]]))
@@ -194,7 +204,8 @@ final class MegaProviderTests: XCTestCase {
         serve()
         let api = client()
         let files = try await api.list(parent: "root")
-        XCTAssertEqual(files.map(\.name), ["Documentos", "Elemento sin acceso", "informe.pdf"], "Carpetas primero y luego por nombre")
+        XCTAssertEqual(files.map(\.name), ["De Ana", "Documentos", "Elemento sin acceso", "informe.pdf"],
+                       "Carpetas primero y luego por nombre")
         let file = try XCTUnwrap(files.first { $0.id == "ARCHIVO" })
         XCTAssertEqual(file.name, "informe.pdf")
         XCTAssertEqual(file.size, Int64(contents.count))
@@ -239,6 +250,12 @@ final class MegaProviderTests: XCTestCase {
         XCTAssertEqual(link.path, "/file/ENLACE123")
         // The key travels in the fragment, which a browser never sends to the server.
         XCTAssertEqual(link.fragment, MegaCrypto.encode(fileKey))
+
+        // A folder is a different flow: Mega makes a share with its own key and re-encrypts every child key under
+        // it. Publishing the folder's own key, as this used to, produced a link that opens nothing.
+        let folder = try XCTUnwrap(files.first { $0.id == "CARPETA" })
+        do { _ = try await api.publicLink(for: folder); XCTFail("Un enlace que no abre es peor que no darlo") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("desde mega.nz"), error.localizedDescription) }
     }
 
     // MARK: - Contents
@@ -648,6 +665,152 @@ final class MegaProviderTests: XCTestCase {
                                                          checkpoint: checkpoint, save: { _ in }, progress: { _, _ in })
         XCTAssertEqual(uploadRefusals, 0, "El trozo se reenvió después de la espera")
         XCTAssertEqual(receipt.remoteID, "NUEVO")
+    }
+
+    func testAFolderSharedIntoTheAccountIsReadableInsteadOfUnavailable() async throws {
+        // An item shared in is wrapped with the key of the share it arrived in, not with the master key. Without
+        // reading the `ok` array of the same response, every one of them showed up as "Elemento sin acceso".
+        serve()
+        let files = try await client().list(parent: "root")
+        let shared = try XCTUnwrap(files.first { $0.id == "COMPARTIDO" })
+        XCTAssertEqual(shared.name, "De Ana")
+        XCTAssertTrue(shared.isFolder)
+        // And something genuinely unreadable still says so rather than inventing a name.
+        let foreign = try XCTUnwrap(files.first { $0.id == "AJENO" })
+        XCTAssertEqual(foreign.name, "Elemento sin acceso")
+    }
+
+    func testAnUnknownAddressAtSignInIsNotAMissingFile() async throws {
+        // -9 means one thing signing in and another everywhere else. Telling somebody who mistyped their e-mail
+        // that the item is gone sent them looking for a file they never deleted.
+        XCTAssertTrue(MegaAPI.failure(-9, command: "us0").localizedDescription.contains("no reconoce ese correo"))
+        XCTAssertTrue(MegaAPI.failure(-9, command: "us").localizedDescription.contains("no reconoce ese correo"))
+        XCTAssertTrue(MegaAPI.failure(-9, command: "g").localizedDescription.contains("ya no está"))
+        XCTAssertTrue(MegaAPI.failure(-9).localizedDescription.contains("ya no está"))
+
+        StubProtocol.handler = { _ in (200, [:], Data("[-9]".utf8)) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubProtocol.self]
+        do {
+            _ = try await MegaAPI.signIn(email: "nadie@ejemplo.com", password: "x", code: nil,
+                                          session: URLSession(configuration: configuration))
+            XCTFail("Una cuenta que no existe debe decirlo")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("no reconoce ese correo"), error.localizedDescription) }
+    }
+
+    func testTwoListingsAtOnceDownloadTheAccountOnlyOnce() async throws {
+        // Opening the app starts a listing and a quota check together, and both want the tree. On a large account
+        // that meant downloading and decrypting the whole thing twice, side by side.
+        var trees = 0
+        serve { action, _ in
+            if action == "f" { trees += 1 }
+            return nil
+        }
+        let api = client()
+        async let first = api.list(parent: "root")
+        async let second = api.list(parent: "root")
+        async let third = api.searchPage(term: "informe")
+        let (a, b, c) = try await (first, second, third)
+        XCTAssertEqual(trees, 1, "Una sola petición del árbol entre las tres")
+        XCTAssertFalse(a.isEmpty)
+        XCTAssertEqual(a.map(\.id), b.map(\.id))
+        XCTAssertFalse(c.hits.isEmpty)
+    }
+
+    func testADownloadSurvivesAnAddressThatExpiredHalfway() async throws {
+        // The temporary address has a life of its own, shorter than a large download, and a chunk that fails used to
+        // lose the whole file: no retry, and nothing that noticed the address had gone stale.
+        var refusals = 1
+        var addresses = 0
+        StubProtocol.handler = { [self] request in
+            let url = try XCTUnwrap(request.url)
+            if url.host == "g.api.mega.co.nz" {
+                let command = try XCTUnwrap((try JSONSerialization.jsonObject(with: requestData(request)) as? [[String: Any]])?.first)
+                switch command["a"] as? String {
+                case "f": return (200, [:], try JSONSerialization.data(withJSONObject: [["f": try tree(), "ok": try shares()]]))
+                case "g":
+                    addresses += 1
+                    return (200, [:], try JSONSerialization.data(withJSONObject: [["g": "http://descarga.ejemplo.com/token\(addresses)", "s": contents.count]]))
+                default: return (200, [:], Data("[0]".utf8))
+                }
+            }
+            if refusals > 0 { refusals -= 1; return (403, [:], Data()) }
+            let range = url.lastPathComponent.split(separator: "-").compactMap { Int($0) }
+            let bounds = try XCTUnwrap(range.count == 2 ? range : nil)
+            let parts = try XCTUnwrap(MegaCrypto.unpack(fileKey: fileKey))
+            let cipher = try MegaCrypto.ctr(Data(contents[bounds[0]...bounds[1]]), key: parts.key, nonce: parts.nonce,
+                                            blockOffset: UInt64(bounds[0] / 16))
+            return (200, [:], cipher)
+        }
+        let api = client()
+        let files = try await api.list(parent: "root")
+        let file = try XCTUnwrap(files.first { $0.id == "ARCHIVO" })
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        try await api.download(file: file, to: destination)
+        XCTAssertEqual(try Data(contentsOf: destination), contents, "El archivo llega entero pese al tropiezo")
+        XCTAssertGreaterThan(addresses, 1, "Y se pidió una dirección nueva")
+    }
+
+    func testAnExhaustedTransferQuotaSaysWhatItIs() async throws {
+        // 509 is Mega's own code for a free account that has spent its allowance. It arrived as a bare HTTP code.
+        StubProtocol.handler = { [self] request in
+            let url = try XCTUnwrap(request.url)
+            if url.host == "g.api.mega.co.nz" {
+                let command = try XCTUnwrap((try JSONSerialization.jsonObject(with: requestData(request)) as? [[String: Any]])?.first)
+                if command["a"] as? String == "f" { return (200, [:], try JSONSerialization.data(withJSONObject: [["f": try tree(), "ok": try shares()]])) }
+                return (200, [:], try JSONSerialization.data(withJSONObject: [["g": "http://descarga.ejemplo.com/t", "s": contents.count]]))
+            }
+            return (509, [:], Data())
+        }
+        let api = client()
+        let files = try await api.list(parent: "root")
+        let file = try XCTUnwrap(files.first { $0.id == "ARCHIVO" })
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        do { try await api.download(file: file, to: destination); XCTFail("Sin cuota no hay descarga") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("cuota de transferencia"), error.localizedDescription) }
+    }
+
+    func testAnEmptyFileIsUploadedAndRegisteredLikeAnyOther() async throws {
+        // A file of zero bytes has no chunks at all, so the loop that encrypts them has nothing to iterate and the
+        // token that turns an upload into a node has to come from the one request that is still made.
+        serve()
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data().write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let stamp = try source.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        var saved: [UploadCheckpoint] = []
+        let receipt = try await client().resumableUpload(local: source, parent: "root", name: "vacio.txt", replacing: nil,
+                                                         checkpoint: UploadCheckpoint(total: 0, modified: stamp),
+                                                         save: { saved.append($0) }, progress: { _, _ in })
+        XCTAssertEqual(receipt.remoteID, "NUEVO")
+        XCTAssertEqual(lastUpload?.offset, 0)
+        XCTAssertTrue(saved.last?.complete == true)
+        XCTAssertNotNil(registered?["a"], "Se registra con su nombre cifrado como cualquier otro")
+    }
+
+    func testTheAccountTreeIsGivenMoreTimeThanAnOrdinaryCommand() {
+        // An account with hundreds of thousands of nodes takes a while before it starts answering `f`, and the
+        // ordinary margin cut it off before the first byte arrived.
+        XCTAssertGreaterThan(MegaAPI.treeTimeout, MegaAPI.requestTimeout)
+        XCTAssertLessThanOrEqual(MegaAPI.treeTimeout, MegaAPI.budget)
+    }
+
+    func testWorkRunOffTheMainActorStopsWhenTheTaskIsCancelled() async throws {
+        // The proof of work Mega asks for runs off the main actor, and a detached task inherits no cancellation.
+        // Its own check never fired, so a hard challenge kept a core busy with no way to stop it.
+        let job = Task { () -> Bool in
+            try await blockingIO {
+                let deadline = Date().addingTimeInterval(5)
+                while Date() < deadline { try Task.checkCancellation() }
+                return false        // ran the full five seconds without ever noticing
+            }
+        }
+        try await Task.sleep(for: .milliseconds(30))
+        job.cancel()
+        do { _ = try await job.value; XCTFail("La cancelación tiene que llegar") }
+        catch { XCTAssertTrue(error is CancellationError, "\(error)") }
     }
 
     func testCapabilitiesSayWhatMegaCanAndCannotDo() {
