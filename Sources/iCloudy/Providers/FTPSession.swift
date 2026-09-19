@@ -54,12 +54,16 @@ actor FTPSession {
             connection.stateUpdateHandler = { state in
                 switch state {
                 case .ready: resumed.once { continuation.resume() }
-                case .failed(let error): resumed.once { continuation.resume(throwing: Self.describe(error)) }
+                case .failed(let error): resumed.once { connection.cancel(); continuation.resume(throwing: Self.describe(error)) }
                 case .cancelled: resumed.once { continuation.resume(throwing: CancellationError()) }
                 case .waiting(let error):
                     // `waiting` means the path is not usable yet. Giving up at the first one turned a network that
-                    // was still settling, right after waking the Mac, into a failed transfer.
-                    resumed.after(grace) { continuation.resume(throwing: Self.describe(error)) }
+                    // was still settling, right after waking the Mac, into a failed transfer. Once the grace is
+                    // spent the connection is closed, or it would go on retrying for the life of the process.
+                    resumed.after(grace) {
+                        connection.cancel()
+                        continuation.resume(throwing: Self.describe(error))
+                    }
                 default: break
                 }
             }
@@ -429,6 +433,10 @@ enum FTPListing {
             let line = String(raw).trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty, !line.hasPrefix("total ") else { return nil }
             if let first = line.first, "dl-".contains(first) { return unix(line, parent: parent) }
+            // A Unix listing also names devices, pipes and sockets, which are not content and cannot be transferred.
+            // Sending those down the DOS parser invented entries with nonsense names and sizes.
+            if let first = line.first, "bcps".contains(first), line.count > 10,
+               line.prefix(10).allSatisfy({ "rwxsStT-dlbcps".contains($0) }) { return nil }
             return dos(line, parent: parent)
         }
     }

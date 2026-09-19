@@ -211,6 +211,16 @@ final class FTPTests: XCTestCase {
         XCTAssertFalse(files[2].isFolder, "Un enlace simbólico no se trata como carpeta")
         XCTAssertEqual(files[1].id, "/base/nota con espacios.txt")
 
+        // A Unix listing also names devices, pipes and sockets. They are not content and cannot be transferred, and
+        // sending them down the DOS parser invented entries with nonsense names and sizes.
+        let exotic = """
+        crw-rw-rw-   1 root  wheel    3,   2 Jan  1 12:00 null
+        prw-r--r--   1 ana   staff      0 Jan  1 12:00 tuberia
+        srwxrwxrwx   1 ana   staff      0 Jan  1 12:00 socket
+        -rw-r--r--   1 ana   staff   1234 Jan  1 12:00 de verdad.txt
+        """
+        XCTAssertEqual(FTPListing.parseLIST(exotic, parent: "/").map(\.name), ["de verdad.txt"])
+
         let dos = """
         01-01-26  12:00PM       <DIR>          Carpeta
         01-01-26  12:00PM                 1234 archivo.txt

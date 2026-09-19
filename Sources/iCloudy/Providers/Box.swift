@@ -37,7 +37,9 @@ extension CloudAPI {
             let result = try await json(url.url!)
             let entries = result["entries"] as? [[String: Any]] ?? []
             files += entries.compactMap(Self.boxFile)
-            guard !entries.isEmpty, let next = result["next_marker"] as? String, !next.isEmpty else { break }
+            // A marker that comes back unchanged is a server, or a cache in front of it, repeating itself; following
+            // it would grow this list until the app ran out of memory.
+            guard !entries.isEmpty, let next = result["next_marker"] as? String, !next.isEmpty, next != marker else { break }
             marker = next
             onPage?(Self.sorted(files))
         }

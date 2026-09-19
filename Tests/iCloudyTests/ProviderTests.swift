@@ -535,6 +535,12 @@ final class ProviderTests: XCTestCase {
         for remote in ["nube.ejemplo.com", "8.8.8.8", "172.32.0.1", "11.0.0.1"] {
             XCTAssertFalse(OAuth.isLocalNetwork(remote), remote)
         }
+        // An IPv6 literal has no dots either, and a NAS reachable over native IPv6 is as public as any other server.
+        XCTAssertFalse(OAuth.isLocalNetwork("2606:4700::1111"), "Una dirección IPv6 pública no es la red local")
+        XCTAssertFalse(OAuth.isLocalNetwork("[2606:4700::1111]"))
+        XCTAssertTrue(OAuth.isLocalNetwork("::1"))
+        XCTAssertTrue(OAuth.isLocalNetwork("fe80::1"), "Enlace local")
+        XCTAssertTrue(OAuth.isLocalNetwork("fd00::1"), "Rango privado de IPv6")
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
         let oauth = OAuth(session: URLSession(configuration: config)) { _ in false }
         StubProtocol.handler = { _ in (207, [:], Data(#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"></d:multistatus>"#.utf8)) }
@@ -545,6 +551,68 @@ final class ProviderTests: XCTestCase {
             _ = try await oauth.signInWebDAV(server: "http://nube.ejemplo.com/dav", username: "ana", password: "secreta")
             XCTFail("Fuera de la red local no")
         } catch { XCTAssertTrue(error.localizedDescription.contains("cifrado"), error.localizedDescription) }
+    }
+
+    func testCredentialsDoNotFollowARedirectToSomewhereElse() async throws {
+        // The Authorization header is set by hand, and URLSession carries a hand-set header across redirects without
+        // asking. A server answering with a 302 elsewhere would be handed the account's Basic password.
+        let guardian = RedirectGuard.shared
+        let session = URLSession(configuration: .ephemeral)
+        let original = URLRequest(url: URL(string: "https://dav.example.com/dav/a.txt")!)
+        let task = session.dataTask(with: original)
+        defer { task.cancel() }
+        let answer = HTTPURLResponse(url: original.url!, statusCode: 302, httpVersion: nil, headerFields: nil)!
+
+        var elsewhere = URLRequest(url: URL(string: "https://otro.example.com/dav/a.txt")!)
+        elsewhere.setValue("Basic secreto", forHTTPHeaderField: "Authorization")
+        elsewhere.setValue("s=1", forHTTPHeaderField: "Cookie")
+        let crossed = await guardian.urlSession(session, task: task, willPerformHTTPRedirection: answer, newRequest: elsewhere)
+        XCTAssertNil(crossed?.value(forHTTPHeaderField: "Authorization"), "La contraseña no viaja a otro servidor")
+        XCTAssertNil(crossed?.value(forHTTPHeaderField: "Cookie"))
+        XCTAssertEqual(crossed?.url?.host, "otro.example.com", "Pero la redirección se sigue")
+
+        var sameHost = URLRequest(url: URL(string: "https://dav.example.com/otra/ruta")!)
+        sameHost.setValue("Basic secreto", forHTTPHeaderField: "Authorization")
+        let kept = await guardian.urlSession(session, task: task, willPerformHTTPRedirection: answer, newRequest: sameHost)
+        XCTAssertEqual(kept?.value(forHTTPHeaderField: "Authorization"), "Basic secreto", "Dentro del mismo servidor es normal")
+    }
+
+    func testDropboxIsNotFollowedForEverWhenItKeepsRefusingTheSameOffset() async throws {
+        // Following the offset it asks for is the recovery; following the same one over and over is a client
+        // hammering the content host without moving, which is worse than the failure it replaced.
+        let payload = Data(repeating: 6, count: 3 * 1024 * 1024)
+        let file = try temporaryFile(payload)
+        defer { try? FileManager.default.removeItem(at: file) }
+        var appends = 0
+        StubProtocol.handler = { request in
+            if request.url!.path.hasSuffix("start") { return (200, [:], Data(#"{"session_id":"s1"}"#.utf8)) }
+            if request.url!.path.hasSuffix("append_v2") {
+                appends += 1
+                return (409, [:], Data(#"{"error_summary":"incorrect_offset/","error":{".tag":"incorrect_offset","correct_offset":1048576}}"#.utf8))
+            }
+            return (200, [:], Data(#"{"path_lower":"/x"}"#.utf8))
+        }
+        let stamp = try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        do {
+            _ = try await client(.dropbox).resumableUpload(local: file, parent: "/", name: "x", replacing: nil,
+                                                          checkpoint: UploadCheckpoint(total: Int64(payload.count), modified: stamp),
+                                                          save: { _ in }, progress: { _, _ in })
+            XCTFail("Debe rendirse en algún momento")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("sigue rechazando"), error.localizedDescription) }
+        XCTAssertLessThanOrEqual(appends, 3, "Y sin machacar el servidor: \(appends) intentos")
+    }
+
+    func testBoxDoesNotFollowAMarkerThatNeverChanges() async throws {
+        // A marker that comes back unchanged is a server, or a cache in front of it, repeating itself; following it
+        // grew the listing until the app ran out of memory.
+        var requests = 0
+        StubProtocol.handler = { _ in
+            requests += 1
+            return (200, [:], Data(#"{"entries":[{"type":"file","id":"1","name":"a.txt"}],"next_marker":"siempre-igual"}"#.utf8))
+        }
+        let files = try await client(.box).list(parent: "root")
+        XCTAssertEqual(requests, 2, "Se pide la siguiente página una vez y se para al ver el mismo marcador")
+        XCTAssertEqual(files.count, 2)
     }
 
     // MARK: - Capabilities and sign-in

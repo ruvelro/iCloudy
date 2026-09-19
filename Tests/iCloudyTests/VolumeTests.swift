@@ -160,10 +160,13 @@ final class VolumeTests: XCTestCase {
 
     func testTheSearchStopsWhenItIsAskedToAndWhenItHasSeenEnough() async throws {
         // The walk runs detached, so it never sees the caller's cancellation by itself; a flag carries it across.
-        let stop = CloudAPI.VolumeSearchStop()
-        XCTAssertFalse(stop.isStopped)
-        stop.stop()
-        XCTAssertTrue(stop.isStopped)
+        // Closing the search used to leave it grinding through a share nobody was waiting on any more.
+        let api = client()
+        let search = Task { try await api.searchPage(term: "nada-que-coincida") }
+        search.cancel()
+        do { _ = try await search.value; XCTFail("Una búsqueda cancelada no devuelve resultados") }
+        catch { XCTAssertTrue(error is CancellationError, "\(error)") }
+        XCTAssertGreaterThan(CloudAPI.volumeSearchScanLimit, 1000, "Y hay un tope aunque nadie cancele")
 
         let many = root.appendingPathComponent("Muchos")
         try FileManager.default.createDirectory(at: many, withIntermediateDirectories: true)
@@ -171,6 +174,18 @@ final class VolumeTests: XCTestCase {
         let page = try await client().searchPage(term: "coincide")
         XCTAssertEqual(page.hits.count, 500, "Hay un tope de resultados")
         XCTAssertTrue(page.incomplete, "Y se dice que la respuesta está recortada")
+    }
+
+    func testACopyThatDoesNotFinishTakesItsHalfWithIt() async throws {
+        // Half a file is worse than none: it looks complete to anything that only checks whether it is there, and
+        // the cross-cloud staging would have uploaded it as if it were the whole thing.
+        let source = root.appendingPathComponent("grande.bin")
+        try Data(repeating: 1, count: 8 * 1024 * 1024).write(to: source)
+        let destination = root.appendingPathComponent("a-medias.bin")
+        let job = Task { try await CloudAPI.volumeCopyContents(from: source, to: destination, progress: { _, _ in }) }
+        job.cancel()
+        do { _ = try await job.value; XCTFail("Cancelada no debe completarse") } catch {}
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path), "No queda el archivo a medias")
     }
 
     func testBreadcrumbsAreBuiltFromThePath() throws {

@@ -31,12 +31,13 @@ final class TokenTests: XCTestCase {
     func testExpiredTokenIsRefreshedOnceForConcurrentCallersAndRotationIsStored() async throws {
         let store = MemoryCredentials(); store.stored[account.id] = credential(expiresIn: -10)
         var posts = 0
+        var sent: [String] = []
         StubProtocol.handler = { [tokenHost, refreshed] request in
             XCTAssertEqual(request.url?.host, tokenHost)
             let body = requestBody(request)
             XCTAssertTrue(body.contains("grant_type=refresh_token"))
-            XCTAssertTrue(body.contains("refresh_token=refresh-1"))
             XCTAssertTrue(body.contains("client_secret=desktop-metadata"))
+            sent.append(["refresh-1", "refresh-2"].first { body.contains("refresh_token=" + $0) } ?? "otro")
             posts += 1
             return (200, [:], refreshed)
         }
@@ -52,6 +53,11 @@ final class TokenTests: XCTestCase {
         _ = try await api.token()
         XCTAssertEqual(posts, 1, "A fresh token is served from memory")
         XCTAssertEqual(store.reads, readsSoFar, "And without going back to the Keychain")
+        // Renewing does read it again, on purpose: another client sharing the entry may have got there first.
+        _ = try await api.token(force: true)
+        XCTAssertGreaterThan(store.reads, readsSoFar)
+        XCTAssertEqual(posts, 2)
+        XCTAssertEqual(sent, ["refresh-1", "refresh-2"], "Y se gasta el token rotado, no el original")
     }
 
     func testTwoClientsSharingOneCredentialRenewItOnceBetweenThem() async throws {
@@ -78,15 +84,23 @@ final class TokenTests: XCTestCase {
         XCTAssertEqual(first, "fresh"); XCTAssertEqual(second, "fresh")
         XCTAssertEqual(used, ["refresh-1"], "Una sola renovación entre las dos cuentas")
 
-        // And one that arrives later, with its own stale copy in memory, picks up what the other already wrote
-        // instead of spending the refresh token a second time.
-        let latecomer = CloudAPI(account: drive, session: session, credentials: store)
-        _ = try await latecomer.token()
-        store.stored[parent.id] = Credential(accessToken: "fresh", refreshToken: "refresh-2", expires: Date().addingTimeInterval(-10))
-        store.stored[parent.id] = Credential(accessToken: "renovado-fuera", refreshToken: "refresh-3", expires: Date().addingTimeInterval(3600))
-        let reused = try await latecomer.token()
-        XCTAssertEqual(reused, "fresh", "Mientras su copia vale, no consulta el Llavero")
-        XCTAssertEqual(used.count, 1)
+        // And a client whose copy in memory is older than what another one wrote renews from the newest refresh
+        // token, not from the one the provider has already retired.
+        let apart = MemoryCredentials()
+        apart.stored[parent.id] = Credential(accessToken: "viejo", refreshToken: "refresh-1", expires: Date().addingTimeInterval(-10))
+        var spent: [String] = []
+        StubProtocol.handler = { request in
+            let body = requestBody(request)
+            spent.append(["refresh-1", "refresh-3", "refresh-9"].first { body.contains("refresh_token=" + $0) } ?? "otro")
+            return (200, [:], Data(#"{"access_token":"a","refresh_token":"refresh-9","expires_in":3600}"#.utf8))
+        }
+        let solo = CloudAPI(account: parent, session: session, credentials: apart)
+        _ = try await solo.token()
+        XCTAssertEqual(spent, ["refresh-1"], "La primera vez gasta el que había")
+        // Another account sharing the entry renews it behind this one's back and leaves a newer copy in the Keychain.
+        apart.stored[parent.id] = Credential(accessToken: "de otro", refreshToken: "refresh-3", expires: Date().addingTimeInterval(7200))
+        _ = try await solo.token(force: true)
+        XCTAssertEqual(spent, ["refresh-1", "refresh-3"], "Y después gasta el más nuevo, no el que ya está muerto")
     }
 
     func testAKeychainThatRefusesTheWriteDoesNotThrowAwayTheOnlyLiveToken() async throws {
@@ -111,11 +125,12 @@ final class TokenTests: XCTestCase {
     func testWhatIsWorthRepeatingDependsOnTheStatusAndTheMethod() {
         // A 429 means the provider did not process the request at all, so repeating it is safe whatever it was. A 5xx
         // may have been applied before the error came back, so a POST that creates something is not repeated.
-        XCTAssertNotNil(CloudAPI.retryDelay(response(429), method: "POST", attempt: 0))
-        XCTAssertNotNil(CloudAPI.retryDelay(response(429), method: "GET", attempt: 0))
-        XCTAssertNil(CloudAPI.retryDelay(response(503), method: "POST", attempt: 0), "Podría haber creado la carpeta")
-        XCTAssertNotNil(CloudAPI.retryDelay(response(503), method: "POST", attempt: 0, repeatable: true), "Salvo que sea una lectura")
+        XCTAssertNil(CloudAPI.retryDelay(response(429), method: "POST", attempt: 0), "Podría haber creado la carpeta")
+        XCTAssertNil(CloudAPI.retryDelay(response(503), method: "POST", attempt: 0))
+        XCTAssertNotNil(CloudAPI.retryDelay(response(429), method: "POST", attempt: 0, repeatable: true), "Salvo que sea una lectura")
+        XCTAssertNotNil(CloudAPI.retryDelay(response(503), method: "POST", attempt: 0, repeatable: true))
         for method in ["GET", "PUT", "DELETE", "PATCH"] {
+            XCTAssertNotNil(CloudAPI.retryDelay(response(429), method: method, attempt: 0), method)
             XCTAssertNotNil(CloudAPI.retryDelay(response(503), method: method, attempt: 0), method)
         }
         XCTAssertNil(CloudAPI.retryDelay(response(404), method: "GET", attempt: 0))
@@ -145,18 +160,31 @@ final class TokenTests: XCTestCase {
         XCTAssertEqual(result["ok"] as? Bool, true)
         XCTAssertEqual(attempts, 2)
 
-        // When the retries run out, the wait the provider asked for reaches the transfer queue with the error.
-        attempts = 0
-        StubProtocol.handler = { _ in attempts += 1; return (429, ["Retry-After": "2"], Data()) }
+        // The wait the provider asked for travels with the error, and the transfer queue honours it instead of its
+        // own count-down, which was what turned one refusal into three in a couple of seconds.
+        let refusal = HTTPURLResponse(url: URL(string: "https://example.com")!, statusCode: 429, httpVersion: nil,
+                                      headerFields: ["Retry-After": "12"])!
         do {
-            _ = try await api.json(URL(string: "https://www.googleapis.com/drive/v3/files/abc")!, method: "PATCH", body: ["name": "x"])
-            XCTFail("Cuatro negativas seguidas deben fallar")
+            try HTTP.validate(refusal, data: Data())
+            XCTFail("Un 429 es un error")
         } catch let error as ServiceError {
-            XCTAssertEqual(error.status, 429)
-            XCTAssertEqual(error.retryAfter, 2)
+            XCTAssertEqual(error.retryAfter, 12)
             XCTAssertTrue(error.retryable)
+            XCTAssertEqual(TransferQueue.retryWait(after: error, attempt: 0, base: 1), 12)
+            XCTAssertEqual(TransferQueue.retryWait(after: error, attempt: 2, base: 1), 12, "No se duplica lo que el proveedor ya fijó")
         }
-        XCTAssertEqual(attempts, 4)
+        let silent = HTTPURLResponse(url: URL(string: "https://example.com")!, statusCode: 503, httpVersion: nil, headerFields: nil)!
+        do { try HTTP.validate(silent, data: Data()); XCTFail("Un 503 es un error") }
+        catch let error as ServiceError {
+            XCTAssertNil(error.retryAfter)
+            XCTAssertEqual(TransferQueue.retryWait(after: error, attempt: 2, base: 1), 4, "Sin cabecera, la espera se duplica")
+        }
+        XCTAssertEqual(TransferQueue.retryWait(after: URLError(.timedOut), attempt: 1, base: 0.5), 1)
+        // And una espera desmedida se recorta, para que la cola no se quede parada media hora.
+        let patient = HTTPURLResponse(url: URL(string: "https://example.com")!, statusCode: 429, httpVersion: nil,
+                                      headerFields: ["Retry-After": "3600"])!
+        do { try HTTP.validate(patient, data: Data()); XCTFail("Un 429 es un error") }
+        catch let error as ServiceError { XCTAssertEqual(TransferQueue.retryWait(after: error, attempt: 0, base: 1), 60) }
     }
 
     func testInvalidGrantMarksTheSessionExpiredWithTheProviderDetail() async throws {

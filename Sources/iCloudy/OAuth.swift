@@ -247,8 +247,11 @@ final class OAuth {
     /// True for an address that cannot leave the local network, which is where macOS still allows a connection in
     /// the clear: `.local` names, a bare host name, loopback, and the private IPv4 ranges.
     static func isLocalNetwork(_ host: String) -> Bool {
-        let name = host.lowercased()
-        if name == "localhost" || name == "::1" || name.hasSuffix(".local") { return true }
+        let name = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        if name == "localhost" || name.hasSuffix(".local") { return true }
+        // An IPv6 literal has no dots either, so it has to be recognised before the bare-name rule below: only
+        // loopback and link-local are inside the building, and every other address is as public as any other.
+        if name.contains(":") { return name == "::1" || name.hasPrefix("fe80:") || name.hasPrefix("fc") || name.hasPrefix("fd") }
         if !name.contains(".") { return true }   // a bare name resolves only inside the local network
         let parts = name.split(separator: ".").compactMap { Int($0) }
         guard parts.count == 4, parts.allSatisfy({ (0...255).contains($0) }) else { return false }

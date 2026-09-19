@@ -98,7 +98,14 @@ extension CloudAPI {
                 let intermediate = source.deletingLastPathComponent().appendingPathComponent(".icloudy-" + UUID().uuidString)
                 try FileManager.default.moveItem(at: source, to: intermediate)
                 do { try FileManager.default.moveItem(at: intermediate, to: target) }
-                catch { try? FileManager.default.moveItem(at: intermediate, to: source); throw error }
+                catch {
+                    guard (try? FileManager.default.moveItem(at: intermediate, to: source)) != nil else {
+                        // Both moves failed, so the file is sitting under a hidden name. Saying which one is the
+                        // difference between recovering it and believing it was lost.
+                        throw CloudError.message(L("No se pudo renombrar y el archivo quedó como «\(intermediate.lastPathComponent)» en la misma carpeta. Renómbralo desde el Finder. (\(error.localizedDescription))"))
+                    }
+                    throw error
+                }
                 return
             }
             guard !FileManager.default.fileExists(atPath: target.path) else {

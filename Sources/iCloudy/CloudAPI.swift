@@ -16,8 +16,24 @@ enum TokenRefresher {
         defer { inFlight[key] = nil }
         return try await task.value
     }
-    /// Only for tests: forgets whatever is in flight so one case cannot wait on another's refresh.
-    static func reset() { inFlight.removeAll() }
+}
+
+/// Keeps the `Authorization` header from following a redirect to a different server.
+///
+/// The header is set by hand on every request, and URLSession carries a hand-set header across redirects without
+/// asking. A WebDAV box that answers with a 302 to somewhere else would therefore be handed the account's Basic
+/// password. Within the same host a redirect is ordinary and the header rides along as before.
+final class RedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    static let shared = RedirectGuard()
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest) async -> URLRequest? {
+        guard let from = task.originalRequest?.url?.host?.lowercased(), let to = request.url?.host?.lowercased(),
+              from != to else { return request }
+        var stripped = request
+        stripped.setValue(nil, forHTTPHeaderField: "Authorization")
+        stripped.setValue(nil, forHTTPHeaderField: "Cookie")
+        return stripped
+    }
 }
 
 @MainActor
@@ -101,6 +117,9 @@ final class CloudAPI {
             let renewed = try await TokenRefresher.refresh(key: account.credentialKey) { [self] in
                 try await exchangeRefreshToken(current)
             }
+            // Whether this client is still wanted is this client's business. Asking inside the shared work would let
+            // one account being disconnected abort the renewal another account is waiting on.
+            guard !invalidated else { throw CancellationError() }
             cachedCredential = renewed
             return renewed.accessToken
         } catch let error as CloudError {
@@ -122,14 +141,15 @@ final class CloudAPI {
             throw CloudError.sessionExpired(error.code == nil ? nil : error.detail)
         }
         try Task.checkCancellation()
-        guard !invalidated else { throw CancellationError() }
         guard let access = result["access_token"] as? String else { throw CloudError.message(L("No se pudo renovar la sesión. Vuelve a conectar la cuenta.")) }
         let updated = Credential(accessToken: access, refreshToken: result["refresh_token"] as? String ?? credential.refreshToken,
                                  expires: Date().addingTimeInterval(result["expires_in"] as? Double ?? 3600))
         // The provider has retired the old refresh token by now, so this one is the only one that still works. It is
         // adopted before the Keychain write, and a write that fails keeps the session alive for this run instead of
-        // throwing away the only token there is.
+        // throwing away the only token there is. An entry that is no longer there belongs to an account somebody
+        // disconnected while this was in flight, and writing it back would resurrect what was just deleted.
         cachedCredential = updated
+        guard (try? credentials.read(account.credentialKey)) != nil else { return updated }
         do { try credentials.save(updated, key: account.credentialKey) }
         catch {
             credentialSaveDidFail?(L("No se pudo guardar la sesión renovada de \(account.cloud.title): \(error.localizedDescription) La cuenta funciona ahora, pero habrá que volver a conectarla al abrir iCloudy de nuevo."))
@@ -152,7 +172,7 @@ final class CloudAPI {
     /// Sends an authenticated request. A first 401 renews the token and retries once; a second 401 means the provider
     /// no longer honours this account, so the session is marked as expired instead of failing silently on every call.
     func send(_ request: inout URLRequest) async throws -> (Data, URLResponse) {
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: request, delegate: RedirectGuard.shared)
         // A self-hosted server asking for Digest is not rejecting the password: iCloudy only speaks Basic. Calling
         // that an expired session sent people to re-type credentials that were right all along.
         if account.cloud.isSelfHosted, (response as? HTTPURLResponse)?.statusCode == 401,
@@ -169,14 +189,14 @@ final class CloudAPI {
 
     /// How long to wait before repeating a refused request, or nil when it must not be repeated.
     ///
-    /// A 429 is the provider saying it did not process the request at all, so repeating it is safe whatever the
-    /// method was. A 5xx may have been applied before the failure reached us, so only methods that do the same thing
-    /// twice as they do once are repeated; repeating a POST could create a second folder. `repeatable` is for the
+    /// A rate limit usually means the request was never processed, and a 5xx may have been applied before the failure
+    /// came back. Neither is worth betting a duplicate on: a gateway can answer 429 after the origin already acted,
+    /// so both are repeated only for methods that do the same thing twice as they do once. `repeatable` is for the
     /// calls that are reads despite being POSTs, which is most of Dropbox's API.
     static func retryDelay(_ response: URLResponse?, method: String, attempt: Int, repeatable: Bool = false) -> Double? {
         guard let http = response as? HTTPURLResponse else { return nil }
         let idempotent = repeatable || ["GET", "HEAD", "PUT", "DELETE", "PATCH"].contains(method.uppercased())
-        guard http.statusCode == 429 || ([500, 502, 503, 504].contains(http.statusCode) && idempotent) else { return nil }
+        guard idempotent, http.statusCode == 429 || [500, 502, 503, 504].contains(http.statusCode) else { return nil }
         let announced = Double(http.value(forHTTPHeaderField: "Retry-After") ?? "")
         return min(max(1, announced ?? pow(2, Double(attempt))), 30)
     }

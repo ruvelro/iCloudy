@@ -170,6 +170,9 @@ extension CloudAPI {
         }
         try handle.seek(toOffset: UInt64(cursor.offset))
         progress(cursor.offset, total)
+        // A server that keeps answering with the same offset would otherwise be asked for ever, which is worse than
+        // the failure this recovery replaces.
+        var corrections = 0
         while cursor.offset < total {
             try Task.checkCancellation()
             let chunk = try await blockingIO { try handle.read(upToCount: Int(Self.dropboxChunk)) ?? Data() }
@@ -181,7 +184,10 @@ extension CloudAPI {
             append.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
             let (data, response) = try await upload(&append, from: chunk)
             if let corrected = Self.dropboxCorrectOffset(response, data) {
-                guard corrected <= total else { throw CloudError.message(L("Dropbox espera un avance que no cabe en el archivo. Cancela la transferencia y vuelve a subirlo.")) }
+                corrections += 1
+                guard corrected <= total, corrected != cursor.offset, corrections <= 3 else {
+                    throw CloudError.message(L("Dropbox sigue rechazando el avance de esta subida. Cancélala y vuelve a subir el archivo."))
+                }
                 // Some of the file was sent by an attempt whose answer never arrived, so these bytes no longer
                 // passed through the hasher in order. The upload continues; it just cannot be verified afterwards.
                 hasher = nil
