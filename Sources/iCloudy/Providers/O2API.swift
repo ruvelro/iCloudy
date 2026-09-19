@@ -134,6 +134,10 @@ enum O2API {
             var domain: String
             var path: String
             var secure: Bool
+            /// Whether the cookie may travel on a request that started at another site. Recreating it without this
+            /// makes WebKit assume the strictest default, and a sign-in that works by bouncing between two
+            /// different servers then never sees it.
+            var sameSite: String?
         }
     }
     static func store(validationKey: String, cookies: [HTTPCookie], userAgent: String? = nil,
@@ -144,7 +148,8 @@ enum O2API {
     }
     private static func shrink(_ cookie: HTTPCookie) -> StoredSession.StoredCookie {
         StoredSession.StoredCookie(name: cookie.name, value: cookie.value, domain: cookie.domain,
-                                   path: cookie.path, secure: cookie.isSecure)
+                                   path: cookie.path, secure: cookie.isSecure,
+                                   sameSite: cookie.sameSitePolicy?.rawValue)
     }
     /// The cookies of the sign-in, ready to be put back into a web view.
     static func restoreSSO(_ text: String) -> [HTTPCookie] {
@@ -152,9 +157,12 @@ enum O2API {
         return (stored.sso ?? []).compactMap(inflate)
     }
     private static func inflate(_ value: StoredSession.StoredCookie) -> HTTPCookie? {
-        HTTPCookie(properties: [.name: value.name, .value: value.value, .domain: value.domain,
-                                .path: value.path.isEmpty ? "/" : value.path,
-                                .secure: value.secure ? "TRUE" : "FALSE"])
+        var properties: [HTTPCookiePropertyKey: Any] = [
+            .name: value.name, .value: value.value, .domain: value.domain,
+            .path: value.path.isEmpty ? "/" : value.path,
+            .secure: value.secure ? "TRUE" : "FALSE"]
+        if let sameSite = value.sameSite { properties[.sameSitePolicy] = sameSite }
+        return HTTPCookie(properties: properties)
     }
     static func restore(_ text: String) -> (validationKey: String, cookies: [HTTPCookie], userAgent: String?)? {
         guard let stored = try? JSONDecoder().decode(StoredSession.self, from: Data(text.utf8)),

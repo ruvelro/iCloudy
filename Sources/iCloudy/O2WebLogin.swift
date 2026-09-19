@@ -224,7 +224,14 @@ final class O2SilentRenewal {
         // Put the sign-in back the way it was. Without this the web view arrives as a stranger and Telefónica shows
         // its login page, which is exactly what a real record showed happening three times in a row.
         for cookie in sso { await jar.setCookie(cookie) }
-        O2Log.record("renovación silenciosa · \(sso.count) cookies de acceso restauradas")
+        // Counting what was handed over says nothing about what was accepted. WebKit refuses a cookie it considers
+        // malformed, and a rejected one looks exactly like one that was never kept. So the jar is read back.
+        let present = Set(await jar.allCookies().map(\.name))
+        let accepted = sso.filter { present.contains($0.name) }.map(\.name)
+        let refused = sso.filter { !present.contains($0.name) }.map(\.name)
+        O2Log.record("renovación silenciosa · acceso restaurado: \(accepted.count) de \(sso.count)"
+                     + (accepted.isEmpty ? "" : " [\(accepted.joined(separator: ","))]")
+                     + (refused.isEmpty ? "" : " · rechazadas [\(refused.joined(separator: ","))]"))
         webView.load(URLRequest(url: start))
 
         O2Log.record("renovación silenciosa · empieza")

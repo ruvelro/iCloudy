@@ -59,11 +59,14 @@ final class O2CloudTests: XCTestCase {
         // makes a session survive closing the app.
         let session = HTTPCookie(properties: [.name: "JSESSIONID", .value: "abc",
                                               .domain: "cloud.o2online.es", .path: "/"])!
-        let signIn = HTTPCookie(properties: [.name: "SSOSESSION", .value: "xyz",
-                                             .domain: "t3.o2online.es", .path: "/", .secure: "TRUE"])!
+        let signIn = HTTPCookie(properties: [.name: "SSOSESSION", .value: "xyz", .domain: "t3.o2online.es",
+                                             .path: "/", .secure: "TRUE",
+                                             .sameSitePolicy: HTTPCookieStringPolicy.sameSiteLax.rawValue])!
         let stored = O2API.store(validationKey: "clave", cookies: [session], userAgent: nil, sso: [signIn])
 
         let back = O2API.restoreSSO(stored)
+        XCTAssertEqual(back.first?.sameSitePolicy, signIn.sameSitePolicy,
+                       "Sin esto WebKit asume lo más estricto y el acceso, que salta entre dos servidores, nunca la ve")
         XCTAssertEqual(back.map(\.name), ["SSOSESSION"], "Las del acceso vuelven listas para devolverlas a la vista web")
         XCTAssertEqual(back.first?.domain, "t3.o2online.es")
         XCTAssertTrue(try XCTUnwrap(back.first).isSecure)
