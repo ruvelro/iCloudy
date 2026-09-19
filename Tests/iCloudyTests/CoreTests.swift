@@ -392,13 +392,24 @@ final class CoreTests: XCTestCase {
         cache.store(files, accountID: "microsoft:2", parent: "root")
         XCTAssertEqual(cache.cached(accountID: "google:1", parent: "root")?.map(\.id), ["a"])
         XCTAssertNil(cache.cached(accountID: "google:1", parent: "other"))
-        try await Task.sleep(for: .milliseconds(200)) // disk write is detached
+        // Disk work runs off the main actor and in the order it was asked for, so the test waits for the queue
+        // rather than for a length of time it hopes is enough.
+        await cache.settle()
         let fromDisk = ListingCache(directory: root)
         XCTAssertEqual(fromDisk.cached(accountID: "google:1", parent: "folder")?.map(\.name), ["Uno"], "Survives a restart")
         fromDisk.removeAll(accountID: "google:1")
+        await fromDisk.settle()
         XCTAssertNil(fromDisk.cached(accountID: "google:1", parent: "root"))
         XCTAssertNil(ListingCache(directory: root).cached(accountID: "google:1", parent: "folder"), "Removed from disk too")
         XCTAssertEqual(ListingCache(directory: root).cached(accountID: "microsoft:2", parent: "root")?.count, 1, "Other accounts untouched")
+
+        // And the newest listing is the one that stays: two refreshes of the same folder used to race on disk.
+        let racing = ListingCache(directory: root)
+        racing.store(files, accountID: "google:1", parent: "carrera")
+        racing.store([CloudFile(id: "b", name: "Dos", mime: "text/plain", size: 2, modified: nil, webURL: nil, isFolder: false)],
+                     accountID: "google:1", parent: "carrera")
+        await racing.settle()
+        XCTAssertEqual(ListingCache(directory: root).cached(accountID: "google:1", parent: "carrera")?.map(\.id), ["b"])
         let big = ListingCache(directory: root); big.maxItems = 0
         big.store(files, accountID: "google:1", parent: "huge")
         XCTAssertNil(big.cached(accountID: "google:1", parent: "huge"), "Oversized listings are not cached")

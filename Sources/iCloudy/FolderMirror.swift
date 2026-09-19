@@ -17,7 +17,7 @@ struct FolderMirror: Identifiable, Codable {
     /// Human-readable remote location, e.g. "user@example.com / Proyectos / Fotos".
     let remoteName: String
     let localURL: URL
-    let bookmark: Data?
+    var bookmark: Data?
     var stamps: [String: FileStamp] = [:]
     /// Stamps taken when the running sync was planned; promoted to `stamps` once that transfer completes.
     var pendingStamps: [String: FileStamp]?
@@ -85,15 +85,23 @@ enum MirrorPlanner {
 
 /// Recursive FSEvents watcher for one folder; fires on the given queue after the system's own coalescing latency.
 final class FolderWatcher {
+    /// What the FSEvents callback is handed. The stream keeps this alive and this keeps nothing alive, so an event
+    /// already on its way when the watcher goes finds an empty box instead of freed memory.
+    private final class Callback {
+        var onChange: (() -> Void)?
+        init(_ onChange: @escaping () -> Void) { self.onChange = onChange }
+    }
     private var stream: FSEventStreamRef?
-    private let onChange: () -> Void
+    private let callback: Callback
     init(url: URL, latency: TimeInterval = 2, onChange: @escaping () -> Void) {
-        self.onChange = onChange
-        var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(), retain: nil, release: nil, copyDescription: nil)
+        callback = Callback(onChange)
+        var context = FSEventStreamContext(version: 0, info: Unmanaged.passRetained(callback).toOpaque(), retain: nil,
+                                           release: { info in Unmanaged<Callback>.fromOpaque(info!).release() },
+                                           copyDescription: nil)
         let flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer)
         stream = FSEventStreamCreate(nil, { _, info, _, _, _, _ in
             guard let info else { return }
-            Unmanaged<FolderWatcher>.fromOpaque(info).takeUnretainedValue().onChange()
+            Unmanaged<Callback>.fromOpaque(info).takeUnretainedValue().onChange?()
         }, &context, [url.path] as CFArray, FSEventStreamEventId(kFSEventStreamEventIdSinceNow), latency, flags)
         if let stream {
             FSEventStreamSetDispatchQueue(stream, DispatchQueue(label: "icloudy.mirror.fsevents"))
@@ -101,6 +109,7 @@ final class FolderWatcher {
         }
     }
     func stop() {
+        callback.onChange = nil
         guard let stream else { return }
         FSEventStreamStop(stream); FSEventStreamInvalidate(stream); FSEventStreamRelease(stream)
         self.stream = nil
@@ -135,7 +144,7 @@ final class MirrorManager: ObservableObject {
     /// Called once the queue exists: watches every folder and runs a cheap catch-up sync for each mirror.
     func start() {
         subscription = queue?.stateChanges.sink { [weak self] _ in self?.noteFailures() }
-        for mirror in mirrors { watch(mirror); scheduleSync(mirror.id, immediate: true) }
+        for mirror in mirrors { watch(mirror); scheduleSync(mirror.id, immediate: true, resumeInterrupted: true) }
     }
     func add(local: URL, account: Account, folder: CloudFile, path: [CloudFile]) throws {
         let standardized = local.standardizedFileURL
@@ -180,12 +189,18 @@ final class MirrorManager: ObservableObject {
     private func resolvedURL(_ mirror: FolderMirror) -> URL {
         if let url = scopedURLs[mirror.id] { return url }
         var url = mirror.localURL
+        var stale = false
         if let bookmark = mirror.bookmark {
-            var stale = false
             if let resolved = try? URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale) { url = resolved }
         }
         // Keep the scope open for as long as the folder is mirrored: the watcher and every sync read through it.
         if url.startAccessingSecurityScopedResource() { scopedURLs[mirror.id] = url }
+        // A stale bookmark still resolves today and stops the day the folder moves, and the mirror then says the
+        // folder no longer exists when it is sitting right there.
+        if stale, let renewed = try? TransferQueue.bookmark(url), let index = mirrors.firstIndex(where: { $0.id == mirror.id }) {
+            mirrors[index].bookmark = renewed
+            try? persist()
+        }
         return url
     }
     private func watch(_ mirror: FolderMirror) {
@@ -194,7 +209,7 @@ final class MirrorManager: ObservableObject {
         let id = mirror.id
         watchers[id] = FolderWatcher(url: url) { [weak self] in Task { @MainActor in self?.scheduleSync(id, immediate: false) } }
     }
-    private func scheduleSync(_ id: UUID, immediate: Bool) {
+    private func scheduleSync(_ id: UUID, immediate: Bool, resumeInterrupted: Bool = false) {
         guard mirrors.contains(where: { $0.id == id }) else { return }
         pending.insert(id)
         scheduled[id]?.cancel()
@@ -203,14 +218,22 @@ final class MirrorManager: ObservableObject {
             if delay > .zero { try? await Task.sleep(for: delay) }
             guard let self, !Task.isCancelled else { return }
             self.scheduled[id] = nil
-            await self.sync(id)
+            await self.sync(id, resumeInterrupted: resumeInterrupted)
         }
     }
-    private func sync(_ id: UUID) async {
+    private func sync(_ id: UUID, resumeInterrupted: Bool = false) async {
         guard let index = mirrors.firstIndex(where: { $0.id == id }), let queue else { return }
-        if let active = mirrors[index].activeTransferID, let item = queue.items.first(where: { $0.id == active }), [.queued, .running].contains(item.state) {
-            // Let the running sync finish; its completion re-plans with whatever changed meanwhile.
-            dirty.insert(id); return
+        if let active = mirrors[index].activeTransferID, let item = queue.items.first(where: { $0.id == active }) {
+            if [.queued, .running].contains(item.state) {
+                // Let the running sync finish; its completion re-plans with whatever changed meanwhile.
+                dirty.insert(id); return
+            }
+            // Closing the app pauses whatever was running. Planning a second sync left the first one orphaned in the
+            // panel, with a plan made against a folder that had since moved on; the person had to notice and clear it.
+            if resumeInterrupted, item.state == .paused {
+                queue.retry(active)
+                dirty.insert(id); pending.remove(id); return
+            }
         }
         pending.remove(id)
         let mirror = mirrors[index]
@@ -229,7 +252,10 @@ final class MirrorManager: ObservableObject {
             // that changed replace their remote counterpart instead of prompting.
             job.names["."] = url.lastPathComponent
             job.folders["."] = mirror.remoteFolderID
-            job.batchChoice = .replace
+            // Only what this mirror has uploaded before is replaced without asking. On the very first sync there is
+            // nothing to compare against, so anything already in the destination is a stranger's file and the usual
+            // conflict dialog decides what happens to it.
+            if mirrors[position].lastSync != nil { job.batchChoice = .replace }
             job.completedPaths = unchanged
             try queue.add([job])
             mirrors[position].activeTransferID = job.id

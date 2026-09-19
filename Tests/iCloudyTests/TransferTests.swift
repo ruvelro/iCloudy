@@ -368,6 +368,20 @@ final class TransferTests: XCTestCase {
         XCTAssertEqual(try demo.list("root").filter { ["a", "b", "c"].contains($0.name) }.count, 3)
     }
 
+    func testAJobThatFailsWithoutNetworkWaitsForItInsteadOfLandingInError() async throws {
+        // A job that fails while the network is gone is not one that recovering the network brings back, so it used
+        // to sit in the error list until somebody noticed and pressed retry.
+        XCTAssertEqual(TransferQueue.outcome(for: URLError(.timedOut), attempts: 0, online: false), .waitForNetwork)
+        XCTAssertEqual(TransferQueue.outcome(for: CloudError.message("no"), attempts: 9, online: false), .waitForNetwork,
+                       "Sin red da igual de qué se quejara")
+        XCTAssertEqual(TransferQueue.outcome(for: URLError(.timedOut), attempts: 0, online: true), .retry)
+        XCTAssertEqual(TransferQueue.outcome(for: URLError(.timedOut), attempts: 3, online: true), .fail, "Con la paciencia agotada")
+        XCTAssertEqual(TransferQueue.outcome(for: ServiceError(status: 503), attempts: 0, online: true), .retry)
+        XCTAssertEqual(TransferQueue.outcome(for: ServiceError(status: 404), attempts: 0, online: true), .fail)
+        XCTAssertEqual(TransferQueue.outcome(for: CloudError.message("ese nombre ya existe"), attempts: 0, online: true), .fail,
+                       "Un problema real no se reintenta")
+    }
+
     func testManualPauseIsNotResumedByTheNetwork() async throws {
         let (root, demo, queue) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -435,6 +449,33 @@ final class TransferTests: XCTestCase {
         XCTAssertEqual(copied.size, Int64(content.count), "Llegó entero, no la mitad")
         XCTAssertEqual(try Data(contentsOf: demoB.directory.appendingPathComponent(copied.id)), content)
         XCTAssertNil(demoA.failDownloadAfter)
+    }
+
+    func testClearingATransferTakesItsStagingFolderWithIt() async throws {
+        // A cross-cloud staging folder used to survive until the next launch, holding whole files in the cache of a
+        // job the person had already swept out of the panel.
+        let (root, demoA, queue) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        queue.scratchRoot = root.appendingPathComponent("scratch")
+        // No account on the other side, so the transfer fails before moving a byte and lands in the error tab.
+        queue.client = { id in
+            guard id != "no-existe" else { throw CloudError.message(L("Vuelve a conectar la cuenta de esta transferencia.")) }
+            return CloudAPI(account: .demo, demo: demoA)
+        }
+        let id = try demoA.add(name: "grande.bin", parent: "root", content: Data(repeating: 2, count: 1000))
+        let source = try XCTUnwrap(demoA.list("root").first { $0.id == id })
+        var job = Transfer(batchID: UUID(), name: source.name, destination: "B", accountID: Account.demo.id,
+                           direction: .transfer, localURL: URL(fileURLWithPath: "/"), parent: "root", file: source)
+        job.localURL = queue.scratchDirectory(for: job.id)
+        job.targetAccountID = "no-existe"
+        try queue.add([job])
+        try await wait { queue.items.first?.finished == true }
+        XCTAssertEqual(queue.items.first?.state, .failed, "Sin cuenta de destino la transferencia falla")
+        try FileManager.default.createDirectory(at: job.localURL, withIntermediateDirectories: true)
+        try Data("restos".utf8).write(to: job.localURL.appendingPathComponent("a-medias.bin"))
+        queue.clearErrored()
+        XCTAssertTrue(queue.items.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: job.localURL.path), "Y no deja su carpeta temporal atrás")
     }
 
     func testRecoveryPausesRunningJobsAndCorruptionIsNotOverwritten() throws {

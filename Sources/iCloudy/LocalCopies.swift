@@ -71,11 +71,15 @@ final class LocalCopyIndex: ObservableObject {
     @Published private(set) var copies: [String: LocalCopy] = [:]
     let storeURL: URL
     private var verifying = false
+    /// Delay before a coalesced write reaches disk. Every file of a transfer records a copy, and writing the whole
+    /// index for each one turned a ten-thousand-file upload into ten thousand growing writes on the main actor.
+    var flushDelay: Duration = .seconds(2)
+    private var dirty = false
+    private var flushTask: Task<Void, Never>?
 
     init(storeURL: URL = LocalStore.directory.appendingPathComponent("local-copies.json")) {
         self.storeURL = storeURL
-        let stored = (try? LocalStore.read([LocalCopy].self, from: storeURL)) ?? []
-        copies = Dictionary(stored.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
+        copies = Snapshot.read(from: storeURL)
     }
     nonisolated static func key(accountID: String, fileID: String) -> String { accountID + "\u{1F}" + fileID }
 
@@ -87,7 +91,7 @@ final class LocalCopyIndex: ObservableObject {
     }
     func record(_ copy: LocalCopy) {
         copies[copy.id] = copy
-        persist()
+        persist(coalesce: true)
     }
     func forget(accountID: String, fileID: String) {
         copies[Self.key(accountID: accountID, fileID: fileID)] = nil
@@ -138,7 +142,76 @@ final class LocalCopyIndex: ObservableObject {
         NSWorkspace.shared.activateFileViewerSelecting([target])
         return true
     }
-    private func persist() { try? LocalStore.save(Array(copies.values), to: storeURL) }
+    /// Writes now, or soon. A coalesced write is scheduled; anything the user would notice losing writes at once.
+    private func persist(coalesce: Bool = false) {
+        guard coalesce else { flushTask?.cancel(); flushTask = nil; dirty = false; write(); return }
+        dirty = true
+        guard flushTask == nil else { return }
+        flushTask = Task { [weak self] in
+            guard let delay = self?.flushDelay else { return }
+            try? await Task.sleep(for: delay)
+            guard let self, !Task.isCancelled else { return }
+            self.flushTask = nil
+            self.flush()
+        }
+    }
+    /// Writes whatever is pending. Called before the process exits, so a transfer that just finished is not forgotten.
+    func flush() {
+        guard dirty else { return }
+        dirty = false
+        write()
+    }
+    private func write() { Snapshot.write(copies, to: storeURL) }
+}
+
+/// What the index looks like on disk.
+///
+/// Bookmarks live in a table of their own because every file of a folder upload is given the same one, and a copy
+/// per entry turned the index of a large transfer into tens of megabytes that were read and rewritten in full.
+private struct Snapshot: Codable {
+    var copies: [Entry] = []
+    var bookmarks: [String: Data] = [:]
+
+    struct Entry: Codable {
+        var accountID: String, fileID: String, name: String, path: String
+        var bookmarkID: String?
+        /// Written by versions that kept a bookmark inside every entry. Still read, never written again.
+        var bookmark: Data?
+        var size: Int64, remoteModified: Date?, savedAt: Date, origin: String
+    }
+    private static func digest(_ data: Data) -> String {
+        String(data.reduce(UInt64(1469598103934665603)) { ($0 ^ UInt64($1)) &* 1099511628211 }, radix: 16)
+    }
+    static func read(from url: URL) -> [String: LocalCopy] {
+        // A file written before bookmarks were shared is a plain array; both shapes are accepted.
+        if let snapshot = try? LocalStore.read(Snapshot.self, from: url), !snapshot.copies.isEmpty {
+            let restored = snapshot.copies.map { entry in
+                LocalCopy(accountID: entry.accountID, fileID: entry.fileID, name: entry.name, path: entry.path,
+                          bookmark: entry.bookmark ?? entry.bookmarkID.flatMap { snapshot.bookmarks[$0] },
+                          size: entry.size, remoteModified: entry.remoteModified, savedAt: entry.savedAt,
+                          origin: LocalCopy.Origin(rawValue: entry.origin) ?? .download)
+            }
+            return Dictionary(restored.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
+        }
+        let legacy = (try? LocalStore.read([LocalCopy].self, from: url)) ?? []
+        return Dictionary(legacy.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
+    }
+    static func write(_ copies: [String: LocalCopy], to url: URL) {
+        var snapshot = Snapshot()
+        for copy in copies.values {
+            var id: String?
+            if let bookmark = copy.bookmark {
+                let key = digest(bookmark)
+                snapshot.bookmarks[key] = bookmark
+                id = key
+            }
+            snapshot.copies.append(Entry(accountID: copy.accountID, fileID: copy.fileID, name: copy.name,
+                                         path: copy.path, bookmarkID: id, bookmark: nil, size: copy.size,
+                                         remoteModified: copy.remoteModified, savedAt: copy.savedAt,
+                                         origin: copy.origin.rawValue))
+        }
+        try? LocalStore.save(snapshot, to: url)
+    }
 }
 
 /// The badge shown next to a file: filled when the file is on this Mac, hollow when it only lives in the cloud.

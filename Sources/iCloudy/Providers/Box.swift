@@ -148,8 +148,15 @@ extension CloudAPI {
         }
         try handle.seek(toOffset: UInt64(cursor.offset))
         progress(cursor.offset, total)
+        let stamp = try local.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         while cursor.offset < total {
             try Task.checkCancellation()
+            // Drive and Graph check this between blocks and Box did not, so a file edited mid-upload arrived as a
+            // mixture of both versions and Box's own hash check was the only thing that noticed.
+            let now = try local.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            guard now.fileSize == stamp.fileSize, now.contentModificationDate == stamp.contentModificationDate else {
+                throw CloudError.message(L("El archivo cambió durante la subida."))
+            }
             let chunk = try await blockingIO { try handle.read(upToCount: Int(partSize)) ?? Data() }
             guard !chunk.isEmpty else { throw CloudError.message(L("El tamaño del origen ha cambiado.")) }
             whole.update(data: chunk)

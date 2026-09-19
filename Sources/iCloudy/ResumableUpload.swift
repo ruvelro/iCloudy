@@ -242,8 +242,12 @@ extension CloudAPI {
         // Hash the bytes as they leave; a resumed session missed earlier blocks, so it cannot be verified.
         var hasher: UploadHasher? = cursor.offset == 0 ? UploadHasher(cloud: account.cloud) : nil
         var receipt = UploadReceipt(remoteID: nil, verification: .unavailable)
+        // A server that keeps accepting a block without moving the offset on would otherwise be asked for ever. It is
+        // the shape an empty file can take when the answer is a 308 with no range in it.
+        var stalled = 0
         repeat {
             try Task.checkCancellation()
+            let before = cursor.offset
             let current = try local.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
             guard current.fileSize == attributes.fileSize, current.contentModificationDate == cursor.modified else { throw CloudError.message(L("El archivo cambió durante la subida.")) }
             // Reading 5 MiB blocks on the main actor stalled the interface on slow volumes.
@@ -270,6 +274,10 @@ extension CloudAPI {
                 guard received == cursor.offset + Int64(data.count) else { throw URLError(.networkConnectionLost) }
                 cursor.offset = received
             } else { throw ServiceError(status: status) }
+            if !cursor.complete, cursor.offset == before {
+                stalled += 1
+                guard stalled < 3 else { throw CloudError.message(L("El servidor acepta los bloques pero no avanza con esta subida. Cancélala y vuelve a intentarlo.")) }
+            } else { stalled = 0 }
             try save(cursor); progress(cursor.offset, total)
         } while !cursor.complete
         return receipt

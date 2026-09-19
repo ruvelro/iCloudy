@@ -204,6 +204,21 @@ final class CloudAPI {
         return min(max(1, announced ?? pow(2, Double(attempt))), 30)
     }
 
+    /// Tells the provider to forget upload sessions a cancelled transfer will never finish. Every failure here is
+    /// ignored on purpose: the sessions expire by themselves, so this is a courtesy, not a step that can fail.
+    func abandonUploadSessions(urls: [URL], boxSessions: [String]) async {
+        for url in urls where url.scheme == "https" {
+            var request = URLRequest(url: url)
+            request.httpMethod = "DELETE"
+            _ = try? await session.data(for: request)
+        }
+        guard account.cloud == .box else { return }
+        for id in boxSessions {
+            guard var request = try? await request(URL(string: "https://upload.box.com/api/2.0/files/upload_sessions/\(Self.segment(id))")!, method: "DELETE") else { continue }
+            _ = try? await send(&request)
+        }
+    }
+
     /// Sends a body to a content host with the same policy as `send`: a first 401 renews the token and repeats the
     /// block, a second means the account is gone. The block uploads of Dropbox and Box go straight to their own hosts
     /// and used to miss that, so a token that expired mid-upload failed the transfer with a bare "HTTP 401".
