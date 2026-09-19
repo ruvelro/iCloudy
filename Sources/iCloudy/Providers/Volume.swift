@@ -15,13 +15,16 @@ extension CloudAPI {
             throw CloudError.message(L("Esta cuenta de volumen no tiene una carpeta válida. Vuelve a conectarla."))
         }
         var resolved = base.isFileURL ? base : URL(fileURLWithPath: path)
+        var stale = false
         if let bookmark = account.bookmark {
-            var stale = false
             if let fromBookmark = try? URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale) {
                 resolved = fromBookmark
             }
         }
         if resolved.startAccessingSecurityScopedResource() { volumeScopeOpen = true }
+        // A stale bookmark still resolves today but stops the day the folder moves, and the account then looks broken
+        // for a reason nobody can see. Renewing it while the scope is open costs nothing and keeps it working.
+        if stale, let renewed = try? TransferQueue.bookmark(resolved) { bookmarkDidRenew?(renewed) }
         volumeRootCache = resolved
         return resolved
     }
@@ -80,8 +83,31 @@ extension CloudAPI {
         let source = try volumeURL(file.id)
         try await volumeRelocate(from: source, to: try volumeURL(destination).appendingPathComponent(file.name), copy: true)
     }
+    /// True when both paths name the very same file on disk, which is how a case-insensitive volume answers to
+    /// "Foto" and "foto" at once.
+    nonisolated static func volumeSameFile(_ first: URL, _ second: URL) -> Bool {
+        guard let a = try? first.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier,
+              let b = try? second.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier else { return false }
+        return (a as? NSObject)?.isEqual(b) ?? false
+    }
     private func volumeRelocate(from source: URL, to target: URL, copy: Bool) async throws {
         try await blockingIO {
+            // Renaming only the capitalisation used to be refused as a name clash: on APFS and HFS+ the file being
+            // renamed already answers to the new name. Comparing the files themselves tells the two cases apart.
+            if !copy, source.path != target.path, Self.volumeSameFile(source, target) {
+                let intermediate = source.deletingLastPathComponent().appendingPathComponent(".icloudy-" + UUID().uuidString)
+                try FileManager.default.moveItem(at: source, to: intermediate)
+                do { try FileManager.default.moveItem(at: intermediate, to: target) }
+                catch {
+                    guard (try? FileManager.default.moveItem(at: intermediate, to: source)) != nil else {
+                        // Both moves failed, so the file is sitting under a hidden name. Saying which one is the
+                        // difference between recovering it and believing it was lost.
+                        throw CloudError.message(L("No se pudo renombrar y el archivo quedó como «\(intermediate.lastPathComponent)» en la misma carpeta. Renómbralo desde el Finder. (\(error.localizedDescription))"))
+                    }
+                    throw error
+                }
+                return
+            }
             guard !FileManager.default.fileExists(atPath: target.path) else {
                 throw CloudError.message(L("Ya existe un elemento con ese nombre en el destino."))
             }
@@ -110,21 +136,29 @@ extension CloudAPI {
         }
         return StorageQuota(used: max(0, total - free), total: total)
     }
-    /// Walks the tree looking at names only. Bounded so a huge share cannot lock the search up.
+    /// How many entries a search may look at before it gives up and says the answer is partial. The old limit only
+    /// counted matches, so a term that matched nothing walked the entire share to the last file.
+    static let volumeSearchScanLimit = 200_000
+    /// Walks the tree looking at names only, bounded in both directions and stoppable.
     func volumeSearch(term: String) async throws -> SearchPage {
         try volumeCheckMounted()
         let root = try volumeRoot()
         let needle = term.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return SearchPage(hits: [], next: nil) }
         let accountID = account.id
-        let limit = 500
+        let limit = 500, scanLimit = Self.volumeSearchScanLimit
+        // Closing the search stops the walk instead of leaving it grinding through a network share nobody is waiting
+        // on any more. `blockingIO` passes the cancellation on to the work it runs off the main actor.
         return try await blockingIO {
             var hits: [SearchHit] = []
             var truncated = false
+            var scanned = 0
             let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey],
                                                             options: [.skipsPackageDescendants])
             while let url = enumerator?.nextObject() as? URL {
-                if hits.count >= limit { truncated = true; break }
+                scanned += 1
+                try Task.checkCancellation()
+                if hits.count >= limit || scanned > scanLimit { truncated = true; break }
                 guard url.lastPathComponent.localizedCaseInsensitiveContains(needle), let file = Self.volumeFile(url) else { continue }
                 hits.append(SearchHit(accountID: accountID, file: file,
                                       parentID: url.deletingLastPathComponent().standardizedFileURL.path))
@@ -154,8 +188,24 @@ extension CloudAPI {
         try volumeCheckMounted()
         let target = try replacing.map { try volumeURL($0) } ?? volumeURL(parent).appendingPathComponent(name)
         cursor.offset = 0; try save(cursor)
-        if replacing != nil { try? FileManager.default.removeItem(at: target) }
-        try await Self.volumeCopyContents(from: local, to: target, progress: progress)
+        if replacing != nil {
+            // Replacing used to delete the old file and then copy over it, so cancelling or losing the volume halfway
+            // left neither the original nor a whole replacement. The new bytes land beside it under a temporary name
+            // and only take its place once they are all there.
+            let staging = target.deletingLastPathComponent().appendingPathComponent(".icloudy-" + UUID().uuidString + ".part")
+            do {
+                try await Self.volumeCopyContents(from: local, to: staging, progress: progress)
+                try await blockingIO {
+                    if FileManager.default.fileExists(atPath: target.path) { _ = try FileManager.default.replaceItemAt(target, withItemAt: staging) }
+                    else { try FileManager.default.moveItem(at: staging, to: target) }
+                }
+            } catch {
+                try? FileManager.default.removeItem(at: staging)
+                throw error
+            }
+        } else {
+            try await Self.volumeCopyContents(from: local, to: target, progress: progress)
+        }
         cursor.offset = cursor.total; cursor.complete = true; try save(cursor); progress(cursor.total, cursor.total)
         // A copy either completes or throws, so there is no checksum to compare against.
         return UploadReceipt(remoteID: target.standardizedFileURL.path, verification: .unavailable)
@@ -169,16 +219,22 @@ extension CloudAPI {
             throw CloudError.message(L("No se pudo crear el archivo de destino."))
         }
         let output = try FileHandle(forWritingTo: destination)
-        defer { try? output.close() }
         var written: Int64 = 0
-        while true {
-            try Task.checkCancellation()
-            let chunk = try await blockingIO { try input.read(upToCount: 4 * 1024 * 1024) ?? Data() }
-            if chunk.isEmpty { break }
-            try await blockingIO { try output.write(contentsOf: chunk) }
-            written += Int64(chunk.count)
-            let reported = written
-            await MainActor.run { progress(reported, max(total, reported)) }
+        do {
+            defer { try? output.close() }
+            while true {
+                try Task.checkCancellation()
+                let chunk = try await blockingIO { try input.read(upToCount: 4 * 1024 * 1024) ?? Data() }
+                if chunk.isEmpty { break }
+                try await blockingIO { try output.write(contentsOf: chunk) }
+                written += Int64(chunk.count)
+                let reported = written
+                await MainActor.run { progress(reported, max(total, reported)) }
+            }
+        } catch {
+            // Half a file is worse than none: it looks complete to anything that only checks whether it is there.
+            try? FileManager.default.removeItem(at: destination)
+            throw error
         }
     }
 }

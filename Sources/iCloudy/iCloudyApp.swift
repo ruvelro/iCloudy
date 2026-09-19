@@ -86,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     func applicationWillTerminate(_ notification: Notification) {
         model?.queue.flush() // coalesced checkpoints still in memory
+        model?.localCopies.flush() // and the index of what a finished transfer put on this Mac
         model?.preview.close()
     }
 }
@@ -133,6 +134,8 @@ struct ExplorerView: View {
     /// with six clouds connected meant scrolling past all of them.
     @State private var sidebarTab = SidebarTab.clouds
     @FocusState private var gridFocused: Bool
+    /// Where a run of files starts when one is taken with Shift held down.
+    @State private var anchor: CloudFile.ID?
 
     private var navigation: some View {
         // The toolbar belongs to the window, not a navigation column. An ordinary split view keeps its
@@ -165,7 +168,9 @@ struct ExplorerView: View {
                                         Text(account.email).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                                         if !model.appearance(for: account).alias.isEmpty { Text(account.cloud.title).font(.caption2).foregroundStyle(.secondary) }
                                         StorageUsageView(account: account, state: model.storageQuotas[account.id]).padding(.top, 3)
-                                        if model.isExpired(account) {
+                                        if model.isRenewing(account) {
+                                            Label("Renovando la sesión…", systemImage: "arrow.clockwise").font(.caption2).foregroundStyle(.secondary)
+                                        } else if model.isExpired(account) {
                                             Label("Sesión caducada · Vuelve a conectar", systemImage: "exclamationmark.triangle.fill").font(.caption2).foregroundStyle(.orange)
                                         }
                                     }
@@ -196,7 +201,7 @@ struct ExplorerView: View {
                                 Text("Abriendo el Llavero…").font(.caption).foregroundStyle(.secondary)
                             }.padding(Layout.sidebarInner)
                         }
-                        if !model.mirrors.mirrors.isEmpty { MirrorList(model: model, mirrors: model.mirrors, disconnectTarget: $disconnectTarget) }
+                        if !model.mirrors.mirrors.isEmpty { MirrorList(model: model, mirrors: model.mirrors) }
                     }
                   } else {
                     FavoritesList(model: model)
@@ -243,7 +248,7 @@ struct ExplorerView: View {
                         ContentUnavailableView {
                             Label("Tus archivos, en un solo lugar", systemImage: "cloud")
                         } description: {
-                            Text("Conecta Google Drive o OneDrive para explorar tus carpetas y transferir archivos cuando lo necesites.")
+                            Text("Conecta una nube para explorar tus carpetas y transferir archivos cuando lo necesites.")
                         } actions: {
                             Button("Conectar una cuenta") { model.showConnect = true }.buttonStyle(.borderedProminent)
                             Button("Explorar demo sin cuenta") { model.enableDemo() }
@@ -388,8 +393,9 @@ struct ExplorerView: View {
             } else { model.preview.close() }
         }
         .onDisappear { model.preview.close() }
-        .alert("No se pudo completar la operación", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) { Button("Aceptar") { model.error = nil } } message: { Text(model.error ?? "") }
-        .alert("iCloudy", isPresented: Binding(get: { model.info != nil }, set: { if !$0 { model.info = nil } })) { Button("Aceptar") { model.info = nil } } message: { Text(model.info ?? "") }
+        .alert(model.alertTitle, isPresented: Binding(get: { model.alertMessage != nil }, set: { if !$0 { model.dismissAlert() } })) {
+            Button("Aceptar") { model.dismissAlert() }
+        } message: { Text(model.alertMessage ?? "") }
         .confirmationDialog("¿Crear un enlace público?", isPresented: Binding(get: { model.pendingShare != nil }, set: { if !$0 { model.pendingShare = nil } }), titleVisibility: .visible) {
             Button("Crear y copiar enlace") {
                 if let pending = model.pendingShare { Task { await model.createPublicLink(pending.file, account: pending.account) } }
@@ -423,11 +429,14 @@ struct ExplorerView: View {
     @ViewBuilder private var explorerActions: some View {
         Group {
             ToolbarSeparator()
-            Button { model.reload(fresh: true) } label: { Image(systemName: "arrow.clockwise") }.help("Actualizar carpeta").disabled(model.account == nil || model.loading)
+            Button { model.refresh() } label: { Image(systemName: "arrow.clockwise") }.help("Actualizar carpeta")
+                .accessibilityLabel("Actualizar carpeta").keyboardShortcut("r", modifiers: .command)
+                .disabled(model.account == nil || model.loading)
             Button { Task { await model.pickUpload() } } label: { Label("Subir", systemImage: "square.and.arrow.up") }.disabled(!model.canWrite)
             Button { model.promptName() } label: { Label("Nueva carpeta", systemImage: "folder.badge.plus") }.disabled(!model.canWrite)
-            Button { Task { await model.saveMany(model.files.filter { selected.contains($0.id) }) } } label: { Label("Descargar selección", systemImage: "square.and.arrow.down") }.disabled(selected.isEmpty)
-            Button { previewSelection() } label: { Image(systemName: "eye") }.help("Vista previa (Espacio)").disabled(selected.count != 1)
+            Button { Task { await model.saveMany(model.selection(selected)) } } label: { Label("Descargar selección", systemImage: "square.and.arrow.down") }.disabled(selected.isEmpty)
+            Button { previewSelection() } label: { Image(systemName: "eye") }.help("Vista previa (Espacio)")
+                .accessibilityLabel("Vista previa").disabled(selected.count != 1)
             ToolbarSeparator()
             Group {
                 Picker("Vista", selection: $model.viewMode) {
@@ -443,6 +452,7 @@ struct ExplorerView: View {
                         Label("Mayor tamaño", systemImage: "arrow.up.arrow.down").tag("size")
                     }.pickerStyle(.inline).labelsHidden()
                 } label: { Image(systemName: "arrow.up.arrow.down") }
+                .accessibilityLabel("Ordenar la lista")
                     .help("Ordenar la lista")
             }
             ToolbarSeparator()
@@ -480,7 +490,9 @@ struct ExplorerView: View {
             }
             CollectionPicker(choices: collectionChoices, selection: model.collection) { model.show($0) }
             HStack {
-                Button { model.back(to: max(0, model.path.count - 1)) } label: { Image(systemName: "chevron.left") }.disabled(model.path.isEmpty)
+                Button { model.back(to: max(0, model.path.count - 1)) } label: { Image(systemName: "chevron.left") }
+                    .accessibilityLabel("Volver a la carpeta anterior").help("Volver a la carpeta anterior")
+                    .keyboardShortcut(.upArrow, modifiers: .command).disabled(model.path.isEmpty)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 5) {
                         Crumb(title: model.collection == .files ? L("Inicio") : model.collection.title,
@@ -537,26 +549,33 @@ struct ExplorerView: View {
         }
         // A Table insets its own cells; this brings their text onto the margin shared by the title and the footer.
         .padding(.horizontal, Layout.tableCorrection)
-        .onDeleteCommand { model.requestTrash(model.files.filter { selected.contains($0.id) }) }
+        .onDeleteCommand { model.requestTrash(model.selection(selected)) }
         .contextMenu(forSelectionType: CloudFile.ID.self) { ids in
             if ids.count > 1 {
-                Button("Descargar \(ids.count) elementos…") { Task { await model.saveMany(model.files.filter { ids.contains($0.id) }) } }
-                Button("Mover \(ids.count) elementos a…") { model.requestRelocation(model.files.filter { ids.contains($0.id) }, copy: false) }
-                Button("Copiar \(ids.count) elementos a…") { model.requestRelocation(model.files.filter { ids.contains($0.id) }, copy: true) }
-                if model.accounts.count > 1 { Button("Enviar \(ids.count) elementos a otra nube…") { model.requestCrossCloud(model.files.filter { ids.contains($0.id) }) } }
+                Button("Descargar \(ids.count) elementos…") { Task { await model.saveMany(model.selection(ids)) } }
+                Button("Mover \(ids.count) elementos a…") { model.requestRelocation(model.selection(ids), copy: false) }
+                Button("Copiar \(ids.count) elementos a…") { model.requestRelocation(model.selection(ids), copy: true) }
+                    .disabled(!model.canCopy(model.selection(ids)))
+                if model.accounts.count > 1 { Button("Enviar \(ids.count) elementos a otra nube…") { model.requestCrossCloud(model.selection(ids)) } }
                 Divider()
-                Button("Enviar \(ids.count) elementos a la papelera…", role: .destructive) { model.requestTrash(model.files.filter { ids.contains($0.id) }) }
-            } else if let id = ids.first, let file = model.files.first(where: { $0.id == id }) { fileActions(file) }
+                Button("Enviar \(ids.count) elementos a la papelera…", role: .destructive) { model.requestTrash(model.selection(ids)) }
+            } else if let file = model.selection(ids).first { fileActions(file) }
         } primaryAction: { ids in
-            guard let id = ids.first, let file = model.files.first(where: { $0.id == id }) else { return }
+            guard let file = model.selection(ids).first else { return }
             if file.isFolder { model.navigate(file) }
             else if file.isGoogleDocument { model.openBrowser(file) }
             else { Task { await model.save(file) } }
         }
     }
 
+    /// The files between two of them, in the order the list shows. Shift picking a run had no equivalent in the
+    /// grid at all, so taking twenty files meant twenty Command-clicks.
+    static func range(from: CloudFile.ID, to: CloudFile.ID, in files: [CloudFile]) -> Set<CloudFile.ID> {
+        guard let first = files.firstIndex(where: { $0.id == from }), let last = files.firstIndex(where: { $0.id == to }) else { return [to] }
+        return Set(files[min(first, last)...max(first, last)].map(\.id))
+    }
     private func previewSelection() {
-        guard selected.count == 1, let file = model.files.first(where: { selected.contains($0.id) }) else { return }
+        guard selected.count == 1, let file = model.selection(selected).first else { return }
         model.showPreview(file)
     }
 
@@ -587,15 +606,25 @@ struct ExplorerView: View {
                                 }
                                 .onTapGesture {
                                     gridFocused = true
-                                    if NSEvent.modifierFlags.contains(.command) {
+                                    let modifiers = NSEvent.modifierFlags
+                                    if modifiers.contains(.command) {
                                         if selected.contains(file.id) { selected.remove(file.id) } else { selected.insert(file.id) }
-                                    } else { selected = [file.id] }
+                                        anchor = file.id
+                                    } else if modifiers.contains(.shift), let from = anchor {
+                                        selected = Self.range(from: from, to: file.id, in: model.visibleFiles)
+                                    } else {
+                                        selected = [file.id]; anchor = file.id
+                                    }
                                 }
                                 .contextMenu { fileActions(file) }
                                 .accessibilityLabel(file.name)
+                                .accessibilityAddTraits(selected.contains(file.id) ? [.isSelected, .isButton] : .isButton)
                         }
                     }.padding(.horizontal, Layout.margin).padding(.vertical, 18)
                 }.focusable().focusEffectDisabled().focused($gridFocused)
+                    // The grid had no keyboard at all: no Delete, and no way to take a run of files without
+                    // clicking each one with Command held down.
+                    .onDeleteCommand { model.requestTrash(model.selection(selected)) }
             } else { fileList }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -608,7 +637,9 @@ struct ExplorerView: View {
                 ContentUnavailableView(emptyTitle, systemImage: model.path.isEmpty ? model.collection.icon : "folder", description: Text(emptyDescription))
                     .allowsHitTesting(false)
             }
-            if dropTarget {
+            // Only where an upload can actually land. The welcome frame used to appear over Recientes and Compartido
+            // conmigo as well, and dropping there answered with a telling-off.
+            if dropTarget, model.canWrite {
                 RoundedRectangle(cornerRadius: 12).fill(Color.accentColor.opacity(0.1)).overlay {
                     RoundedRectangle(cornerRadius: 12).strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [8]))
                 }.overlay { Label("Subir a esta carpeta", systemImage: "arrow.up.doc.fill").font(.title2).padding().background(.regularMaterial, in: Capsule()) }.padding(10).allowsHitTesting(false)
@@ -616,7 +647,7 @@ struct ExplorerView: View {
         }
         .dropDestination(for: URL.self) { urls, _ in
             let local = urls.filter(\.isFileURL)
-            guard !local.isEmpty else { return false }
+            guard !local.isEmpty, model.canWrite else { return false }
             model.enqueueUploads(local); return true
         } isTargeted: { dropTarget = $0 }
     }
@@ -792,6 +823,7 @@ struct TransferPanel: View {
                 Text(tally(active.count, L("1 en curso"), L("\(active.count) en curso"), L("Nada en curso")))
                 Spacer(minLength: 0)
                 Button { queue.pauseAll() } label: { Image(systemName: "pause.circle") }
+                    .accessibilityLabel("Pausar todas las transferencias")
                     .buttonStyle(.borderless).help("Pausar todas")
                     .disabled(!queue.items.contains { [.running, .queued].contains($0.state) })
                 broom(L("Cancelar y quitar todo lo que hay en curso"), enabled: !active.isEmpty) { confirmCancelActive = true }
@@ -816,6 +848,7 @@ struct TransferPanel: View {
                 }.pickerStyle(.segmented).labelsHidden().controlSize(.small).frame(width: 110)
                 Spacer(minLength: 0)
                 Button { showHistory = true } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                    .accessibilityLabel("Abrir el historial completo")
                     .buttonStyle(.borderless).help("Abrir el historial completo")
                 broom(historyFilter == .today ? L("Borrar del historial lo de hoy") : L("Vaciar el historial"),
                       enabled: !historyEntries.isEmpty) {
@@ -992,11 +1025,14 @@ struct TransferCard: View {
             }
             if queue.isMovable(transfer) {
                 Button { queue.prioritize(transfer.id) } label: { Image(systemName: "arrow.up.to.line") }
+                    .accessibilityLabel("Pasar al principio")
                     .help("Pasar al principio de la cola")
             }
             if [.running, .queued].contains(transfer.state) {
                 Button { queue.cancel(transfer.id, pause: true) } label: { Image(systemName: "pause.circle") }.help("Pausar")
+                    .accessibilityLabel("Pausar")
                 Button { queue.cancel(transfer.id) } label: { Image(systemName: "xmark.circle") }.help("Cancelar")
+                    .accessibilityLabel("Cancelar")
                 if queue.pendingBatchMates(of: transfer.id) > 0 {
                     Button("Cancelar el resto") { queue.cancelBatch(transfer.batchID) }
                         .help("Cancela este elemento y los \(queue.pendingBatchMates(of: transfer.id)) pendientes que se añadieron con él")
@@ -1184,6 +1220,24 @@ struct ServerLoginView: View {
         return (secureFTP ? "ftps://" : "ftp://") + clean
     }
 
+    /// Reconnecting is about a session, not about an address: the server and the user are already known, and asking
+    /// for them again from memory is a poor way of asking somebody for a password.
+    private func prefillForReconnect() {
+        guard server.isEmpty, username.isEmpty, let account = model.reconnecting, account.cloud == cloud else { return }
+        username = Self.storedUser(of: account)
+        guard needsServer, let stored = account.serverURL else { return }
+        secureFTP = stored.hasPrefix("ftps://")
+        nextcloud = account.flavor == "nextcloud"
+        server = cloud == .ftp ? stored.replacingOccurrences(of: "ftps://", with: "").replacingOccurrences(of: "ftp://", with: "") : stored
+    }
+    /// The user name an account was connected with. Mega keeps it as the e-mail; the self-hosted ones put it after
+    /// the "#" of their identifier and before the "@" of the label.
+    static func storedUser(of account: Account) -> String {
+        if account.cloud == .mega { return account.email }
+        if let marker = account.id.lastIndex(of: "#") { return String(account.id[account.id.index(after: marker)...]) }
+        return account.email.split(separator: "@").dropLast().joined(separator: "@")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
@@ -1211,6 +1265,7 @@ struct ServerLoginView: View {
             }
             if needsServer { TextField(placeholder, text: $server).textFieldStyle(.roundedBorder) }
             TextField(needsServer ? "Usuario" : "Correo de la cuenta", text: $username).textFieldStyle(.roundedBorder)
+                .onAppear(perform: prefillForReconnect)
             SecureField(needsServer ? "Contraseña o contraseña de aplicación" : "Contraseña", text: $password).textFieldStyle(.roundedBorder)
             Text(needsServer
                  ? "Si tu servidor usa verificación en dos pasos, crea una contraseña de aplicación en su configuración."
@@ -1229,7 +1284,7 @@ struct ServerLoginView: View {
                 Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             }
             HStack {
-                Button("Cancelar") { model.serverLogin = nil; dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancelar") { model.serverLogin = nil; model.reconnecting = nil; dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
                 if model.connecting { ProgressView().controlSize(.small) }
                 Button("Conectar") {
@@ -1358,7 +1413,6 @@ struct FavoritesList: View {
 struct MirrorList: View {
     let model: AppModel
     @ObservedObject var mirrors: MirrorManager
-    @Binding var disconnectTarget: Account?
     @State private var removing: FolderMirror?
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {

@@ -7,6 +7,7 @@ import Foundation
 /// Two things shape the code. Folders and files live in separate numbering spaces, so a folder 12 and a file 12 are
 /// different things; iCloudy prefixes every identifier to keep them apart. And each file has a media type, picture,
 /// video, audio or file, which decides the endpoint that renames or deletes it.
+@MainActor
 final class O2Session {
     let host: String
     /// Sent with every request beside the session cookie. The server rotates it and says so with SEC-1003.
@@ -118,31 +119,46 @@ extension CloudAPI {
         return state
     }
 
-    /// One SAPI call. `body` is sent as JSON when present, which is what the web client does for everything but login.
-    @discardableResult
-    func o2Call(_ path: String, action: String, query: [URLQueryItem] = [], body: [String: Any]? = nil,
-                method: String? = nil, retrying: Bool = true) async throws -> [String: Any] {
+    /// Runs one exchange with this server and, when the platform answers that the validation key has just rotated,
+    /// runs it again with the new one.
+    ///
+    /// Everything that talks to O2 goes through here: the plain calls, the upload and the download. The last two
+    /// used to build their own requests and skip all of it, so a key that rotated mid-transfer lost the whole
+    /// transfer with a message about a password nobody had typed, and a session that had really ended left the
+    /// account looking healthy, with no renewal attempted and no way back but noticing by hand.
+    func o2Retrying<T>(_ path: String, _ action: String, _ work: (O2Session) async throws -> T) async throws -> T {
         let state = try o2Session()
         do {
-            let answer = try await O2API.call(path, action: action, query: query, body: body, method: method,
-                                              state: state, session: session)
+            let result = try await work(state)
             o2Persist(state)
-            return answer
-        } catch let error as O2API.Failure where error.code == "SEC-1003" && retrying {
+            return result
+        } catch let error as O2API.Failure where error.code == "SEC-1003" {
             // The key rotates while the session lives on, and the replacement comes inside the error itself.
             guard let fresh = error.data, !fresh.isEmpty else {
-                let detail = L("SEC-1003 sin clave nueva, en \(error.origin ?? "?")")
+                let detail = L("SEC-1003 sin clave nueva, en \(error.origin ?? path + " " + action)")
                 expireSession(detail)
                 throw CloudError.sessionExpired(L("La sesión de O2 Cloud ha caducado (\(detail)). Vuelve a iniciar sesión."))
             }
             state.validationKey = fresh
             state.renewed = true
             o2Persist(state)
-            return try await o2Call(path, action: action, query: query, body: body, method: method, retrying: false)
+            let result = try await work(state)
+            o2Persist(state)
+            return result
         } catch let error as O2API.Failure where error.isExpiredSession {
-            let detail = L("\(error.code) en \(error.origin ?? "?")")
+            let detail = L("\(error.code) en \(error.origin ?? path + " " + action)")
             expireSession(detail)
             throw CloudError.sessionExpired(L("La sesión de O2 Cloud ha caducado (\(detail)). Vuelve a iniciar sesión."))
+        }
+    }
+
+    /// One SAPI call. `body` is sent as JSON when present, which is what the web client does for everything but login.
+    @discardableResult
+    func o2Call(_ path: String, action: String, query: [URLQueryItem] = [], body: [String: Any]? = nil,
+                method: String? = nil) async throws -> [String: Any] {
+        try await o2Retrying(path, action) { state in
+            try await O2API.call(path, action: action, query: query, body: body, method: method,
+                                 state: state, session: session)
         }
     }
 
@@ -160,8 +176,12 @@ extension CloudAPI {
     func o2Root() async throws -> String {
         let state = try o2Session()
         if let cached = state.rootFolder { return cached }
-        let answer = try await o2Call("media/folder", action: "get", query: [URLQueryItem(name: "limit", value: "1")])
-        guard let folders = answer["folders"] as? [[String: Any]], let id = O2API.identifier(folders.first?["id"]) else {
+        // Asking for one folder and taking it is a guess about the order the server answers in. An account with
+        // several top-level folders would have had whichever came first treated as the root of everything.
+        let answer = try await o2Call("media/folder", action: "get", query: [URLQueryItem(name: "limit", value: "20")])
+        let folders = answer["folders"] as? [[String: Any]] ?? []
+        let top = folders.first { O2API.identifier($0["parentid"]) == nil } ?? folders.first
+        guard let id = O2API.identifier(top?["id"]) else {
             throw CloudError.message(L("O2 Cloud no devolvió la carpeta raíz de la cuenta."))
         }
         state.rootFolder = id
@@ -175,14 +195,21 @@ extension CloudAPI {
         var files: [CloudFile] = []
 
         // Folders and files come from different endpoints, each paged on its own.
+        //
+        // Asking for another page while the last one brought something new is what a capped page size needs: some
+        // deployments answer fewer items than the limit asked for, and stopping at the first short page cut a large
+        // folder off without a word. Counting what is actually new also ends the walk on a server that ignores the
+        // offset and keeps handing back the same page.
+        var seen: Set<String> = []
         var offset = 0
         while true {
             let page = try await o2Call("media/folder", action: "list", query: [
                 URLQueryItem(name: "parentid", value: folder),
                 URLQueryItem(name: "limit", value: String(O2API.pageSize))] + O2API.skip(offset), method: "GET")
-            let batch = page["folders"] as? [[String: Any]] ?? []
-            files.append(contentsOf: batch.compactMap(Self.o2FolderFile))
-            guard batch.count == O2API.pageSize else { break }
+            let batch = (page["folders"] as? [[String: Any]] ?? []).compactMap(Self.o2FolderFile)
+            let fresh = batch.filter { seen.insert($0.id).inserted }
+            files.append(contentsOf: fresh)
+            guard !fresh.isEmpty, page["more"] as? Bool != false else { break }
             offset += batch.count
             try Task.checkCancellation()
         }
@@ -193,9 +220,10 @@ extension CloudAPI {
                 URLQueryItem(name: "folderid", value: folder),
                 URLQueryItem(name: "limit", value: String(O2API.pageSize))] + O2API.skip(offset),
                 body: ["data": ["fields": O2API.mediaFields]])
-            let batch = page["media"] as? [[String: Any]] ?? []
-            files.append(contentsOf: batch.compactMap(Self.o2MediaFile))
-            guard page["more"] as? Bool == true, !batch.isEmpty else { break }
+            let batch = (page["media"] as? [[String: Any]] ?? []).compactMap(Self.o2MediaFile)
+            let fresh = batch.filter { seen.insert($0.id).inserted }
+            files.append(contentsOf: fresh)
+            guard !fresh.isEmpty, page["more"] as? Bool != false else { break }
             offset += batch.count
             try Task.checkCancellation()
         }
@@ -310,30 +338,41 @@ extension CloudAPI {
 
     func o2Download(file: CloudFile, to destination: URL, progress: @escaping (Int64, Int64) -> Void) async throws {
         let media = try o2Media(file)
-        let answer = try await o2Call("media", action: "get",
-                                      body: ["data": ["ids": [media.value], "fields": ["url", "name", "size"]]])
-        // Its own clients are served over TLS, so an address that arrives without it is upgraded rather than
-        // attempted in the clear, which macOS would refuse anyway.
-        guard let entry = (answer["media"] as? [[String: Any]])?.first,
-              let address = entry["url"] as? String, let url = CloudAPI.secureURL(address) else {
-            throw CloudError.message(L("O2 Cloud no devolvió la dirección de descarga."))
+        try await o2Retrying("media", "get") { state in
+            let answer = try await O2API.call("media", action: "get", query: [],
+                                              body: ["data": ["ids": [media.value], "fields": ["url", "name", "size"]]],
+                                              method: nil, state: state, session: session)
+            // Its own clients are served over TLS, so an address that arrives without it is upgraded rather than
+            // attempted in the clear, which macOS would refuse anyway.
+            guard let entry = (answer["media"] as? [[String: Any]])?.first,
+                  let address = entry["url"] as? String, let url = CloudAPI.secureURL(address) else {
+                throw CloudError.message(L("O2 Cloud no devolvió la dirección de descarga."))
+            }
+            var request = URLRequest(url: url)
+            O2API.uncached(&request)
+            // The address O2 hands out may well be a different fleet of servers. The session belongs to O2's own
+            // host and nowhere else: sending it wherever the answer points would hand the account's cookies to
+            // whoever that turns out to be.
+            if let answering = url.host?.lowercased(), answering == o2Host.lowercased() || answering.hasSuffix("." + o2Host.lowercased()) {
+                state.apply(to: &request)
+            }
+            let sent = state.validationKey
+            // A transfer of any size deserves a moving bar; this one reported nothing until the last byte.
+            let reporter = DownloadProgress { bytes, total in Task { @MainActor in progress(bytes, total) } }
+            let (temporary, response) = try await session.download(for: request, delegate: reporter)
+            defer { try? FileManager.default.removeItem(at: temporary) }
+            try O2API.interpret(response, data: Data(), state: state, path: "descarga", action: media.kind.rawValue, sentKey: sent)
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.moveItem(at: temporary, to: destination)
+            let written = Int64((try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+            progress(written, max(written, file.size ?? written))
         }
-        var request = URLRequest(url: url)
-        // The temporary address is still behind the session, so it needs the same identity and cookies.
-        try o2Session().apply(to: &request)
-        let (temporary, response) = try await session.download(for: request)
-        try HTTP.validate(response, data: Data())
-        try? FileManager.default.removeItem(at: destination)
-        try FileManager.default.moveItem(at: temporary, to: destination)
-        let written = Int64((try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
-        progress(written, max(written, file.size ?? written))
     }
 
     /// One multipart request, which is all the platform offers third parties: there is no resumable upload, so a
     /// restart begins again. The envelope is built on disk so a large file never sits in memory.
     func o2Upload(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint,
                   save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
-        let state = try o2Session()
         let folder = try await o2Folder(parent)
         let total = cursor.total
         cursor.offset = 0; cursor.url = nil; try save(cursor)
@@ -342,24 +381,35 @@ extension CloudAPI {
         let metadata: [String: Any] = ["data": ["name": name, "size": total, "folderid": folder,
                                                 "contenttype": Self.mime(forName: name),
                                                 "modificationdate": O2API.stamp(cursor.modified ?? Date())]]
+        // Built once, outside the retry: a rotated key costs another request, not another copy of the whole file.
         let envelope = try await Self.o2Envelope(local: local, name: name, boundary: boundary, metadata: metadata)
         defer { try? FileManager.default.removeItem(at: envelope) }
 
-        var request = URLRequest(url: O2API.url(host: o2Host, path: "upload", action: "save", state: state, query: [
-            URLQueryItem(name: "acceptasynchronous", value: "true")]))
-        request.httpMethod = "POST"
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        state.apply(to: &request)
-        let reporter = O2UploadReporter(total: total, progress: progress)
-        let (data, response) = try await session.upload(for: request, fromFile: envelope, delegate: reporter)
-        try HTTP.validate(response, data: data)
-        let answer = try O2API.payload(data)
+        let answer = try await o2Retrying("upload", "save") { state in
+            var request = URLRequest(url: O2API.url(host: o2Host, path: "upload", action: "save",
+                                                    validationKey: state.validationKey,
+                                                    query: [URLQueryItem(name: "acceptasynchronous", value: "true")]))
+            request.httpMethod = "POST"
+            O2API.uncached(&request)
+            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+            state.apply(to: &request)
+            let sent = state.validationKey
+            let reporter = O2UploadReporter(total: total, progress: progress)
+            let (data, response) = try await session.upload(for: request, fromFile: envelope, delegate: reporter)
+            try O2API.interpret(response, data: data, state: state, path: "upload", action: "save", sentKey: sent)
+            return try O2API.result(data, state: state, path: "upload", action: "save", sentKey: sent)
+        }
 
         cursor.offset = total; cursor.complete = true; try save(cursor); progress(total, total)
         // Replacing means uploading beside the old copy and then binning it: the platform has no overwrite.
         if let replacing, let previous = Self.o2Split(replacing), previous.kind != nil {
             let old = CloudFile(id: replacing, name: name, mime: "", size: nil, modified: nil, webURL: nil, isFolder: false)
-            try? await o2Trash(file: old)
+            do { try await o2Trash(file: old) }
+            catch {
+                // The new copy is there and the old one is not going anywhere. Swallowing this left two files with
+                // the same name and a transfer that claimed to have replaced one of them.
+                throw CloudError.message(L("Se subió «\(name)», pero la copia anterior no se pudo enviar a la papelera: \(error.localizedDescription) Bórrala desde la web de O2."))
+            }
         }
         let id = O2API.identifier(answer["id"]) ?? O2API.identifier((answer["media"] as? [[String: Any]])?.first?["id"])
         // The platform reports no checksum, so there is nothing to compare the upload against.

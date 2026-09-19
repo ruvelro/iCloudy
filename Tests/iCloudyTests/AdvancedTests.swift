@@ -55,8 +55,12 @@ final class AdvancedTests: XCTestCase {
     }
 
     func testEveryGoogleAndGraphCallGoesThroughTheScopedHelpers() throws {
-        // A single endpoint written by hand would silently read the wrong drive, so the check is mechanical.
-        let sources = ["Sources/iCloudy/CloudAPI.swift", "Sources/iCloudy/Providers/SharedDrives.swift"]
+        // A single endpoint written by hand would silently read the wrong drive, so the check is mechanical, and it
+        // covers every source file: the upload and the move were once written outside the two files it looked at.
+        let root = URL(fileURLWithPath: "Sources/iCloudy")
+        let sources = try XCTUnwrap(FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?
+            .compactMap { ($0 as? URL)?.path }.filter { $0.hasSuffix(".swift") })
+        XCTAssertGreaterThan(sources.count, 30)
         for path in sources {
             let text = try String(contentsOf: URL(fileURLWithPath: path), encoding: .utf8)
             let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
@@ -69,12 +73,118 @@ final class AdvancedTests: XCTestCase {
                 let scopedNearby = nearby.contains("googleDriveScope") || nearby.contains("googleAllDrives")
 
                 XCTAssertFalse(line.contains("graph.microsoft.com/v1.0/me/drive"), "\(place) debería usar graphDrive")
-                if line.contains("www.googleapis.com/drive/v3"), !line.contains("/drives?") {
+                // `about` describes the person, not a drive; it takes no drive parameters.
+                if line.contains("www.googleapis.com/drive/v3"), !line.contains("/drives?"), !line.contains("/drive/v3/about") {
                     XCTAssertTrue(line.contains("googleURL(") || scopedNearby,
                                   "\(place) debería pasar por googleURL, googleDriveScope o googleAllDrives")
                 }
             }
         }
+    }
+
+    private func stubbed(_ account: Account) -> CloudAPI {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [StubProtocol.self]
+        return CloudAPI(account: account, session: URLSession(configuration: configuration), tokenProvider: { "token" })
+    }
+
+    func testUploadingToTheTopOfASharedDriveFilesItThereAndNotUnderMiUnidad() async throws {
+        // Drive accepts the alias "root" with supportsAllDrives and files the upload in the person's own drive, so
+        // a file dropped at the top of a shared drive vanished from it. The parent has to be the drive's id.
+        let api = stubbed(Account.scoped(to: "0ABCdrive", named: "Marketing", from: account(.google)))
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data("hola".utf8).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        var startBody = ""
+        StubProtocol.handler = { request in
+            // The session starts with a POST; the bytes follow with a PUT to the Location handed back.
+            if request.httpMethod == "POST" {
+                XCTAssertTrue(request.url?.query?.contains("supportsAllDrives=true") == true, request.url?.absoluteString ?? "")
+                startBody = requestBody(request)
+                return (200, ["Location": "https://www.googleapis.com/upload/session/1"], Data())
+            }
+            return (200, [:], Data(#"{"id":"nuevo","md5Checksum":"4d186321c1a7f0f354b297e8914ab240"}"#.utf8))
+        }
+        let checkpoint = UploadCheckpoint(total: 4, modified: try source.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+        let receipt = try await api.resumableUpload(local: source, parent: "root", name: "hola.txt", replacing: nil, checkpoint: checkpoint, save: { _ in }, progress: { _, _ in })
+        XCTAssertTrue(startBody.contains(#""parents":["0ABCdrive"]"#), startBody)
+        XCTAssertEqual(receipt.remoteID, "nuevo")
+
+        // An ordinary account keeps sending the alias, which is what Drive expects there.
+        StubProtocol.handler = { request in
+            if request.httpMethod == "POST" { startBody = requestBody(request); return (200, ["Location": "https://www.googleapis.com/upload/session/2"], Data()) }
+            return (200, [:], Data(#"{"id":"nuevo"}"#.utf8))
+        }
+        _ = try await stubbed(account(.google)).resumableUpload(local: source, parent: "root", name: "hola.txt", replacing: nil, checkpoint: checkpoint, save: { _ in }, progress: { _, _ in })
+        XCTAssertTrue(startBody.contains(#""parents":["root"]"#), startBody)
+    }
+
+    func testMovingInsideASharedDriveOptsInOnThePatchToo() async throws {
+        // The PATCH that changes the parents was the one Drive call built by hand, without supportsAllDrives, and
+        // Drive answers that with 404 for anything living in a shared drive.
+        let api = stubbed(Account.scoped(to: "0ABCdrive", named: "Marketing", from: account(.google)))
+        var patch: URL?
+        StubProtocol.handler = { request in
+            if request.httpMethod == "PATCH" { patch = request.url; return (200, [:], Data(#"{"id":"f1","parents":["dest"]}"#.utf8)) }
+            return (200, [:], Data(#"{"parents":["old"]}"#.utf8))
+        }
+        let file = CloudFile(id: "f1", name: "a.txt", mime: "text/plain", size: 1, modified: nil, webURL: nil, isFolder: false)
+        try await api.move(file: file, to: "dest")
+        let query = URLComponents(url: try XCTUnwrap(patch), resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertEqual(query.first { $0.name == "supportsAllDrives" }?.value, "true", patch?.absoluteString ?? "")
+        XCTAssertEqual(query.first { $0.name == "addParents" }?.value, "dest")
+        XCTAssertEqual(query.first { $0.name == "removeParents" }?.value, "old")
+    }
+
+    func testSearchingAsksForOneCorpusNotTwo() async throws {
+        // A scoped account once sent `corpora=user` and `corpora=drive` in the same request, which Drive rejects.
+        var seen: [URL] = []
+        StubProtocol.handler = { request in seen.append(request.url!); return (200, [:], Data(#"{"files":[]}"#.utf8)) }
+        _ = try await stubbed(Account.scoped(to: "0ABCdrive", named: "Marketing", from: account(.google))).searchPage(term: "informe")
+        _ = try await stubbed(account(.google)).searchPage(term: "informe")
+        let corpora = seen.map { URLComponents(url: $0, resolvingAgainstBaseURL: false)!.queryItems!.filter { $0.name == "corpora" }.map { $0.value ?? "" } }
+        XCTAssertEqual(corpora, [["drive"], ["user"]])
+    }
+
+    func testAScopedAccountOffersNeitherPersonalListsNorABorrowedQuota() async throws {
+        // "Recientes" and "Compartido conmigo" are the person's own activity, not a drive's, and Drive answers a
+        // request that mixes them with a drive scope with nothing or a refusal. The quota is the same lie the other
+        // way round: `about` reports the person's storage, which is not the shared drive's.
+        let parent = account(.google)
+        let drive = Account.scoped(to: "0ABCdrive", named: "Marketing", from: parent)
+        XCTAssertTrue(parent.capabilities.recents)
+        XCTAssertTrue(parent.capabilities.sharedWithMe)
+        XCTAssertFalse(drive.capabilities.recents)
+        XCTAssertFalse(drive.capabilities.sharedWithMe)
+        XCTAssertEqual(AppModel.collections(for: drive), [.files], "La cabecera no ofrece lo que no existe")
+        let library = Account.scoped(to: "b!lib", named: "Documentos", from: account(.microsoft))
+        XCTAssertFalse(library.capabilities.recents)
+
+        StubProtocol.handler = { _ in XCTFail("Una unidad compartida no tiene cuota que preguntar"); return (500, [:], Data()) }
+        do {
+            _ = try await stubbed(drive).storageQuota()
+            XCTFail("Debe decir que no la informa")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("unidad compartida"), error.localizedDescription) }
+
+        // A document library does have one of its own, and it is asked for on the library's endpoint.
+        var asked: URL?
+        StubProtocol.handler = { request in
+            asked = request.url
+            return (200, [:], Data(#"{"quota":{"used":10,"total":100}}"#.utf8))
+        }
+        let quota = try await stubbed(library).storageQuota()
+        XCTAssertEqual(quota.total, 100)
+        XCTAssertTrue(try XCTUnwrap(asked?.absoluteString).contains("/drives/"), asked?.absoluteString ?? "")
+    }
+
+    func testOnlyTheProvidersThatIgnoreTheLoopbackPortFallBackToAnotherOne() {
+        // Google ignores the port of a loopback redirect and Box checks only scheme, host and path, so a busy 53682
+        // does not block them. Microsoft and Dropbox compare the whole address, so falling back would just fail later
+        // with an unregistered redirect instead of a clear message now.
+        XCTAssertTrue(OAuthRequest.toleratesAnyPort(.google))
+        XCTAssertTrue(OAuthRequest.toleratesAnyPort(.box))
+        XCTAssertFalse(OAuthRequest.toleratesAnyPort(.microsoft))
+        XCTAssertFalse(OAuthRequest.toleratesAnyPort(.dropbox))
+        XCTAssertEqual(OAuthRequest.redirectURI(port: 1234), "http://127.0.0.1:1234/callback")
     }
 
     func testOnlyNextcloudFlavouredWebDAVOffersPublicLinks() async throws {

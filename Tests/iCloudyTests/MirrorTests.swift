@@ -74,4 +74,63 @@ final class MirrorTests: XCTestCase {
         XCTAssertTrue(manager.mirrors.isEmpty)
         XCTAssertTrue(MirrorManager(storeURL: manager.storeURL).mirrors.isEmpty)
     }
+
+    func testTheFirstSyncDoesNotReplaceWhatItFindsInTheDestination() async throws {
+        // Until a mirror has uploaded something there is nothing to compare against, so whatever is already in the
+        // destination belongs to somebody else. It used to be overwritten without a word.
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let local = root.appendingPathComponent("Fotos"); try tree(local)
+        let demo = try DemoStore(directory: root.appendingPathComponent("cloud")); demo.latency = .milliseconds(1)
+        let queue = TransferQueue(storeURL: root.appendingPathComponent("queue.json")); queue.retryDelay = 0.001
+        queue.client = { _ in CloudAPI(account: .demo, demo: demo) }
+        let manager = MirrorManager(storeURL: root.appendingPathComponent("mirrors.json"))
+        manager.watching = false; manager.queue = queue
+        queue.didFinish = { manager.handleFinished($0) }
+        let remoteID = try demo.add(name: "Destino", parent: "root", folder: true)
+        _ = try demo.add(name: "a.txt", parent: remoteID, content: Data("de otro".utf8))
+        let remote = try XCTUnwrap(demo.list("root").first { $0.id == remoteID })
+        try manager.add(local: local, account: .demo, folder: remote, path: [])
+        try await wait { queue.conflict != nil }
+        XCTAssertEqual(queue.conflict?.name, "a.txt", "Pregunta en vez de pisar")
+        queue.resolve(.copy, applyToBatch: true)
+        try await wait { manager.mirrors.first?.lastSync != nil }
+        XCTAssertEqual(try demo.list(remoteID).filter { $0.name.hasPrefix("a") }.count, 2, "El ajeno se conserva")
+
+        // From the second sync on, what this mirror uploaded before is replaced without asking.
+        try Data("cambiado".utf8).write(to: local.appendingPathComponent("a.txt"))
+        let previous = manager.mirrors[0].lastSync
+        manager.syncNow(manager.mirrors[0].id)
+        try await wait { manager.mirrors.first?.lastSync != previous }
+        XCTAssertNil(queue.conflict)
+        XCTAssertEqual(queue.items.last?.batchChoice, .replace)
+    }
+
+    func testRestartingResumesTheInterruptedSyncInsteadOfPlanningASecond() async throws {
+        // Closing the app pauses whatever was running. Planning a second sync left the first one orphaned in the
+        // panel, with a plan made against a folder that had since moved on.
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let local = root.appendingPathComponent("Fotos"); try tree(local)
+        let demo = try DemoStore(directory: root.appendingPathComponent("cloud")); demo.latency = .milliseconds(1)
+        let queue = TransferQueue(storeURL: root.appendingPathComponent("queue.json")); queue.retryDelay = 0.001
+        queue.client = { _ in CloudAPI(account: .demo, demo: demo) }
+        let manager = MirrorManager(storeURL: root.appendingPathComponent("mirrors.json"))
+        manager.watching = false; manager.queue = queue
+        queue.didFinish = { manager.handleFinished($0) }
+        let remoteID = try demo.add(name: "Destino", parent: "root", folder: true)
+        let remote = try XCTUnwrap(demo.list("root").first { $0.id == remoteID })
+        try manager.add(local: local, account: .demo, folder: remote, path: [])
+        try await wait { manager.mirrors.first?.activeTransferID != nil }
+        let interrupted = try XCTUnwrap(manager.mirrors.first?.activeTransferID)
+        queue.cancel(interrupted, pause: true)
+        try await wait { queue.items.first { $0.id == interrupted }?.state == .paused }
+
+        // What `start()` does when the app opens again.
+        manager.start()
+        try await wait { manager.mirrors.first?.lastSync != nil }
+        XCTAssertEqual(queue.items.count, 1, "Un solo trabajo, el que estaba a medias: \(queue.items.map(\.state))")
+        XCTAssertEqual(queue.items.first?.id, interrupted)
+        XCTAssertEqual(queue.items.first?.state, .completed)
+    }
 }

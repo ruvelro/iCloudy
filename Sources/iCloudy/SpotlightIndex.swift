@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 protocol SearchableIndexing {
     func index(_ items: [CSSearchableItem]) async throws
     func deleteItems(withDomainIdentifiers identifiers: [String]) async throws
+    func deleteItems(withIdentifiers identifiers: [String]) async throws
 }
 
 struct SystemSearchableIndex: SearchableIndexing {
@@ -19,6 +20,13 @@ struct SystemSearchableIndex: SearchableIndexing {
     func deleteItems(withDomainIdentifiers identifiers: [String]) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             CSSearchableIndex.default().deleteSearchableItems(withDomainIdentifiers: identifiers) { error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+            }
+        }
+    }
+    func deleteItems(withIdentifiers identifiers: [String]) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            CSSearchableIndex.default().deleteSearchableItems(withIdentifiers: identifiers) { error in
                 if let error { continuation.resume(throwing: error) } else { continuation.resume() }
             }
         }
@@ -110,6 +118,22 @@ final class SpotlightIndex {
         items.removeAll { $0.accountID == accountID }
         persist()
         Task { [index] in try? await index.deleteItems(withDomainIdentifiers: [accountID]) }
+    }
+    /// Drops one item, which is what sending it to the bin means for Spotlight. A hit left behind opens on a file
+    /// that is not there any more, and the app can only answer that the result is no longer available.
+    func forget(accountID: String, fileID: String) {
+        guard items.contains(where: { $0.accountID == accountID && $0.file.id == fileID }) else { return }
+        items.removeAll { $0.accountID == accountID && $0.file.id == fileID }
+        persist()
+        let identifier = Self.identifier(accountID: accountID, fileID: fileID)
+        Task { [index] in try? await index.deleteItems(withIdentifiers: [identifier]) }
+    }
+    /// Keeps an indexed item's name current, because a rename left Spotlight offering the old one.
+    func rename(_ file: CloudFile, accountID: String, accountLabel: String) {
+        guard let position = items.firstIndex(where: { $0.accountID == accountID && $0.file.id == file.id }) else { return }
+        items[position] = IndexedItem(accountID: accountID, file: file, path: items[position].path, seen: Date())
+        persist()
+        publish([items[position]], label: accountLabel)
     }
     private func publish(_ entries: [IndexedItem], label: String) {
         let searchable = entries.map { Self.searchableItem(for: $0, accountLabel: label) }

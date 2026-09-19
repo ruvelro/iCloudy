@@ -55,6 +55,8 @@ final class FakeFTPServer: @unchecked Sendable {
     }
     func log() -> [String] { lock.withLock { commands } }
     func uploaded() -> [String: Data] { lock.withLock { stored } }
+    /// What a server does to an idle client: closes the control connection without a word.
+    func dropControl() { control?.cancel(); control = nil; buffer = Data() }
 
     private func accept(_ connection: NWConnection) {
         control = connection
@@ -209,6 +211,16 @@ final class FTPTests: XCTestCase {
         XCTAssertFalse(files[2].isFolder, "Un enlace simbólico no se trata como carpeta")
         XCTAssertEqual(files[1].id, "/base/nota con espacios.txt")
 
+        // A Unix listing also names devices, pipes and sockets. They are not content and cannot be transferred, and
+        // sending them down the DOS parser invented entries with nonsense names and sizes.
+        let exotic = """
+        crw-rw-rw-   1 root  wheel    3,   2 Jan  1 12:00 null
+        prw-r--r--   1 ana   staff      0 Jan  1 12:00 tuberia
+        srwxrwxrwx   1 ana   staff      0 Jan  1 12:00 socket
+        -rw-r--r--   1 ana   staff   1234 Jan  1 12:00 de verdad.txt
+        """
+        XCTAssertEqual(FTPListing.parseLIST(exotic, parent: "/").map(\.name), ["de verdad.txt"])
+
         let dos = """
         01-01-26  12:00PM       <DIR>          Carpeta
         01-01-26  12:00PM                 1234 archivo.txt
@@ -234,6 +246,42 @@ final class FTPTests: XCTestCase {
 
         XCTAssertEqual(try CloudAPI.ftpEndpoint("ftp://nas.local:2121/x").port, 2121)
         XCTAssertThrowsError(try CloudAPI.ftpEndpoint("no es una dirección"))
+    }
+
+    func testTheRootHasNoBreadcrumbsOfItsOwn() async throws {
+        // "root" is iCloudy's alias, not a folder. Reading it as a path invented a crumb called "root", which is
+        // where "Ir a la carpeta" landed for anything uploaded to the top of the account.
+        let server = try FakeFTPServer(files: [:], listings: ["/": ""])
+        let port = try await server.start()
+        defer { server.stop() }
+        let api = client(port: port)
+        XCTAssertTrue(try api.ftpTrail(id: "root").isEmpty, "El alias no es una carpeta")
+        XCTAssertEqual(try api.ftpTrail(id: "/uno/dos").map(\.name), ["uno", "dos"])
+        // WebDAV addresses items the same way and had the same phantom.
+        let webdav = CloudAPI(account: Account(id: "webdav:test", cloud: .webdav, name: "Test", email: "ana@test",
+                                               clientID: "", clientSecret: nil, serverURL: "https://dav.example.com/dav"))
+        XCTAssertTrue(webdav.webdavTrail(id: "root").isEmpty)
+        XCTAssertEqual(webdav.webdavTrail(id: "/uno/dos").map(\.name), ["uno", "dos"])
+    }
+
+    func testTheSessionAsksForUTF8AndExplainsARefusedCertificate() async throws {
+        // Older Windows servers answer in the local code page unless told otherwise, which turned accented names
+        // into mojibake. Servers that do not know the command answer 500 and carry on.
+        let server = try FakeFTPServer(files: [:], listings: ["/": ""])
+        let port = try await server.start()
+        defer { server.stop() }
+        let api = client(port: port)
+        try await hurry(api)
+        _ = try await api.list(parent: "root")
+        XCTAssertTrue(server.log().contains("OPTS UTF8 ON"), server.log().description)
+
+        // A NAS with its own certificate is the usual cause of a TLS refusal, and the bare status said nothing.
+        let described = FTPSession.describe(NWError.tls(-9807))
+        XCTAssertTrue(described.localizedDescription.contains("certificado"), described.localizedDescription)
+        XCTAssertTrue(described.localizedDescription.contains("-9807"), described.localizedDescription)
+        // Anything that is not a TLS failure is passed through untouched.
+        let plain = FTPSession.describe(NWError.posix(.ECONNREFUSED))
+        XCTAssertFalse(plain.localizedDescription.contains("certificado"), plain.localizedDescription)
     }
 
     func testCapabilitiesHideWhatFTPCannotDo() {
@@ -294,6 +342,83 @@ final class FTPTests: XCTestCase {
         XCTAssertEqual(receipt.verification, .unavailable, "FTP no informa de ninguna suma de verificación")
         XCTAssertEqual(server.uploaded()["/subido.txt"], Data("contenido subido".utf8), "Órdenes recibidas: \(server.log())")
         XCTAssertTrue(checkpoint.complete)
+    }
+
+    func testADroppedControlConnectionIsReopenedOnTheNextOperation() async throws {
+        // FTP servers close an idle control connection after a few minutes. Before, the next command went down the
+        // dead socket and every listing of that account failed until it was disconnected and connected again.
+        let listing = "type=file;size=3;modify=20260101120000; a.txt\r\n"
+        let server = try FakeFTPServer(files: [:], listings: ["/": listing])
+        let port = try await server.start()
+        defer { server.stop() }
+        let api = client(port: port)
+        try await hurry(api)
+        let before = try await api.list(parent: "root")
+        XCTAssertEqual(before.map(\.name), ["a.txt"])
+        server.dropControl()
+        try await Task.sleep(for: .milliseconds(200))
+        let after = try await api.list(parent: "root")
+        XCTAssertEqual(after.map(\.name), ["a.txt"], "Se vuelve a conectar sola")
+        XCTAssertEqual(server.log().filter { $0 == "USER ana" }.count, 2, "Hubo una segunda sesión: \(server.log())")
+    }
+
+    func testOperationsOnTheSameSessionRunOneAtATime() async throws {
+        // The explorer and the queue share one control connection. Two operations interleaved on it read each
+        // other's replies; here a listing, an upload and another listing are started at once and must all succeed.
+        let listing = "type=file;size=3;modify=20260101120000; a.txt\r\n"
+        let server = try FakeFTPServer(files: [:], listings: ["/": listing])
+        let port = try await server.start()
+        defer { server.stop() }
+        let api = client(port: port)
+        try await hurry(api)
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data("contenido".utf8).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let stamp = try source.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        async let first = api.list(parent: "root")
+        async let upload = api.resumableUpload(local: source, parent: "root", name: "s.txt", replacing: nil,
+                                               checkpoint: UploadCheckpoint(total: 9, modified: stamp), save: { _ in }, progress: { _, _ in })
+        async let second = api.list(parent: "root")
+        let (a, receipt, b) = try await (first, upload, second)
+        XCTAssertEqual(a.map(\.name), ["a.txt"])
+        XCTAssertEqual(b.map(\.name), ["a.txt"])
+        XCTAssertEqual(receipt.remoteID, "/s.txt")
+        XCTAssertEqual(server.uploaded()["/s.txt"], Data("contenido".utf8), "Órdenes: \(server.log())")
+        // Every data transfer opens its own passive channel, and they must not overlap: a STOR between two MLSDs.
+        let transfers = server.log().filter { $0.hasPrefix("MLSD") || $0.hasPrefix("STOR") }
+        XCTAssertEqual(transfers.count, 3, "\(server.log())")
+    }
+
+    func testALineBreakInANameNeverReachesTheServer() async throws {
+        // A command ends at CR LF, so "informe\rDELE /index.html" would be two commands. It is refused before the
+        // socket, and the name rules refuse it before the transfer even starts.
+        XCTAssertNotNil(FileNames.problem(with: "informe\rDELE /index.html", for: .ftp))
+        XCTAssertNotNil(FileNames.problem(with: "dos\nlíneas.txt", for: .ftp))
+        XCTAssertNotNil(FileNames.problem(with: "a\r\nb", for: .ftp), "CR LF is one Swift character; it must still be caught")
+        XCTAssertNil(FileNames.problem(with: "informe final.pdf", for: .ftp))
+        XCTAssertFalse(FTPSession.isSafeLine("STOR a\r\nDELE b"))
+        XCTAssertTrue(FTPSession.isSafeLine("STOR a b"))
+        let server = try FakeFTPServer(files: [:], listings: ["/": ""])
+        let port = try await server.start()
+        defer { server.stop() }
+        let api = client(port: port)
+        try await hurry(api)
+        let session = try await api.ftp()
+        do { _ = try await session.command("STOR a\r\nDELE /b"); XCTFail("Debe rechazarse") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("salto de línea"), error.localizedDescription) }
+        XCTAssertFalse(server.log().contains { $0.hasPrefix("DELE") }, server.log().description)
+    }
+
+    func testCredentialsTypedIntoTheAddressAreStrippedFromWhatIsStored() async throws {
+        let server = try FakeFTPServer(files: [:], listings: ["/": ""])
+        let port = try await server.start()
+        defer { server.stop() }
+        let oauth = OAuth { _ in XCTFail("FTP must not open a browser"); return false }
+        let (account, credential) = try await oauth.signInFTP(server: "ftp://ana:secreta@127.0.0.1:\(port)/", username: "", password: "")
+        XCTAssertEqual(account.serverURL, "ftp://127.0.0.1:\(port)/", "La contraseña no acaba en accounts.json")
+        XCTAssertFalse(account.id.contains("secreta"))
+        XCTAssertEqual(credential.accessToken, Data("ana:secreta".utf8).base64EncodedString(), "Pero sí se usa para entrar")
+        XCTAssertTrue(server.log().contains("PASS secreta"))
     }
 
     func testWrongPasswordIsReportedWithoutStoringAnything() async throws {

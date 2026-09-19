@@ -18,7 +18,9 @@ struct O2LoginRequest: Identifiable, Hashable {
 
 @MainActor
 final class O2WebLoginModel: ObservableObject {
-    let host: String
+    /// Which server to sign in to. It is a setting and not a constant because the platform is resold by several
+    /// operators: `cloud.o2online.es` is O2 Spain, `cloud.o2.de` is o2 Germany, and the protocol is the same.
+    @Published private(set) var host: String
     @Published var status: String = L("Abriendo el acceso de O2…")
     @Published var failed: String?
     /// Receives the session once O2 has granted one.
@@ -37,11 +39,22 @@ final class O2WebLoginModel: ObservableObject {
 
     init(host: String) { self.host = host }
 
-    /// The address O2's own client uses to start the flow. The device identifier is opaque to the server and only
-    /// distinguishes one signed-in client from another.
-    var start: URL {
-        URL(string: "https://\(host)/sapi/oauth/pkce/authorize?platform=web&deviceid=web-icloudy-\(UUID().uuidString.prefix(12))")
-            ?? URL(string: "https://\(host)/")!
+    /// The address O2's own client uses to start the flow.
+    var start: URL { O2WebSession.start(host: host) }
+
+    /// Points the window at another operator's server. The view is rebuilt around the new host, so whatever the old
+    /// one had loaded is left behind rather than half-replaced.
+    func use(host newHost: String) {
+        let clean = newHost.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "https://", with: "").replacingOccurrences(of: "http://", with: "")
+            .split(separator: "/").first.map(String.init) ?? ""
+        guard !clean.isEmpty, clean != host else { return }
+        stop()
+        done = false
+        canFinishByHand = false
+        failed = nil
+        status = L("Abriendo el acceso de O2…")
+        host = clean
     }
 
     /// Watches the web view's cookies. The web client stores the key that authorises every later call in a cookie
@@ -54,7 +67,10 @@ final class O2WebLoginModel: ObservableObject {
                 try? await Task.sleep(nanoseconds: 700_000_000)
                 guard let self, !self.done else { return }
                 let mine = await self.sessionCookies()
-                self.canFinishByHand = !mine.isEmpty
+                // Any cookie at all appears the moment the first page loads, so offering the way out from there
+                // invited people to press it before they had typed anything. A session cookie is the earliest sign
+                // that there is something worth keeping.
+                self.canFinishByHand = mine.contains { $0.name.uppercased().contains("SESSION") || $0.name == "validationKey" }
                 guard let key = mine.first(where: { $0.name == "validationKey" })?.value, !key.isEmpty else { continue }
                 self.done = true
                 self.status = L("Sesión iniciada. Cerrando…")
@@ -140,6 +156,8 @@ struct O2WebLoginView: View {
     @ObservedObject var model: AppModel
     @StateObject private var login: O2WebLoginModel
     @Environment(\.dismiss) private var dismiss
+    @State private var showServer = false
+    @State private var server = ""
 
     init(model: AppModel, host: String) {
         self.model = model
@@ -160,10 +178,23 @@ struct O2WebLoginView: View {
                     Button("Ya he entrado") { Task { await login.finishByHand() } }
                         .help("Úsalo solo si has iniciado sesión y esta ventana no se cierra sola")
                 }
+                Button(showServer ? "Ocultar servidor" : "Servidor…") {
+                    server = login.host
+                    showServer.toggle()
+                }.help("Elegir el servidor de otro operador con la misma plataforma")
                 Button("Cancelar") { finish() }.keyboardShortcut(.cancelAction)
             }.padding(12)
+            if showServer {
+                HStack(spacing: 8) {
+                    Text("Servidor").font(.caption)
+                    TextField("cloud.o2online.es", text: $server).textFieldStyle(.roundedBorder)
+                    Button("Cargar") { login.use(host: server) }.disabled(server.trimmingCharacters(in: .whitespaces).isEmpty)
+                }.padding(.horizontal, 12).padding(.bottom, 8)
+                Text("La plataforma la revenden varios operadores. Déjalo como está para O2 España; para o2 Alemania es cloud.o2.de.")
+                    .font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.bottom, 8)
+            }
             Divider()
-            O2WebView(model: login)
+            O2WebView(model: login).id(login.host)
             Divider()
             Text("Escribes tus datos en las páginas de O2. iCloudy no ve la contraseña ni el código: solo guarda la sesión que devuelve el servidor.")
                 .font(.caption2).foregroundStyle(.secondary).padding(10)
@@ -188,6 +219,56 @@ struct O2WebLoginView: View {
     }
 }
 
+/// The sign-in that lives in WebKit's own store, which is not the Keychain and not iCloudy's to keep quietly.
+///
+/// Signing in happens on O2's pages, and what makes a silent renewal possible is that the session at Telefónica
+/// outlives the one at O2. That is a credential in everything but name: with it, opening the sign-in window hands
+/// out a working session without anybody typing anything. Disconnecting the account has to take it too, or
+/// "disconnect" would mean rather less than it says.
+enum O2WebSession {
+    /// How this Mac introduces itself to the platform.
+    ///
+    /// Funambol keeps a list of devices per account. A fresh random identifier on every sign-in and every silent
+    /// renewal filled that list with thirty entries a month, and some deployments cap it and start expelling the
+    /// oldest — which is one more way for a session to die for no reason anybody can see from here.
+    static func deviceID(host: String) -> String {
+        let key = "o2DeviceID." + host
+        if let stored = UserDefaults.standard.string(forKey: key), !stored.isEmpty { return stored }
+        let fresh = "web-icloudy-" + UUID().uuidString.prefix(12)
+        UserDefaults.standard.set(fresh, forKey: key)
+        return fresh
+    }
+    /// Where the sign-in starts. O2's own client does nothing but navigate here; the server takes it from there.
+    static func start(host: String) -> URL {
+        URL(string: "https://\(host)/sapi/oauth/pkce/authorize?platform=web&deviceid=\(deviceID(host: host))")
+            ?? URL(string: "https://\(host)/")!
+    }
+    /// The operator's own domains, where the sign-in that outlives the O2 session really happens. The silent
+    /// renewal keeps cookies from exactly these, so disconnecting has to clear exactly these too: one list, not two
+    /// that drift apart.
+    static let signInDomains = ["o2online.es", "telefonica.es", "movistar.es"]
+    /// Cleared as well, although nothing is ever kept from them: o2 Germany's own domain and Telefónica's other
+    /// one. Deleting more than was stored is the safe direction for a disconnection.
+    private static let alsoCleared = ["o2.de", "telefonica.com"]
+    /// Hosts whose stored data belongs to this sign-in: O2's own server and the operator's identity provider.
+    static func belongs(_ record: String, host: String) -> Bool {
+        let name = record.lowercased(), server = host.lowercased()
+        if server == name || server.hasSuffix("." + name) { return true }
+        return signInDomains.contains(name) || alsoCleared.contains(name)
+    }
+    @MainActor
+    static func forget(host: String) async {
+        let store = WKWebsiteDataStore.default()
+        let types: Set<String> = [WKWebsiteDataTypeCookies, WKWebsiteDataTypeLocalStorage,
+                                  WKWebsiteDataTypeSessionStorage, WKWebsiteDataTypeIndexedDBDatabases]
+        let records = await store.dataRecords(ofTypes: types)
+        let doomed = records.filter { belongs($0.displayName, host: host) }
+        guard !doomed.isEmpty else { return }
+        await store.removeData(ofTypes: types, for: doomed)
+        O2Log.record("sesión web olvidada · \(doomed.count) registros")
+    }
+}
+
 /// Renews an O2 session without asking the person anything.
 ///
 /// O2's server ends a session after about an hour without requests, so a Mac that was switched off overnight always
@@ -202,7 +283,8 @@ final class O2SilentRenewal {
     private var webView: WKWebView?
     private let host: String
     /// Where the sign-in happens. Cookies from these are kept so it can be repeated without anyone taking part.
-    static let signInDomains = ["o2online.es", "telefonica.es", "movistar.es"]
+    /// The same list the sign-in window harvests from and disconnecting clears.
+    static let signInDomains = O2WebSession.signInDomains
     init(host: String) { self.host = host }
 
     /// Returns the new session, or nil when it could not be had without the person taking part.
@@ -213,8 +295,7 @@ final class O2SilentRenewal {
         self.webView = webView
         defer { self.webView = nil }
 
-        let start = URL(string: "https://\(host)/sapi/oauth/pkce/authorize?platform=web&deviceid=web-icloudy-\(UUID().uuidString.prefix(12))")
-        guard let start else { return nil }
+        let start = O2WebSession.start(host: host)
         // The key from the dead session is still in the store. Clearing it first means that seeing one again can
         // only mean the server has just handed out a new one, rather than this reading its own leftovers.
         let jar = configuration.websiteDataStore.httpCookieStore

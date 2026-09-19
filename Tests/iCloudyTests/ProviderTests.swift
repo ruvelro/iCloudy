@@ -128,42 +128,225 @@ final class ProviderTests: XCTestCase {
 
     // MARK: - Box
 
-    func testBoxPaginatesByOffsetAndBuildsTrailFromPathCollection() async throws {
+    func testBoxPaginatesByMarkerAndBuildsTrailFromPathCollection() async throws {
+        // Box refuses an offset past 10 000, so a folder with more items than that was cut short at the ten
+        // thousandth without a word. A marker has no such ceiling.
         var urls: [URL] = []
         StubProtocol.handler = { request in
             urls.append(request.url!)
             if request.url!.path.hasSuffix("/items") {
-                let offset = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!.first { $0.name == "offset" }!.value!
-                if offset == "0" { return (200, [:], Data(#"{"total_count":2,"entries":[{"type":"folder","id":"11","name":"Fotos"}]}"#.utf8)) }
-                return (200, [:], Data(#"{"total_count":2,"entries":[{"type":"file","id":"12","name":"a.pdf","size":9}]}"#.utf8))
+                let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
+                XCTAssertEqual(query.first { $0.name == "usemarker" }?.value, "true")
+                XCTAssertNil(query.first { $0.name == "offset" }, "El desplazamiento numérico ya no se usa")
+                guard let marker = query.first(where: { $0.name == "marker" })?.value else {
+                    return (200, [:], Data(#"{"entries":[{"type":"folder","id":"11","name":"Fotos"}],"next_marker":"m1"}"#.utf8))
+                }
+                XCTAssertEqual(marker, "m1")
+                return (200, [:], Data(#"{"entries":[{"type":"file","id":"12","name":"a.pdf","size":9}]}"#.utf8))
             }
             return (200, [:], Data(#"{"id":"11","name":"Fotos","path_collection":{"entries":[{"type":"folder","id":"0","name":"All Files"},{"type":"folder","id":"5","name":"Trabajo"}]}}"#.utf8))
         }
         let api = client(.box)
         let files = try await api.list(parent: "root")
         XCTAssertEqual(urls[0].path, "/2.0/folders/0/items", "iCloudy's root maps to Box's folder 0")
-        XCTAssertEqual(files.map(\.id), ["11", "12"])
+        XCTAssertEqual(files.map(\.id), ["11", "12"], "Las dos páginas llegan")
         let trail = try await api.folderTrail(id: "11")
         XCTAssertEqual(trail.map(\.name), ["Trabajo", "Fotos"], "The root entry is dropped and the folder itself closes the trail")
     }
 
+    func testBoxSearchStopsWhereBoxStopsAnswering() async throws {
+        // Box's search has no marker, and asking past its cap returns an error instead of a page. The results end
+        // there and say nothing more, rather than promising a "load more" that cannot work.
+        StubProtocol.handler = { request in
+            let offset = Int(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!.first { $0.name == "offset" }!.value!)!
+            let entries = (0..<100).map { #"{"type":"file","id":"\#(offset + $0)","name":"a.txt"}"# }.joined(separator: ",")
+            return (200, [:], Data(#"{"total_count":50000,"entries":[\#(entries)]}"#.utf8))
+        }
+        let api = client(.box)
+        let early = try await api.searchPage(term: "a", cursor: "0")
+        XCTAssertEqual(early.next, "100", "Al principio sí hay más")
+        let atTheCap = try await api.searchPage(term: "a", cursor: String(CloudAPI.boxSearchCap - 100))
+        XCTAssertNil(atTheCap.next, "Y en el tope se para, aunque el total diga que hay más")
+        XCTAssertEqual(atTheCap.hits.count, 100, "Sin perder la última página")
+    }
+
+    func testBoxWaitsWhileItIsStillAssemblingTheUpload() async throws {
+        // Box answers 202 while it puts the parts together. Taking that for a finished upload returned a transfer
+        // with no file behind it, and the id came back empty.
+        let size = Int(CloudAPI.boxSessionThreshold) + 512
+        let large = try temporaryFile(Data(repeating: 9, count: size))
+        defer { try? FileManager.default.removeItem(at: large) }
+        let sha1 = UploadHasher.hex(Insecure.SHA1.hash(data: Data(repeating: 9, count: size)))
+        var commits = 0
+        StubProtocol.handler = { request in
+            let path = request.url!.path
+            if path == "/api/2.0/files/upload_sessions" { return (201, [:], Data(#"{"id":"s1","part_size":\#(8 * 1024 * 1024)}"#.utf8)) }
+            if path.hasSuffix("/commit") {
+                commits += 1
+                if commits < 3 { return (202, ["Retry-After": "1"], Data()) }
+                return (201, [:], Data(#"{"entries":[{"id":"77","sha1":"\#(sha1)"}]}"#.utf8))
+            }
+            return (200, [:], Data(#"{"part":{"part_id":"p","offset":0,"size":1}}"#.utf8))
+        }
+        let stamp = try large.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        let receipt = try await client(.box).resumableUpload(local: large, parent: "5", name: "big.bin", replacing: nil,
+                                                             checkpoint: UploadCheckpoint(total: Int64(size), modified: stamp), save: { _ in }, progress: { _, _ in })
+        XCTAssertEqual(commits, 3, "Se vuelve a preguntar hasta que Box confirma")
+        XCTAssertEqual(receipt.remoteID, "77")
+        XCTAssertEqual(receipt.verification, .verified)
+    }
+
+    func testATokenThatExpiresMidUploadIsRenewedInsteadOfFailingTheTransfer() async throws {
+        // The block uploads of Dropbox and Box go straight to their own hosts, outside the path that renews a token
+        // after a 401. A long upload that crossed the hour failed with a bare "HTTP 401".
+        let payload = Data(repeating: 4, count: 1024)
+        let file = try temporaryFile(payload)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let expected = UploadHasher.hex(SHA256.hash(data: Data(SHA256.hash(data: payload))))
+        let store = MemoryCredentials()
+        store.stored["dropbox:1"] = Credential(accessToken: "viejo", refreshToken: "r1", expires: Date().addingTimeInterval(3600))
+        var refreshes = 0, unauthorized = 0
+        StubProtocol.handler = { request in
+            if request.url?.host == "api.dropboxapi.com", request.url?.path == "/oauth2/token" {
+                refreshes += 1
+                return (200, [:], Data(#"{"access_token":"nuevo","refresh_token":"r2","expires_in":3600}"#.utf8))
+            }
+            if request.value(forHTTPHeaderField: "Authorization") == "Bearer viejo", request.url!.path.hasSuffix("append_v2") {
+                unauthorized += 1
+                return (401, [:], Data())
+            }
+            if request.url!.path.hasSuffix("start") { return (200, [:], Data(#"{"session_id":"s1"}"#.utf8)) }
+            if request.url!.path.hasSuffix("append_v2") { return (200, [:], Data()) }
+            return (200, [:], Data(#"{"path_lower":"/x","content_hash":"\#(expected)"}"#.utf8))
+        }
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let account = Account(id: "dropbox:1", cloud: .dropbox, name: "Ana", email: "ana@ejemplo.com", clientID: "c", clientSecret: nil)
+        let api = CloudAPI(account: account, session: URLSession(configuration: config), credentials: store)
+        let stamp = try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        let receipt = try await api.resumableUpload(local: file, parent: "/", name: "x", replacing: nil,
+                                                    checkpoint: UploadCheckpoint(total: 1024, modified: stamp), save: { _ in }, progress: { _, _ in })
+        XCTAssertEqual(unauthorized, 1)
+        XCTAssertEqual(refreshes, 1, "Se renueva una vez y el bloque se repite")
+        XCTAssertEqual(receipt.remoteID, "/x")
+        XCTAssertFalse(api.sessionExpired)
+    }
+
+    func testDropboxFollowsTheOffsetItSaysItIsWaitingFor() async throws {
+        // Dropbox cannot be asked how far a session got, and the local checkpoint is written in batches, so after a
+        // crash it can be behind. Its 409 says which offset it expects; ignoring it left the transfer failed for good.
+        let payload = Data(repeating: 6, count: 3 * 1024 * 1024)
+        let file = try temporaryFile(payload)
+        defer { try? FileManager.default.removeItem(at: file) }
+        var offsets: [Int64] = []
+        var refused = false
+        StubProtocol.handler = { request in
+            let argument = request.value(forHTTPHeaderField: "Dropbox-API-Arg") ?? ""
+            if request.url!.path.hasSuffix("start") { return (200, [:], Data(#"{"session_id":"s1"}"#.utf8)) }
+            if request.url!.path.hasSuffix("append_v2") {
+                let sent = (try? JSONSerialization.jsonObject(with: Data(argument.utf8))) as? [String: Any]
+                let offset = ((sent?["cursor"] as? [String: Any])?["offset"] as? NSNumber)?.int64Value ?? -1
+                offsets.append(offset)
+                if !refused {
+                    refused = true
+                    return (409, [:], Data(#"{"error_summary":"incorrect_offset/","error":{".tag":"incorrect_offset","correct_offset":1048576}}"#.utf8))
+                }
+                return (200, [:], Data())
+            }
+            return (200, [:], Data(#"{"path_lower":"/x"}"#.utf8))
+        }
+        let stamp = try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        var saved: [UploadCheckpoint] = []
+        let receipt = try await client(.dropbox).resumableUpload(local: file, parent: "/", name: "x", replacing: nil,
+                                                                 checkpoint: UploadCheckpoint(total: Int64(payload.count), modified: stamp),
+                                                                 save: { saved.append($0) }, progress: { _, _ in })
+        XCTAssertEqual(offsets, [0, 1_048_576], "Se reanuda donde Dropbox dice, no donde creíamos")
+        XCTAssertEqual(saved.last?.offset, Int64(payload.count))
+        XCTAssertTrue(saved.last?.complete == true)
+        XCTAssertEqual(receipt.verification, .unavailable, "Saltarse bloques impide comprobar la suma, y se dice")
+    }
+
     func testBoxChoosesSimpleOrChunkedUploadAndSendsDigests() async throws {
-        let small = try temporaryFile(Data(repeating: 3, count: 1024))
+        let payload = Data(repeating: 3, count: 1024)
+        let sha1 = UploadHasher.hex(Insecure.SHA1.hash(data: payload))
+        let small = try temporaryFile(payload)
         defer { try? FileManager.default.removeItem(at: small) }
         var contentType = "", digest = "", path = ""
         StubProtocol.handler = { request in
             path = request.url!.path; contentType = request.value(forHTTPHeaderField: "Content-Type") ?? ""
-            digest = request.value(forHTTPHeaderField: "Digest") ?? ""
-            return (201, [:], Data(#"{"entries":[{"id":"99","sha1":"abc"}]}"#.utf8))
+            digest = request.value(forHTTPHeaderField: "content-md5") ?? ""
+            return (201, [:], Data(#"{"entries":[{"id":"99","sha1":"\#(sha1)"}]}"#.utf8))
         }
         let checkpoint = UploadCheckpoint(total: 1024, modified: try small.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
         let receipt = try await client(.box).resumableUpload(local: small, parent: "5", name: "a.bin", replacing: nil, checkpoint: checkpoint, save: { _ in }, progress: { _, _ in })
         XCTAssertEqual(path, "/api/2.0/files/content", "Under 20 MB Box refuses upload sessions")
         XCTAssertTrue(contentType.hasPrefix("multipart/form-data; boundary="), contentType)
-        XCTAssertEqual(digest, "sha=" + Data(Insecure.SHA1.hash(data: Data(repeating: 3, count: 1024))).base64EncodedString())
+        XCTAssertEqual(digest, sha1, "The single-shot endpoint takes the SHA-1 in content-md5, in hex")
         XCTAssertEqual(receipt.remoteID, "99")
         XCTAssertEqual(receipt.verification, .verified)
         XCTAssertGreaterThan(CloudAPI.boxSessionThreshold, 0)
+    }
+
+    func testBoxOnlyCountsAnUploadAsVerifiedWhenItsHashMatches() async throws {
+        // A stored sha1 used to be enough for "verified" without ever being compared. It has to match the bytes sent.
+        let small = try temporaryFile(Data(repeating: 3, count: 1024))
+        defer { try? FileManager.default.removeItem(at: small) }
+        let checkpoint = UploadCheckpoint(total: 1024, modified: try small.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+        StubProtocol.handler = { _ in (201, [:], Data(#"{"entries":[{"id":"99","sha1":"0000000000000000000000000000000000000000"}]}"#.utf8)) }
+        do {
+            _ = try await client(.box).resumableUpload(local: small, parent: "5", name: "a.bin", replacing: nil, checkpoint: checkpoint, save: { _ in }, progress: { _, _ in })
+            XCTFail("A different hash must fail loudly")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("suma de verificación"), error.localizedDescription) }
+        StubProtocol.handler = { _ in (201, [:], Data(#"{"entries":[{"id":"99"}]}"#.utf8)) }
+        let receipt = try await client(.box).resumableUpload(local: small, parent: "5", name: "a.bin", replacing: nil, checkpoint: checkpoint, save: { _ in }, progress: { _, _ in })
+        XCTAssertEqual(receipt.verification, .unavailable, "No hash from Box, nothing to compare")
+    }
+
+    func testBoxSessionCommitsCarryTheWholeFileDigestEvenWhenResumed() async throws {
+        // Box refuses a commit without the digest of the whole file. A resumed session did not see the earlier
+        // parts leave, so it hashes them again from the local file, which also lets the upload be verified.
+        let size = Int(CloudAPI.boxSessionThreshold) + 1024
+        var payload = Data(count: size)
+        for index in stride(from: 0, to: size, by: 4099) { payload[index] = UInt8(index % 251) }
+        let sha1 = UploadHasher.hex(Insecure.SHA1.hash(data: payload))
+        let large = try temporaryFile(payload)
+        defer { try? FileManager.default.removeItem(at: large) }
+        let partSize = 8 * 1024 * 1024
+        var parts: [String] = [], commitDigest: String?, ranges: [String] = []
+        StubProtocol.handler = { request in
+            let path = request.url!.path
+            if path == "/api/2.0/files/upload_sessions" {
+                return (201, [:], Data(#"{"id":"s1","part_size":\#(partSize)}"#.utf8))
+            }
+            if path.hasSuffix("/commit") {
+                commitDigest = request.value(forHTTPHeaderField: "Digest")
+                let body = (try? JSONSerialization.jsonObject(with: requestData(request))) as? [String: Any]
+                parts = (body?["parts"] as? [[String: Any]])?.map { "\($0)" } ?? []
+                return (201, [:], Data(#"{"entries":[{"id":"77","sha1":"\#(sha1)"}]}"#.utf8))
+            }
+            let range = request.value(forHTTPHeaderField: "Content-Range") ?? ""
+            ranges.append(range)
+            let offset = range.split(separator: " ").last?.split(separator: "-").first ?? ""
+            return (200, [:], Data(#"{"part":{"part_id":"p\#(offset)","offset":\#(offset),"size":1}}"#.utf8))
+        }
+        let stamp = try large.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        let fresh = try await client(.box).resumableUpload(local: large, parent: "5", name: "big.bin", replacing: nil,
+                                                          checkpoint: UploadCheckpoint(total: Int64(size), modified: stamp), save: { _ in }, progress: { _, _ in })
+        XCTAssertEqual(ranges.count, 3, "Three parts of 8 MiB")
+        XCTAssertEqual(commitDigest, "sha=" + Data(Insecure.SHA1.hash(data: payload)).base64EncodedString())
+        XCTAssertEqual(fresh.verification, .verified)
+        XCTAssertEqual(fresh.remoteID, "77")
+        XCTAssertFalse(parts.isEmpty)
+
+        // The same upload, interrupted after the first part and resumed from the checkpoint.
+        ranges = []; commitDigest = nil
+        var resumed = UploadCheckpoint(total: Int64(size), modified: stamp)
+        resumed.sessionID = "s1"; resumed.chunkSize = Int64(partSize); resumed.offset = Int64(partSize)
+        resumed.parts = [#"{"part_id":"p0","offset":0,"size":8388608}"#]
+        let receipt = try await client(.box).resumableUpload(local: large, parent: "5", name: "big.bin", replacing: nil,
+                                                            checkpoint: resumed, save: { _ in }, progress: { _, _ in })
+        XCTAssertEqual(ranges.count, 2, "Only the parts after the checkpoint travel again")
+        XCTAssertEqual(commitDigest, "sha=" + Data(Insecure.SHA1.hash(data: payload)).base64EncodedString(), "The digest covers the whole file, resumed or not")
+        XCTAssertEqual(receipt.verification, .verified)
     }
 
     // MARK: - WebDAV
@@ -247,6 +430,191 @@ final class ProviderTests: XCTestCase {
         catch { XCTAssertTrue(error.localizedDescription.contains("enlaces públicos"), error.localizedDescription) }
     }
 
+    func testAWebPageIsNotAListingHoweverPoliteItsStatusIs() async throws {
+        // A misread address, or a proxy, answers a PROPFIND with the site's own page and a 200. Reading that as an
+        // empty folder left the account showing nothing for ever, with no error to explain it.
+        StubProtocol.handler = { _ in (200, [:], Data("<!doctype html><html><body>Nextcloud</body></html>".utf8)) }
+        do {
+            _ = try await client(.webdav).list(parent: "root")
+            XCTFail("Una página web no es un listado")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("no es un listado"), error.localizedDescription) }
+
+        // An empty 207, which is what an empty folder really looks like, stays empty and does not complain.
+        StubProtocol.handler = { _ in (207, [:], Data(#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"></d:multistatus>"#.utf8)) }
+        let empty = try await client(.webdav).list(parent: "root")
+        XCTAssertTrue(empty.isEmpty)
+    }
+
+    func testMovingUsesTheNameOnTheServerNotTheOneItLikesToDisplay() async throws {
+        // `displayname` is what the server would like shown, and some report it with different capitalisation or a
+        // title of their own. Building the destination from it renamed the item as a side effect of moving it.
+        XCTAssertEqual(CloudAPI.webdavName("/Fotos/niño.JPG"), "niño.JPG")
+        XCTAssertEqual(CloudAPI.webdavName("/"), "/")
+        var destinations: [String?] = []
+        StubProtocol.handler = { request in
+            destinations.append(request.value(forHTTPHeaderField: "Destination"))
+            return (204, [:], Data())
+        }
+        let api = client(.webdav)
+        let file = CloudFile(id: "/Fotos/IMG_0001.JPG", name: "Un título cualquiera", mime: "image/jpeg",
+                             size: 1, modified: nil, webURL: nil, isFolder: false)
+        try await api.move(file: file, to: "/Destino")
+        XCTAssertEqual(destinations.last, "https://dav.example.com/remote.php/dav/files/ana/Destino/IMG_0001.JPG")
+        try await api.copy(file: file, to: "/Destino")
+        XCTAssertEqual(destinations.last, "https://dav.example.com/remote.php/dav/files/ana/Destino/IMG_0001.JPG")
+    }
+
+    func testAnHrefThatDiffersOnlyInCapitalisationStillLosesItsPrefix() {
+        // Reverse proxies routinely echo the base with different capitalisation. Leaving it in made every id carry
+        // the prefix twice once it was turned back into a URL.
+        let xml = Data("""
+        <?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
+        <d:response><d:href>/Remote.php/DAV/files/ana/Fotos/a.txt</d:href><d:propstat><d:prop>
+        <d:displayname>a.txt</d:displayname><d:resourcetype/></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+        </d:multistatus>
+        """.utf8)
+        let entries = WebDAVEntry.parse(xml, basePath: "/remote.php/dav/files/ana")
+        XCTAssertEqual(entries.map(\.path), ["/Fotos/a.txt"])
+    }
+
+    func testADigestChallengeIsNotAWrongPassword() async throws {
+        // iCloudy only speaks Basic. Calling a Digest challenge an expired session sent people to re-type
+        // credentials that were right all along.
+        StubProtocol.handler = { _ in (401, ["WWW-Authenticate": "Digest realm=\"nas\", nonce=\"abc\""], Data()) }
+        let api = client(.webdav)
+        do { _ = try await api.list(parent: "root"); XCTFail("Debe explicar qué pasa") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("Digest"), error.localizedDescription) }
+        XCTAssertFalse(api.sessionExpired, "No es una sesión caducada")
+    }
+
+    func testNextcloudReusesTheLinkAnItemAlreadyHasAndRepeatsWhatTheServerSays() async throws {
+        let account = Account(id: "webdav:nc", cloud: .webdav, name: "NC", email: "ana@nc", clientID: "", clientSecret: nil,
+                              serverURL: "https://nube.ejemplo.com/remote.php/dav/files/ana", bookmark: nil,
+                              options: ["flavor": "nextcloud"])
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let api = CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "token" })
+        let file = CloudFile(id: "/nota.txt", name: "nota.txt", mime: "text/plain", size: 4, modified: nil, webURL: nil, isFolder: false)
+
+        // Nextcloud makes a new link every time it is asked, and each has to be revoked separately.
+        var methods: [String] = []
+        StubProtocol.handler = { request in
+            methods.append(request.httpMethod ?? "")
+            return (200, [:], Data(#"{"ocs":{"meta":{"status":"ok"},"data":[{"share_type":0,"url":"https://nube/persona"},{"share_type":3,"url":"https://nube/s/yaexiste"}]}}"#.utf8))
+        }
+        let reused = try await api.publicLink(for: file)
+        XCTAssertEqual(reused.absoluteString, "https://nube/s/yaexiste", "Se reutiliza el enlace público que ya tenía")
+        XCTAssertEqual(methods, ["GET"], "Sin crear un segundo enlace")
+
+        // With none to reuse, one is created.
+        methods = []
+        StubProtocol.handler = { request in
+            methods.append(request.httpMethod ?? "")
+            if request.httpMethod == "GET" { return (200, [:], Data(#"{"ocs":{"meta":{"status":"ok"},"data":[]}}"#.utf8)) }
+            XCTAssertEqual(request.value(forHTTPHeaderField: "OCS-APIRequest"), "true")
+            return (200, [:], Data(#"{"ocs":{"meta":{"status":"ok"},"data":{"url":"https://nube/s/nuevo"}}}"#.utf8))
+        }
+        let created = try await api.publicLink(for: file)
+        XCTAssertEqual(created.absoluteString, "https://nube/s/nuevo")
+        XCTAssertEqual(methods, ["GET", "POST"])
+
+        // And a refusal keeps the server's own words instead of a bare HTTP code.
+        StubProtocol.handler = { request in
+            if request.httpMethod == "GET" { return (200, [:], Data(#"{"ocs":{"meta":{"status":"ok"},"data":[]}}"#.utf8)) }
+            return (403, [:], Data(#"{"ocs":{"meta":{"status":"failure","statuscode":403,"message":"Se exige contraseña en los enlaces públicos"}}}"#.utf8))
+        }
+        do { _ = try await api.publicLink(for: file); XCTFail("Debe fallar") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("Se exige contraseña"), error.localizedDescription) }
+    }
+
+    func testAPasswordInTheClearIsOnlyAllowedWhereItCannotLeaveTheBuilding() async throws {
+        // A Basic password travels in every request. macOS blocks plain HTTP off the local network anyway, and over
+        // the internet it would be handing the password to whoever is listening.
+        for local in ["nas.local", "192.168.1.10", "10.0.0.5", "172.16.3.1", "127.0.0.1", "localhost", "diskstation"] {
+            XCTAssertTrue(OAuth.isLocalNetwork(local), local)
+        }
+        for remote in ["nube.ejemplo.com", "8.8.8.8", "172.32.0.1", "11.0.0.1"] {
+            XCTAssertFalse(OAuth.isLocalNetwork(remote), remote)
+        }
+        // An IPv6 literal has no dots either, and a NAS reachable over native IPv6 is as public as any other server.
+        XCTAssertFalse(OAuth.isLocalNetwork("2606:4700::1111"), "Una dirección IPv6 pública no es la red local")
+        XCTAssertFalse(OAuth.isLocalNetwork("[2606:4700::1111]"))
+        XCTAssertTrue(OAuth.isLocalNetwork("::1"))
+        XCTAssertTrue(OAuth.isLocalNetwork("fe80::1"), "Enlace local")
+        XCTAssertTrue(OAuth.isLocalNetwork("fd00::1"), "Rango privado de IPv6")
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let oauth = OAuth(session: URLSession(configuration: config)) { _ in false }
+        StubProtocol.handler = { _ in (207, [:], Data(#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"></d:multistatus>"#.utf8)) }
+        let nas = try await oauth.signInWebDAV(server: "http://nas.local/dav", username: "ana", password: "secreta")
+        XCTAssertEqual(nas.0.serverURL, "http://nas.local/dav", "En la red local se permite")
+        StubProtocol.handler = { _ in XCTFail("No debe contactarse"); return (500, [:], Data()) }
+        do {
+            _ = try await oauth.signInWebDAV(server: "http://nube.ejemplo.com/dav", username: "ana", password: "secreta")
+            XCTFail("Fuera de la red local no")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("cifrado"), error.localizedDescription) }
+    }
+
+    func testCredentialsDoNotFollowARedirectToSomewhereElse() async throws {
+        // The Authorization header is set by hand, and URLSession carries a hand-set header across redirects without
+        // asking. A server answering with a 302 elsewhere would be handed the account's Basic password.
+        let guardian = RedirectGuard.shared
+        let session = URLSession(configuration: .ephemeral)
+        let original = URLRequest(url: URL(string: "https://dav.example.com/dav/a.txt")!)
+        let task = session.dataTask(with: original)
+        defer { task.cancel() }
+        let answer = HTTPURLResponse(url: original.url!, statusCode: 302, httpVersion: nil, headerFields: nil)!
+
+        var elsewhere = URLRequest(url: URL(string: "https://otro.example.com/dav/a.txt")!)
+        elsewhere.setValue("Basic secreto", forHTTPHeaderField: "Authorization")
+        elsewhere.setValue("s=1", forHTTPHeaderField: "Cookie")
+        let crossed = await guardian.urlSession(session, task: task, willPerformHTTPRedirection: answer, newRequest: elsewhere)
+        XCTAssertNil(crossed?.value(forHTTPHeaderField: "Authorization"), "La contraseña no viaja a otro servidor")
+        XCTAssertNil(crossed?.value(forHTTPHeaderField: "Cookie"))
+        XCTAssertEqual(crossed?.url?.host, "otro.example.com", "Pero la redirección se sigue")
+
+        var sameHost = URLRequest(url: URL(string: "https://dav.example.com/otra/ruta")!)
+        sameHost.setValue("Basic secreto", forHTTPHeaderField: "Authorization")
+        let kept = await guardian.urlSession(session, task: task, willPerformHTTPRedirection: answer, newRequest: sameHost)
+        XCTAssertEqual(kept?.value(forHTTPHeaderField: "Authorization"), "Basic secreto", "Dentro del mismo servidor es normal")
+    }
+
+    func testDropboxIsNotFollowedForEverWhenItKeepsRefusingTheSameOffset() async throws {
+        // Following the offset it asks for is the recovery; following the same one over and over is a client
+        // hammering the content host without moving, which is worse than the failure it replaced.
+        let payload = Data(repeating: 6, count: 3 * 1024 * 1024)
+        let file = try temporaryFile(payload)
+        defer { try? FileManager.default.removeItem(at: file) }
+        var appends = 0
+        StubProtocol.handler = { request in
+            if request.url!.path.hasSuffix("start") { return (200, [:], Data(#"{"session_id":"s1"}"#.utf8)) }
+            if request.url!.path.hasSuffix("append_v2") {
+                appends += 1
+                return (409, [:], Data(#"{"error_summary":"incorrect_offset/","error":{".tag":"incorrect_offset","correct_offset":1048576}}"#.utf8))
+            }
+            return (200, [:], Data(#"{"path_lower":"/x"}"#.utf8))
+        }
+        let stamp = try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        do {
+            _ = try await client(.dropbox).resumableUpload(local: file, parent: "/", name: "x", replacing: nil,
+                                                          checkpoint: UploadCheckpoint(total: Int64(payload.count), modified: stamp),
+                                                          save: { _ in }, progress: { _, _ in })
+            XCTFail("Debe rendirse en algún momento")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("sigue rechazando"), error.localizedDescription) }
+        XCTAssertLessThanOrEqual(appends, 3, "Y sin machacar el servidor: \(appends) intentos")
+    }
+
+    func testBoxDoesNotFollowAMarkerThatNeverChanges() async throws {
+        // A marker that comes back unchanged is a server, or a cache in front of it, repeating itself; following it
+        // grew the listing until the app ran out of memory.
+        var requests = 0
+        StubProtocol.handler = { _ in
+            requests += 1
+            return (200, [:], Data(#"{"entries":[{"type":"file","id":"1","name":"a.txt"}],"next_marker":"siempre-igual"}"#.utf8))
+        }
+        let files = try await client(.box).list(parent: "root")
+        XCTAssertEqual(requests, 2, "Se pide la siguiente página una vez y se para al ver el mismo marcador")
+        XCTAssertEqual(files.count, 2)
+    }
+
     // MARK: - Capabilities and sign-in
 
     func testCapabilitiesDescribeWhatEachProviderCanDo() {
@@ -312,5 +680,28 @@ final class ProviderTests: XCTestCase {
         StubProtocol.handler = { _ in XCTFail("A malformed address must not be contacted"); return (500, [:], Data()) }
         do { _ = try await oauth.signInWebDAV(server: "no es una url", username: "a", password: "b"); XCTFail("Expected a rejection") }
         catch { XCTAssertTrue(error.localizedDescription.contains("dirección"), error.localizedDescription) }
+    }
+
+    func testCredentialsTypedIntoTheWebDAVAddressAreUsedButNeverStored() async throws {
+        // Password managers hand out `https://ana:secreta@nas/dav`. The address lives in accounts.json, outside the
+        // Keychain, so what rides in it is stripped and treated as the credentials it is.
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let oauth = OAuth(session: URLSession(configuration: config)) { _ in false }
+        var authorization: String?
+        StubProtocol.handler = { request in
+            authorization = request.value(forHTTPHeaderField: "Authorization")
+            XCTAssertNil(request.url?.user, "The request itself carries no userinfo either")
+            return (207, [:], Data(#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"></d:multistatus>"#.utf8))
+        }
+        let (account, credential) = try await oauth.signInWebDAV(server: "https://ana:secr%40ta@dav.example.com/dav/", username: "", password: "")
+        XCTAssertEqual(account.serverURL, "https://dav.example.com/dav")
+        XCTAssertEqual(account.id, "webdav:dav.example.com/dav#ana")
+        XCTAssertEqual(credential.accessToken, Data("ana:secr@ta".utf8).base64EncodedString(), "Percent-decoded, as typed")
+        XCTAssertEqual(authorization, "Basic " + Data("ana:secr@ta".utf8).base64EncodedString())
+
+        // What the form says wins over what the address carries.
+        let (typed, typedCredential) = try await oauth.signInWebDAV(server: "https://otra:x@dav.example.com/dav", username: "ana", password: "secreta")
+        XCTAssertEqual(typed.serverURL, "https://dav.example.com/dav")
+        XCTAssertEqual(typedCredential.accessToken, Data("ana:secreta".utf8).base64EncodedString())
     }
 }

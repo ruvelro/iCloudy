@@ -8,8 +8,10 @@ import UniformTypeIdentifiers
 final class MockSearchableIndex: SearchableIndexing {
     var indexed: [CSSearchableItem] = []
     var deletedDomains: [String] = []
+    var deletedItems: [String] = []
     func index(_ items: [CSSearchableItem]) async throws { indexed += items }
     func deleteItems(withDomainIdentifiers identifiers: [String]) async throws { deletedDomains += identifiers }
+    func deleteItems(withIdentifiers identifiers: [String]) async throws { deletedItems += identifiers }
 }
 
 @MainActor
@@ -46,6 +48,32 @@ final class SystemIntegrationTests: XCTestCase {
         XCTAssertNil(item.attributeSet.textContent, "Contents are never indexed")
         let folder = SpotlightIndex.searchableItem(for: IndexedItem(accountID: "a", file: file("Fotos", id: "d1", folder: true, mime: "application/vnd.google-apps.folder"), path: [], seen: Date()), accountLabel: "A")
         XCTAssertEqual(folder.attributeSet.contentType, UTType.folder.identifier)
+    }
+
+    func testBinningAnItemAndRenamingOneReachSpotlight() async throws {
+        // A hit left behind after the item went to the bin opens on a file that is not there, and the app can only
+        // answer that the result is no longer available. A rename left Spotlight offering the old name.
+        let (index, mock, root) = try makeIndex()
+        defer { try? FileManager.default.removeItem(at: root) }
+        index.note(file("Informe.pdf", id: "f1"), accountID: "google:1", path: [], accountLabel: "Drive")
+        try await settle()
+        XCTAssertEqual(mock.indexed.count, 1)
+
+        index.rename(file("Informe final.pdf", id: "f1"), accountID: "google:1", accountLabel: "Drive")
+        try await settle()
+        XCTAssertEqual(index.items.first?.file.name, "Informe final.pdf")
+        XCTAssertEqual(mock.indexed.last?.attributeSet.title, "Informe final.pdf", "Y se vuelve a publicar")
+
+        index.forget(accountID: "google:1", fileID: "f1")
+        try await settle()
+        XCTAssertTrue(index.items.isEmpty)
+        XCTAssertEqual(mock.deletedItems, [SpotlightIndex.identifier(accountID: "google:1", fileID: "f1")])
+
+        // Something that was never indexed asks the system for nothing at all.
+        index.forget(accountID: "google:1", fileID: "jamás")
+        index.rename(file("x", id: "jamás"), accountID: "google:1", accountLabel: "Drive")
+        try await settle()
+        XCTAssertEqual(mock.deletedItems.count, 1)
     }
 
     func testNoteDeduplicatesKeepsTheNewestAndHonoursTheLimit() async throws {

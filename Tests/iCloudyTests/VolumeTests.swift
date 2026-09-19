@@ -106,6 +106,88 @@ final class VolumeTests: XCTestCase {
         XCTAssertTrue(empty.hits.isEmpty, "Una búsqueda vacía no recorre el disco")
     }
 
+    func testAnInterruptedReplacementNeverDestroysTheOriginal() async throws {
+        // Replacing used to delete the old file and then copy over it, so a cancellation or a volume that went away
+        // halfway left neither the original nor a whole replacement.
+        let api = client()
+        let target = root.appendingPathComponent("nota.txt")
+        let original = try Data(contentsOf: target)
+        let source = root.appendingPathComponent("origen.bin")
+        try Data(repeating: 3, count: 12 * 1024 * 1024).write(to: source)
+        let stamp = try source.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+
+        let job = Task {
+            var checkpoint = UploadCheckpoint(total: 12 * 1024 * 1024, modified: stamp)
+            _ = try await api.resumableUpload(local: source, parent: "root", name: "nota.txt", replacing: target.path,
+                                              checkpoint: checkpoint, save: { checkpoint = $0 }, progress: { _, _ in })
+        }
+        // Cancelled before the first block leaves: the copy stops at its first cancellation check, which is exactly
+        // the moment when the old code had already deleted the file it was replacing.
+        job.cancel()
+        _ = try? await job.value
+        XCTAssertEqual(try Data(contentsOf: target), original, "El original sigue entero")
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: root.path).filter { $0.hasSuffix(".part") }
+        XCTAssertTrue(leftovers.isEmpty, "Y no queda basura a medias: \(leftovers)")
+
+        // And when it does finish, the replacement really takes its place.
+        var checkpoint = UploadCheckpoint(total: 12 * 1024 * 1024, modified: stamp)
+        _ = try await api.resumableUpload(local: source, parent: "root", name: "nota.txt", replacing: target.path,
+                                          checkpoint: checkpoint, save: { checkpoint = $0 }, progress: { _, _ in })
+        XCTAssertEqual(try Data(contentsOf: target).count, 12 * 1024 * 1024)
+    }
+
+    func testRenamingOnlyTheCapitalisationIsNotAClashWithItself() async throws {
+        // On APFS and HFS+ the file being renamed already answers to the new name, so a plain existence check
+        // refused "nota.txt" → "Nota.txt".
+        let api = client()
+        let before = try await api.list(parent: "root")
+        let file = try XCTUnwrap(before.first { $0.name == "nota.txt" })
+        try await api.rename(file: file, name: "Nota.txt")
+        let listing = try await api.list(parent: "root")
+        let names = listing.map(\.name)
+        XCTAssertTrue(names.contains("Nota.txt"), names.description)
+        XCTAssertFalse(names.contains("nota.txt"), names.description)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("Nota.txt")), Data("hola".utf8), "Y el contenido no se pierde")
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).allSatisfy { !$0.hasPrefix(".icloudy-") }, "Sin intermedios olvidados")
+
+        // Renaming onto a different file that really exists is still refused.
+        let after = try await api.list(parent: "root")
+        let renamed = try XCTUnwrap(after.first { $0.name == "Nota.txt" })
+        try Data("otra".utf8).write(to: root.appendingPathComponent("ocupado.txt"))
+        do { try await api.rename(file: renamed, name: "ocupado.txt"); XCTFail("Debe avisar del choque") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("Ya existe"), error.localizedDescription) }
+    }
+
+    func testTheSearchStopsWhenItIsAskedToAndWhenItHasSeenEnough() async throws {
+        // The walk runs detached, so it never sees the caller's cancellation by itself; a flag carries it across.
+        // Closing the search used to leave it grinding through a share nobody was waiting on any more.
+        let api = client()
+        let search = Task { try await api.searchPage(term: "nada-que-coincida") }
+        search.cancel()
+        do { _ = try await search.value; XCTFail("Una búsqueda cancelada no devuelve resultados") }
+        catch { XCTAssertTrue(error is CancellationError, "\(error)") }
+        XCTAssertGreaterThan(CloudAPI.volumeSearchScanLimit, 1000, "Y hay un tope aunque nadie cancele")
+
+        let many = root.appendingPathComponent("Muchos")
+        try FileManager.default.createDirectory(at: many, withIntermediateDirectories: true)
+        for index in 0..<600 { try Data().write(to: many.appendingPathComponent("coincide-\(index).txt")) }
+        let page = try await client().searchPage(term: "coincide")
+        XCTAssertEqual(page.hits.count, 500, "Hay un tope de resultados")
+        XCTAssertTrue(page.incomplete, "Y se dice que la respuesta está recortada")
+    }
+
+    func testACopyThatDoesNotFinishTakesItsHalfWithIt() async throws {
+        // Half a file is worse than none: it looks complete to anything that only checks whether it is there, and
+        // the cross-cloud staging would have uploaded it as if it were the whole thing.
+        let source = root.appendingPathComponent("grande.bin")
+        try Data(repeating: 1, count: 8 * 1024 * 1024).write(to: source)
+        let destination = root.appendingPathComponent("a-medias.bin")
+        let job = Task { try await CloudAPI.volumeCopyContents(from: source, to: destination, progress: { _, _ in }) }
+        job.cancel()
+        do { _ = try await job.value; XCTFail("Cancelada no debe completarse") } catch {}
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path), "No queda el archivo a medias")
+    }
+
     func testBreadcrumbsAreBuiltFromThePath() throws {
         let trail = try client().volumeTrail(id: root.appendingPathComponent("Fotos/Viaje").path)
         XCTAssertEqual(trail.map(\.name), ["Fotos", "Viaje"])

@@ -9,6 +9,15 @@ final class ListingCache {
     /// Listings above this size are not cached: they are rare and would make the JSON slow to decode on the main actor.
     var maxItems = 5000
     private var memory: [String: [CloudFile]] = [:]
+    /// Disk work happens one piece at a time, in the order it was asked for. Two quick refreshes of the same folder
+    /// used to race, and the older listing could be the one that stayed on disk.
+    private var lastWrite: Task<Void, Never>?
+    private func enqueue(_ work: @escaping @Sendable () -> Void) {
+        let previous = lastWrite
+        lastWrite = Task.detached(priority: .utility) { await previous?.value; work() }
+    }
+    /// Lets tests wait for the disk to catch up.
+    func settle() async { await lastWrite?.value }
 
     init(directory: URL = LocalStore.directory.appendingPathComponent("Listings", isDirectory: true)) {
         self.directory = directory
@@ -28,15 +37,17 @@ final class ListingCache {
         guard files.count <= maxItems else { invalidate(accountID: accountID, parent: parent); return }
         memory[key(accountID, parent)] = files
         let url = fileURL(accountID, parent)
-        Task.detached(priority: .utility) { try? LocalStore.save(files, to: url) }
+        enqueue { try? LocalStore.save(files, to: url) }
     }
     func invalidate(accountID: String, parent: String) {
         memory[key(accountID, parent)] = nil
-        try? FileManager.default.removeItem(at: fileURL(accountID, parent))
+        let url = fileURL(accountID, parent)
+        enqueue { try? FileManager.default.removeItem(at: url) }
     }
     /// Disconnecting an account must leave no trace of its file names on disk.
     func removeAll(accountID: String) {
         memory = memory.filter { !$0.key.hasPrefix(accountID + "\u{1F}") }
-        try? FileManager.default.removeItem(at: accountDirectory(accountID))
+        let directory = accountDirectory(accountID)
+        enqueue { try? FileManager.default.removeItem(at: directory) }
     }
 }

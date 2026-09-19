@@ -150,7 +150,7 @@ enum MegaCrypto {
         while json.last == 0 { json = json.dropLast() }
         return (try? JSONSerialization.jsonObject(with: Data(json))) as? [String: Any]
     }
-    static func encodeAttributes(_ values: [String: String], key: Data) throws -> Data {
+    static func encodeAttributes(_ values: [String: Any], key: Data) throws -> Data {
         var plain = Data("MEGA".utf8)
         plain.append(try JSONSerialization.data(withJSONObject: values, options: [.sortedKeys]))
         plain.append(Data(count: (16 - plain.count % 16) % 16))
@@ -238,9 +238,14 @@ enum MegaCrypto {
         UInt32(truncatingIfNeeded: (((easiness & 63) << 1) + 1) << ((easiness >> 6) * 7 + 3))
     }
 
-    static func randomKey(count: Int = 32) -> Data {
+    /// Throws rather than returning what it got. Ignoring the result meant that a system that could not produce
+    /// randomness would have handed back sixteen zeros, and a file would have been encrypted with them.
+    static func randomKey(count: Int = 32) throws -> Data {
         var bytes = Data(count: count)
-        _ = bytes.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, count, $0.baseAddress!) }
+        let status = bytes.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, count, $0.baseAddress!) }
+        guard status == errSecSuccess else {
+            throw CloudError.message(L("Este Mac no pudo generar una clave aleatoria, así que no se ha subido nada."))
+        }
         return bytes
     }
 }

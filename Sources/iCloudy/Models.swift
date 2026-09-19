@@ -134,6 +134,9 @@ struct Account: Codable, Identifiable, Hashable {
         var base = cloud.capabilities
         // Plain WebDAV cannot share, but Nextcloud and ownCloud add their own API for it on top.
         if cloud == .webdav, flavor == "nextcloud" { base.publicLinks = true }
+        // "Recientes" and "Compartido conmigo" list the person's own activity, not a drive's. A shared drive or a
+        // document library has neither, and asking for them inside one returns nothing or a refusal.
+        if driveID != nil { base.recents = false; base.sharedWithMe = false }
         return base
     }
     /// An account restricted to one shared drive or document library. It is a view of the parent account rather than a
@@ -292,7 +295,11 @@ struct Favorite: Identifiable, Codable {
 /// Runs blocking file-system work off the main actor. Network calls were already asynchronous; disk reads, directory
 /// walks and moves were not, and on slow or external volumes they froze the interface.
 func blockingIO<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
-    try await Task.detached(priority: .userInitiated) { try work() }.value
+    let task = Task.detached(priority: .userInitiated) { try work() }
+    // A detached task inherits neither the actor nor the cancellation of whoever started it. Escaping the actor is
+    // the whole point; losing the cancellation was not. Work that does check it — the proof of work Mega asks for,
+    // the walk of a volume — kept going long after the person had given up, with no way to stop it.
+    return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
 }
 
 enum LocalStore {
@@ -395,6 +402,8 @@ enum FileNames {
     static func problem(with name: String, for cloud: Cloud) -> String? {
         if name.isEmpty || name == "." || name == ".." { return L("Introduce un nombre válido.") }
         if name.contains("/") || name.contains("\0") { return L("El nombre no puede contener barras.") }
+        // An FTP command ends at the line break, so a name carrying one would smuggle a second command to the server.
+        if cloud == .ftp, name.unicodeScalars.contains(where: { $0 == "\r" || $0 == "\n" }) { return L("FTP no admite saltos de línea en los nombres.") }
         // OneDrive, Box and most WebDAV servers sit on Windows-style rules; Drive and Dropbox are permissive.
         guard [.microsoft, .box, .webdav].contains(cloud) else { return nil }
         if name.unicodeScalars.contains(where: { oneDriveForbidden.contains($0) }) { return L("OneDrive no admite los caracteres \" * : < > ? / \\ | en los nombres.") }

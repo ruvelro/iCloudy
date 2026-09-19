@@ -69,6 +69,10 @@ enum OAuthRequest {
     static let defaultPort: UInt16 = 53682
     static let redirectURI = redirectURI(port: defaultPort)
     static func redirectURI(port: UInt16) -> String { "http://127.0.0.1:\(port)/callback" }
+    /// True when the provider accepts a loopback redirect on a port other than the registered one, which lets a busy
+    /// 53682 fall back to an ephemeral one. Google ignores the port of a loopback redirect and Box checks only
+    /// scheme, host and path; Microsoft and Dropbox compare the whole address. See `docs/OAUTH.md`.
+    static func toleratesAnyPort(_ cloud: Cloud) -> Bool { [.google, .box].contains(cloud) }
 
     static func authorizationEndpoint(_ cloud: Cloud) -> String {
         switch cloud {

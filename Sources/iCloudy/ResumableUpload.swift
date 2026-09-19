@@ -6,6 +6,9 @@ struct ServiceError: LocalizedError {
     var detail: String? = nil
     /// Machine-readable code when the body carried one: RFC 6749 `error` (e.g. `invalid_grant`) or the Graph/Drive `error.code`.
     var code: String? = nil
+    /// Seconds the provider asked us to wait, from its `Retry-After` header. Waiting less is what turns one refusal
+    /// into a string of them.
+    var retryAfter: Double? = nil
     var errorDescription: String? { detail ?? "El servicio devolvió HTTP \(status)." }
     var retryable: Bool { [408, 429, 500, 502, 503, 504].contains(status) }
 }
@@ -34,8 +37,8 @@ extension CloudAPI {
         if let drive = account.driveID, account.cloud == .google { return drive }
         guard [.google, .microsoft].contains(account.cloud) else { return account.cloud.rootAlias }
         if let rootIDCache { return rootIDCache }
-        let endpoint = account.cloud == .google ? "https://www.googleapis.com/drive/v3/files/root?fields=id" : "\(graphDrive)/root?$select=id"
-        guard let id = try await json(URL(string: endpoint)!)["id"] as? String else { throw CloudError.message(L("No se pudo identificar la carpeta raíz.")) }
+        let endpoint = account.cloud == .google ? googleURL("https://www.googleapis.com/drive/v3/files/root?fields=id") : URL(string: "\(graphDrive)/root?$select=id")!
+        guard let id = try await json(endpoint)["id"] as? String else { throw CloudError.message(L("No se pudo identificar la carpeta raíz.")) }
         rootIDCache = id
         return id
     }
@@ -59,7 +62,7 @@ extension CloudAPI {
             let current = try await json(googleURL("https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))?fields=parents"))
             let parents = (current["parents"] as? [String] ?? []).filter { $0 != target }
             var url = URLComponents(string: "https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))")!
-            url.queryItems = [URLQueryItem(name: "addParents", value: target), URLQueryItem(name: "removeParents", value: parents.joined(separator: ",")), URLQueryItem(name: "fields", value: "id,parents")]
+            url.queryItems = [URLQueryItem(name: "addParents", value: target), URLQueryItem(name: "removeParents", value: parents.joined(separator: ",")), URLQueryItem(name: "fields", value: "id,parents")] + googleAllDrives
             _ = try await json(url.url!, method: "PATCH", body: [:])
         } else {
             _ = try await json(URL(string: "\(graphDrive)/items/\(Self.segment(file.id))")!, method: "PATCH", body: ["parentReference": ["id": target]])
@@ -206,7 +209,8 @@ extension CloudAPI {
             if account.cloud == .google {
                 let suffix = replacing.map { "/" + Self.segment($0) } ?? ""
                 var metadata: [String: Any] = ["name": name]
-                if replacing == nil { metadata["parents"] = [parent] }
+                // The top of a shared drive is the drive's own id; sending the alias would file it under "Mi unidad".
+                if replacing == nil { metadata["parents"] = [googleParent(parent)] }
                 // `fields` on the session request shapes the final response, which is where the checksum comes back.
                 var initial = try await request(googleURL("https://www.googleapis.com/upload/drive/v3/files\(suffix)?uploadType=resumable&fields=id,md5Checksum,size"), method: replacing == nil ? "POST" : "PATCH", body: metadata)
                 initial.setValue("application/octet-stream", forHTTPHeaderField: "X-Upload-Content-Type")
@@ -238,8 +242,12 @@ extension CloudAPI {
         // Hash the bytes as they leave; a resumed session missed earlier blocks, so it cannot be verified.
         var hasher: UploadHasher? = cursor.offset == 0 ? UploadHasher(cloud: account.cloud) : nil
         var receipt = UploadReceipt(remoteID: nil, verification: .unavailable)
+        // A server that keeps accepting a block without moving the offset on would otherwise be asked for ever. It is
+        // the shape an empty file can take when the answer is a 308 with no range in it.
+        var stalled = 0
         repeat {
             try Task.checkCancellation()
+            let before = cursor.offset
             let current = try local.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
             guard current.fileSize == attributes.fileSize, current.contentModificationDate == cursor.modified else { throw CloudError.message(L("El archivo cambió durante la subida.")) }
             // Reading 5 MiB blocks on the main actor stalled the interface on slow volumes.
@@ -266,6 +274,10 @@ extension CloudAPI {
                 guard received == cursor.offset + Int64(data.count) else { throw URLError(.networkConnectionLost) }
                 cursor.offset = received
             } else { throw ServiceError(status: status) }
+            if !cursor.complete, cursor.offset == before {
+                stalled += 1
+                guard stalled < 3 else { throw CloudError.message(L("El servidor acepta los bloques pero no avanza con esta subida. Cancélala y vuelve a intentarlo.")) }
+            } else { stalled = 0 }
             try save(cursor); progress(cursor.offset, total)
         } while !cursor.complete
         return receipt

@@ -18,7 +18,8 @@ enum HTTP {
         guard (200..<300).contains(response.statusCode) else {
             let (code, message) = errorDetails(data)
             let fallback = "El servicio devolvió HTTP \(response.statusCode). \(response.statusCode == 401 ? L("Vuelve a conectar la cuenta.") : L("Inténtalo de nuevo más tarde."))"
-            throw ServiceError(status: response.statusCode, detail: message ?? fallback, code: code)
+            throw ServiceError(status: response.statusCode, detail: message ?? fallback, code: code,
+                               retryAfter: Double(response.value(forHTTPHeaderField: "Retry-After") ?? ""))
         }
     }
     /// Drive and Graph nest the error as an object; the OAuth token endpoints follow RFC 6749 with `error` and `error_description` strings.
@@ -83,12 +84,13 @@ final class OAuth {
         let verifier = Self.random()
         expectedState = Self.random()
         defer { stop() }
-        // Microsoft validates the registered port, so it must be the fixed one. Google ignores the port of a loopback
-        // redirect, which lets a second instance or another app on 53682 fall back to an ephemeral port.
+        // Microsoft and Dropbox validate the registered port, so for them it has to be the fixed one. Google ignores
+        // the port of a loopback redirect and Box only checks scheme, host and path, so with those two a busy 53682
+        // falls back to an ephemeral port instead of blocking the sign-in.
         let port: UInt16
         do { port = try await listen(on: OAuthRequest.defaultPort) }
         catch {
-            guard cloud == .google else { throw CloudError.message(L("No se pudo preparar el inicio de sesión: el puerto \(OAuthRequest.defaultPort) está ocupado. Cierra otras instancias de iCloudy y vuelve a intentarlo.")) }
+            guard OAuthRequest.toleratesAnyPort(cloud) else { throw CloudError.message(L("No se pudo preparar el inicio de sesión: el puerto \(OAuthRequest.defaultPort) está ocupado. Cierra otras instancias de iCloudy y vuelve a intentarlo.")) }
             port = try await listen(on: 0)
         }
         let redirect = OAuthRequest.redirectURI(port: port)
@@ -170,7 +172,13 @@ final class OAuth {
               let host = components.host, !host.isEmpty, ["http", "https"].contains(components.scheme ?? "") else {
             throw CloudError.message(L("Escribe una dirección de servidor válida, por ejemplo https://nube.ejemplo.com/remote.php/dav/files/ana"))
         }
+        let (username, password) = Self.credentials(embeddedIn: &components, username: username, password: password)
         guard !username.isEmpty, !password.isEmpty else { throw CloudError.message(L("Introduce el usuario y la contraseña del servidor.")) }
+        // A Basic password travels in every single request. macOS blocks plain HTTP to anything but the local
+        // network, and over the internet it would be handing the password to whoever is listening.
+        if components.scheme?.lowercased() == "http", !Self.isLocalNetwork(host) {
+            throw CloudError.message(L("Esa dirección no usa cifrado, y la contraseña viajaría en claro en cada petición. Usa https://, o una dirección de tu red local."))
+        }
         components.query = nil; components.fragment = nil
         if components.path.hasSuffix("/") { components.path = String(components.path.dropLast()) }
         guard let base = components.url else { throw CloudError.message(L("Escribe una dirección de servidor válida, por ejemplo https://nube.ejemplo.com/remote.php/dav/files/ana")) }
@@ -210,6 +218,7 @@ final class OAuth {
               ["ftp", "ftps"].contains((components.scheme ?? "").lowercased()) else {
             throw CloudError.message(L("Escribe una dirección válida, por ejemplo ftp://servidor.ejemplo.com/carpeta"))
         }
+        let (username, password) = Self.credentials(embeddedIn: &components, username: username, password: password)
         guard !username.isEmpty else { throw CloudError.message(L("Introduce el usuario del servidor.")) }
         components.query = nil; components.fragment = nil
         if components.path.hasSuffix("/"), components.path.count > 1 { components.path = String(components.path.dropLast()) }
@@ -233,6 +242,33 @@ final class OAuth {
                               name: host, email: username + "@" + host, clientID: "", clientSecret: nil, serverURL: base)
         return (account, Credential(accessToken: Data("\(username):\(password)".utf8).base64EncodedString(),
                                     refreshToken: "", expires: .distantFuture))
+    }
+
+    /// True for an address that cannot leave the local network, which is where macOS still allows a connection in
+    /// the clear: `.local` names, a bare host name, loopback, and the private IPv4 ranges.
+    static func isLocalNetwork(_ host: String) -> Bool {
+        let name = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        if name == "localhost" || name.hasSuffix(".local") { return true }
+        // An IPv6 literal has no dots either, so it has to be recognised before the bare-name rule below: only
+        // loopback and link-local are inside the building, and every other address is as public as any other.
+        if name.contains(":") { return name == "::1" || name.hasPrefix("fe80:") || name.hasPrefix("fc") || name.hasPrefix("fd") }
+        if !name.contains(".") { return true }   // a bare name resolves only inside the local network
+        let parts = name.split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 4, parts.allSatisfy({ (0...255).contains($0) }) else { return false }
+        if parts[0] == 127 || parts[0] == 10 { return true }
+        if parts[0] == 192 && parts[1] == 168 { return true }
+        if parts[0] == 172 && (16...31).contains(parts[1]) { return true }
+        if parts[0] == 169 && parts[1] == 254 { return true }
+        return false
+    }
+
+    /// Password managers and NAS panels hand out addresses like `https://ana:secreta@nas/dav`. The address is stored
+    /// outside the Keychain, so whatever rides in it is stripped here and treated as the credentials it is, unless the
+    /// form already has its own. Nothing typed as an address ever ends up in `accounts.json`.
+    static func credentials(embeddedIn components: inout URLComponents, username: String, password: String) -> (String, String) {
+        let embeddedUser = components.user ?? "", embeddedPassword = components.password ?? ""
+        components.user = nil; components.password = nil
+        return (username.isEmpty ? embeddedUser : username, password.isEmpty ? embeddedPassword : password)
     }
 
     /// Binds the loopback listener and returns the port actually in use (`0` asks the system for a free one).

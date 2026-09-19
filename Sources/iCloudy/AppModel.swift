@@ -14,6 +14,11 @@ final class AppModel: ObservableObject {
     @Published var error: String?
     /// Non-error feedback, e.g. "link copied". Shown in a plain alert.
     @Published var info: String?
+    /// SwiftUI presents one alert at a time, so an error and a piece of good news arriving together meant the second
+    /// one never appeared at all. They share a presentation now: the error goes first and the other waits its turn.
+    var alertTitle: String { error != nil ? L("No se pudo completar la operación") : L("iCloudy") }
+    var alertMessage: String? { error ?? info }
+    func dismissAlert() { if error != nil { error = nil } else { info = nil } }
     /// File awaiting confirmation before a public link is created for it.
     @Published var pendingShare: (file: CloudFile, account: Account)?
     /// Items awaiting confirmation before being sent to the provider's trash.
@@ -24,6 +29,9 @@ final class AppModel: ObservableObject {
     @Published var crossCloud: CrossCloudRequest?
     /// Self-hosted provider whose credentials form is open, if any.
     @Published var serverLogin: Cloud?
+    /// The account that form was opened to reconnect, so it arrives with its address and user already written.
+    /// Retyping a NAS address from memory to fix a session is a poor way to ask somebody for a password.
+    @Published var reconnecting: Account?
     /// True while the advanced sheet for shared drives and document libraries is open.
     /// Host of the O2 account being connected, which also drives the sign-in window.
     @Published var o2Login: O2LoginRequest?
@@ -79,6 +87,8 @@ final class AppModel: ObservableObject {
     private var keepAlive: Task<Void, Never>?
     private var wakeObserver: NSObjectProtocol?
     private var lastKeepAlive: [String: Date] = [:]
+    /// Accounts with a keep-alive request in flight, so a slow one is not asked again on the next round.
+    private var touching: Set<String> = []
     /// Accounts whose session is being renewed in the background, so it is only attempted once at a time.
     @Published private(set) var renewingAccountIDs: Set<String> = []
     private var editContext: (Account, String)?
@@ -88,9 +98,10 @@ final class AppModel: ObservableObject {
     /// How long a session may go untouched. Measured against O2's server, which let 68 minutes pass and refused at
     /// 80, so a quarter of an hour leaves room for several missed rounds.
     static let keepAliveInterval: TimeInterval = 15 * 60
-    /// How often that is checked. Shorter than the interval on purpose: a background app has its timers stretched by
-    /// the system, and a real record showed a twenty-minute sleep arriving after forty. Looking often and deciding
-    /// by the clock survives that, where trusting the sleep did not.
+    /// How often that is checked. Shorter than the interval on purpose: deciding by the clock rather than by how long
+    /// the sleep actually lasted is what survives a Mac that spends the night waking in the dark and going back to
+    /// sleep. (An earlier note here claimed the system stretched a twenty-minute sleep to forty. It did not: the
+    /// script that measured it was dropping one line in three. The shape of the fix stands; the reason given did not.)
     static let keepAliveCheck: TimeInterval = 4 * 60
 
     var account: Account? { accounts.first { $0.id == selectedAccountID } }
@@ -127,8 +138,12 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             isOnline = online
             queue.setOnline(online)
-            // Whatever failed while offline is worth one automatic retry now.
-            if online, account != nil { reload() }
+            // Whatever failed while offline is worth one automatic retry now, and a session that goes quiet while the
+            // network is away is one the provider may have given up on: the first thing to do is prove it is alive.
+            if online {
+                touchIdleSessions(force: true, note: "ha vuelto la red")
+                if account != nil { reload() }
+            }
         }
         queue.didComplete = { [weak self] id in
             guard let self else { return }
@@ -205,8 +220,12 @@ final class AppModel: ObservableObject {
             return try await self.client(account).searchPage(term: query, cursor: cursor, filters: self.globalSearch.filters)
         }
     }
+    /// A Spotlight result opened before the stored accounts had been read. The Keychain is read after the window is
+    /// on screen, so a cold start always got here first and the answer was always that the result was gone.
+    private var pendingSpotlightItem: String?
     /// Handles a Spotlight result: folders open in place, files open their preview, because only the item itself was indexed.
     func openSpotlightItem(identifier: String) {
+        guard !loadingAccounts else { pendingSpotlightItem = identifier; return }
         guard let decoded = SpotlightIndex.decode(identifier: identifier),
               let entry = spotlight.items.first(where: { $0.accountID == decoded.accountID && $0.file.id == decoded.fileID }),
               let account = accounts.first(where: { $0.id == decoded.accountID }) else {
@@ -242,6 +261,15 @@ final class AppModel: ObservableObject {
         guard let account else { return }
         localCopies.forget(accountID: account.id, fileID: file.id)
     }
+    /// Republishes the favorites of the accounts that are actually connected. Favorites are kept when an account is
+    /// disconnected, on purpose, but publishing them again put back in the system's search exactly what disconnecting
+    /// had just removed from it.
+    func refreshSpotlightFavorites() {
+        let connected = Set(accounts.map(\.id))
+        spotlight.refreshFavorites(favorites.filter { connected.contains($0.accountID) }) { [weak self] id in
+            self?.accounts.first { $0.id == id }.map { self?.accountTitle($0) ?? $0.email } ?? id
+        }
+    }
     private func noteForSpotlight(_ file: CloudFile, account: Account) {
         spotlight.note(file, accountID: account.id, path: path, accountLabel: accountTitle(account))
     }
@@ -262,7 +290,8 @@ final class AppModel: ObservableObject {
             // The demo account is local and may already be in the list.
             accounts = stored + accounts.filter(\.isDemo)
             if selectedAccountID == nil { selectedAccountID = accounts.first?.id }
-            spotlight.refreshFavorites(favorites) { [weak self] id in self?.accounts.first { $0.id == id }.map { self?.accountTitle($0) ?? $0.email } ?? id }
+            refreshSpotlightFavorites()
+            if let waiting = pendingSpotlightItem { pendingSpotlightItem = nil; openSpotlightItem(identifier: waiting) }
             if account != nil { reload() }
             for account in accounts where account.id != selectedAccountID { refreshStorage(account) }
             repairKeychainAccessOnce()
@@ -286,6 +315,8 @@ final class AppModel: ObservableObject {
         if let client = clients[account.id] { return client }
         if account.isDemo && demo == nil { demo = try DemoStore() }
         let client = CloudAPI(account: account, demo: account.isDemo ? demo : nil)
+        client.credentialSaveDidFail = { [weak self] message in self?.error = message }
+        client.bookmarkDidRenew = { [weak self] bookmark in self?.storeRenewedBookmark(bookmark, for: account) }
         client.sessionDidExpire = { [weak self] reason in
             self?.expiredAccountIDs.insert(account.id)
             if let reason { self?.expiryReasons[account.id] = reason }
@@ -294,7 +325,35 @@ final class AppModel: ObservableObject {
         clients[account.id] = client
         return client
     }
+    /// Keeps a bookmark the system had to renew. macOS marks one stale when the folder moves or the volume changes
+    /// identity; the old one still resolves for a while and then stops, and the account looks broken out of nowhere.
+    private func storeRenewedBookmark(_ bookmark: Data, for account: Account) {
+        guard let index = accounts.firstIndex(where: { $0.id == account.id }), accounts[index].bookmark != bookmark else { return }
+        accounts[index].bookmark = bookmark
+        try? Vault.save(accounts.filter { !$0.isDemo }, key: "accounts")
+    }
     func isExpired(_ account: Account) -> Bool { expiredAccountIDs.contains(account.id) }
+    /// Accounts that live off this one's credential: the shared drives and document libraries derived from it. They
+    /// have no sign-in of their own, so whatever happens to the parent's session happens to them.
+    static func dependents(of account: Account, in accounts: [Account]) -> [Account] {
+        accounts.filter { $0.id != account.id && $0.credentialKey == account.id }
+    }
+    /// Reconnecting replaces the client of the account itself; the dependants keep a client that still believes the
+    /// old session is gone, so they are reset too. Without this a shared drive stayed "expired" until the next launch.
+    private func adopt(_ account: Account, credential: Credential?) throws {
+        if let credential { try Vault.save(credential, key: account.id) }
+        var updated = accounts.filter { $0.id != account.id }; updated.append(account)
+        try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
+        accounts = updated
+        for member in [account] + Self.dependents(of: account, in: accounts) {
+            clients[member.id]?.invalidate(); clients[member.id] = nil
+            expiredAccountIDs.remove(member.id); expiryReasons[member.id] = nil
+        }
+    }
+    /// The files a multi-selection acts on: only what the list shows. The selection keeps ids of rows the filter has
+    /// hidden, and acting on those sent things to the bin that were not on screen.
+    func selection(_ ids: Set<String>) -> [CloudFile] { Self.selected(ids, among: visibleFiles) }
+    static func selected(_ ids: Set<String>, among visible: [CloudFile]) -> [CloudFile] { visible.filter { ids.contains($0.id) } }
     /// True while a new session is being fetched without involving the person, so the interface can say so rather
     /// than showing an alarming notice about an account that is about to fix itself.
     func isRenewing(_ account: Account) -> Bool { renewingAccountIDs.contains(account.id) }
@@ -367,15 +426,18 @@ final class AppModel: ObservableObject {
             let sso = stored.map { O2API.restoreSSO($0.secret) } ?? []
             let renewed = await O2SilentRenewal(host: host).attempt(sso: sso)
             guard let self else { return }
-            renewingAccountIDs.remove(account.id)
+            // Released only once the new session has been proved and written. Clearing it before that showed the
+            // "expired" notice, with its button, over an account that was about to fix itself.
+            defer { renewingAccountIDs.remove(account.id) }
             guard let renewed else { return }
             await completeO2(host: host, validationKey: renewed.key, cookies: renewed.cookies,
-                             userAgent: renewed.userAgent, sso: renewed.sso, select: false)
+                             userAgent: renewed.userAgent, sso: renewed.sso, replacing: account, select: false)
         }
     }
 
     func completeO2(host: String, validationKey: String, cookies: [HTTPCookie], userAgent: String?,
-                    sso: [HTTPCookie] = [], select shouldSelect: Bool = true) async {
+                    sso: [HTTPCookie] = [], replacing existing: Account? = nil,
+                    select shouldSelect: Bool = true) async {
         connectionError = nil
         connecting = shouldSelect
         defer { connecting = false }
@@ -389,9 +451,15 @@ final class AppModel: ObservableObject {
             // Asking who this is proves the session works before anything is written to the Keychain.
             let identity = try await O2API.identity(host: host, state: state, session: probe)
 
-            let account = Account(id: "o2:\(host):\(identity)", cloud: .o2, name: L("O2 Cloud"), email: identity,
+            // Renewing keeps the account it was renewing. The identifier is built from whatever `/profile` answers,
+            // and that answer is not always the same field: a renewal that got the phone number where the first
+            // sign-in got the e-mail would have created a second account and left the first one expired for good.
+            var options = existing?.options ?? ["host": host]
+            options["host"] = host
+            let account = Account(id: existing?.id ?? "o2:\(host):\(identity)", cloud: .o2, name: L("O2 Cloud"),
+                                  email: existing?.email ?? identity,
                                   clientID: "", clientSecret: nil, serverURL: "https://" + host, bookmark: nil,
-                                  options: ["host": host])
+                                  options: options)
             let credential = Credential(accessToken: "", refreshToken: "", expires: .distantFuture,
                                         secret: O2API.store(validationKey: validationKey, cookies: cookies,
                                                             userAgent: userAgent, sso: sso))
@@ -400,9 +468,15 @@ final class AppModel: ObservableObject {
             try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
             accounts = updated; clients[account.id]?.invalidate(); clients[account.id] = nil
             expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
+            lastKeepAlive[account.id] = Date()
             if shouldSelect { select(account.id); showConnect = false }
             else if selectedAccountID == account.id { reload() }
-        } catch { connectionError = error.localizedDescription }
+        } catch {
+            // A silent renewal has nobody watching the connection sheet, so its failure goes to the diagnostic
+            // instead of to a field on a form that is not on screen.
+            if shouldSelect { connectionError = error.localizedDescription }
+            else { O2Log.record("renovación silenciosa · no se pudo adoptar: \(error.localizedDescription)") }
+        }
     }
 
     /// Opens the Finder's own "Connect to Server" flow. Mounting is not something a sandboxed app may do itself.
@@ -432,7 +506,7 @@ final class AppModel: ObservableObject {
             try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
             accounts = updated; clients[account.id]?.invalidate(); clients[account.id] = nil
             expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
-            serverLogin = nil
+            serverLogin = nil; reconnecting = nil
             select(account.id); showConnect = false
         } catch { connectionError = error.localizedDescription }
     }
@@ -445,10 +519,16 @@ final class AppModel: ObservableObject {
         case .volume:
             await connectVolume()
         case let cloud where cloud.usesWebLogin || cloud.usesPasswordLogin:
-            // These two sign in from inside the connection sheet, so it has to be on screen to present them.
+            // These two sign in from inside the connection sheet, so it has to be on screen to present them. The
+            // sheet is opened first and the form a moment later: presenting both in the same turn is a nesting
+            // SwiftUI sometimes drops on the floor, leaving a connection sheet and no form.
+            reconnecting = account
             showConnect = true
-            if cloud.usesWebLogin { o2Login = O2LoginRequest(id: account.options["host"] ?? "cloud.o2online.es") }
-            else { serverLogin = cloud }
+            let host = account.options["host"] ?? "cloud.o2online.es"
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(120))
+                if cloud.usesWebLogin { self.o2Login = O2LoginRequest(id: host) } else { self.serverLogin = cloud }
+            }
         default:
             await connect(cloud: account.cloud)
         }
@@ -492,39 +572,49 @@ final class AppModel: ObservableObject {
             let configuration = try OAuthConfiguration.load()
             let client = try configuration.client(for: cloud)
             let (account, credential) = try await oauth.signIn(cloud: cloud, clientID: client.id, clientSecret: client.secret)
-            try Vault.save(credential, key: account.id)
-            var updated = accounts.filter { $0.id != account.id }; updated.append(account)
-            try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
-            accounts = updated; clients[account.id]?.invalidate(); clients[account.id] = nil
-            expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
+            try adopt(account, credential: credential)
             select(account.id); showConnect = false
         } catch is CancellationError {} catch { connectionError = error.localizedDescription }
     }
     func canDisconnect(_ account: Account) -> Bool {
-        accounts.contains { $0.id == account.id } && !queue.hasActive(accountID: account.id)
+        guard accounts.contains(where: { $0.id == account.id }) else { return false }
+        return ([account] + Self.dependents(of: account, in: accounts)).allSatisfy { !queue.hasActive(accountID: $0.id) }
     }
     func disconnect(_ account: Account) {
         guard canDisconnect(account) else {
             error = L("Pausa o termina las transferencias de esta cuenta antes de desconectarla.")
             return
         }
+        // The sign-in at Telefónica outlives the session at O2 and lives in WebKit's own store, not in the Keychain.
+        // Left behind, anybody opening "Conectar O2 Cloud" on this Mac walked straight in without typing anything.
+        if account.cloud.usesWebLogin {
+            let host = account.options["host"] ?? "cloud.o2online.es"
+            Task { await O2WebSession.forget(host: host) }
+        }
+        // A shared drive or a library borrows this account's credential: once that is gone they cannot work and
+        // cannot be reconnected on their own, so they leave with it instead of lingering as "expired".
+        let leaving = [account] + Self.dependents(of: account, in: accounts)
         do {
-            if preview.model.account?.id == account.id { preview.close() }
-            let updated = accounts.filter { $0.id != account.id }
+            if let shown = preview.model.account, leaving.contains(where: { $0.id == shown.id }) { preview.close() }
+            let updated = accounts.filter { member in !leaving.contains { $0.id == member.id } }
             if account.isDemo { UserDefaults.standard.set(false, forKey: "demoEnabled") }
             else { try Vault.save(updated.filter { !$0.isDemo }, key: "accounts"); try Vault.delete(key: account.id) }
-            quotaTasks.removeValue(forKey: account.id)?.cancel()
-            quotaRequestIDs[account.id] = nil; storageQuotas[account.id] = nil
-            clients[account.id]?.invalidate(); clients[account.id] = nil
-            expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
-            listings.removeAll(accountID: account.id)
-            mirrors.removeAll(accountID: account.id)
-            spotlight.removeAccount(account.id)
-            localCopies.removeAccount(account.id)
+            for member in leaving { forget(member) }
             accounts = updated
-            globalSearch.removeAccount(account.id)
-            if selectedAccountID == account.id { select(accounts.first?.id) }
+            if let selected = selectedAccountID, leaving.contains(where: { $0.id == selected }) { select(accounts.first?.id) }
         } catch { self.error = error.localizedDescription }
+    }
+    /// Drops everything kept locally about an account: its client, quota, listings, mirrors, index and search rows.
+    private func forget(_ account: Account) {
+        quotaTasks.removeValue(forKey: account.id)?.cancel()
+        quotaRequestIDs[account.id] = nil; storageQuotas[account.id] = nil
+        clients[account.id]?.invalidate(); clients[account.id] = nil
+        expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
+        listings.removeAll(accountID: account.id)
+        mirrors.removeAll(accountID: account.id)
+        spotlight.removeAccount(account.id)
+        localCopies.removeAccount(account.id)
+        globalSearch.removeAccount(account.id)
     }
     /// Keeps sessions alive for the providers that end them out of boredom. The cheapest call that proves the
     /// session still works is the one that reads how much space is left, and it has the side benefit of keeping that
@@ -555,19 +645,30 @@ final class AppModel: ObservableObject {
         for account in accounts where account.cloud.needsKeepAlive && !isExpired(account) {
             let since = Date().timeIntervalSince(lastKeepAlive[account.id] ?? .distantPast)
             guard force || since >= Self.keepAliveInterval else { continue }
-            lastKeepAlive[account.id] = Date()
-            refreshStorage(account, force: true)
+            guard touching.insert(account.id).inserted else { continue }
+            refreshStorage(account, force: true) { [weak self] answered in
+                self?.touching.remove(account.id)
+                // Only a touch that got an answer counts. Marking the clock before asking meant that a failure right
+                // after waking, while the Wi-Fi was still coming back, bought another quarter of an hour of silence
+                // — which is exactly the gap this exists to prevent.
+                guard answered else { O2Log.record("mantener viva · sin respuesta, se reintenta en la próxima ronda"); return }
+                self?.lastKeepAlive[account.id] = Date()
+            }
         }
     }
 
-    func refreshStorage(_ account: Account, force: Bool = false) {
-        guard accounts.contains(where: { $0.id == account.id }) else { return }
+    /// `then` reports whether the provider actually answered, which is what the keep-alive needs to know: this is
+    /// the cheapest call that proves an O2 session is still alive, and one that failed must not pass for one that
+    /// worked.
+    func refreshStorage(_ account: Account, force: Bool = false, then completion: ((Bool) -> Void)? = nil) {
+        guard accounts.contains(where: { $0.id == account.id }) else { completion?(false); return }
         // Asking a provider that has no quota command would only produce a pointless error every time.
         guard account.capabilities.quota else {
             storageQuotas[account.id] = .unavailable(L("\(account.cloud.title) no informa del espacio disponible."))
+            completion?(false)
             return
         }
-        if !force, case .available = storageQuotas[account.id], let fetched = quotaFetched[account.id], Date().timeIntervalSince(fetched) < Self.quotaRefreshInterval { return }
+        if !force, case .available = storageQuotas[account.id], let fetched = quotaFetched[account.id], Date().timeIntervalSince(fetched) < Self.quotaRefreshInterval { completion?(true); return }
         quotaTasks[account.id]?.cancel()
         let requestID = UUID(); quotaRequestIDs[account.id] = requestID
         // Keep an already displayed value visible while refreshing it.
@@ -578,11 +679,13 @@ final class AppModel: ObservableObject {
             do {
                 let quota = try await client(account).storageQuota()
                 try Task.checkCancellation()
-                guard quotaRequestIDs[account.id] == requestID else { return }
+                guard quotaRequestIDs[account.id] == requestID else { completion?(false); return }
                 storageQuotas[account.id] = .available(quota); quotaFetched[account.id] = Date()
+                completion?(true)
             } catch {
-                guard !Task.isCancelled, quotaRequestIDs[account.id] == requestID else { return }
+                guard !Task.isCancelled, quotaRequestIDs[account.id] == requestID else { completion?(false); return }
                 storageQuotas[account.id] = .unavailable(error.localizedDescription)
+                completion?(false)
             }
         }
     }
@@ -634,6 +737,12 @@ final class AppModel: ObservableObject {
         preview.close(); path.append(file); search = ""; files = []; reload()
     }
     func back(to count: Int) { preview.close(); path = Array(path.prefix(count)); search = ""; files = []; reload() }
+    /// What the "Actualizar" button does: forget what the provider handed out earlier and ask again. `reload(fresh:)`
+    /// alone was enough for providers that are asked folder by folder, not for one that sends the whole account once.
+    func refresh() {
+        if let account, let client = try? client(account) { client.dropCaches() }
+        reload(fresh: true)
+    }
     /// `fresh` skips the cached copy, e.g. right after a write the cache cannot know about yet.
     func reload(fresh: Bool = false) {
         navigationTask?.cancel()
@@ -683,6 +792,12 @@ final class AppModel: ObservableObject {
             NSPasteboard.general.setString(link.absoluteString, forType: .string)
             info = L("Enlace público copiado. Cualquiera que lo tenga podrá ver «\(file.name)». Para revocarlo, usa la web del proveedor.")
         } catch { self.error = error.localizedDescription }
+    }
+    /// Whether "copy to…" can do anything with this selection. Drive cannot copy a folder, and offering the action
+    /// only to answer with a refusal afterwards is a worse way of saying so.
+    func canCopy(_ files: [CloudFile]) -> Bool {
+        guard let account, account.capabilities.copy, !files.isEmpty else { return false }
+        return account.cloud != .google || !files.contains(where: \.isFolder)
     }
     func requestRelocation(_ files: [CloudFile], copy: Bool) {
         guard let account, !files.isEmpty else { return }
@@ -771,6 +886,7 @@ final class AppModel: ObservableObject {
             for file in files {
                 try await api.trash(file: file)
                 moved += 1
+                spotlight.forget(accountID: account.id, fileID: file.id)
                 favorites.removeAll { $0.accountID == account.id && ($0.file.id == file.id || $0.path.contains { $0.id == file.id }) }
             }
             try LocalStore.save(favorites, to: favoritesURL)
@@ -846,6 +962,7 @@ final class AppModel: ObservableObject {
             if let file {
                 try await api.rename(file: file, name: name)
                 let updated = CloudFile(id: file.id, name: name, mime: file.mime, size: file.size, modified: Date(), webURL: file.webURL, isFolder: file.isFolder)
+                spotlight.rename(updated, accountID: account.id, accountLabel: accountTitle(account))
                 for i in favorites.indices where favorites[i].accountID == account.id {
                     if favorites[i].file.id == file.id { favorites[i].file = updated }
                     favorites[i].path = favorites[i].path.map { $0.id == file.id ? updated : $0 }
@@ -861,7 +978,7 @@ final class AppModel: ObservableObject {
         if isFavorite(file) { favorites.removeAll { $0.accountID == account.id && $0.file.id == file.id } }
         else { favorites.append(Favorite(accountID: account.id, file: file, path: path, collection: collection)) }
         do { try LocalStore.save(favorites, to: favoritesURL) } catch { self.error = error.localizedDescription }
-        spotlight.refreshFavorites(favorites) { [weak self] id in self?.accounts.first { $0.id == id }.map { self?.accountTitle($0) ?? $0.email } ?? id }
+        refreshSpotlightFavorites()
     }
     func openFavorite(_ favorite: Favorite) {
         guard accounts.contains(where: { $0.id == favorite.accountID }) else { error = L("Conecta la cuenta de este favorito."); return }

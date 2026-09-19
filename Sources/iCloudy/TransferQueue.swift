@@ -1,6 +1,10 @@
 import Foundation
 import Combine
 
+/// Thrown to take a job out of its retry loop without failing it: the network went away, so it waits for it to come
+/// back alongside the ones the monitor caught in time.
+private struct NetworkGone: Error {}
+
 struct ConflictRequest: Identifiable {
     let id = UUID()
     let transferID: UUID
@@ -137,8 +141,12 @@ final class TransferQueue: ObservableObject {
     func cancel(_ id: UUID, pause: Bool = false) {
         guard let index = index(id), !items[index].finished else { return }
         items[index].state = pause ? .paused : .cancelled; items[index].bytesPerSecond = 0; items[index].detail = ""
-        // Session URLs are pre-authenticated capabilities; a cancelled job will not resume them, so drop them from disk.
-        if !pause { items[index].uploads = [:] }
+        // Session URLs are pre-authenticated capabilities; a cancelled job will not resume them, so drop them from
+        // disk, and tell the provider to forget them rather than leaving them to expire on their own.
+        if !pause {
+            abandonSessions(items[index])
+            items[index].uploads = [:]
+        }
         if !pause, items[index].direction == .transfer { try? FileManager.default.removeItem(at: items[index].localURL) }
         if activeID == id {
             task?.cancel()
@@ -146,6 +154,15 @@ final class TransferQueue: ObservableObject {
         }
         do { try persist() } catch { persistenceError = error.localizedDescription }
         stateChanges.send()
+    }
+    /// Asks the provider to drop the upload sessions of a job that will never finish them. Best effort: they expire
+    /// by themselves, but Box counts the open ones against the account and the others hold storage meanwhile.
+    private func abandonSessions(_ transfer: Transfer) {
+        let urls = transfer.uploads.values.compactMap(\.url)
+        let boxSessions = transfer.uploads.values.compactMap(\.sessionID)
+        guard !urls.isEmpty || !boxSessions.isEmpty, let lookup = client,
+              let api = try? lookup(transfer.accountID) else { return }
+        Task { await api.abandonUploadSessions(urls: urls, boxSessions: boxSessions) }
     }
     /// True for jobs that can be re-prioritised: waiting or paused. The running job and finished ones keep their place.
     func isMovable(_ transfer: Transfer) -> Bool { [.queued, .paused].contains(transfer.state) && transfer.id != activeID }
@@ -214,6 +231,11 @@ final class TransferQueue: ObservableObject {
         return ids.count
     }
     private func clear(_ matches: (Transfer) -> Bool) {
+        // Staging folders of cross-cloud transfers used to survive until the next launch, holding on to whole files
+        // in the cache of a job the person had already swept away.
+        for leaving in items where matches(leaving) && leaving.direction == .transfer {
+            try? FileManager.default.removeItem(at: leaving.localURL)
+        }
         items.removeAll(where: matches)
         do { try persist() } catch { persistenceError = error.localizedDescription }
         stateChanges.send()
@@ -257,10 +279,13 @@ final class TransferQueue: ObservableObject {
                     catch {
                         try Task.checkCancellation()
                         let current = try job(id)
-                        let transient = (error as? ServiceError)?.retryable == true || [.timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost].contains((error as? URLError)?.code)
-                        guard transient, current.attempts < 3 else { throw error }
-                        try edit(id) { $0.attempts += 1; $0.detail = L("Conexión interrumpida. Reintento \($0.attempts)/3…") }
-                        try await Task.sleep(for: .seconds(retryDelay * pow(2, Double(current.attempts))))
+                        switch Self.outcome(for: error, attempts: current.attempts, online: isOnline) {
+                        case .fail: throw error
+                        case .waitForNetwork: throw NetworkGone()
+                        case .retry:
+                            try edit(id) { $0.attempts += 1; $0.detail = L("Conexión interrumpida. Reintento \($0.attempts)/3…") }
+                            try await Task.sleep(for: .seconds(Self.retryWait(after: error, attempt: current.attempts, base: retryDelay)))
+                        }
                     }
                 }
                 // If the user cancelled just after the server committed, preserve the completed checkpoint but keep their state.
@@ -272,6 +297,13 @@ final class TransferQueue: ObservableObject {
                 }
                 if let finished = items.first(where: { $0.id == id && $0.state == .completed }) { didFinish?(finished) }
                 didComplete?(next.accountID)
+            } catch is NetworkGone {
+                pausedByNetwork.insert(id)
+                if let index = index(id), !items[index].finished {
+                    items[index].state = .paused; items[index].bytesPerSecond = 0
+                    items[index].detail = L("Sin conexión · se reanudará automáticamente al volver la red")
+                    do { try persist() } catch { persistenceError = error.localizedDescription }
+                }
             } catch {
                 if let index = index(id), items[index].state == .running {
                     if Task.isCancelled { items[index].state = .paused; items[index].detail = "" }
@@ -284,6 +316,25 @@ final class TransferQueue: ObservableObject {
             stateChanges.send()
             kick()
         }
+    }
+    /// What becomes of a job that has just thrown.
+    enum Outcome: Equatable { case retry, fail, waitForNetwork }
+    /// With the network already gone this is not an error to spend attempts on: a job that fails here is not one
+    /// that `setOnline(true)` brings back, so it sat in the error list until somebody pressed retry by hand. Only
+    /// what the monitor already knows counts, because a job parked while the network looks fine would have nothing
+    /// to wake it up again.
+    static func outcome(for error: Error, attempts: Int, online: Bool) -> Outcome {
+        guard online else { return .waitForNetwork }
+        let transient = (error as? ServiceError)?.retryable == true
+            || [.timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost].contains((error as? URLError)?.code)
+        return transient && attempts < 3 ? .retry : .fail
+    }
+    /// How long to wait before trying a failed transfer again. A provider that answered 429 said how long it wants
+    /// to be left alone; waiting less is what turns one refusal into a string of them and burns the three attempts in
+    /// a few seconds. Anything else doubles the wait each time.
+    static func retryWait(after error: Error, attempt: Int, base: Double) -> Double {
+        if let announced = (error as? ServiceError)?.retryAfter { return min(max(1, announced), 60) }
+        return base * pow(2, Double(attempt))
     }
     static func completionSummary(verified: Int, unverified: Int) -> String {
         guard verified + unverified > 0 else { return "" }
@@ -415,7 +466,25 @@ final class TransferQueue: ObservableObject {
                 // No staged copy (first run, or scratch cleaned): the upload session, if any, is worthless now.
                 checkpoint = nil
                 try edit(id, coalesce: true) { $0.uploads[key] = nil; $0.detail = L("Descargando «\(file.name)» de \(source.account.cloud.title)…") }
-                try await source.download(file: file, to: staged, exportMime: export?.mime)
+                // Some providers write the destination as the bytes arrive, so a download cut short by the network
+                // leaves a truncated file behind. Downloading beside the staged name and renaming only at the end
+                // means a file at `staged` is always a complete one; a retry never uploads half a file as whole.
+                let partial = staged.appendingPathExtension("part")
+                try? FileManager.default.removeItem(at: partial)
+                // Half the work of a cross-cloud transfer is this download, and the bar did not move for any of it.
+                let downloaded = done
+                try await source.download(file: file, to: partial, exportMime: export?.mime) { bytes, total in
+                    self.report(id, base: downloaded, bytes: bytes, total: total)
+                }
+                try Task.checkCancellation()
+                if let expected = file.size, export == nil {
+                    let actual = Int64((try? partial.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+                    guard actual == expected else {
+                        try? FileManager.default.removeItem(at: partial)
+                        throw CloudError.message(L("«\(file.name)» llegó incompleto de \(source.account.cloud.title): \(actual) de \(expected) bytes."))
+                    }
+                }
+                try FileManager.default.moveItem(at: partial, to: staged)
             }
             let base = done
             try edit(id, coalesce: true) { $0.detail = L("Subiendo «\(name)» a \(target.account.cloud.title)…") }
@@ -451,10 +520,16 @@ final class TransferQueue: ObservableObject {
         guard values.isSymbolicLink != true else { throw CloudError.message(L("No se admiten enlaces simbólicos.")) }
         let folder = values.isDirectory == true
         if try job(id).completedPaths.contains(key) { done += try await blockingIO { try Self.localSize(local) }; mark(id, done: done); return }
-        if let problem = FileNames.problem(with: local.lastPathComponent, for: api.account.cloud) {
+        // A mirror's own folder is never created remotely: its contents go into one that already exists, so its name
+        // never reaches the provider. Judging it by the provider's rules stopped a mirror of "Fotos." from ever
+        // syncing to OneDrive, over a name nobody was going to send.
+        if key != ".", let problem = FileNames.problem(with: local.lastPathComponent, for: api.account.cloud) {
             throw CloudError.message(L("No se puede subir «\(local.lastPathComponent)»: \(problem)"))
         }
         var current = try job(id)
+        if key == ".", current.folders[key] == nil, let problem = FileNames.problem(with: local.lastPathComponent, for: api.account.cloud) {
+            throw CloudError.message(L("No se puede subir «\(local.lastPathComponent)»: \(problem)"))
+        }
         if current.uncertainFolders.contains(key) {
             // An earlier POST may have committed even though its reply was lost. Recheck conflicts before creating again.
             try edit(id) { $0.names[key] = nil; $0.replacements[key] = nil; $0.uncertainFolders.remove(key) }

@@ -6,11 +6,11 @@
 
 **Google Drive · OneDrive · Dropbox · Box · Mega · Nextcloud · Synology · FTP · SMB**
 
-[![versión](https://img.shields.io/badge/versión-0.1.0-6f9dff?style=flat-square)](https://github.com/ruvelro/iCloudy/releases)
+[![versión](https://img.shields.io/badge/versión-0.5.0-6f9dff?style=flat-square)](https://github.com/ruvelro/iCloudy/releases)
 [![macOS](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-5.9-F05138?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![SwiftUI](https://img.shields.io/badge/SwiftUI-nativo-0071e3?style=flat-square)](https://developer.apple.com/xcode/swiftui/)
-[![tests](https://img.shields.io/badge/tests-217%20✓-43c463?style=flat-square)](Tests)
+[![tests](https://img.shields.io/badge/tests-305%20✓-43c463?style=flat-square)](Tests)
 [![licencia](https://img.shields.io/badge/licencia-GPL--3.0-8a7ee0?style=flat-square)](LICENSE)
 
 </div>
@@ -48,13 +48,14 @@ terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga 
 | **WebDAV** | Usuario y contraseña | — | ✅¹ | — | — | Estable |
 | **Volúmenes y carpetas** | Carpeta del Mac | ✅ | — | ✅² | — | Estable |
 | **FTP / FTPS** | Usuario y contraseña | — | — | — | — | Estable |
-| **Mega** | Correo y contraseña | ✅ | ✅ | ✅ | MAC propio³ | 🧪 Experimental |
+| **Mega** | Correo y contraseña | ✅ | ✅⁴ | ✅ | MAC propio³ | 🧪 Experimental |
 | **O2 Cloud** | Sesión de Mi O2 | — | — | ✅ | — | 🧪 Experimental |
 
 <sub>
 ¹ Enlaces públicos en Nextcloud y ownCloud, activando la API OCS al conectar.
 ² Papelera real y reversible del sistema, vía <code>trashItem</code>.
 ³ Cifrado de extremo a extremo: cada descarga se verifica contra el resumen que lleva dentro la clave del archivo.
+<br>⁴ En Mega, enlaces de archivo. Una carpeta se comparte con una clave aparte que iCloudy todavía no sabe crear, y lo dice.
 </sub>
 
 **WebDAV** cubre Nextcloud, ownCloud, Synology y casi cualquier NAS. **Volúmenes** cubre SMB, AFP, NFS, discos
@@ -130,7 +131,9 @@ open dist/iCloudy.app
 ```
 
 Para conectar cuentas de Google, Microsoft, Dropbox o Box necesitas registrar tus propios identificadores OAuth —
-el repositorio no incluye ninguno. La [guía de OAuth](docs/OAUTH.md) explica cómo, proveedor por proveedor.
+el repositorio no incluye ninguno. Ten en cuenta que esos identificadores quedan dentro del `.app` que compilas, en
+claro: es lo normal en un cliente de escritorio, porque la app tiene que presentarlos al proveedor, pero significa
+que un paquete compilado no se comparte con nadie a quien no le darías también esas credenciales. La [guía de OAuth](docs/OAUTH.md) explica cómo, proveedor por proveedor.
 **WebDAV, FTP, volúmenes, Mega y O2 no necesitan registro**: funcionan nada más compilar.
 
 <br>
@@ -140,10 +143,13 @@ el repositorio no incluye ninguno. La [guía de OAuth](docs/OAUTH.md) explica c�
 - **Sin backend.** Tu Mac habla directamente con cada proveedor. No hay servidor de iCloudy por el que pasen tus
   archivos, tus nombres de archivo o tus credenciales.
 - **Credenciales en el Llavero**, con `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`: no salen de este Mac, no entran
-  en copias de iCloud y solo se leen con la sesión desbloqueada.
+  en copias de iCloud y solo se leen con la sesión desbloqueada. La excepción es O2: su acceso se hace en las páginas
+  del operador y las cookies de ese acceso viven en el contenedor de WebKit, como en un navegador. Ahí es donde se
+  renueva la sesión sin preguntar nada, y desconectar la cuenta las borra.
 - **OAuth con PKCE** y navegador externo. iCloudy nunca ve tu contraseña de Google, Microsoft, Dropbox ni Box.
-- **Nada se borra de verdad.** La única eliminación es «Enviar a la papelera», reversible desde la web del proveedor.
-  No hay vaciado de papelera ni borrado definitivo.
+- **Nada se borra de verdad en las nubes con papelera.** La única eliminación es «Enviar a la papelera», reversible
+  desde la web del proveedor. No hay vaciado de papelera ni borrado definitivo. WebDAV y FTP no tienen papelera: ahí
+  borrar es definitivo, y el diálogo de confirmación lo dice antes de hacerlo.
 - **No se indexan contenidos.** Spotlight recibe nombres y ubicaciones, nunca lo que hay dentro de los archivos.
 - **Sin telemetría.** Ninguna.
 
@@ -192,7 +198,7 @@ el repositorio no incluye ninguno. La [guía de OAuth](docs/OAUTH.md) explica c�
 ## 🛠️ Desarrollo
 
 ```bash
-swift test                       # 217 pruebas, sin red: todas las respuestas HTTP están simuladas
+swift test                       # 305 pruebas, sin red: todas las respuestas HTTP están simuladas
 swift run iCloudy                # iterar sobre la interfaz
 python3 scripts/mockups/generar.py  # rehacer las maquetas del README
 swift scripts/render-mockups.swift  # y convertirlas en PNG

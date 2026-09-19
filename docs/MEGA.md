@@ -85,8 +85,34 @@ mueve a la papelera, y crear una carpeta o subir un archivo insertan el nodo que
 trae todo lo necesario. Solo lo que no se puede aplicar, porque la respuesta no trae lo que debía, fuerza una
 recarga. Hay pruebas que cuentan las peticiones de árbol y fallan si vuelve a haber más de una.
 
+Lo que Mega no cuenta es lo que hacen los demás dispositivos. Por eso el árbol tiene caducidad: pasados cinco
+minutos se vuelve a pedir en el siguiente listado, y el botón «Actualizar» lo pide en el acto. Sin eso, un archivo
+subido desde el móvil no aparecía hasta desconectar la cuenta.
+
+Y solo se pide una vez a la vez. Al abrir la app arrancan juntos un listado y la consulta de espacio, y los dos
+quieren el árbol: en una cuenta grande eso era descargarlo y descifrarlo dos veces en paralelo. La petición del
+árbol tiene además más margen de tiempo que una orden corriente, porque es la única cuya respuesta Mega tarda en
+empezar a producir.
+
+Al renombrar se reescriben todos los atributos del nodo, no solo el nombre. MEGAsync guarda ahí la huella con la
+fecha real de modificación, y escribir solo el nombre la borraba: el cliente oficial perdía la fecha y volvía a subir
+el archivo.
+
 Las subidas también se reintentan trozo a trozo. Los servidores de almacenamiento contestan `-3`, «espera», igual
 que la API, y abandonar por eso perdía la subida entera por un momento de retraso.
+
+## Lo que llega compartido de otra cuenta
+
+Una carpeta que otra persona comparte contigo no viene cifrada con tu clave maestra, sino con una clave de
+compartición propia que Mega entrega aparte, en el campo `ok` de la misma respuesta que trae el árbol. Sin leerla,
+todo lo compartido aparecía como «Elemento sin acceso», que es lo que se muestra cuando una clave no abre. Ahora se
+descifran esas claves y se prueban con los nodos que llegaron con ellas, así que lo compartido tiene su nombre y sale
+en las búsquedas. Lo que sigue sin haber es una vista «Compartido conmigo» que los reúna.
+
+Al revés no funciona igual. Compartir una carpeta **desde** iCloudy no está: Mega crea para ello una clave de
+compartición nueva, vuelve a cifrar con ella la clave de cada hijo y publica esa clave en el enlace. Antes se
+publicaba la clave de la propia carpeta, que no abre nada, así que el enlace parecía correcto y no lo era. Ahora se
+avisa y se remite a mega.nz. Los archivos sueltos sí se comparten desde la app, y eso está probado.
 
 ## Cuando no se llega a Mega
 
@@ -112,7 +138,13 @@ curl -sS -m 40 -o /dev/null -w '%{http_code} %{time_total}s\n' \
   'https://g.api.mega.co.nz/cs?id=1'
 ```
 
-De ahí sale el resto. Una petición caída se repite hasta tres veces antes de darse por perdida, que con la tasa de
+De ahí sale el resto. Las descargas tienen ahora la misma paciencia que el resto. La dirección que Mega entrega para transferir caduca
+antes que una descarga larga, y un trozo que fallaba perdía el archivo entero: no había reintento ni nada que se
+diera cuenta de que la dirección había envejecido. Ahora cada trozo se reintenta, se pide una dirección nueva cuando
+hace falta, y el 509 con el que Mega avisa de que una cuenta gratuita ha gastado su cuota de transferencia se dice
+con esas palabras en vez de como un código HTTP suelto.
+
+Una petición caída se repite hasta tres veces antes de darse por perdida, que con la tasa de
 fallo observada deja la probabilidad de perder un borrado por debajo del dos por ciento. El número de secuencia no
 cambia entre reintentos, que es lo que impide que Mega aplique el mismo cambio dos veces. Un 5xx o un 429 se esperan
 igual que el `-3`, en vez de entregarle el fallo al usuario al primer intento.
@@ -146,16 +178,26 @@ espacio y los seis dígitos. Si la cuenta no tiene segundo factor, no hay nada q
 Probado contra valores de referencia externos (OpenSSL y la especificación de AES): AES en ECB, CBC y CTR, la
 derivación de contraseña, el resumen del contenido y la exponenciación modular. Probado de extremo a extremo
 contra un servidor de mentira que habla el mismo protocolo: el inicio de sesión completo con el desafío RSA,
-el descifrado del árbol, el listado, la búsqueda, las migas, la cuota, los enlaces, la descarga con su
-comprobación, una descarga alterada, la subida cifrada y el reintento cuando Mega contesta «espera».
+el descifrado del árbol, el listado, la búsqueda, las migas, la cuota, los enlaces de archivo y la negativa a dar uno
+de carpeta, la descarga con su comprobación, una descarga alterada, una dirección de descarga caducada a mitad, la
+cuota de transferencia agotada, la subida cifrada, la de un archivo vacío, el reintento cuando Mega contesta
+«espera» en la subida, la conservación de atributos al renombrar, la recarga del árbol al actualizar o envejecer,
+que dos listados a la vez no lo piden dos veces, el descifrado de lo que llega compartido y el mensaje de un correo
+que Mega no reconoce.
 
 Sin probar: el comportamiento real de los servidores de Mega, que es justo lo que ningún test puede fijar.
 En concreto, no se ha podido comprobar contra una cuenta real el inicio de sesión con segundo factor, ni las
-cuentas anteriores a 2018, ni los límites de transferencia de las cuentas gratuitas.
+cuentas anteriores a 2018, ni los límites de transferencia de las cuentas gratuitas, ni el enlace público de una
+carpeta: el de archivo está probado, pero el de carpeta pasa por una clave de compartición que hoy no se genera, así
+que es probable que no abra.
 
 ## Lo que no hace
 
-No lista «Recientes» ni «Compartido conmigo». Un elemento compartido con la cuenta cuya clave no se puede
-abrir aparece como «Elemento sin acceso» en lugar de con un nombre inventado. Copiar solo funciona con
-archivos, no con carpetas: Mega adjunta el mismo contenido cifrado a un nodo nuevo sin mover bytes, y eso no
-se puede hacer con un árbol entero en una sola petición.
+No lista «Recientes» ni «Compartido conmigo». Un elemento cuya clave no se puede abrir de ninguna manera, ni con la
+maestra ni con una de compartición, aparece como «Elemento sin acceso» en lugar de con un nombre inventado. Copiar
+solo funciona con archivos, no con carpetas: Mega adjunta el mismo contenido cifrado a un nodo nuevo sin mover
+bytes, y eso no se puede hacer con un árbol entero en una sola petición. Compartir carpetas tampoco, por lo dicho
+más arriba.
+
+Las subidas no se reanudan, y por eso tampoco se guarda un punto de control a mitad: hacerlo prometía una
+reanudación que no existe, porque un reintento empieza de cero de todos modos.
