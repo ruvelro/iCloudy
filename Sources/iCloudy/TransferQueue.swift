@@ -415,7 +415,21 @@ final class TransferQueue: ObservableObject {
                 // No staged copy (first run, or scratch cleaned): the upload session, if any, is worthless now.
                 checkpoint = nil
                 try edit(id, coalesce: true) { $0.uploads[key] = nil; $0.detail = L("Descargando «\(file.name)» de \(source.account.cloud.title)…") }
-                try await source.download(file: file, to: staged, exportMime: export?.mime)
+                // Some providers write the destination as the bytes arrive, so a download cut short by the network
+                // leaves a truncated file behind. Downloading beside the staged name and renaming only at the end
+                // means a file at `staged` is always a complete one; a retry never uploads half a file as whole.
+                let partial = staged.appendingPathExtension("part")
+                try? FileManager.default.removeItem(at: partial)
+                try await source.download(file: file, to: partial, exportMime: export?.mime)
+                try Task.checkCancellation()
+                if let expected = file.size, export == nil {
+                    let actual = Int64((try? partial.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+                    guard actual == expected else {
+                        try? FileManager.default.removeItem(at: partial)
+                        throw CloudError.message(L("«\(file.name)» llegó incompleto de \(source.account.cloud.title): \(actual) de \(expected) bytes."))
+                    }
+                }
+                try FileManager.default.moveItem(at: partial, to: staged)
             }
             let base = done
             try edit(id, coalesce: true) { $0.detail = L("Subiendo «\(name)» a \(target.account.cloud.title)…") }

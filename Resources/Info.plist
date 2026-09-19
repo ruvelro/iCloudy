@@ -14,7 +14,22 @@
     <key>CFBundleDevelopmentRegion</key><string>es</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
-    <key>NSHumanReadableCopyright</key><string>© 2026 iCloudy. Cliente de Google Drive y OneDrive.</string>
+    <key>NSHumanReadableCopyright</key><string>© 2026 ruvelro. Todas tus nubes, en una sola ventana del Mac.</string>
+    <!-- Dropping files on the Dock icon only works when the app declares what it opens. Without this the Finder never
+         highlights the icon and application(_:open:) is never called. Rank "None": iCloudy is not a file's editor. -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key><string>Archivo o carpeta para subir</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>None</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.item</string>
+                <string>public.folder</string>
+            </array>
+        </dict>
+    </array>
     <key>ITSAppUsesNonExemptEncryption</key><false/>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>

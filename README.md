@@ -10,7 +10,7 @@
 [![macOS](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-5.9-F05138?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![SwiftUI](https://img.shields.io/badge/SwiftUI-nativo-0071e3?style=flat-square)](https://developer.apple.com/xcode/swiftui/)
-[![tests](https://img.shields.io/badge/tests-217%20✓-43c463?style=flat-square)](Tests)
+[![tests](https://img.shields.io/badge/tests-245%20✓-43c463?style=flat-square)](Tests)
 [![licencia](https://img.shields.io/badge/licencia-GPL--3.0-8a7ee0?style=flat-square)](LICENSE)
 
 </div>
@@ -142,8 +142,9 @@ el repositorio no incluye ninguno. La [guía de OAuth](docs/OAUTH.md) explica c�
 - **Credenciales en el Llavero**, con `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`: no salen de este Mac, no entran
   en copias de iCloud y solo se leen con la sesión desbloqueada.
 - **OAuth con PKCE** y navegador externo. iCloudy nunca ve tu contraseña de Google, Microsoft, Dropbox ni Box.
-- **Nada se borra de verdad.** La única eliminación es «Enviar a la papelera», reversible desde la web del proveedor.
-  No hay vaciado de papelera ni borrado definitivo.
+- **Nada se borra de verdad en las nubes con papelera.** La única eliminación es «Enviar a la papelera», reversible
+  desde la web del proveedor. No hay vaciado de papelera ni borrado definitivo. WebDAV y FTP no tienen papelera: ahí
+  borrar es definitivo, y el diálogo de confirmación lo dice antes de hacerlo.
 - **No se indexan contenidos.** Spotlight recibe nombres y ubicaciones, nunca lo que hay dentro de los archivos.
 - **Sin telemetría.** Ninguna.
 
@@ -192,7 +193,7 @@ el repositorio no incluye ninguno. La [guía de OAuth](docs/OAUTH.md) explica c�
 ## 🛠️ Desarrollo
 
 ```bash
-swift test                       # 217 pruebas, sin red: todas las respuestas HTTP están simuladas
+swift test                       # 245 pruebas, sin red: todas las respuestas HTTP están simuladas
 swift run iCloudy                # iterar sobre la interfaz
 python3 scripts/mockups/generar.py  # rehacer las maquetas del README
 swift scripts/render-mockups.swift  # y convertirlas en PNG

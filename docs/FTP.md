@@ -4,6 +4,8 @@
 
 **FTP** con usuario y contraseña, en modo pasivo siempre. La conexión de control se abre una vez por cuenta y se reutiliza; cada listado o transferencia abre su propia conexión de datos con `EPSV`, o con `PASV` si el servidor no admite la primera.
 
+Esa conexión de control la comparten el explorador y la cola de transferencias, y FTP no admite dos órdenes a la vez en el mismo canal: las respuestas se mezclarían. Por eso las operaciones se ejecutan de una en una, en el orden en que llegan. Y como los servidores cierran la conexión de control tras unos minutos sin uso (vsftpd, a los cinco), la siguiente orden detecta que está muerta, o lee el `421` de despedida, y se vuelve a conectar sola una vez antes de rendirse.
+
 Los identificadores de los elementos son rutas absolutas del servidor, igual que en WebDAV, y la raíz es la ruta base que el usuario escribe al conectar. Las migas de pan se construyen a partir de la ruta, sin peticiones adicionales.
 
 Listados: se usa `MLSD` cuando `FEAT` lo anuncia, que es el formato con tipos, tamaños y fechas fiables. Si no está, se analiza `LIST` en su variante Unix (`ls -l`) y en la variante DOS de algunos servidores Windows. Un enlace simbólico se muestra con su nombre, nunca como carpeta: iCloudy no puede comprobar a dónde apunta.
@@ -32,4 +34,8 @@ FTP no tiene búsqueda, enlaces públicos, papelera, cuota ni sumas de verificac
 
 Sin FTPS, **la contraseña y los archivos viajan sin cifrar**. El formulario de conexión lo advierte y recomienda reservar esa opción para la red local. Las credenciales se guardan en el Llavero de este Mac y solo se envían al servidor que el usuario escribe.
 
-Toda lectura tiene límite de tiempo, así que un servidor que deja de responder a mitad de una transferencia falla con un mensaje en lugar de dejar la operación colgada.
+Toda lectura tiene límite de tiempo, así que un servidor que deja de responder a mitad de una transferencia falla con un mensaje en lugar de dejar la operación colgada. Cancelar una subida detiene el envío en el siguiente bloque.
+
+Una orden FTP termina en el salto de línea. Un nombre de archivo con un retorno de carro dentro, cosa que APFS permite, colaría una segunda orden al servidor (`informe\rDELE /web/index.html`). Los nombres con saltos de línea se rechazan antes de empezar la transferencia, y la sesión se niega a enviar cualquier línea que los contenga.
+
+Si la dirección se escribe con las credenciales dentro (`ftp://ana:secreta@nas`), se extraen antes de guardarla: la dirección va a `accounts.json`, la contraseña solo al Llavero.

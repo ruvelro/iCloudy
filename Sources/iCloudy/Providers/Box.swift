@@ -117,16 +117,32 @@ extension CloudAPI {
             try save(cursor)
         }
         guard let sessionID = cursor.sessionID, let partSize = cursor.chunkSize else { throw CloudError.message(L("No hay sesión de subida.")) }
+        // Box requires the digest of the whole file when the session is committed, resumed or not, and it is also
+        // what makes the upload verifiable. A resumed session did not see the earlier blocks leave, so it reads them
+        // again from the local file, which is still here: that is cheaper than a commit Box refuses.
+        var whole = Insecure.SHA1()
+        if cursor.offset > 0 {
+            let prefix = cursor.offset
+            whole = try await blockingIO {
+                var hasher = Insecure.SHA1()
+                let reader = try FileHandle(forReadingFrom: local)
+                defer { try? reader.close() }
+                var remaining = prefix
+                while remaining > 0 {
+                    let piece = try reader.read(upToCount: Int(min(remaining, 4 * 1024 * 1024))) ?? Data()
+                    guard !piece.isEmpty else { throw CloudError.message(L("El tamaño del origen ha cambiado.")) }
+                    hasher.update(data: piece); remaining -= Int64(piece.count)
+                }
+                return hasher
+            }
+        }
         try handle.seek(toOffset: UInt64(cursor.offset))
         progress(cursor.offset, total)
-        var whole = Insecure.SHA1()
-        // A resumed session cannot recompute the digest of the whole file from the blocks it already sent.
-        var wholeIsComplete = cursor.offset == 0
         while cursor.offset < total {
             try Task.checkCancellation()
             let chunk = try await blockingIO { try handle.read(upToCount: Int(partSize)) ?? Data() }
             guard !chunk.isEmpty else { throw CloudError.message(L("El tamaño del origen ha cambiado.")) }
-            if wholeIsComplete { whole.update(data: chunk) }
+            whole.update(data: chunk)
             var upload = try await request(URL(string: "https://upload.box.com/api/2.0/files/upload_sessions/\(Self.segment(sessionID))")!, method: "PUT")
             upload.timeoutInterval = 180
             upload.setValue("bytes \(cursor.offset)-\(cursor.offset + Int64(chunk.count) - 1)/\(total)", forHTTPHeaderField: "Content-Range")
@@ -143,14 +159,23 @@ extension CloudAPI {
             try save(cursor); progress(cursor.offset, total)
         }
         let parts = cursor.parts.compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+        let digest = whole.finalize()
         var commit = try await request(URL(string: "https://upload.box.com/api/2.0/files/upload_sessions/\(Self.segment(sessionID))/commit")!, method: "POST", body: ["parts": parts])
-        if wholeIsComplete { commit.setValue("sha=" + Data(whole.finalize()).base64EncodedString(), forHTTPHeaderField: "Digest") }
+        commit.setValue("sha=" + Data(digest).base64EncodedString(), forHTTPHeaderField: "Digest")
         let (data, response) = try await send(&commit)
         try HTTP.validate(response, data: data)
         cursor.complete = true; try save(cursor); progress(total, total)
         let entry = ((try? HTTP.json(data))?["entries"] as? [[String: Any]])?.first ?? [:]
-        wholeIsComplete = wholeIsComplete && entry["sha1"] != nil
-        return UploadReceipt(remoteID: entry["id"] as? String, verification: wholeIsComplete ? .verified : .unavailable)
+        return UploadReceipt(remoteID: entry["id"] as? String, verification: try Self.boxVerify(entry, sha1: UploadHasher.hex(digest), name: name))
+    }
+    /// Box stores the SHA-1 of what it kept. Only an answer that matches the bytes sent counts as verified; a stored
+    /// hash on its own says the file exists, not that it is the right one.
+    static func boxVerify(_ entry: [String: Any], sha1: String, name: String) throws -> UploadVerification {
+        guard let stored = entry["sha1"] as? String, !stored.isEmpty else { return .unavailable }
+        guard stored.lowercased() == sha1.lowercased() else {
+            throw CloudError.message(L("La suma de verificación de «\(name)» no coincide con la que informa el servidor. La copia remota puede estar dañada: revísala o vuelve a subirla."))
+        }
+        return .verified
     }
 
     /// Single request with a multipart body. Bounded by `boxSessionThreshold`, so memory use stays modest.
@@ -170,12 +195,14 @@ extension CloudAPI {
         var request = try await request(URL(string: "https://upload.box.com/api/2.0/" + route)!, method: "POST")
         request.timeoutInterval = 180
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.setValue("sha=" + Data(Insecure.SHA1.hash(data: payload)).base64EncodedString(), forHTTPHeaderField: "Digest")
+        // This endpoint takes the hash in `content-md5`, in hex, despite the name: `Digest` belongs to the session
+        // endpoints and is ignored here. Box refuses the upload when it does not match what arrived.
+        let sha1 = UploadHasher.hex(Insecure.SHA1.hash(data: payload))
+        request.setValue(sha1, forHTTPHeaderField: "content-md5")
         let (data, response) = try await session.upload(for: request, from: body)
         try HTTP.validate(response, data: data)
         cursor.offset = cursor.total; cursor.complete = true; try save(cursor); progress(cursor.total, cursor.total)
         let entry = ((try? HTTP.json(data))?["entries"] as? [[String: Any]])?.first ?? [:]
-        // Box checks the Digest header itself and rejects a mismatch, so a stored sha1 means the bytes arrived intact.
-        return UploadReceipt(remoteID: entry["id"] as? String, verification: entry["sha1"] != nil ? .verified : .unavailable)
+        return UploadReceipt(remoteID: entry["id"] as? String, verification: try Self.boxVerify(entry, sha1: sha1, name: name))
     }
 }

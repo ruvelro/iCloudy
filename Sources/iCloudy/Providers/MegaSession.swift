@@ -17,6 +17,16 @@ struct MegaNode: Hashable {
     var isReadable: Bool { !key.isEmpty || kind >= 2 }
     /// The key that decrypts this node's contents and attributes.
     var contentKey: Data { kind == 0 ? (MegaCrypto.unpack(fileKey: key)?.key ?? Data()) : key }
+    /// Everything else the node's attributes carried, as JSON: MEGAsync's fingerprint `c`, labels, favourites. It is
+    /// kept so that renaming writes the whole set back; writing only the name used to erase the rest, and the
+    /// official clients then lost the file's real modification date.
+    var attributeJSON = Data()
+    /// The attributes with the name replaced, ready to be encrypted again.
+    func attributes(named name: String) -> [String: Any] {
+        var values = (try? JSONSerialization.jsonObject(with: attributeJSON)) as? [String: Any] ?? [:]
+        values["n"] = name
+        return values
+    }
 }
 
 /// A signed-in Mega session: the identifier the server accepts, the master key that unwraps every node key, and the
@@ -28,6 +38,9 @@ final class MegaState {
     var children: [String: [String]] = [:]
     var root = ""
     var trash = ""
+    /// When the tree was last fetched. Mega does not push changes made elsewhere, so a tree older than
+    /// `CloudAPI.megaTreeMaxAge` is fetched again on the next listing; until then changes are applied in place.
+    var loadedAt: Date?
     var loaded = false
     /// Mega numbers requests so a retried call is not applied twice.
     var sequence = Int.random(in: 0..<1_000_000)
@@ -262,7 +275,7 @@ enum MegaAPI {
 
     /// Unwraps a node key. A node may carry several copies of its key, one per account it was shared with, so every
     /// candidate is tried and the one whose attributes decode is the right one.
-    static func decrypt(node: [String: Any], masterKey: Data) -> (key: Data, name: String)? {
+    static func decrypt(node: [String: Any], masterKey: Data) -> (key: Data, name: String, attributes: [String: Any])? {
         let kind = node["t"] as? Int ?? 0
         let field = node["k"] as? String ?? ""
         let attributes = node["a"] as? String ?? ""
@@ -275,7 +288,7 @@ enum MegaAPI {
             let content = kind == 0 ? (MegaCrypto.unpack(fileKey: key)?.key ?? Data()) : key
             guard let values = MegaCrypto.attributes(MegaCrypto.decode(attributes), key: content),
                   let name = values["n"] as? String, !name.isEmpty else { continue }
-            return (key, name)
+            return (key, name, values)
         }
         return nil
     }
@@ -296,7 +309,8 @@ enum MegaAPI {
         return MegaNode(handle: handle, parent: entry["p"] as? String ?? "", kind: kind, name: name,
                         size: kind == 0 ? size : nil,
                         modified: (entry["ts"] as? Double).map { Date(timeIntervalSince1970: $0) },
-                        key: decrypted?.key ?? Data())
+                        key: decrypted?.key ?? Data(),
+                        attributeJSON: decrypted.flatMap { try? JSONSerialization.data(withJSONObject: $0.attributes, options: [.sortedKeys]) } ?? Data())
     }
     /// Builds the tree from an `f` response, keeping the order Mega sends so parents are known before children.
     static func tree(_ files: [[String: Any]], masterKey: Data) -> MegaState.Tree {
@@ -320,8 +334,10 @@ extension MegaState {
     func adopt(_ tree: Tree) {
         nodes = tree.nodes; children = tree.children
         root = tree.root; trash = tree.trash
-        loaded = true
+        loaded = true; loadedAt = Date()
     }
+    /// Forgets the tree without forgetting the session, so the next listing fetches the account again.
+    func expire() { loaded = false }
     func next() -> Int { sequence += 1; return sequence }
 
     // MARK: - Keeping the tree current
@@ -333,6 +349,7 @@ extension MegaState {
     func rename(_ handle: String, to name: String) {
         guard var node = nodes[handle] else { loaded = false; return }
         node.name = name
+        node.attributeJSON = (try? JSONSerialization.data(withJSONObject: node.attributes(named: name), options: [.sortedKeys])) ?? node.attributeJSON
         nodes[handle] = node
     }
     func reparent(_ handle: String, to parent: String) {

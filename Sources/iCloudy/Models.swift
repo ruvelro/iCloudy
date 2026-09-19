@@ -395,6 +395,8 @@ enum FileNames {
     static func problem(with name: String, for cloud: Cloud) -> String? {
         if name.isEmpty || name == "." || name == ".." { return L("Introduce un nombre válido.") }
         if name.contains("/") || name.contains("\0") { return L("El nombre no puede contener barras.") }
+        // An FTP command ends at the line break, so a name carrying one would smuggle a second command to the server.
+        if cloud == .ftp, name.unicodeScalars.contains(where: { $0 == "\r" || $0 == "\n" }) { return L("FTP no admite saltos de línea en los nombres.") }
         // OneDrive, Box and most WebDAV servers sit on Windows-style rules; Drive and Dropbox are permissive.
         guard [.microsoft, .box, .webdav].contains(cloud) else { return nil }
         if name.unicodeScalars.contains(where: { oneDriveForbidden.contains($0) }) { return L("OneDrive no admite los caracteres \" * : < > ? / \\ | en los nombres.") }

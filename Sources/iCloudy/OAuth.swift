@@ -170,6 +170,7 @@ final class OAuth {
               let host = components.host, !host.isEmpty, ["http", "https"].contains(components.scheme ?? "") else {
             throw CloudError.message(L("Escribe una dirección de servidor válida, por ejemplo https://nube.ejemplo.com/remote.php/dav/files/ana"))
         }
+        let (username, password) = Self.credentials(embeddedIn: &components, username: username, password: password)
         guard !username.isEmpty, !password.isEmpty else { throw CloudError.message(L("Introduce el usuario y la contraseña del servidor.")) }
         components.query = nil; components.fragment = nil
         if components.path.hasSuffix("/") { components.path = String(components.path.dropLast()) }
@@ -210,6 +211,7 @@ final class OAuth {
               ["ftp", "ftps"].contains((components.scheme ?? "").lowercased()) else {
             throw CloudError.message(L("Escribe una dirección válida, por ejemplo ftp://servidor.ejemplo.com/carpeta"))
         }
+        let (username, password) = Self.credentials(embeddedIn: &components, username: username, password: password)
         guard !username.isEmpty else { throw CloudError.message(L("Introduce el usuario del servidor.")) }
         components.query = nil; components.fragment = nil
         if components.path.hasSuffix("/"), components.path.count > 1 { components.path = String(components.path.dropLast()) }
@@ -233,6 +235,15 @@ final class OAuth {
                               name: host, email: username + "@" + host, clientID: "", clientSecret: nil, serverURL: base)
         return (account, Credential(accessToken: Data("\(username):\(password)".utf8).base64EncodedString(),
                                     refreshToken: "", expires: .distantFuture))
+    }
+
+    /// Password managers and NAS panels hand out addresses like `https://ana:secreta@nas/dav`. The address is stored
+    /// outside the Keychain, so whatever rides in it is stripped here and treated as the credentials it is, unless the
+    /// form already has its own. Nothing typed as an address ever ends up in `accounts.json`.
+    static func credentials(embeddedIn components: inout URLComponents, username: String, password: String) -> (String, String) {
+        let embeddedUser = components.user ?? "", embeddedPassword = components.password ?? ""
+        components.user = nil; components.password = nil
+        return (username.isEmpty ? embeddedUser : username, password.isEmpty ? embeddedPassword : password)
     }
 
     /// Binds the loopback listener and returns the port actually in use (`0` asks the system for a free one).

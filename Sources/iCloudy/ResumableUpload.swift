@@ -34,8 +34,8 @@ extension CloudAPI {
         if let drive = account.driveID, account.cloud == .google { return drive }
         guard [.google, .microsoft].contains(account.cloud) else { return account.cloud.rootAlias }
         if let rootIDCache { return rootIDCache }
-        let endpoint = account.cloud == .google ? "https://www.googleapis.com/drive/v3/files/root?fields=id" : "\(graphDrive)/root?$select=id"
-        guard let id = try await json(URL(string: endpoint)!)["id"] as? String else { throw CloudError.message(L("No se pudo identificar la carpeta raíz.")) }
+        let endpoint = account.cloud == .google ? googleURL("https://www.googleapis.com/drive/v3/files/root?fields=id") : URL(string: "\(graphDrive)/root?$select=id")!
+        guard let id = try await json(endpoint)["id"] as? String else { throw CloudError.message(L("No se pudo identificar la carpeta raíz.")) }
         rootIDCache = id
         return id
     }
@@ -59,7 +59,7 @@ extension CloudAPI {
             let current = try await json(googleURL("https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))?fields=parents"))
             let parents = (current["parents"] as? [String] ?? []).filter { $0 != target }
             var url = URLComponents(string: "https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))")!
-            url.queryItems = [URLQueryItem(name: "addParents", value: target), URLQueryItem(name: "removeParents", value: parents.joined(separator: ",")), URLQueryItem(name: "fields", value: "id,parents")]
+            url.queryItems = [URLQueryItem(name: "addParents", value: target), URLQueryItem(name: "removeParents", value: parents.joined(separator: ",")), URLQueryItem(name: "fields", value: "id,parents")] + googleAllDrives
             _ = try await json(url.url!, method: "PATCH", body: [:])
         } else {
             _ = try await json(URL(string: "\(graphDrive)/items/\(Self.segment(file.id))")!, method: "PATCH", body: ["parentReference": ["id": target]])
@@ -206,7 +206,8 @@ extension CloudAPI {
             if account.cloud == .google {
                 let suffix = replacing.map { "/" + Self.segment($0) } ?? ""
                 var metadata: [String: Any] = ["name": name]
-                if replacing == nil { metadata["parents"] = [parent] }
+                // The top of a shared drive is the drive's own id; sending the alias would file it under "Mi unidad".
+                if replacing == nil { metadata["parents"] = [googleParent(parent)] }
                 // `fields` on the session request shapes the final response, which is where the checksum comes back.
                 var initial = try await request(googleURL("https://www.googleapis.com/upload/drive/v3/files\(suffix)?uploadType=resumable&fields=id,md5Checksum,size"), method: replacing == nil ? "POST" : "PATCH", body: metadata)
                 initial.setValue("application/octet-stream", forHTTPHeaderField: "X-Upload-Content-Type")

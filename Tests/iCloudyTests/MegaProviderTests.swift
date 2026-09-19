@@ -29,11 +29,15 @@ final class MegaProviderTests: XCTestCase {
 
     // MARK: - The stand-in server
 
+    /// Attributes beside the name that a node may carry, the way MEGAsync writes its fingerprint.
+    private var extraAttributes: [String: [String: Any]] = [:]
     private func entry(_ handle: String, parent: String, kind: Int, name: String, key: Data,
                        size: Int? = nil, master: Data? = nil) throws -> [String: Any] {
         let content = kind == 0 ? (MegaCrypto.unpack(fileKey: key)?.key ?? Data()) : key
+        var attributes: [String: Any] = extraAttributes[handle] ?? [:]
+        attributes["n"] = name
         var node: [String: Any] = ["h": handle, "p": parent, "t": kind, "ts": 1_700_000_000,
-                                   "a": MegaCrypto.encode(try MegaCrypto.encodeAttributes(["n": name], key: content)),
+                                   "a": MegaCrypto.encode(try MegaCrypto.encodeAttributes(attributes, key: content)),
                                    "k": "PROPIA:" + MegaCrypto.encode(try MegaCrypto.ecb(key, key: master ?? masterKey, encrypt: true))]
         if let size { node["s"] = size }
         return node
@@ -554,6 +558,55 @@ final class MegaProviderTests: XCTestCase {
         let afterTrash = try await api.list(parent: "CARPETA")
         XCTAssertTrue(afterTrash.isEmpty, "Borrar lo saca de la carpeta")
         XCTAssertEqual(trees, 1, "Tampoco mover ni borrar recargan nada")
+    }
+
+    func testRenamingKeepsTheOtherAttributesOfTheNode() async throws {
+        // MEGAsync stores a fingerprint with the real modification date under `c`. Writing back only the name erased
+        // it, and the official clients then lost the date and re-uploaded the file.
+        extraAttributes["ARCHIVO"] = ["c": "huella:12345", "lbl": 3]
+        var written: [String] = []
+        serve { action, command in
+            if action == "a" { written.append(command["attr"] as? String ?? "") }
+            return nil
+        }
+        let api = client()
+        let files = try await api.list(parent: "root")
+        let file = try XCTUnwrap(files.first { $0.id == "ARCHIVO" })
+        try await api.rename(file: file, name: "informe final.pdf")
+        let content = try XCTUnwrap(MegaCrypto.unpack(fileKey: fileKey)).key
+        let values = try XCTUnwrap(MegaCrypto.attributes(MegaCrypto.decode(try XCTUnwrap(written.first)), key: content))
+        XCTAssertEqual(values["n"] as? String, "informe final.pdf")
+        XCTAssertEqual(values["c"] as? String, "huella:12345", "La huella sigue ahí")
+        XCTAssertEqual(values["lbl"] as? Int, 3)
+        // And renaming again starts from the updated set, not from the original.
+        let listing = try await api.list(parent: "root")
+        let renamed = try XCTUnwrap(listing.first { $0.id == "ARCHIVO" })
+        try await api.rename(file: renamed, name: "otro.pdf")
+        let again = try XCTUnwrap(MegaCrypto.attributes(MegaCrypto.decode(try XCTUnwrap(written.last)), key: content))
+        XCTAssertEqual(again["n"] as? String, "otro.pdf")
+        XCTAssertEqual(again["c"] as? String, "huella:12345")
+    }
+
+    func testTheTreeIsFetchedAgainOnRefreshAndWhenItGrowsOld() async throws {
+        // Mega never says what other devices did. Changes made from iCloudy are applied in place, but "Actualizar"
+        // and plain age have to bring the account back from the server, or a file uploaded from the phone is
+        // invisible until the account is disconnected.
+        var trees = 0
+        serve { action, _ in
+            if action == "f" { trees += 1 }
+            return nil
+        }
+        let api = client()
+        _ = try await api.list(parent: "root")
+        _ = try await api.list(parent: "root")
+        XCTAssertEqual(trees, 1, "Navegar no vuelve a pedir la cuenta")
+        api.dropCaches()
+        _ = try await api.list(parent: "root")
+        XCTAssertEqual(trees, 2, "Actualizar sí")
+        api.megaStateCache?.loadedAt = Date().addingTimeInterval(-CloudAPI.megaTreeMaxAge - 1)
+        _ = try await api.list(parent: "root")
+        XCTAssertEqual(trees, 3, "Y un árbol viejo se renueva solo")
+        XCTAssertEqual(api.megaStateCache?.sid, session, "Sin volver a iniciar sesión")
     }
 
     func testACreatedFolderAppearsWithoutAskingForTheAccountAgain() async throws {

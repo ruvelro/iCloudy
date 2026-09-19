@@ -150,7 +150,7 @@ enum MegaCrypto {
         while json.last == 0 { json = json.dropLast() }
         return (try? JSONSerialization.jsonObject(with: Data(json))) as? [String: Any]
     }
-    static func encodeAttributes(_ values: [String: String], key: Data) throws -> Data {
+    static func encodeAttributes(_ values: [String: Any], key: Data) throws -> Data {
         var plain = Data("MEGA".utf8)
         plain.append(try JSONSerialization.data(withJSONObject: values, options: [.sortedKeys]))
         plain.append(Data(count: (16 - plain.count % 16) % 16))

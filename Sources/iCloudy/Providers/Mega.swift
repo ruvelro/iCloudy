@@ -35,11 +35,15 @@ extension CloudAPI {
             throw error
         }
     }
-    /// The whole tree, fetched once and kept until something changes it.
+    /// How long a fetched tree is trusted. Changes made from iCloudy are applied in place, but Mega does not push
+    /// what other devices do, so a tree this old is fetched again on the next listing.
+    static let megaTreeMaxAge: TimeInterval = 5 * 60
+    /// The whole tree, fetched once and kept until something changes it, "Actualizar" asks for it, or it grows old.
     @discardableResult
     func megaTree() async throws -> MegaState {
         let state = try await megaSession()
-        guard !state.loaded else { return state }
+        let stale = state.loadedAt.map { Date().timeIntervalSince($0) > Self.megaTreeMaxAge } ?? true
+        guard !state.loaded || stale else { return state }
         guard let answer = try await megaCall(["a": "f", "c": 1, "r": 1]) as? [String: Any],
               let files = answer["f"] as? [[String: Any]] else {
             throw CloudError.message(L("Mega no devolvió el contenido de la cuenta."))
@@ -139,7 +143,9 @@ extension CloudAPI {
         let state = try await megaTree()
         let node = try megaNode(file.id, in: state)
         guard node.isReadable else { throw CloudError.message(L("Este elemento no se puede renombrar porque su clave no es de esta cuenta.")) }
-        let attributes = try MegaCrypto.encodeAttributes(["n": name], key: node.contentKey)
+        // The whole attribute set goes back with the new name, not the name alone: the fingerprint and the labels
+        // that MEGAsync wrote are part of the node, and dropping them made the official clients lose the real date.
+        let attributes = try MegaCrypto.encodeAttributes(node.attributes(named: name), key: node.contentKey)
         _ = try await megaCall(["a": "a", "n": node.handle,
                                 "attr": MegaCrypto.encode(attributes),
                                 "key": MegaCrypto.encode(try MegaCrypto.ecb(node.key, key: state.masterKey, encrypt: true))])
@@ -159,7 +165,7 @@ extension CloudAPI {
         guard !node.isFolder else { throw CloudError.message(L("Mega solo copia archivos, no carpetas.")) }
         guard node.isReadable else { throw CloudError.message(L("Este elemento no se puede copiar porque su clave no es de esta cuenta.")) }
         let entry: [String: Any] = ["h": node.handle, "t": 0,
-                                    "a": MegaCrypto.encode(try MegaCrypto.encodeAttributes(["n": node.name], key: node.contentKey)),
+                                    "a": MegaCrypto.encode(try MegaCrypto.encodeAttributes(node.attributes(named: node.name), key: node.contentKey)),
                                     "k": MegaCrypto.encode(try MegaCrypto.ecb(node.key, key: state.masterKey, encrypt: true))]
         let answer = try await megaCall(["a": "p", "t": try megaHandle(destination, in: state), "n": [entry]])
         state.insert((answer as? [String: Any])?["f"] as? [[String: Any]] ?? [])

@@ -28,6 +28,12 @@ final class CloudAPI {
     /// Resolved root of a volume account, with its security scope held open while this client exists.
     var volumeRootCache: URL?
     var volumeScopeOpen = false
+    /// Forgets what was fetched from the provider without forgetting the session. "Actualizar" calls this so a
+    /// provider that hands out the whole account at once, like Mega, fetches it again instead of answering from memory.
+    func dropCaches() {
+        megaStateCache?.expire()
+        o2SessionCache?.rootFolder = nil
+    }
     func invalidate() {
         invalidated = true
         refreshTask?.cancel()

@@ -174,10 +174,12 @@ extension CloudAPI {
             var url = URLComponents(string: "https://www.googleapis.com/drive/v3/files")!
             url.queryItems = [
                 URLQueryItem(name: "q", value: (["trashed = false"] + terms.map { "(name contains '\($0)' or fullText contains '\($0)')" } + Self.googleFilterClauses(filters)).joined(separator: " and ")),
-                URLQueryItem(name: "spaces", value: "drive"), URLQueryItem(name: "corpora", value: "user"),
+                URLQueryItem(name: "spaces", value: "drive"),
                 URLQueryItem(name: "pageSize", value: "100"), URLQueryItem(name: "pageToken", value: cursor),
                 URLQueryItem(name: "fields", value: "nextPageToken,incompleteSearch,files(id,name,mimeType,size,modifiedTime,webViewLink,parents,driveId)")
-            ] + googleDriveScope
+            // A shared-drive account searches that drive; anything else searches the person's own corpus. Sending
+            // both values of `corpora` at once, as this once did, is a contradiction Drive answers with 400.
+            ] + (account.driveID == nil ? [URLQueryItem(name: "corpora", value: "user")] : googleDriveScope)
             let response = try await json(url.url!)
             let hits = (response["files"] as? [[String: Any]] ?? []).compactMap { value -> SearchHit? in
                 // A personal account cannot browse shared-drive items; a scoped account sees nothing else.

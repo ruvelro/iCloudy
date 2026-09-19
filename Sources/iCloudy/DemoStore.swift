@@ -6,6 +6,8 @@ final class DemoStore {
     let directory: URL
     var offline = false
     var failNext = false
+    /// Cuts the next download after this many bytes, the way a network drop does. Consumed by that download.
+    var failDownloadAfter: Int64?
     var latency: Duration = .milliseconds(60)
     private var entries: [String: Entry]
     private var indexURL: URL { directory.appendingPathComponent("index.json") }
@@ -165,6 +167,7 @@ final class DemoStore {
             if let maxBytes, bytes + Int64(data.count) > maxBytes { throw CloudError.message(L("La vista previa supera el límite de descarga autorizado.")) }
             try output.write(contentsOf: data)
             bytes += Int64(data.count); progress(bytes, file.size ?? bytes)
+            if let limit = failDownloadAfter, bytes >= limit { failDownloadAfter = nil; throw URLError(.networkConnectionLost) }
         }
     }
 }

@@ -295,6 +295,27 @@ final class AppModel: ObservableObject {
         return client
     }
     func isExpired(_ account: Account) -> Bool { expiredAccountIDs.contains(account.id) }
+    /// Accounts that live off this one's credential: the shared drives and document libraries derived from it. They
+    /// have no sign-in of their own, so whatever happens to the parent's session happens to them.
+    static func dependents(of account: Account, in accounts: [Account]) -> [Account] {
+        accounts.filter { $0.id != account.id && $0.credentialKey == account.id }
+    }
+    /// Reconnecting replaces the client of the account itself; the dependants keep a client that still believes the
+    /// old session is gone, so they are reset too. Without this a shared drive stayed "expired" until the next launch.
+    private func adopt(_ account: Account, credential: Credential?) throws {
+        if let credential { try Vault.save(credential, key: account.id) }
+        var updated = accounts.filter { $0.id != account.id }; updated.append(account)
+        try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
+        accounts = updated
+        for member in [account] + Self.dependents(of: account, in: accounts) {
+            clients[member.id]?.invalidate(); clients[member.id] = nil
+            expiredAccountIDs.remove(member.id); expiryReasons[member.id] = nil
+        }
+    }
+    /// The files a multi-selection acts on: only what the list shows. The selection keeps ids of rows the filter has
+    /// hidden, and acting on those sent things to the bin that were not on screen.
+    func selection(_ ids: Set<String>) -> [CloudFile] { Self.selected(ids, among: visibleFiles) }
+    static func selected(_ ids: Set<String>, among visible: [CloudFile]) -> [CloudFile] { visible.filter { ids.contains($0.id) } }
     /// True while a new session is being fetched without involving the person, so the interface can say so rather
     /// than showing an alarming notice about an account that is about to fix itself.
     func isRenewing(_ account: Account) -> Bool { renewingAccountIDs.contains(account.id) }
@@ -490,39 +511,43 @@ final class AppModel: ObservableObject {
             let configuration = try OAuthConfiguration.load()
             let client = try configuration.client(for: cloud)
             let (account, credential) = try await oauth.signIn(cloud: cloud, clientID: client.id, clientSecret: client.secret)
-            try Vault.save(credential, key: account.id)
-            var updated = accounts.filter { $0.id != account.id }; updated.append(account)
-            try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
-            accounts = updated; clients[account.id]?.invalidate(); clients[account.id] = nil
-            expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
+            try adopt(account, credential: credential)
             select(account.id); showConnect = false
         } catch is CancellationError {} catch { connectionError = error.localizedDescription }
     }
     func canDisconnect(_ account: Account) -> Bool {
-        accounts.contains { $0.id == account.id } && !queue.hasActive(accountID: account.id)
+        guard accounts.contains(where: { $0.id == account.id }) else { return false }
+        return ([account] + Self.dependents(of: account, in: accounts)).allSatisfy { !queue.hasActive(accountID: $0.id) }
     }
     func disconnect(_ account: Account) {
         guard canDisconnect(account) else {
             error = L("Pausa o termina las transferencias de esta cuenta antes de desconectarla.")
             return
         }
+        // A shared drive or a library borrows this account's credential: once that is gone they cannot work and
+        // cannot be reconnected on their own, so they leave with it instead of lingering as "expired".
+        let leaving = [account] + Self.dependents(of: account, in: accounts)
         do {
-            if preview.model.account?.id == account.id { preview.close() }
-            let updated = accounts.filter { $0.id != account.id }
+            if let shown = preview.model.account, leaving.contains(where: { $0.id == shown.id }) { preview.close() }
+            let updated = accounts.filter { member in !leaving.contains { $0.id == member.id } }
             if account.isDemo { UserDefaults.standard.set(false, forKey: "demoEnabled") }
             else { try Vault.save(updated.filter { !$0.isDemo }, key: "accounts"); try Vault.delete(key: account.id) }
-            quotaTasks.removeValue(forKey: account.id)?.cancel()
-            quotaRequestIDs[account.id] = nil; storageQuotas[account.id] = nil
-            clients[account.id]?.invalidate(); clients[account.id] = nil
-            expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
-            listings.removeAll(accountID: account.id)
-            mirrors.removeAll(accountID: account.id)
-            spotlight.removeAccount(account.id)
-            localCopies.removeAccount(account.id)
+            for member in leaving { forget(member) }
             accounts = updated
-            globalSearch.removeAccount(account.id)
-            if selectedAccountID == account.id { select(accounts.first?.id) }
+            if let selected = selectedAccountID, leaving.contains(where: { $0.id == selected }) { select(accounts.first?.id) }
         } catch { self.error = error.localizedDescription }
+    }
+    /// Drops everything kept locally about an account: its client, quota, listings, mirrors, index and search rows.
+    private func forget(_ account: Account) {
+        quotaTasks.removeValue(forKey: account.id)?.cancel()
+        quotaRequestIDs[account.id] = nil; storageQuotas[account.id] = nil
+        clients[account.id]?.invalidate(); clients[account.id] = nil
+        expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
+        listings.removeAll(accountID: account.id)
+        mirrors.removeAll(accountID: account.id)
+        spotlight.removeAccount(account.id)
+        localCopies.removeAccount(account.id)
+        globalSearch.removeAccount(account.id)
     }
     /// Keeps sessions alive for the providers that end them out of boredom. The cheapest call that proves the
     /// session still works is the one that reads how much space is left, and it has the side benefit of keeping that
@@ -632,6 +657,12 @@ final class AppModel: ObservableObject {
         preview.close(); path.append(file); search = ""; files = []; reload()
     }
     func back(to count: Int) { preview.close(); path = Array(path.prefix(count)); search = ""; files = []; reload() }
+    /// What the "Actualizar" button does: forget what the provider handed out earlier and ask again. `reload(fresh:)`
+    /// alone was enough for providers that are asked folder by folder, not for one that sends the whole account once.
+    func refresh() {
+        if let account, let client = try? client(account) { client.dropCaches() }
+        reload(fresh: true)
+    }
     /// `fresh` skips the cached copy, e.g. right after a write the cache cannot know about yet.
     func reload(fresh: Bool = false) {
         navigationTask?.cancel()

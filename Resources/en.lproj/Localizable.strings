@@ -656,3 +656,8 @@
 "Se guarda una copia del registro. No contiene contraseñas, claves ni nombres de tus archivos." = "A copy of the record is saved. It contains no passwords, keys or names of your files.";
 "Guardado" = "Saved";
 "Renovando la sesión sin molestarte. Si no sale, aparecerá el botón para entrar a mano." = "Renewing the session without bothering you. If it does not work, the button to sign in by hand will appear.";
+
+/* Nube a nube, FTP y nombres */
+"«%@» llegó incompleto de %@: %lld de %lld bytes." = "“%@” arrived incomplete from %@: %lld of %lld bytes.";
+"El nombre contiene un salto de línea, que FTP no admite." = "The name contains a line break, which FTP does not allow.";
+"FTP no admite saltos de línea en los nombres." = "FTP does not allow line breaks in names.";

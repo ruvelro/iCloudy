@@ -412,6 +412,31 @@ final class TransferTests: XCTestCase {
         XCTAssertFalse(queue.hasActive(accountID: other.id))
     }
 
+    func testAStagedDownloadCutShortIsFetchedAgainAndNeverUploadedTruncated() async throws {
+        // Mega, FTP and volumes write the staged file as the bytes arrive. A network drop halfway left a truncated
+        // file that the automatic retry then uploaded as if it were complete, and marked it verified.
+        let (root, demoA, queue) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let demoB = try DemoStore(directory: root.appendingPathComponent("cloudB")); demoB.latency = .milliseconds(1)
+        let other = Account(id: "demo:other", cloud: .microsoft, name: "B", email: "b@example.com", clientID: "", clientSecret: nil)
+        queue.client = { id in id == Account.demo.id ? CloudAPI(account: .demo, demo: demoA) : CloudAPI(account: other, demo: demoB) }
+        queue.scratchRoot = root.appendingPathComponent("scratch")
+        let content = Data((0..<600_000).map { UInt8($0 % 251) })
+        let id = try demoA.add(name: "grande.bin", parent: "root", content: content)
+        let source = try XCTUnwrap(demoA.list("root").first { $0.id == id })
+        demoA.failDownloadAfter = 300_000
+        var job = Transfer(batchID: UUID(), name: source.name, destination: "B", accountID: Account.demo.id, direction: .transfer, localURL: URL(fileURLWithPath: "/"), parent: "root", file: source)
+        job.localURL = queue.scratchDirectory(for: job.id); job.targetAccountID = other.id
+        try queue.add([job])
+        try await wait { !queue.isWorking }
+        XCTAssertEqual(queue.items.first?.state, .completed, queue.items.first?.detail ?? "")
+        XCTAssertEqual(queue.items.first?.attempts, 1, "El corte se reintentó solo")
+        let copied = try XCTUnwrap(demoB.list("root").first { $0.name == "grande.bin" })
+        XCTAssertEqual(copied.size, Int64(content.count), "Llegó entero, no la mitad")
+        XCTAssertEqual(try Data(contentsOf: demoB.directory.appendingPathComponent(copied.id)), content)
+        XCTAssertNil(demoA.failDownloadAfter)
+    }
+
     func testRecoveryPausesRunningJobsAndCorruptionIsNotOverwritten() throws {
         let (root, _, queue) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }

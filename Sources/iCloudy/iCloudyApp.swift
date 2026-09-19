@@ -243,7 +243,7 @@ struct ExplorerView: View {
                         ContentUnavailableView {
                             Label("Tus archivos, en un solo lugar", systemImage: "cloud")
                         } description: {
-                            Text("Conecta Google Drive o OneDrive para explorar tus carpetas y transferir archivos cuando lo necesites.")
+                            Text("Conecta una nube para explorar tus carpetas y transferir archivos cuando lo necesites.")
                         } actions: {
                             Button("Conectar una cuenta") { model.showConnect = true }.buttonStyle(.borderedProminent)
                             Button("Explorar demo sin cuenta") { model.enableDemo() }
@@ -423,10 +423,10 @@ struct ExplorerView: View {
     @ViewBuilder private var explorerActions: some View {
         Group {
             ToolbarSeparator()
-            Button { model.reload(fresh: true) } label: { Image(systemName: "arrow.clockwise") }.help("Actualizar carpeta").disabled(model.account == nil || model.loading)
+            Button { model.refresh() } label: { Image(systemName: "arrow.clockwise") }.help("Actualizar carpeta").disabled(model.account == nil || model.loading)
             Button { Task { await model.pickUpload() } } label: { Label("Subir", systemImage: "square.and.arrow.up") }.disabled(!model.canWrite)
             Button { model.promptName() } label: { Label("Nueva carpeta", systemImage: "folder.badge.plus") }.disabled(!model.canWrite)
-            Button { Task { await model.saveMany(model.files.filter { selected.contains($0.id) }) } } label: { Label("Descargar selección", systemImage: "square.and.arrow.down") }.disabled(selected.isEmpty)
+            Button { Task { await model.saveMany(model.selection(selected)) } } label: { Label("Descargar selección", systemImage: "square.and.arrow.down") }.disabled(selected.isEmpty)
             Button { previewSelection() } label: { Image(systemName: "eye") }.help("Vista previa (Espacio)").disabled(selected.count != 1)
             ToolbarSeparator()
             Group {
@@ -537,18 +537,18 @@ struct ExplorerView: View {
         }
         // A Table insets its own cells; this brings their text onto the margin shared by the title and the footer.
         .padding(.horizontal, Layout.tableCorrection)
-        .onDeleteCommand { model.requestTrash(model.files.filter { selected.contains($0.id) }) }
+        .onDeleteCommand { model.requestTrash(model.selection(selected)) }
         .contextMenu(forSelectionType: CloudFile.ID.self) { ids in
             if ids.count > 1 {
-                Button("Descargar \(ids.count) elementos…") { Task { await model.saveMany(model.files.filter { ids.contains($0.id) }) } }
-                Button("Mover \(ids.count) elementos a…") { model.requestRelocation(model.files.filter { ids.contains($0.id) }, copy: false) }
-                Button("Copiar \(ids.count) elementos a…") { model.requestRelocation(model.files.filter { ids.contains($0.id) }, copy: true) }
-                if model.accounts.count > 1 { Button("Enviar \(ids.count) elementos a otra nube…") { model.requestCrossCloud(model.files.filter { ids.contains($0.id) }) } }
+                Button("Descargar \(ids.count) elementos…") { Task { await model.saveMany(model.selection(ids)) } }
+                Button("Mover \(ids.count) elementos a…") { model.requestRelocation(model.selection(ids), copy: false) }
+                Button("Copiar \(ids.count) elementos a…") { model.requestRelocation(model.selection(ids), copy: true) }
+                if model.accounts.count > 1 { Button("Enviar \(ids.count) elementos a otra nube…") { model.requestCrossCloud(model.selection(ids)) } }
                 Divider()
-                Button("Enviar \(ids.count) elementos a la papelera…", role: .destructive) { model.requestTrash(model.files.filter { ids.contains($0.id) }) }
-            } else if let id = ids.first, let file = model.files.first(where: { $0.id == id }) { fileActions(file) }
+                Button("Enviar \(ids.count) elementos a la papelera…", role: .destructive) { model.requestTrash(model.selection(ids)) }
+            } else if let file = model.selection(ids).first { fileActions(file) }
         } primaryAction: { ids in
-            guard let id = ids.first, let file = model.files.first(where: { $0.id == id }) else { return }
+            guard let file = model.selection(ids).first else { return }
             if file.isFolder { model.navigate(file) }
             else if file.isGoogleDocument { model.openBrowser(file) }
             else { Task { await model.save(file) } }
@@ -556,7 +556,7 @@ struct ExplorerView: View {
     }
 
     private func previewSelection() {
-        guard selected.count == 1, let file = model.files.first(where: { selected.contains($0.id) }) else { return }
+        guard selected.count == 1, let file = model.selection(selected).first else { return }
         model.showPreview(file)
     }
 

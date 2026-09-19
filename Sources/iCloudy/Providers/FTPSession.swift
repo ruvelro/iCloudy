@@ -68,39 +68,64 @@ actor FTPSession {
         let connection = try await open(port: port)
         control = connection
         pending = Data()
+        do { try await handshake() }
+        catch { close(); throw error }
+    }
+    private func handshake() async throws {
         let greeting = try await reply()
         guard greeting.code == 220 else { throw failure(greeting, L("El servidor FTP no aceptó la conexión.")) }
         if security == .implicitTLS {
             // Protect the data channel as well; without this the listings and files travel in the clear.
-            _ = try? await command("PBSZ 0")
-            let protection = try await command("PROT P")
+            _ = try? await send("PBSZ 0")
+            let protection = try await send("PROT P")
             guard protection.isPositive else { throw failure(protection, L("El servidor no aceptó cifrar el canal de datos.")) }
         }
-        let userReply = try await command("USER \(user)")
+        let userReply = try await send("USER \(user)")
         if userReply.code == 331 {
-            let passwordReply = try await command("PASS \(password)")
+            let passwordReply = try await send("PASS \(password)")
             guard passwordReply.code == 230 else {
                 throw CloudError.message(L("El servidor rechazó el usuario o la contraseña."))
             }
         } else if userReply.code != 230 {
             throw failure(userReply, L("El servidor rechazó el usuario o la contraseña."))
         }
-        let type = try await command("TYPE I")
+        let type = try await send("TYPE I")
         guard type.isPositive else { throw failure(type, L("El servidor no admite transferencias binarias.")) }
     }
     func close() {
         control?.cancel(); control = nil; pending = Data()
     }
-    /// Reconnects once when the server has dropped an idle connection, which FTP servers do aggressively.
+    /// The server closed the control connection, or the socket under it failed. Distinct from a refusal so the
+    /// operation can be repeated on a fresh connection, and so the person reads "closed", not "refused".
+    struct ConnectionLost: LocalizedError {
+        var errorDescription: String? { L("El servidor FTP cerró la conexión.") }
+    }
+    /// Reconnects once when the server has dropped an idle connection, which FTP servers do aggressively: vsftpd
+    /// closes after five minutes, and the next command then fails on a dead socket or reads a 421.
     private func withConnection<T>(_ work: () async throws -> T) async throws -> T {
         try await connect()
         do { return try await work() }
-        catch let error as NWError {
+        catch let error where error is NWError || error is ConnectionLost {
+            try Task.checkCancellation()
             close()
             try await connect()
-            _ = error
             return try await work()
         }
+    }
+    /// One operation at a time on the control channel. The actor is reentrant at every `await`, so without this a
+    /// listing started by the explorer while the queue was in the middle of a STOR would read the upload's closing
+    /// reply as its own, and the upload would read the listing's. Each public operation runs to completion before the
+    /// next one starts, in the order they arrived.
+    private var lastOperation: Task<Void, Never>?
+    private func exclusive<T>(_ work: @escaping () async throws -> T) async throws -> T {
+        let previous = lastOperation
+        let operation = Task<T, Error> {
+            await previous?.value
+            try Task.checkCancellation()
+            return try await work()
+        }
+        lastOperation = Task { _ = try? await operation.value }
+        return try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
     }
     private func failure(_ reply: Reply, _ fallback: String) -> CloudError {
         .message(reply.text.isEmpty ? fallback : fallback + " (" + reply.text + ")")
@@ -175,16 +200,28 @@ actor FTPSession {
                 }
             }
             guard Date() < deadline else { throw CloudError.message(L("El servidor FTP no respondió a tiempo.")) }
-            guard let chunk = try await rawReceive(connection) else { throw CloudError.message(L("El servidor FTP cerró la conexión.")) }
+            guard let chunk = try await rawReceive(connection) else { close(); throw ConnectionLost() }
             pending.append(chunk)
         }
     }
+    /// A command line is terminated by CR LF, so a name that contains either would end the command early and start
+    /// another: `informe\rDELE /web/index.html` is two commands. Nothing with a line break is ever sent.
+    /// Checked on scalars, not characters: Swift folds "\r\n" into one character, and `contains("\r")` misses it.
+    static func isSafeLine(_ line: String) -> Bool { !line.unicodeScalars.contains { $0 == "\r" || $0 == "\n" || $0 == "\0" } }
+    /// Writes one command and reads its reply. Callers hold the lock and have a live connection.
+    private func send(_ line: String) async throws -> Reply {
+        guard Self.isSafeLine(line) else { throw CloudError.message(L("El nombre contiene un salto de línea, que FTP no admite.")) }
+        guard let connection = control else { throw ConnectionLost() }
+        do { try await rawSend(connection, Data((line + "\r\n").utf8)) }
+        catch let error as NWError { close(); throw error }
+        let answer = try await reply()
+        // 421 is the server saying goodbye, usually for idleness; the socket is about to close under us.
+        if answer.code == 421 { close(); throw ConnectionLost() }
+        return answer
+    }
     @discardableResult
     func command(_ line: String) async throws -> Reply {
-        try await connect()
-        guard let connection = control else { throw CloudError.message(L("No hay conexión con el servidor FTP.")) }
-        try await rawSend(connection, Data((line + "\r\n").utf8))
-        return try await reply()
+        try await exclusive { try await self.withConnection { try await self.send(line) } }
     }
     /// Same as `command`, but fails when the server answers with an error code.
     @discardableResult
@@ -198,9 +235,9 @@ actor FTPSession {
 
     /// Asks for a passive data port. EPSV works over IPv6 and is preferred; PASV is the fallback.
     private func passivePort() async throws -> UInt16 {
-        let extended = try await command("EPSV")
+        let extended = try await send("EPSV")
         if extended.isPositive, let port = Self.parseEPSV(extended.text) { return port }
-        let passive = try await command("PASV")
+        let passive = try await send("PASV")
         guard passive.isPositive, let port = Self.parsePASV(passive.text) else {
             throw failure(passive, L("El servidor no aceptó el modo pasivo."))
         }
@@ -226,7 +263,7 @@ actor FTPSession {
         let port = try await passivePort()
         let data = try await open(port: port)
         defer { data.cancel() }
-        let started = try await command(line)
+        let started = try await send(line)
         // 125 and 150 both mean the transfer is about to start.
         guard [125, 150].contains(started.code) else { throw failure(started, L("El servidor no pudo iniciar la transferencia.")) }
         while true {
@@ -247,6 +284,9 @@ actor FTPSession {
         return String(decoding: buffer, as: UTF8.self)
     }
     func retrieve(path: String, to destination: URL, progress: @Sendable @escaping (Int64) -> Void) async throws {
+        try await exclusive { try await self.withConnection { try await self.retrieveUnlocked(path: path, to: destination, progress: progress) } }
+    }
+    private func retrieveUnlocked(path: String, to destination: URL, progress: @Sendable @escaping (Int64) -> Void) async throws {
         FileManager.default.createFile(atPath: destination.path, contents: nil)
         let handle = try FileHandle(forWritingTo: destination)
         defer { try? handle.close() }
@@ -259,15 +299,21 @@ actor FTPSession {
     }
     /// Sends a local file. FTP has no checksum of its own, so the only confirmation is the server's closing reply.
     func store(_ source: URL, to path: String, progress: @Sendable @escaping (Int64) -> Void) async throws {
+        try await exclusive { try await self.withConnection { try await self.storeUnlocked(source, to: path, progress: progress) } }
+    }
+    private func storeUnlocked(_ source: URL, to path: String, progress: @Sendable @escaping (Int64) -> Void) async throws {
         let port = try await passivePort()
         let data = try await open(port: port)
         defer { data.cancel() }
-        let started = try await command("STOR " + path)
+        let started = try await send("STOR " + path)
         guard [125, 150].contains(started.code) else { throw failure(started, L("El servidor no pudo iniciar la subida.")) }
         let handle = try FileHandle(forReadingFrom: source)
         defer { try? handle.close() }
         var sent: Int64 = 0
         while true {
+            // Cancelling a transfer must stop the bytes, not just mark the job; without this a 4 GB upload kept
+            // going to the end after the person had cancelled it.
+            try Task.checkCancellation()
             let chunk = try handle.read(upToCount: 256 * 1024) ?? Data()
             if chunk.isEmpty { break }
             try await rawSend(data, chunk)
@@ -283,9 +329,11 @@ actor FTPSession {
     // MARK: - Directory listing
 
     func list(path: String) async throws -> [CloudFile] {
-        try await connect()
+        try await exclusive { try await self.withConnection { try await self.listUnlocked(path: path) } }
+    }
+    private func listUnlocked(path: String) async throws -> [CloudFile] {
         if supportsMLSD == nil {
-            let features = try await command("FEAT")
+            let features = try await send("FEAT")
             supportsMLSD = features.text.uppercased().contains("MLSD")
         }
         let quoted = path.isEmpty ? "/" : path

@@ -85,6 +85,14 @@ mueve a la papelera, y crear una carpeta o subir un archivo insertan el nodo que
 trae todo lo necesario. Solo lo que no se puede aplicar, porque la respuesta no trae lo que debía, fuerza una
 recarga. Hay pruebas que cuentan las peticiones de árbol y fallan si vuelve a haber más de una.
 
+Lo que Mega no cuenta es lo que hacen los demás dispositivos. Por eso el árbol tiene caducidad: pasados cinco
+minutos se vuelve a pedir en el siguiente listado, y el botón «Actualizar» lo pide en el acto. Sin eso, un archivo
+subido desde el móvil no aparecía hasta desconectar la cuenta.
+
+Al renombrar se reescriben todos los atributos del nodo, no solo el nombre. MEGAsync guarda ahí la huella con la
+fecha real de modificación, y escribir solo el nombre la borraba: el cliente oficial perdía la fecha y volvía a subir
+el archivo.
+
 Las subidas también se reintentan trozo a trozo. Los servidores de almacenamiento contestan `-3`, «espera», igual
 que la API, y abandonar por eso perdía la subida entera por un momento de retraso.
 
@@ -146,12 +154,15 @@ espacio y los seis dígitos. Si la cuenta no tiene segundo factor, no hay nada q
 Probado contra valores de referencia externos (OpenSSL y la especificación de AES): AES en ECB, CBC y CTR, la
 derivación de contraseña, el resumen del contenido y la exponenciación modular. Probado de extremo a extremo
 contra un servidor de mentira que habla el mismo protocolo: el inicio de sesión completo con el desafío RSA,
-el descifrado del árbol, el listado, la búsqueda, las migas, la cuota, los enlaces, la descarga con su
-comprobación, una descarga alterada, la subida cifrada y el reintento cuando Mega contesta «espera».
+el descifrado del árbol, el listado, la búsqueda, las migas, la cuota, los enlaces de archivo, la descarga con su
+comprobación, una descarga alterada, la subida cifrada, el reintento cuando Mega contesta «espera» en la subida, la
+conservación de atributos al renombrar y la recarga del árbol al actualizar o envejecer.
 
 Sin probar: el comportamiento real de los servidores de Mega, que es justo lo que ningún test puede fijar.
 En concreto, no se ha podido comprobar contra una cuenta real el inicio de sesión con segundo factor, ni las
-cuentas anteriores a 2018, ni los límites de transferencia de las cuentas gratuitas.
+cuentas anteriores a 2018, ni los límites de transferencia de las cuentas gratuitas, ni el enlace público de una
+carpeta: el de archivo está probado, pero el de carpeta pasa por una clave de compartición que hoy no se genera, así
+que es probable que no abra.
 
 ## Lo que no hace
 

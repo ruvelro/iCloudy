@@ -148,22 +148,87 @@ final class ProviderTests: XCTestCase {
     }
 
     func testBoxChoosesSimpleOrChunkedUploadAndSendsDigests() async throws {
-        let small = try temporaryFile(Data(repeating: 3, count: 1024))
+        let payload = Data(repeating: 3, count: 1024)
+        let sha1 = UploadHasher.hex(Insecure.SHA1.hash(data: payload))
+        let small = try temporaryFile(payload)
         defer { try? FileManager.default.removeItem(at: small) }
         var contentType = "", digest = "", path = ""
         StubProtocol.handler = { request in
             path = request.url!.path; contentType = request.value(forHTTPHeaderField: "Content-Type") ?? ""
-            digest = request.value(forHTTPHeaderField: "Digest") ?? ""
-            return (201, [:], Data(#"{"entries":[{"id":"99","sha1":"abc"}]}"#.utf8))
+            digest = request.value(forHTTPHeaderField: "content-md5") ?? ""
+            return (201, [:], Data(#"{"entries":[{"id":"99","sha1":"\#(sha1)"}]}"#.utf8))
         }
         let checkpoint = UploadCheckpoint(total: 1024, modified: try small.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
         let receipt = try await client(.box).resumableUpload(local: small, parent: "5", name: "a.bin", replacing: nil, checkpoint: checkpoint, save: { _ in }, progress: { _, _ in })
         XCTAssertEqual(path, "/api/2.0/files/content", "Under 20 MB Box refuses upload sessions")
         XCTAssertTrue(contentType.hasPrefix("multipart/form-data; boundary="), contentType)
-        XCTAssertEqual(digest, "sha=" + Data(Insecure.SHA1.hash(data: Data(repeating: 3, count: 1024))).base64EncodedString())
+        XCTAssertEqual(digest, sha1, "The single-shot endpoint takes the SHA-1 in content-md5, in hex")
         XCTAssertEqual(receipt.remoteID, "99")
         XCTAssertEqual(receipt.verification, .verified)
         XCTAssertGreaterThan(CloudAPI.boxSessionThreshold, 0)
+    }
+
+    func testBoxOnlyCountsAnUploadAsVerifiedWhenItsHashMatches() async throws {
+        // A stored sha1 used to be enough for "verified" without ever being compared. It has to match the bytes sent.
+        let small = try temporaryFile(Data(repeating: 3, count: 1024))
+        defer { try? FileManager.default.removeItem(at: small) }
+        let checkpoint = UploadCheckpoint(total: 1024, modified: try small.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+        StubProtocol.handler = { _ in (201, [:], Data(#"{"entries":[{"id":"99","sha1":"0000000000000000000000000000000000000000"}]}"#.utf8)) }
+        do {
+            _ = try await client(.box).resumableUpload(local: small, parent: "5", name: "a.bin", replacing: nil, checkpoint: checkpoint, save: { _ in }, progress: { _, _ in })
+            XCTFail("A different hash must fail loudly")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("suma de verificación"), error.localizedDescription) }
+        StubProtocol.handler = { _ in (201, [:], Data(#"{"entries":[{"id":"99"}]}"#.utf8)) }
+        let receipt = try await client(.box).resumableUpload(local: small, parent: "5", name: "a.bin", replacing: nil, checkpoint: checkpoint, save: { _ in }, progress: { _, _ in })
+        XCTAssertEqual(receipt.verification, .unavailable, "No hash from Box, nothing to compare")
+    }
+
+    func testBoxSessionCommitsCarryTheWholeFileDigestEvenWhenResumed() async throws {
+        // Box refuses a commit without the digest of the whole file. A resumed session did not see the earlier
+        // parts leave, so it hashes them again from the local file, which also lets the upload be verified.
+        let size = Int(CloudAPI.boxSessionThreshold) + 1024
+        var payload = Data(count: size)
+        for index in stride(from: 0, to: size, by: 4099) { payload[index] = UInt8(index % 251) }
+        let sha1 = UploadHasher.hex(Insecure.SHA1.hash(data: payload))
+        let large = try temporaryFile(payload)
+        defer { try? FileManager.default.removeItem(at: large) }
+        let partSize = 8 * 1024 * 1024
+        var parts: [String] = [], commitDigest: String?, ranges: [String] = []
+        StubProtocol.handler = { request in
+            let path = request.url!.path
+            if path == "/api/2.0/files/upload_sessions" {
+                return (201, [:], Data(#"{"id":"s1","part_size":\#(partSize)}"#.utf8))
+            }
+            if path.hasSuffix("/commit") {
+                commitDigest = request.value(forHTTPHeaderField: "Digest")
+                let body = (try? JSONSerialization.jsonObject(with: requestData(request))) as? [String: Any]
+                parts = (body?["parts"] as? [[String: Any]])?.map { "\($0)" } ?? []
+                return (201, [:], Data(#"{"entries":[{"id":"77","sha1":"\#(sha1)"}]}"#.utf8))
+            }
+            let range = request.value(forHTTPHeaderField: "Content-Range") ?? ""
+            ranges.append(range)
+            let offset = range.split(separator: " ").last?.split(separator: "-").first ?? ""
+            return (200, [:], Data(#"{"part":{"part_id":"p\#(offset)","offset":\#(offset),"size":1}}"#.utf8))
+        }
+        let stamp = try large.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        let fresh = try await client(.box).resumableUpload(local: large, parent: "5", name: "big.bin", replacing: nil,
+                                                          checkpoint: UploadCheckpoint(total: Int64(size), modified: stamp), save: { _ in }, progress: { _, _ in })
+        XCTAssertEqual(ranges.count, 3, "Three parts of 8 MiB")
+        XCTAssertEqual(commitDigest, "sha=" + Data(Insecure.SHA1.hash(data: payload)).base64EncodedString())
+        XCTAssertEqual(fresh.verification, .verified)
+        XCTAssertEqual(fresh.remoteID, "77")
+        XCTAssertFalse(parts.isEmpty)
+
+        // The same upload, interrupted after the first part and resumed from the checkpoint.
+        ranges = []; commitDigest = nil
+        var resumed = UploadCheckpoint(total: Int64(size), modified: stamp)
+        resumed.sessionID = "s1"; resumed.chunkSize = Int64(partSize); resumed.offset = Int64(partSize)
+        resumed.parts = [#"{"part_id":"p0","offset":0,"size":8388608}"#]
+        let receipt = try await client(.box).resumableUpload(local: large, parent: "5", name: "big.bin", replacing: nil,
+                                                            checkpoint: resumed, save: { _ in }, progress: { _, _ in })
+        XCTAssertEqual(ranges.count, 2, "Only the parts after the checkpoint travel again")
+        XCTAssertEqual(commitDigest, "sha=" + Data(Insecure.SHA1.hash(data: payload)).base64EncodedString(), "The digest covers the whole file, resumed or not")
+        XCTAssertEqual(receipt.verification, .verified)
     }
 
     // MARK: - WebDAV
@@ -312,5 +377,28 @@ final class ProviderTests: XCTestCase {
         StubProtocol.handler = { _ in XCTFail("A malformed address must not be contacted"); return (500, [:], Data()) }
         do { _ = try await oauth.signInWebDAV(server: "no es una url", username: "a", password: "b"); XCTFail("Expected a rejection") }
         catch { XCTAssertTrue(error.localizedDescription.contains("dirección"), error.localizedDescription) }
+    }
+
+    func testCredentialsTypedIntoTheWebDAVAddressAreUsedButNeverStored() async throws {
+        // Password managers hand out `https://ana:secreta@nas/dav`. The address lives in accounts.json, outside the
+        // Keychain, so what rides in it is stripped and treated as the credentials it is.
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let oauth = OAuth(session: URLSession(configuration: config)) { _ in false }
+        var authorization: String?
+        StubProtocol.handler = { request in
+            authorization = request.value(forHTTPHeaderField: "Authorization")
+            XCTAssertNil(request.url?.user, "The request itself carries no userinfo either")
+            return (207, [:], Data(#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"></d:multistatus>"#.utf8))
+        }
+        let (account, credential) = try await oauth.signInWebDAV(server: "https://ana:secr%40ta@dav.example.com/dav/", username: "", password: "")
+        XCTAssertEqual(account.serverURL, "https://dav.example.com/dav")
+        XCTAssertEqual(account.id, "webdav:dav.example.com/dav#ana")
+        XCTAssertEqual(credential.accessToken, Data("ana:secr@ta".utf8).base64EncodedString(), "Percent-decoded, as typed")
+        XCTAssertEqual(authorization, "Basic " + Data("ana:secr@ta".utf8).base64EncodedString())
+
+        // What the form says wins over what the address carries.
+        let (typed, typedCredential) = try await oauth.signInWebDAV(server: "https://otra:x@dav.example.com/dav", username: "ana", password: "secreta")
+        XCTAssertEqual(typed.serverURL, "https://dav.example.com/dav")
+        XCTAssertEqual(typedCredential.accessToken, Data("ana:secreta".utf8).base64EncodedString())
     }
 }
