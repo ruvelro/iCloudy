@@ -30,9 +30,13 @@ private struct GeneralSettings: View {
             Section {
                 LabeledContent("Preguntar antes de descargar más de") {
                     HStack {
-                        TextField("", value: $previewConsent, format: .number).frame(width: 70).multilineTextAlignment(.trailing)
+                        // Typed, not stepped: a zero made every preview ask, and a negative number turned the
+                        // limit into the file's own size, which is no limit at all.
+                        TextField("Megabytes", value: Binding(get: { previewConsent },
+                                                              set: { previewConsent = min(max($0, 10), 2000) }), format: .number)
+                            .frame(width: 70).multilineTextAlignment(.trailing).labelsHidden()
                         Text("MB")
-                        Stepper("", value: $previewConsent, in: 10...2000, step: 10).labelsHidden()
+                        Stepper("Megabytes antes de preguntar", value: $previewConsent, in: 10...2000, step: 10).labelsHidden()
                     }
                 }
                 Text("Se aplica a la vista previa. Un archivo de tamaño desconocido siempre pide confirmación.")

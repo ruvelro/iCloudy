@@ -171,6 +171,7 @@ struct ChromeField: View {
                 .textFieldStyle(.plain).focused($focused).onSubmit(onSubmit)
             if !text.isEmpty {
                 Button { text = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
+                    .accessibilityLabel("Borrar el filtro")
                     .buttonStyle(.plain).help("Limpiar")
             }
         }

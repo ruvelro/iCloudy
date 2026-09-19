@@ -14,6 +14,11 @@ final class AppModel: ObservableObject {
     @Published var error: String?
     /// Non-error feedback, e.g. "link copied". Shown in a plain alert.
     @Published var info: String?
+    /// SwiftUI presents one alert at a time, so an error and a piece of good news arriving together meant the second
+    /// one never appeared at all. They share a presentation now: the error goes first and the other waits its turn.
+    var alertTitle: String { error != nil ? L("No se pudo completar la operación") : L("iCloudy") }
+    var alertMessage: String? { error ?? info }
+    func dismissAlert() { if error != nil { error = nil } else { info = nil } }
     /// File awaiting confirmation before a public link is created for it.
     @Published var pendingShare: (file: CloudFile, account: Account)?
     /// Items awaiting confirmation before being sent to the provider's trash.
@@ -24,6 +29,9 @@ final class AppModel: ObservableObject {
     @Published var crossCloud: CrossCloudRequest?
     /// Self-hosted provider whose credentials form is open, if any.
     @Published var serverLogin: Cloud?
+    /// The account that form was opened to reconnect, so it arrives with its address and user already written.
+    /// Retyping a NAS address from memory to fix a session is a poor way to ask somebody for a password.
+    @Published var reconnecting: Account?
     /// True while the advanced sheet for shared drives and document libraries is open.
     /// Host of the O2 account being connected, which also drives the sign-in window.
     @Published var o2Login: O2LoginRequest?
@@ -205,8 +213,12 @@ final class AppModel: ObservableObject {
             return try await self.client(account).searchPage(term: query, cursor: cursor, filters: self.globalSearch.filters)
         }
     }
+    /// A Spotlight result opened before the stored accounts had been read. The Keychain is read after the window is
+    /// on screen, so a cold start always got here first and the answer was always that the result was gone.
+    private var pendingSpotlightItem: String?
     /// Handles a Spotlight result: folders open in place, files open their preview, because only the item itself was indexed.
     func openSpotlightItem(identifier: String) {
+        guard !loadingAccounts else { pendingSpotlightItem = identifier; return }
         guard let decoded = SpotlightIndex.decode(identifier: identifier),
               let entry = spotlight.items.first(where: { $0.accountID == decoded.accountID && $0.file.id == decoded.fileID }),
               let account = accounts.first(where: { $0.id == decoded.accountID }) else {
@@ -242,6 +254,15 @@ final class AppModel: ObservableObject {
         guard let account else { return }
         localCopies.forget(accountID: account.id, fileID: file.id)
     }
+    /// Republishes the favorites of the accounts that are actually connected. Favorites are kept when an account is
+    /// disconnected, on purpose, but publishing them again put back in the system's search exactly what disconnecting
+    /// had just removed from it.
+    func refreshSpotlightFavorites() {
+        let connected = Set(accounts.map(\.id))
+        spotlight.refreshFavorites(favorites.filter { connected.contains($0.accountID) }) { [weak self] id in
+            self?.accounts.first { $0.id == id }.map { self?.accountTitle($0) ?? $0.email } ?? id
+        }
+    }
     private func noteForSpotlight(_ file: CloudFile, account: Account) {
         spotlight.note(file, accountID: account.id, path: path, accountLabel: accountTitle(account))
     }
@@ -262,7 +283,8 @@ final class AppModel: ObservableObject {
             // The demo account is local and may already be in the list.
             accounts = stored + accounts.filter(\.isDemo)
             if selectedAccountID == nil { selectedAccountID = accounts.first?.id }
-            spotlight.refreshFavorites(favorites) { [weak self] id in self?.accounts.first { $0.id == id }.map { self?.accountTitle($0) ?? $0.email } ?? id }
+            refreshSpotlightFavorites()
+            if let waiting = pendingSpotlightItem { pendingSpotlightItem = nil; openSpotlightItem(identifier: waiting) }
             if account != nil { reload() }
             for account in accounts where account.id != selectedAccountID { refreshStorage(account) }
             repairKeychainAccessOnce()
@@ -460,7 +482,7 @@ final class AppModel: ObservableObject {
             try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
             accounts = updated; clients[account.id]?.invalidate(); clients[account.id] = nil
             expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
-            serverLogin = nil
+            serverLogin = nil; reconnecting = nil
             select(account.id); showConnect = false
         } catch { connectionError = error.localizedDescription }
     }
@@ -473,10 +495,16 @@ final class AppModel: ObservableObject {
         case .volume:
             await connectVolume()
         case let cloud where cloud.usesWebLogin || cloud.usesPasswordLogin:
-            // These two sign in from inside the connection sheet, so it has to be on screen to present them.
+            // These two sign in from inside the connection sheet, so it has to be on screen to present them. The
+            // sheet is opened first and the form a moment later: presenting both in the same turn is a nesting
+            // SwiftUI sometimes drops on the floor, leaving a connection sheet and no form.
+            reconnecting = account
             showConnect = true
-            if cloud.usesWebLogin { o2Login = O2LoginRequest(id: account.options["host"] ?? "cloud.o2online.es") }
-            else { serverLogin = cloud }
+            let host = account.options["host"] ?? "cloud.o2online.es"
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(120))
+                if cloud.usesWebLogin { self.o2Login = O2LoginRequest(id: host) } else { self.serverLogin = cloud }
+            }
         default:
             await connect(cloud: account.cloud)
         }
@@ -722,6 +750,12 @@ final class AppModel: ObservableObject {
             info = L("Enlace público copiado. Cualquiera que lo tenga podrá ver «\(file.name)». Para revocarlo, usa la web del proveedor.")
         } catch { self.error = error.localizedDescription }
     }
+    /// Whether "copy to…" can do anything with this selection. Drive cannot copy a folder, and offering the action
+    /// only to answer with a refusal afterwards is a worse way of saying so.
+    func canCopy(_ files: [CloudFile]) -> Bool {
+        guard let account, account.capabilities.copy, !files.isEmpty else { return false }
+        return account.cloud != .google || !files.contains(where: \.isFolder)
+    }
     func requestRelocation(_ files: [CloudFile], copy: Bool) {
         guard let account, !files.isEmpty else { return }
         if copy, account.cloud == .google, files.contains(where: \.isFolder) {
@@ -809,6 +843,7 @@ final class AppModel: ObservableObject {
             for file in files {
                 try await api.trash(file: file)
                 moved += 1
+                spotlight.forget(accountID: account.id, fileID: file.id)
                 favorites.removeAll { $0.accountID == account.id && ($0.file.id == file.id || $0.path.contains { $0.id == file.id }) }
             }
             try LocalStore.save(favorites, to: favoritesURL)
@@ -884,6 +919,7 @@ final class AppModel: ObservableObject {
             if let file {
                 try await api.rename(file: file, name: name)
                 let updated = CloudFile(id: file.id, name: name, mime: file.mime, size: file.size, modified: Date(), webURL: file.webURL, isFolder: file.isFolder)
+                spotlight.rename(updated, accountID: account.id, accountLabel: accountTitle(account))
                 for i in favorites.indices where favorites[i].accountID == account.id {
                     if favorites[i].file.id == file.id { favorites[i].file = updated }
                     favorites[i].path = favorites[i].path.map { $0.id == file.id ? updated : $0 }
@@ -899,7 +935,7 @@ final class AppModel: ObservableObject {
         if isFavorite(file) { favorites.removeAll { $0.accountID == account.id && $0.file.id == file.id } }
         else { favorites.append(Favorite(accountID: account.id, file: file, path: path, collection: collection)) }
         do { try LocalStore.save(favorites, to: favoritesURL) } catch { self.error = error.localizedDescription }
-        spotlight.refreshFavorites(favorites) { [weak self] id in self?.accounts.first { $0.id == id }.map { self?.accountTitle($0) ?? $0.email } ?? id }
+        refreshSpotlightFavorites()
     }
     func openFavorite(_ favorite: Favorite) {
         guard accounts.contains(where: { $0.id == favorite.accountID }) else { error = L("Conecta la cuenta de este favorito."); return }

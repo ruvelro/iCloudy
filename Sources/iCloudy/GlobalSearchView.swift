@@ -94,6 +94,7 @@ struct GlobalSearchView: View {
         .toolbar {
             Button("Volver al explorador") { model.showGlobalSearch = false; search.cancel(); model.preview.close() }
             Button { if let selectedHit { model.previewSearchHit(selectedHit) } } label: { Image(systemName: "eye") }.disabled(selectedHit == nil).help("Vista previa (Espacio)")
+                .accessibilityLabel("Vista previa")
         }
         .onDisappear { search.cancel() }
         .onChange(of: search.submittedQuery) { selected = []; model.preview.close() }
@@ -115,7 +116,9 @@ struct GlobalSearchView: View {
             Button("Abrir en navegador") { model.openBrowser(hit.file) }
             Button("Copiar enlace") { model.copyLink(hit.file) }
         }
-        if let account = model.accounts.first(where: { $0.id == hit.accountID }) {
+        // The explorer checks this and the search did not, so here the action was offered for FTP and for a volume
+        // and answered with the provider's refusal.
+        if let account = model.accounts.first(where: { $0.id == hit.accountID }), account.capabilities.publicLinks {
             Button("Crear enlace público de solo lectura…") { model.pendingShare = (hit.file, account) }
         }
         ForEach(hit.file.exportOptions, id: \.ext) { option in
