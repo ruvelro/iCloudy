@@ -208,6 +208,7 @@ final class O2SilentRenewal {
         }
         webView.load(URLRequest(url: start))
 
+        O2Log.record("renovación silenciosa · empieza")
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             try? await Task.sleep(nanoseconds: 700_000_000)
@@ -215,9 +216,14 @@ final class O2SilentRenewal {
             let mine = cookies.filter { host.hasSuffix($0.domain) || $0.domain.hasSuffix(host) }
             if let key = mine.first(where: { $0.name == "validationKey" })?.value, !key.isEmpty {
                 let agent = (try? await webView.evaluateJavaScript("navigator.userAgent")) as? String
+                O2Log.record("renovación silenciosa · conseguida sin intervención")
                 return (key, mine, agent)
             }
         }
+        // Normally this means Telefónica wants to see the person again. Saying which page it stopped on is the only
+        // clue available afterwards, and it is why this is written down at all.
+        let stuck = webView.url?.host ?? "sin página"
+        O2Log.record("renovación silenciosa · no se pudo, se quedó en \(stuck)")
         return nil
     }
 }

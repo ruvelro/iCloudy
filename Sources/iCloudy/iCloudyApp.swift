@@ -267,8 +267,13 @@ struct ExplorerView: View {
                         if let account = model.account, model.isExpired(account) {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Label("La sesión de esta cuenta ha caducado o se ha revocado. Los archivos no se pueden consultar hasta volver a conectarla.", systemImage: "exclamationmark.triangle.fill")
-                                        .font(.caption).fixedSize(horizontal: false, vertical: true)
+                                    if model.isRenewing(account) {
+                                        Label("Renovando la sesión sin molestarte. Si no sale, aparecerá el botón para entrar a mano.", systemImage: "arrow.clockwise")
+                                            .font(.caption).fixedSize(horizontal: false, vertical: true)
+                                    } else {
+                                        Label("La sesión de esta cuenta ha caducado o se ha revocado. Los archivos no se pueden consultar hasta volver a conectarla.", systemImage: "exclamationmark.triangle.fill")
+                                            .font(.caption).fixedSize(horizontal: false, vertical: true)
+                                    }
                                     // What the provider said, when it said anything. Without this, a provider that
                                     // drops sessions for its own reasons is impossible to diagnose from a report.
                                     if let reason = model.expiryReason(account) {
@@ -277,7 +282,8 @@ struct ExplorerView: View {
                                     }
                                 }
                                 Spacer()
-                                Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.connecting)
+                                if model.isRenewing(account) { ProgressView().controlSize(.small) }
+                                else { Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.connecting) }
                             }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
                         }
                         fileBrowser

@@ -78,7 +78,7 @@ final class AppModel: ObservableObject {
     private var subscription: AnyCancellable?
     private var keepAlive: Task<Void, Never>?
     /// Accounts whose session is being renewed in the background, so it is only attempted once at a time.
-    private var renewingAccountIDs: Set<String> = []
+    @Published private(set) var renewingAccountIDs: Set<String> = []
     private var editContext: (Account, String)?
     private let favoritesURL = LocalStore.directory.appendingPathComponent("favorites.json")
     /// Opening folders refreshes the quota at most this often; explicit requests and finished transfers always do.
@@ -289,6 +289,9 @@ final class AppModel: ObservableObject {
         return client
     }
     func isExpired(_ account: Account) -> Bool { expiredAccountIDs.contains(account.id) }
+    /// True while a new session is being fetched without involving the person, so the interface can say so rather
+    /// than showing an alarming notice about an account that is about to fix itself.
+    func isRenewing(_ account: Account) -> Bool { renewingAccountIDs.contains(account.id) }
     /// What the provider said when it dropped the session, if anything.
     func expiryReason(_ account: Account) -> String? { expiryReasons[account.id] }
     /// Top-level views this account's provider can actually produce. Static because it depends only on the account,
