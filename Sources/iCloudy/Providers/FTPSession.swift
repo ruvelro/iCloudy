@@ -42,25 +42,36 @@ actor FTPSession {
         parameters.allowLocalEndpointReuse = true
         return parameters
     }
+    /// How long a connection may sit in `waiting` before it is given up on. Long enough for a Wi-Fi that is coming
+    /// back after a sleep, short enough that a server that is simply not there fails quickly.
+    static let pathGrace: TimeInterval = 3
     private func open(port: UInt16) async throws -> NWConnection {
         guard let endpointPort = NWEndpoint.Port(rawValue: port) else { throw CloudError.message(L("Puerto de servidor no válido.")) }
         let connection = NWConnection(host: NWEndpoint.Host(host), port: endpointPort, using: parameters())
+        let grace = Self.pathGrace
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let resumed = Resumed()
             connection.stateUpdateHandler = { state in
                 switch state {
                 case .ready: resumed.once { continuation.resume() }
-                case .failed(let error): resumed.once { continuation.resume(throwing: error) }
+                case .failed(let error): resumed.once { continuation.resume(throwing: Self.describe(error)) }
                 case .cancelled: resumed.once { continuation.resume(throwing: CancellationError()) }
                 case .waiting(let error):
-                    // `waiting` means the path is not usable yet; for a file transfer that is a failure, not patience.
-                    resumed.once { continuation.resume(throwing: error) }
+                    // `waiting` means the path is not usable yet. Giving up at the first one turned a network that
+                    // was still settling, right after waking the Mac, into a failed transfer.
+                    resumed.after(grace) { continuation.resume(throwing: Self.describe(error)) }
                 default: break
                 }
             }
             connection.start(queue: .global(qos: .userInitiated))
         }
         return connection
+    }
+    /// Network.framework reports a refused certificate as a bare TLS status, which surfaced as "the operation could
+    /// not be completed". A NAS with a certificate of its own is the usual cause, and that is worth saying.
+    nonisolated static func describe(_ error: NWError) -> Error {
+        guard case .tls(let status) = error else { return error }
+        return CloudError.message(L("El servidor rechazó la conexión cifrada (TLS \(status)). Si es un NAS con un certificado propio, macOS no lo acepta: instala ese certificado en el Llavero y márcalo como de confianza, o usa FTP sin cifrar solo dentro de tu red."))
     }
     /// Opens the control connection, greets, authenticates and switches to binary mode.
     func connect() async throws {
@@ -91,6 +102,9 @@ actor FTPSession {
         }
         let type = try await send("TYPE I")
         guard type.isPositive else { throw failure(type, L("El servidor no admite transferencias binarias.")) }
+        // Older Windows servers answer in the local code page unless told otherwise, which turned accented names into
+        // mojibake. Servers that do not know the command answer 500 and carry on, so the reply is not checked.
+        _ = try? await send("OPTS UTF8 ON")
     }
     func close() {
         control?.cancel(); control = nil; pending = Data()
@@ -346,16 +360,31 @@ actor FTPSession {
     }
 }
 
-/// Resumes a continuation exactly once even though Network.framework may report several states.
+/// Resumes a continuation exactly once even though Network.framework may report several states, and holds the timer
+/// that gives a path still settling a moment to become usable.
 private final class Resumed: @unchecked Sendable {
     private let lock = NSLock()
     private var done = false
+    private var grace: Task<Void, Never>?
     func once(_ body: () -> Void) {
         lock.lock()
         let first = !done
         done = true
+        let pending = grace; grace = nil
         lock.unlock()
+        pending?.cancel()
         if first { body() }
+    }
+    /// Runs `body` after `seconds` unless something resumes first. Repeated calls keep the first timer.
+    func after(_ seconds: TimeInterval, _ body: @escaping @Sendable () -> Void) {
+        lock.lock()
+        guard !done, grace == nil else { lock.unlock(); return }
+        grace = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            self?.once(body)
+        }
+        lock.unlock()
     }
 }
 

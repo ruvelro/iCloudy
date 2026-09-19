@@ -34,6 +34,8 @@ final class CloudAPI {
     /// is shown to the user: an undocumented provider that drops sessions is impossible to diagnose from a report
     /// that only says "expired".
     var sessionDidExpire: ((String?) -> Void)?
+    /// Reports a security-scoped bookmark that had to be renewed, so the account can keep the new one.
+    var bookmarkDidRenew: ((Data) -> Void)?
     /// Reports that a renewed credential could not be written to the Keychain. The session keeps working for this
     /// run, but the next launch will read the retired one, so the person deserves to know before it happens.
     var credentialSaveDidFail: ((String) -> Void)?
@@ -151,6 +153,13 @@ final class CloudAPI {
     /// no longer honours this account, so the session is marked as expired instead of failing silently on every call.
     func send(_ request: inout URLRequest) async throws -> (Data, URLResponse) {
         let (data, response) = try await session.data(for: request)
+        // A self-hosted server asking for Digest is not rejecting the password: iCloudy only speaks Basic. Calling
+        // that an expired session sent people to re-type credentials that were right all along.
+        if account.cloud.isSelfHosted, (response as? HTTPURLResponse)?.statusCode == 401,
+           let challenge = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "WWW-Authenticate")?.lowercased(),
+           challenge.contains("digest"), !challenge.contains("basic") {
+            throw CloudError.message(L("Este servidor pide autenticación Digest, que iCloudy todavía no habla. Habilita la autenticación Basic sobre HTTPS en el servidor, o usa una contraseña de aplicación si la ofrece."))
+        }
         guard (response as? HTTPURLResponse)?.statusCode == 401, tokenProvider == nil else { return (data, response) }
         request.setValue(account.cloud.authorizationScheme + " " + (try await token(force: true)), forHTTPHeaderField: "Authorization")
         let (retriedData, retriedResponse) = try await session.data(for: request)

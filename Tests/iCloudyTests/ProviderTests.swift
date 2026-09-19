@@ -430,6 +430,123 @@ final class ProviderTests: XCTestCase {
         catch { XCTAssertTrue(error.localizedDescription.contains("enlaces públicos"), error.localizedDescription) }
     }
 
+    func testAWebPageIsNotAListingHoweverPoliteItsStatusIs() async throws {
+        // A misread address, or a proxy, answers a PROPFIND with the site's own page and a 200. Reading that as an
+        // empty folder left the account showing nothing for ever, with no error to explain it.
+        StubProtocol.handler = { _ in (200, [:], Data("<!doctype html><html><body>Nextcloud</body></html>".utf8)) }
+        do {
+            _ = try await client(.webdav).list(parent: "root")
+            XCTFail("Una página web no es un listado")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("no es un listado"), error.localizedDescription) }
+
+        // An empty 207, which is what an empty folder really looks like, stays empty and does not complain.
+        StubProtocol.handler = { _ in (207, [:], Data(#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"></d:multistatus>"#.utf8)) }
+        let empty = try await client(.webdav).list(parent: "root")
+        XCTAssertTrue(empty.isEmpty)
+    }
+
+    func testMovingUsesTheNameOnTheServerNotTheOneItLikesToDisplay() async throws {
+        // `displayname` is what the server would like shown, and some report it with different capitalisation or a
+        // title of their own. Building the destination from it renamed the item as a side effect of moving it.
+        XCTAssertEqual(CloudAPI.webdavName("/Fotos/niño.JPG"), "niño.JPG")
+        XCTAssertEqual(CloudAPI.webdavName("/"), "/")
+        var destinations: [String?] = []
+        StubProtocol.handler = { request in
+            destinations.append(request.value(forHTTPHeaderField: "Destination"))
+            return (204, [:], Data())
+        }
+        let api = client(.webdav)
+        let file = CloudFile(id: "/Fotos/IMG_0001.JPG", name: "Un título cualquiera", mime: "image/jpeg",
+                             size: 1, modified: nil, webURL: nil, isFolder: false)
+        try await api.move(file: file, to: "/Destino")
+        XCTAssertEqual(destinations.last, "https://dav.example.com/remote.php/dav/files/ana/Destino/IMG_0001.JPG")
+        try await api.copy(file: file, to: "/Destino")
+        XCTAssertEqual(destinations.last, "https://dav.example.com/remote.php/dav/files/ana/Destino/IMG_0001.JPG")
+    }
+
+    func testAnHrefThatDiffersOnlyInCapitalisationStillLosesItsPrefix() {
+        // Reverse proxies routinely echo the base with different capitalisation. Leaving it in made every id carry
+        // the prefix twice once it was turned back into a URL.
+        let xml = Data("""
+        <?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
+        <d:response><d:href>/Remote.php/DAV/files/ana/Fotos/a.txt</d:href><d:propstat><d:prop>
+        <d:displayname>a.txt</d:displayname><d:resourcetype/></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+        </d:multistatus>
+        """.utf8)
+        let entries = WebDAVEntry.parse(xml, basePath: "/remote.php/dav/files/ana")
+        XCTAssertEqual(entries.map(\.path), ["/Fotos/a.txt"])
+    }
+
+    func testADigestChallengeIsNotAWrongPassword() async throws {
+        // iCloudy only speaks Basic. Calling a Digest challenge an expired session sent people to re-type
+        // credentials that were right all along.
+        StubProtocol.handler = { _ in (401, ["WWW-Authenticate": "Digest realm=\"nas\", nonce=\"abc\""], Data()) }
+        let api = client(.webdav)
+        do { _ = try await api.list(parent: "root"); XCTFail("Debe explicar qué pasa") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("Digest"), error.localizedDescription) }
+        XCTAssertFalse(api.sessionExpired, "No es una sesión caducada")
+    }
+
+    func testNextcloudReusesTheLinkAnItemAlreadyHasAndRepeatsWhatTheServerSays() async throws {
+        let account = Account(id: "webdav:nc", cloud: .webdav, name: "NC", email: "ana@nc", clientID: "", clientSecret: nil,
+                              serverURL: "https://nube.ejemplo.com/remote.php/dav/files/ana", bookmark: nil,
+                              options: ["flavor": "nextcloud"])
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let api = CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "token" })
+        let file = CloudFile(id: "/nota.txt", name: "nota.txt", mime: "text/plain", size: 4, modified: nil, webURL: nil, isFolder: false)
+
+        // Nextcloud makes a new link every time it is asked, and each has to be revoked separately.
+        var methods: [String] = []
+        StubProtocol.handler = { request in
+            methods.append(request.httpMethod ?? "")
+            return (200, [:], Data(#"{"ocs":{"meta":{"status":"ok"},"data":[{"share_type":0,"url":"https://nube/persona"},{"share_type":3,"url":"https://nube/s/yaexiste"}]}}"#.utf8))
+        }
+        let reused = try await api.publicLink(for: file)
+        XCTAssertEqual(reused.absoluteString, "https://nube/s/yaexiste", "Se reutiliza el enlace público que ya tenía")
+        XCTAssertEqual(methods, ["GET"], "Sin crear un segundo enlace")
+
+        // With none to reuse, one is created.
+        methods = []
+        StubProtocol.handler = { request in
+            methods.append(request.httpMethod ?? "")
+            if request.httpMethod == "GET" { return (200, [:], Data(#"{"ocs":{"meta":{"status":"ok"},"data":[]}}"#.utf8)) }
+            XCTAssertEqual(request.value(forHTTPHeaderField: "OCS-APIRequest"), "true")
+            return (200, [:], Data(#"{"ocs":{"meta":{"status":"ok"},"data":{"url":"https://nube/s/nuevo"}}}"#.utf8))
+        }
+        let created = try await api.publicLink(for: file)
+        XCTAssertEqual(created.absoluteString, "https://nube/s/nuevo")
+        XCTAssertEqual(methods, ["GET", "POST"])
+
+        // And a refusal keeps the server's own words instead of a bare HTTP code.
+        StubProtocol.handler = { request in
+            if request.httpMethod == "GET" { return (200, [:], Data(#"{"ocs":{"meta":{"status":"ok"},"data":[]}}"#.utf8)) }
+            return (403, [:], Data(#"{"ocs":{"meta":{"status":"failure","statuscode":403,"message":"Se exige contraseña en los enlaces públicos"}}}"#.utf8))
+        }
+        do { _ = try await api.publicLink(for: file); XCTFail("Debe fallar") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("Se exige contraseña"), error.localizedDescription) }
+    }
+
+    func testAPasswordInTheClearIsOnlyAllowedWhereItCannotLeaveTheBuilding() async throws {
+        // A Basic password travels in every request. macOS blocks plain HTTP off the local network anyway, and over
+        // the internet it would be handing the password to whoever is listening.
+        for local in ["nas.local", "192.168.1.10", "10.0.0.5", "172.16.3.1", "127.0.0.1", "localhost", "diskstation"] {
+            XCTAssertTrue(OAuth.isLocalNetwork(local), local)
+        }
+        for remote in ["nube.ejemplo.com", "8.8.8.8", "172.32.0.1", "11.0.0.1"] {
+            XCTAssertFalse(OAuth.isLocalNetwork(remote), remote)
+        }
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let oauth = OAuth(session: URLSession(configuration: config)) { _ in false }
+        StubProtocol.handler = { _ in (207, [:], Data(#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"></d:multistatus>"#.utf8)) }
+        let nas = try await oauth.signInWebDAV(server: "http://nas.local/dav", username: "ana", password: "secreta")
+        XCTAssertEqual(nas.0.serverURL, "http://nas.local/dav", "En la red local se permite")
+        StubProtocol.handler = { _ in XCTFail("No debe contactarse"); return (500, [:], Data()) }
+        do {
+            _ = try await oauth.signInWebDAV(server: "http://nube.ejemplo.com/dav", username: "ana", password: "secreta")
+            XCTFail("Fuera de la red local no")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("cifrado"), error.localizedDescription) }
+    }
+
     // MARK: - Capabilities and sign-in
 
     func testCapabilitiesDescribeWhatEachProviderCanDo() {

@@ -238,6 +238,42 @@ final class FTPTests: XCTestCase {
         XCTAssertThrowsError(try CloudAPI.ftpEndpoint("no es una dirección"))
     }
 
+    func testTheRootHasNoBreadcrumbsOfItsOwn() async throws {
+        // "root" is iCloudy's alias, not a folder. Reading it as a path invented a crumb called "root", which is
+        // where "Ir a la carpeta" landed for anything uploaded to the top of the account.
+        let server = try FakeFTPServer(files: [:], listings: ["/": ""])
+        let port = try await server.start()
+        defer { server.stop() }
+        let api = client(port: port)
+        XCTAssertTrue(try api.ftpTrail(id: "root").isEmpty, "El alias no es una carpeta")
+        XCTAssertEqual(try api.ftpTrail(id: "/uno/dos").map(\.name), ["uno", "dos"])
+        // WebDAV addresses items the same way and had the same phantom.
+        let webdav = CloudAPI(account: Account(id: "webdav:test", cloud: .webdav, name: "Test", email: "ana@test",
+                                               clientID: "", clientSecret: nil, serverURL: "https://dav.example.com/dav"))
+        XCTAssertTrue(webdav.webdavTrail(id: "root").isEmpty)
+        XCTAssertEqual(webdav.webdavTrail(id: "/uno/dos").map(\.name), ["uno", "dos"])
+    }
+
+    func testTheSessionAsksForUTF8AndExplainsARefusedCertificate() async throws {
+        // Older Windows servers answer in the local code page unless told otherwise, which turned accented names
+        // into mojibake. Servers that do not know the command answer 500 and carry on.
+        let server = try FakeFTPServer(files: [:], listings: ["/": ""])
+        let port = try await server.start()
+        defer { server.stop() }
+        let api = client(port: port)
+        try await hurry(api)
+        _ = try await api.list(parent: "root")
+        XCTAssertTrue(server.log().contains("OPTS UTF8 ON"), server.log().description)
+
+        // A NAS with its own certificate is the usual cause of a TLS refusal, and the bare status said nothing.
+        let described = FTPSession.describe(NWError.tls(-9807))
+        XCTAssertTrue(described.localizedDescription.contains("certificado"), described.localizedDescription)
+        XCTAssertTrue(described.localizedDescription.contains("-9807"), described.localizedDescription)
+        // Anything that is not a TLS failure is passed through untouched.
+        let plain = FTPSession.describe(NWError.posix(.ECONNREFUSED))
+        XCTAssertFalse(plain.localizedDescription.contains("certificado"), plain.localizedDescription)
+    }
+
     func testCapabilitiesHideWhatFTPCannotDo() {
         let ftp = Cloud.ftp.capabilities
         XCTAssertFalse(ftp.oauth)

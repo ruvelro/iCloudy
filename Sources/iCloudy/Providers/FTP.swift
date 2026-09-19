@@ -74,6 +74,8 @@ extension CloudAPI {
     }
     /// FTP deletes for good, and an empty directory is a precondition for RMD, so folders are emptied depth first.
     func ftpDelete(file: CloudFile) async throws {
+        // Deleting here is final and a deep folder is many round trips, so cancelling has to actually stop it.
+        try Task.checkCancellation()
         let session = try await ftp()
         guard file.isFolder else {
             try await session.require("DELE " + file.id, L("No se pudo eliminar el archivo."))
@@ -103,6 +105,9 @@ extension CloudAPI {
     }
     /// Breadcrumbs come from the path, as with WebDAV and Dropbox.
     func ftpTrail(id: String) throws -> [CloudFile] {
+        // The root has no crumbs of its own. Reading the alias as a path produced a phantom folder called "root",
+        // which is where "Ir a la carpeta" landed for anything uploaded to the top of the account.
+        guard id != "root" else { return [] }
         let base = try ftpPath("root")
         var relative = id
         if base != "/", relative.hasPrefix(base) { relative = String(relative.dropFirst(base.count)) }

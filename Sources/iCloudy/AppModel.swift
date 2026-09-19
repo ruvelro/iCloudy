@@ -287,6 +287,7 @@ final class AppModel: ObservableObject {
         if account.isDemo && demo == nil { demo = try DemoStore() }
         let client = CloudAPI(account: account, demo: account.isDemo ? demo : nil)
         client.credentialSaveDidFail = { [weak self] message in self?.error = message }
+        client.bookmarkDidRenew = { [weak self] bookmark in self?.storeRenewedBookmark(bookmark, for: account) }
         client.sessionDidExpire = { [weak self] reason in
             self?.expiredAccountIDs.insert(account.id)
             if let reason { self?.expiryReasons[account.id] = reason }
@@ -294,6 +295,13 @@ final class AppModel: ObservableObject {
         }
         clients[account.id] = client
         return client
+    }
+    /// Keeps a bookmark the system had to renew. macOS marks one stale when the folder moves or the volume changes
+    /// identity; the old one still resolves for a while and then stops, and the account looks broken out of nowhere.
+    private func storeRenewedBookmark(_ bookmark: Data, for account: Account) {
+        guard let index = accounts.firstIndex(where: { $0.id == account.id }), accounts[index].bookmark != bookmark else { return }
+        accounts[index].bookmark = bookmark
+        try? Vault.save(accounts.filter { !$0.isDemo }, key: "accounts")
     }
     func isExpired(_ account: Account) -> Bool { expiredAccountIDs.contains(account.id) }
     /// Accounts that live off this one's credential: the shared drives and document libraries derived from it. They

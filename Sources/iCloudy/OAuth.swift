@@ -174,6 +174,11 @@ final class OAuth {
         }
         let (username, password) = Self.credentials(embeddedIn: &components, username: username, password: password)
         guard !username.isEmpty, !password.isEmpty else { throw CloudError.message(L("Introduce el usuario y la contraseña del servidor.")) }
+        // A Basic password travels in every single request. macOS blocks plain HTTP to anything but the local
+        // network, and over the internet it would be handing the password to whoever is listening.
+        if components.scheme?.lowercased() == "http", !Self.isLocalNetwork(host) {
+            throw CloudError.message(L("Esa dirección no usa cifrado, y la contraseña viajaría en claro en cada petición. Usa https://, o una dirección de tu red local."))
+        }
         components.query = nil; components.fragment = nil
         if components.path.hasSuffix("/") { components.path = String(components.path.dropLast()) }
         guard let base = components.url else { throw CloudError.message(L("Escribe una dirección de servidor válida, por ejemplo https://nube.ejemplo.com/remote.php/dav/files/ana")) }
@@ -237,6 +242,21 @@ final class OAuth {
                               name: host, email: username + "@" + host, clientID: "", clientSecret: nil, serverURL: base)
         return (account, Credential(accessToken: Data("\(username):\(password)".utf8).base64EncodedString(),
                                     refreshToken: "", expires: .distantFuture))
+    }
+
+    /// True for an address that cannot leave the local network, which is where macOS still allows a connection in
+    /// the clear: `.local` names, a bare host name, loopback, and the private IPv4 ranges.
+    static func isLocalNetwork(_ host: String) -> Bool {
+        let name = host.lowercased()
+        if name == "localhost" || name == "::1" || name.hasSuffix(".local") { return true }
+        if !name.contains(".") { return true }   // a bare name resolves only inside the local network
+        let parts = name.split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 4, parts.allSatisfy({ (0...255).contains($0) }) else { return false }
+        if parts[0] == 127 || parts[0] == 10 { return true }
+        if parts[0] == 192 && parts[1] == 168 { return true }
+        if parts[0] == 172 && (16...31).contains(parts[1]) { return true }
+        if parts[0] == 169 && parts[1] == 254 { return true }
+        return false
     }
 
     /// Password managers and NAS panels hand out addresses like `https://ana:secreta@nas/dav`. The address is stored

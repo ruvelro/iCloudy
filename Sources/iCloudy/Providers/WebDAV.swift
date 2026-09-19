@@ -52,7 +52,13 @@ extension CloudAPI {
         let (data, response) = try await webdavRequest(try webdavURL(id), method: "PROPFIND", depth: depth, body: Self.propfindBody)
         guard let http = response as? HTTPURLResponse else { throw CloudError.message(L("Respuesta HTTP no válida.")) }
         guard http.statusCode == 207 || (200..<300).contains(http.statusCode) else { try HTTP.validate(response, data: data); return [] }
-        return WebDAVEntry.parse(data, basePath: try webdavBasePath())
+        let entries = WebDAVEntry.parse(data, basePath: try webdavBasePath())
+        // A proxy or a misread address answers a PROPFIND with the site's own web page, and a 200. Reading that as an
+        // empty folder left the account showing nothing, for ever, with no error to explain it.
+        guard http.statusCode == 207 || !entries.isEmpty else {
+            throw CloudError.message(L("El servidor respondió algo que no es un listado de WebDAV. Comprueba la dirección de la cuenta y vuelve a conectarla."))
+        }
+        return entries
     }
 
     func webdavList(parent: String, onPage: (([CloudFile]) -> Void)?) async throws -> [CloudFile] {
@@ -80,17 +86,23 @@ extension CloudAPI {
         let (data, response) = try await send(&mutable)
         try HTTP.validate(response, data: data)
     }
+    /// What the item is called on the server: the last segment of its path. `file.name` is the `displayname`, which
+    /// some servers report with different capitalisation or a title of their own, and building a destination from it
+    /// renamed the item as a side effect of moving it.
+    nonisolated static func webdavName(_ id: String) -> String {
+        webdavNormalize(id).split(separator: "/").last.map(String.init) ?? id
+    }
     func webdavRename(file: CloudFile, name: String) async throws {
         let parent = Self.dropboxParent(Self.webdavNormalize(file.id))
         try await webdavRelocate(file, to: (parent == "" ? "" : parent) + "/" + name, method: "MOVE")
     }
     func webdavMove(file: CloudFile, to destination: String) async throws {
         let parent = Self.webdavNormalize(destination == "root" ? "/" : destination)
-        try await webdavRelocate(file, to: (parent == "/" ? "" : parent) + "/" + file.name, method: "MOVE")
+        try await webdavRelocate(file, to: (parent == "/" ? "" : parent) + "/" + Self.webdavName(file.id), method: "MOVE")
     }
     func webdavCopy(file: CloudFile, to destination: String) async throws {
         let parent = Self.webdavNormalize(destination == "root" ? "/" : destination)
-        try await webdavRelocate(file, to: (parent == "/" ? "" : parent) + "/" + file.name, method: "COPY")
+        try await webdavRelocate(file, to: (parent == "/" ? "" : parent) + "/" + Self.webdavName(file.id), method: "COPY")
     }
     /// WebDAV has no trash of its own: DELETE is final. The confirmation dialog says so for these accounts.
     func webdavDelete(file: CloudFile) async throws {
@@ -106,6 +118,8 @@ extension CloudAPI {
     }
     /// Breadcrumbs come straight from the path; every ancestor is a collection on the same server.
     func webdavTrail(id: String) -> [CloudFile] {
+        // The root has no crumbs of its own; reading the alias as a path invented a folder called "root".
+        guard id != "root" else { return [] }
         let parts = Self.webdavNormalize(id).split(separator: "/").map(String.init)
         return parts.indices.map { index in
             let path = "/" + parts[0...index].joined(separator: "/")
@@ -125,7 +139,26 @@ extension CloudAPI {
         return url
     }
 
+    /// The public link this item already has, if any. Nextcloud happily makes a second one every time it is asked,
+    /// and each has to be revoked separately, so asking twice for the same file left a trail of live links.
+    private func nextcloudExistingLink(for file: CloudFile) async throws -> URL? {
+        guard var components = URLComponents(url: try nextcloudSharesURL(), resolvingAgainstBaseURL: false) else { return nil }
+        let existing = components.queryItems ?? []
+        components.queryItems = existing + [URLQueryItem(name: "path", value: Self.webdavNormalize(file.id))]
+        guard let url = components.url else { return nil }
+        var request = try await request(url, method: "GET")
+        request.setValue("true", forHTTPHeaderField: "OCS-APIRequest")
+        let (data, response) = try await send(&request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              let body = try? HTTP.json(data), let ocs = body["ocs"] as? [String: Any],
+              let shares = ocs["data"] as? [[String: Any]] else { return nil }
+        // Share type 3 is the public link; the rest are shares with a person or a group.
+        return shares.first { ($0["share_type"] as? NSNumber)?.intValue == 3 }
+            .flatMap { ($0["url"] as? String).flatMap(URL.init(string:)) }
+    }
+
     func nextcloudPublicLink(for file: CloudFile) async throws -> URL {
+        if let existing = try? await nextcloudExistingLink(for: file) { return existing }
         var request = try await request(try nextcloudSharesURL(), method: "POST")
         request.setValue("true", forHTTPHeaderField: "OCS-APIRequest")
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -133,14 +166,16 @@ extension CloudAPI {
         request.httpBody = HTTP.form(["path": Self.webdavNormalize(file.id), "shareType": "3", "permissions": "1"])
         var mutable = request
         let (data, response) = try await send(&mutable)
-        try HTTP.validate(response, data: data)
-        let body = try HTTP.json(data)
-        guard let ocs = body["ocs"] as? [String: Any], let payload = ocs["data"] as? [String: Any],
-              let link = (payload["url"] as? String).flatMap(URL.init(string:)) else {
-            let message = ((body["ocs"] as? [String: Any])?["meta"] as? [String: Any])?["message"] as? String
-            throw CloudError.message(message ?? L("El servidor no devolvió el enlace. Comprueba que compartir está habilitado."))
+        // OCS puts its own refusals in the body, and only sometimes in the status. Reading the body first keeps the
+        // server's explanation, such as a policy that demands a password, instead of a bare HTTP code.
+        if let body = try? HTTP.json(data), let ocs = body["ocs"] as? [String: Any] {
+            if let payload = ocs["data"] as? [String: Any], let link = (payload["url"] as? String).flatMap(URL.init(string:)) { return link }
+            if let message = (ocs["meta"] as? [String: Any])?["message"] as? String, !message.isEmpty {
+                throw CloudError.message(L("El servidor rechazó crear el enlace: \(message)"))
+            }
         }
-        return link
+        try HTTP.validate(response, data: data)
+        throw CloudError.message(L("El servidor no devolvió el enlace. Comprueba que compartir está habilitado."))
     }
 
     /// WebDAV has no resumable protocol: a PUT either lands whole or is repeated. The file is streamed from disk.
@@ -238,7 +273,9 @@ final class WebDAVParserDelegate: NSObject, XMLParserDelegate {
         // An href may be absolute or path-only, and is always percent-encoded.
         let rawPath = URLComponents(string: href)?.path ?? href.removingPercentEncoding ?? href
         var path = rawPath
-        if !basePath.isEmpty, path.hasPrefix(basePath) { path = String(path.dropFirst(basePath.count)) }
+        // Some servers, and most reverse proxies, echo the base with different capitalisation. Leaving it in made
+        // every id carry the prefix twice once it was turned back into a URL.
+        if !basePath.isEmpty, path.lowercased().hasPrefix(basePath.lowercased()) { path = String(path.dropFirst(basePath.count)) }
         path = CloudAPI.webdavNormalize(path.isEmpty ? "/" : path)
         let name = properties["displayname"] ?? path.split(separator: "/").last.map(String.init) ?? "/"
         let file = CloudFile(id: path, name: name,

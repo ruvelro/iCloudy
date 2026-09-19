@@ -10,7 +10,7 @@
 [![macOS](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-5.9-F05138?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![SwiftUI](https://img.shields.io/badge/SwiftUI-nativo-0071e3?style=flat-square)](https://developer.apple.com/xcode/swiftui/)
-[![tests](https://img.shields.io/badge/tests-255%20✓-43c463?style=flat-square)](Tests)
+[![tests](https://img.shields.io/badge/tests-266%20✓-43c463?style=flat-square)](Tests)
 [![licencia](https://img.shields.io/badge/licencia-GPL--3.0-8a7ee0?style=flat-square)](LICENSE)
 
 </div>
@@ -193,7 +193,7 @@ el repositorio no incluye ninguno. La [guía de OAuth](docs/OAUTH.md) explica c�
 ## 🛠️ Desarrollo
 
 ```bash
-swift test                       # 255 pruebas, sin red: todas las respuestas HTTP están simuladas
+swift test                       # 266 pruebas, sin red: todas las respuestas HTTP están simuladas
 swift run iCloudy                # iterar sobre la interfaz
 python3 scripts/mockups/generar.py  # rehacer las maquetas del README
 swift scripts/render-mockups.swift  # y convertirlas en PNG

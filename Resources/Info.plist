@@ -30,6 +30,12 @@
             </array>
         </dict>
     </array>
+    <!-- A NAS on the local network often serves WebDAV over plain HTTP with a name macOS cannot verify. This allows
+         that, and only that: everything outside the local network still has to use TLS. -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key><true/>
+    </dict>
     <key>ITSAppUsesNonExemptEncryption</key><false/>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
