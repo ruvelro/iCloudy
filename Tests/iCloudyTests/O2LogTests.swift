@@ -24,6 +24,14 @@ final class O2LogTests: XCTestCase {
         XCTAssertTrue(line.contains("ninguna"))
     }
 
+    func testEachEntryKeepsItsOwnLine() {
+        // A real record came back as one enormous line: trimming dropped the final newline, so every entry after the
+        // first was glued to the one before it and the file could not be read.
+        let text = O2Log.capped("primera\nsegunda") + "\n"
+        XCTAssertTrue(text.hasSuffix("\n"), "Sin esto, lo siguiente que se escriba se pega a lo anterior")
+        XCTAssertEqual((text + "tercera\n").split(separator: "\n").count, 3)
+    }
+
     func testTheRecordWritesNothingWhileTheTestsRun() {
         // The suite is not sandboxed, so without this the diagnostic would pile up in the real Application Support
         // folder of whoever ran it. It did, until this was noticed.

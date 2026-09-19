@@ -77,15 +77,21 @@ final class AppModel: ObservableObject {
     private var favoriteKeys: Set<String> = []
     private var subscription: AnyCancellable?
     private var keepAlive: Task<Void, Never>?
+    private var wakeObserver: NSObjectProtocol?
+    private var lastKeepAlive: [String: Date] = [:]
     /// Accounts whose session is being renewed in the background, so it is only attempted once at a time.
     @Published private(set) var renewingAccountIDs: Set<String> = []
     private var editContext: (Account, String)?
     private let favoritesURL = LocalStore.directory.appendingPathComponent("favorites.json")
     /// Opening folders refreshes the quota at most this often; explicit requests and finished transfers always do.
     static let quotaRefreshInterval: TimeInterval = 300
-    /// How often a provider that drops idle sessions is touched. Well inside the hour O2's server allows, with room
-    /// for a missed round because the Mac was asleep.
-    static let keepAliveInterval: TimeInterval = 20 * 60
+    /// How long a session may go untouched. Measured against O2's server, which let 68 minutes pass and refused at
+    /// 80, so a quarter of an hour leaves room for several missed rounds.
+    static let keepAliveInterval: TimeInterval = 15 * 60
+    /// How often that is checked. Shorter than the interval on purpose: a background app has its timers stretched by
+    /// the system, and a real record showed a twenty-minute sleep arriving after forty. Looking often and deciding
+    /// by the clock survives that, where trusting the sleep did not.
+    static let keepAliveCheck: TimeInterval = 4 * 60
 
     var account: Account? { accounts.first { $0.id == selectedAccountID } }
     var folderID: String { path.last?.id ?? collection.rootID }
@@ -524,14 +530,31 @@ final class AppModel: ObservableObject {
     private func startKeepAlive() {
         keepAlive?.cancel()
         guard accounts.contains(where: { $0.cloud.needsKeepAlive }) else { return }
+        // Waking from sleep is the dangerous moment: nothing ran while the Mac was asleep, and the session may
+        // already be over. Touching it straight away turns a long silence into a short one.
+        if wakeObserver == nil {
+            wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                    Task { @MainActor in self?.touchIdleSessions(force: true, note: "el Mac ha despertado") }
+                }
+        }
         keepAlive = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: UInt64(Self.keepAliveInterval * 1_000_000_000))
+                try? await Task.sleep(nanoseconds: UInt64(Self.keepAliveCheck * 1_000_000_000))
                 guard let self, !Task.isCancelled else { return }
-                for account in accounts where account.cloud.needsKeepAlive && !isExpired(account) {
-                    refreshStorage(account, force: true)
-                }
+                touchIdleSessions(force: false, note: nil)
             }
+        }
+    }
+    /// Touches the sessions that have gone quiet for too long, deciding by the clock rather than by how long the
+    /// sleep above actually lasted.
+    private func touchIdleSessions(force: Bool, note: String?) {
+        if let note { O2Log.record("mantener viva · \(note)") }
+        for account in accounts where account.cloud.needsKeepAlive && !isExpired(account) {
+            let since = Date().timeIntervalSince(lastKeepAlive[account.id] ?? .distantPast)
+            guard force || since >= Self.keepAliveInterval else { continue }
+            lastKeepAlive[account.id] = Date()
+            refreshStorage(account, force: true)
         }
     }
 

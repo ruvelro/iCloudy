@@ -116,9 +116,13 @@ final class O2CloudTests: XCTestCase {
         for cloud in Cloud.allCases where cloud != .o2 {
             XCTAssertFalse(cloud.needsKeepAlive, "\(cloud) no necesita que se le hable sin motivo")
         }
-        // Three touches per hour against a limit measured at more than 43 minutes and less than 80.
-        XCTAssertLessThan(AppModel.keepAliveInterval, 40 * 60, "Con margen para una ronda perdida por un Mac dormido")
+        // Medido contra el servidor real: dejó pasar 68 minutos y rechazó a los 80.
+        XCTAssertLessThan(AppModel.keepAliveInterval, 30 * 60, "Con margen para varias rondas perdidas")
         XCTAssertGreaterThan(AppModel.keepAliveInterval, 5 * 60, "Sin machacar un servidor ajeno")
+        // El sistema estira los temporizadores de una app en segundo plano: una espera de veinte minutos llegó a los
+        // cuarenta. Por eso se mira más a menudo de lo que se toca, y se decide por el reloj.
+        XCTAssertLessThan(AppModel.keepAliveCheck, AppModel.keepAliveInterval / 2,
+                          "Mirar más veces de las que hace falta es lo que sobrevive a que el reloj se estire")
     }
 
     func testARenewedKeyArrivesInACookieAndIsKept() async throws {

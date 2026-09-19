@@ -25,8 +25,11 @@ enum O2Log {
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
                                                     attributes: [.posixPermissions: 0o700])
-            let previous = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-            try capped(previous + entry).write(to: url, atomically: true, encoding: .utf8)
+            var previous = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            // Trimming drops the final newline, so without this every line after the first is glued to the one
+            // before it and the file becomes one enormous line. It was, until a real record showed it.
+            if !previous.isEmpty, !previous.hasSuffix("\n") { previous += "\n" }
+            try (capped(previous + entry) + "\n").write(to: url, atomically: true, encoding: .utf8)
             try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         } catch {
             // A diagnostic that breaks the thing it is diagnosing would be worse than no diagnostic.
