@@ -17,8 +17,16 @@ echo "   (el ganador de cada negociación; dasd es el planificador de tareas de 
 printf '%s\n' "$registro" | "$grep" -oE '\*process=[A-Za-z]+' | sed 's/\*process=//' | sort | uniq -c | sort -rn | head -6
 
 echo
-echo "== Por qué despertó realmente =="
-printf '%s\n' "$registro" | "$grep" -oE 'due to [^:]*' | sed 's/due to //' | cut -c1-60 | sort | uniq -c | sort -rn | head -8
+echo "== Por qué despertó =="
+# Solo las líneas de despertar: "due to" aparece también al dormirse, y mezclarlas hacía que
+# 'Maintenance Sleep' apareciera como si fuera un motivo de despertar, que es justo lo contrario.
+printf '%s\n' "$registro" | "$grep" -E 'DarkWake|^[0-9-]+ [0-9:]+ [^ ]+ Wake ' | "$grep" -v 'Wake Requests' \
+    | "$grep" -oE 'due to [^:]*' | sed 's/due to //' | cut -c1-58 | sort | uniq -c | sort -rn | head -6
+
+echo
+echo "== Por qué se durmió =="
+printf '%s\n' "$registro" | "$grep" -E 'Entering Sleep' \
+    | "$grep" -oE "due to '[^']*'" | sed "s/due to //" | sort | uniq -c | sort -rn | head -5
 
 echo
 echo "== Tramos dormido sin despertar ni una vez (ahí es donde muere la sesión) =="
