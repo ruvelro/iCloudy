@@ -1,6 +1,10 @@
 # Vista previa
 
-Segunda fase implementada: además de PDF, imágenes y texto, se previsualizan Google Docs, Sheets, Slides y Drawings exportados a un PDF temporal mediante `files.export` (sin confirmación de tamaño porque Google limita la exportación a 10 MB), audio y vídeo descargados completos y reproducidos con AVKit (sin streaming), y documentos de Office e iWork mediante Quick Look tras comprobar su cabecera (contenedor ZIP para los formatos modernos, OLE para los antiguos, `{\rtf` para RTF). Los formatos de audio y vídeo dependen de los codecs de macOS; un archivo no reproducible se rechaza antes de abrir el reproductor.
+Este documento empezó siendo el plan de la vista previa y hoy describe lo que hay. Lo que sigue etiquetado como
+«primera versión» o «segunda fase» es el histórico de cómo se hizo, no trabajo pendiente: todo lo que se nombra
+aquí está implementado.
+
+Además de PDF, imágenes y texto, se previsualizan Google Docs, Sheets, Slides y Drawings exportados a un PDF temporal mediante `files.export` (sin confirmación de tamaño porque Google limita la exportación a 10 MB), audio y vídeo descargados completos y reproducidos con AVKit (sin streaming), y documentos de Office e iWork mediante Quick Look tras comprobar su cabecera (contenedor ZIP para los formatos modernos, OLE para los antiguos, `{\rtf` para RTF). Los formatos de audio y vídeo dependen de los codecs de macOS; un archivo no reproducible se rechaza antes de abrir el reproductor.
 
 ## Primera versión
 
@@ -12,14 +16,14 @@ Objetivo: consultar un archivo sin elegir dónde guardarlo y sin dejar una copia
 - PDF, imágenes habituales (JPEG, PNG, HEIC) y texto plano/código en modo de lectura. No ejecutar HTML, scripts, aplicaciones ni macros. Carpetas, archivos comprimidos y formatos no admitidos muestran información y la opción de descargar.
 - PDF e imágenes mediante Quick Look en una ventana de iCloudy; texto/código en un visor nativo de texto plano sin ejecución ni enlaces automáticos. Sin edición ni subida automática. Botón «Guardar copia…» para conservarlo expresamente, sin sobrescribir archivos existentes.
 - Los textos grandes muestran únicamente el primer MB para mantener el visor ligero. «Guardar copia…» conserva el contenido completo descargado.
-- Google Docs/Sheets/Slides: mantener «Abrir en navegador» y exportación explícita en esta primera versión. Una segunda fase podría exportar a PDF temporal, respetando los límites de Google.
-- Audio/vídeo y documentos Office quedan para una segunda fase, tras validar formatos, codecs y tamaño. No prometer reproducción en streaming: Quick Look trabaja con un archivo local.
+- Google Docs/Sheets/Slides: «Abrir en navegador» y exportación explícita siguen ahí, y desde la segunda fase se exportan además a un PDF temporal, respetando los límites de Google.
+- Audio, vídeo y documentos de Office llegaron en la segunda fase, ya hecha, tras validar formatos, codecs y tamaño. Lo que sigue sin haber es reproducción en streaming: Quick Look y AVKit trabajan con un archivo local.
 
 ## Descarga, tamaño y limpieza
 
 1. Descargar únicamente al solicitar la vista previa; nunca al seleccionar una fila o listar una carpeta.
 2. Mostrar tamaño, progreso y Cancelar. Pedir confirmación por encima de 100 MB o si el tamaño es desconocido. El límite autorizado es 100 MB para tamaños desconocidos/pequeños y el tamaño anunciado para archivos mayores confirmados. Cancelar si el servidor anuncia o envía más bytes. Reservar margen de 20 MB al comprobar el espacio libre; macOS puede necesitar espacio adicional para generar la representación.
-3. Guardar en una carpeta temporal privada de iCloudy, identificada por cuenta + archivo + sesión, con nombres locales seguros. No usar Descargas ni añadir contenido a favoritos/caché offline.
+3. Guardar en una carpeta temporal privada de iCloudy, una por vista previa y nombrada con un identificador aleatorio, con nombres locales seguros. No usar Descargas ni añadir contenido a favoritos/caché offline.
 4. Reutilizar la copia solo mientras la vista previa esté abierta. Al cambiar de archivo, cerrar el visor o desconectar la cuenta, cancelar las descargas pendientes y eliminar sus temporales después de que el visor deje de usarlos.
 5. Limpiar también al salir y al siguiente arranque para recuperar residuos tras un cierre inesperado. No borrar carpetas ajenas ni archivos guardados expresamente.
 6. Si no hay conexión, permisos o soporte de formato, mostrar un mensaje claro y conservar la navegación. No descargar ni abrir en otra aplicación automáticamente como alternativa.
