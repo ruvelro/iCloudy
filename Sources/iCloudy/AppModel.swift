@@ -87,6 +87,8 @@ final class AppModel: ObservableObject {
     private var keepAlive: Task<Void, Never>?
     private var wakeObserver: NSObjectProtocol?
     private var lastKeepAlive: [String: Date] = [:]
+    /// Accounts with a keep-alive request in flight, so a slow one is not asked again on the next round.
+    private var touching: Set<String> = []
     /// Accounts whose session is being renewed in the background, so it is only attempted once at a time.
     @Published private(set) var renewingAccountIDs: Set<String> = []
     private var editContext: (Account, String)?
@@ -96,9 +98,10 @@ final class AppModel: ObservableObject {
     /// How long a session may go untouched. Measured against O2's server, which let 68 minutes pass and refused at
     /// 80, so a quarter of an hour leaves room for several missed rounds.
     static let keepAliveInterval: TimeInterval = 15 * 60
-    /// How often that is checked. Shorter than the interval on purpose: a background app has its timers stretched by
-    /// the system, and a real record showed a twenty-minute sleep arriving after forty. Looking often and deciding
-    /// by the clock survives that, where trusting the sleep did not.
+    /// How often that is checked. Shorter than the interval on purpose: deciding by the clock rather than by how long
+    /// the sleep actually lasted is what survives a Mac that spends the night waking in the dark and going back to
+    /// sleep. (An earlier note here claimed the system stretched a twenty-minute sleep to forty. It did not: the
+    /// script that measured it was dropping one line in three. The shape of the fix stands; the reason given did not.)
     static let keepAliveCheck: TimeInterval = 4 * 60
 
     var account: Account? { accounts.first { $0.id == selectedAccountID } }
@@ -135,8 +138,12 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             isOnline = online
             queue.setOnline(online)
-            // Whatever failed while offline is worth one automatic retry now.
-            if online, account != nil { reload() }
+            // Whatever failed while offline is worth one automatic retry now, and a session that goes quiet while the
+            // network is away is one the provider may have given up on: the first thing to do is prove it is alive.
+            if online {
+                touchIdleSessions(force: true, note: "ha vuelto la red")
+                if account != nil { reload() }
+            }
         }
         queue.didComplete = { [weak self] id in
             guard let self else { return }
@@ -417,15 +424,17 @@ final class AppModel: ObservableObject {
         Task { [weak self] in
             let renewed = await O2SilentRenewal(host: host).attempt()
             guard let self else { return }
-            renewingAccountIDs.remove(account.id)
+            // Released only once the new session has been proved and written. Clearing it before that showed the
+            // "expired" notice, with its button, over an account that was about to fix itself.
+            defer { renewingAccountIDs.remove(account.id) }
             guard let renewed else { return }
             await completeO2(host: host, validationKey: renewed.key, cookies: renewed.cookies,
-                             userAgent: renewed.userAgent, select: false)
+                             userAgent: renewed.userAgent, replacing: account, select: false)
         }
     }
 
     func completeO2(host: String, validationKey: String, cookies: [HTTPCookie], userAgent: String?,
-                    select shouldSelect: Bool = true) async {
+                    replacing existing: Account? = nil, select shouldSelect: Bool = true) async {
         connectionError = nil
         connecting = shouldSelect
         defer { connecting = false }
@@ -439,9 +448,15 @@ final class AppModel: ObservableObject {
             // Asking who this is proves the session works before anything is written to the Keychain.
             let identity = try await O2API.identity(host: host, state: state, session: probe)
 
-            let account = Account(id: "o2:\(host):\(identity)", cloud: .o2, name: L("O2 Cloud"), email: identity,
+            // Renewing keeps the account it was renewing. The identifier is built from whatever `/profile` answers,
+            // and that answer is not always the same field: a renewal that got the phone number where the first
+            // sign-in got the e-mail would have created a second account and left the first one expired for good.
+            var options = existing?.options ?? ["host": host]
+            options["host"] = host
+            let account = Account(id: existing?.id ?? "o2:\(host):\(identity)", cloud: .o2, name: L("O2 Cloud"),
+                                  email: existing?.email ?? identity,
                                   clientID: "", clientSecret: nil, serverURL: "https://" + host, bookmark: nil,
-                                  options: ["host": host])
+                                  options: options)
             let credential = Credential(accessToken: "", refreshToken: "", expires: .distantFuture,
                                         secret: O2API.store(validationKey: validationKey, cookies: cookies,
                                                             userAgent: userAgent))
@@ -450,9 +465,15 @@ final class AppModel: ObservableObject {
             try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
             accounts = updated; clients[account.id]?.invalidate(); clients[account.id] = nil
             expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
+            lastKeepAlive[account.id] = Date()
             if shouldSelect { select(account.id); showConnect = false }
             else if selectedAccountID == account.id { reload() }
-        } catch { connectionError = error.localizedDescription }
+        } catch {
+            // A silent renewal has nobody watching the connection sheet, so its failure goes to the diagnostic
+            // instead of to a field on a form that is not on screen.
+            if shouldSelect { connectionError = error.localizedDescription }
+            else { O2Log.record("renovación silenciosa · no se pudo adoptar: \(error.localizedDescription)") }
+        }
     }
 
     /// Opens the Finder's own "Connect to Server" flow. Mounting is not something a sandboxed app may do itself.
@@ -561,6 +582,12 @@ final class AppModel: ObservableObject {
             error = L("Pausa o termina las transferencias de esta cuenta antes de desconectarla.")
             return
         }
+        // The sign-in at Telefónica outlives the session at O2 and lives in WebKit's own store, not in the Keychain.
+        // Left behind, anybody opening "Conectar O2 Cloud" on this Mac walked straight in without typing anything.
+        if account.cloud.usesWebLogin {
+            let host = account.options["host"] ?? "cloud.o2online.es"
+            Task { await O2WebSession.forget(host: host) }
+        }
         // A shared drive or a library borrows this account's credential: once that is gone they cannot work and
         // cannot be reconnected on their own, so they leave with it instead of lingering as "expired".
         let leaving = [account] + Self.dependents(of: account, in: accounts)
@@ -615,19 +642,30 @@ final class AppModel: ObservableObject {
         for account in accounts where account.cloud.needsKeepAlive && !isExpired(account) {
             let since = Date().timeIntervalSince(lastKeepAlive[account.id] ?? .distantPast)
             guard force || since >= Self.keepAliveInterval else { continue }
-            lastKeepAlive[account.id] = Date()
-            refreshStorage(account, force: true)
+            guard touching.insert(account.id).inserted else { continue }
+            refreshStorage(account, force: true) { [weak self] answered in
+                self?.touching.remove(account.id)
+                // Only a touch that got an answer counts. Marking the clock before asking meant that a failure right
+                // after waking, while the Wi-Fi was still coming back, bought another quarter of an hour of silence
+                // — which is exactly the gap this exists to prevent.
+                guard answered else { O2Log.record("mantener viva · sin respuesta, se reintenta en la próxima ronda"); return }
+                self?.lastKeepAlive[account.id] = Date()
+            }
         }
     }
 
-    func refreshStorage(_ account: Account, force: Bool = false) {
-        guard accounts.contains(where: { $0.id == account.id }) else { return }
+    /// `then` reports whether the provider actually answered, which is what the keep-alive needs to know: this is
+    /// the cheapest call that proves an O2 session is still alive, and one that failed must not pass for one that
+    /// worked.
+    func refreshStorage(_ account: Account, force: Bool = false, then completion: ((Bool) -> Void)? = nil) {
+        guard accounts.contains(where: { $0.id == account.id }) else { completion?(false); return }
         // Asking a provider that has no quota command would only produce a pointless error every time.
         guard account.capabilities.quota else {
             storageQuotas[account.id] = .unavailable(L("\(account.cloud.title) no informa del espacio disponible."))
+            completion?(false)
             return
         }
-        if !force, case .available = storageQuotas[account.id], let fetched = quotaFetched[account.id], Date().timeIntervalSince(fetched) < Self.quotaRefreshInterval { return }
+        if !force, case .available = storageQuotas[account.id], let fetched = quotaFetched[account.id], Date().timeIntervalSince(fetched) < Self.quotaRefreshInterval { completion?(true); return }
         quotaTasks[account.id]?.cancel()
         let requestID = UUID(); quotaRequestIDs[account.id] = requestID
         // Keep an already displayed value visible while refreshing it.
@@ -638,11 +676,13 @@ final class AppModel: ObservableObject {
             do {
                 let quota = try await client(account).storageQuota()
                 try Task.checkCancellation()
-                guard quotaRequestIDs[account.id] == requestID else { return }
+                guard quotaRequestIDs[account.id] == requestID else { completion?(false); return }
                 storageQuotas[account.id] = .available(quota); quotaFetched[account.id] = Date()
+                completion?(true)
             } catch {
-                guard !Task.isCancelled, quotaRequestIDs[account.id] == requestID else { return }
+                guard !Task.isCancelled, quotaRequestIDs[account.id] == requestID else { completion?(false); return }
                 storageQuotas[account.id] = .unavailable(error.localizedDescription)
+                completion?(false)
             }
         }
     }

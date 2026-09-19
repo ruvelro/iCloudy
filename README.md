@@ -6,11 +6,11 @@
 
 **Google Drive · OneDrive · Dropbox · Box · Mega · Nextcloud · Synology · FTP · SMB**
 
-[![versión](https://img.shields.io/badge/versión-0.1.0-6f9dff?style=flat-square)](https://github.com/ruvelro/iCloudy/releases)
+[![versión](https://img.shields.io/badge/versión-0.5.0-6f9dff?style=flat-square)](https://github.com/ruvelro/iCloudy/releases)
 [![macOS](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-5.9-F05138?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![SwiftUI](https://img.shields.io/badge/SwiftUI-nativo-0071e3?style=flat-square)](https://developer.apple.com/xcode/swiftui/)
-[![tests](https://img.shields.io/badge/tests-291%20✓-43c463?style=flat-square)](Tests)
+[![tests](https://img.shields.io/badge/tests-303%20✓-43c463?style=flat-square)](Tests)
 [![licencia](https://img.shields.io/badge/licencia-GPL--3.0-8a7ee0?style=flat-square)](LICENSE)
 
 </div>
@@ -143,7 +143,9 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 - **Sin backend.** Tu Mac habla directamente con cada proveedor. No hay servidor de iCloudy por el que pasen tus
   archivos, tus nombres de archivo o tus credenciales.
 - **Credenciales en el Llavero**, con `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`: no salen de este Mac, no entran
-  en copias de iCloud y solo se leen con la sesión desbloqueada.
+  en copias de iCloud y solo se leen con la sesión desbloqueada. La excepción es O2: su acceso se hace en las páginas
+  del operador y las cookies de ese acceso viven en el contenedor de WebKit, como en un navegador. Ahí es donde se
+  renueva la sesión sin preguntar nada, y desconectar la cuenta las borra.
 - **OAuth con PKCE** y navegador externo. iCloudy nunca ve tu contraseña de Google, Microsoft, Dropbox ni Box.
 - **Nada se borra de verdad en las nubes con papelera.** La única eliminación es «Enviar a la papelera», reversible
   desde la web del proveedor. No hay vaciado de papelera ni borrado definitivo. WebDAV y FTP no tienen papelera: ahí
@@ -196,7 +198,7 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 ## 🛠️ Desarrollo
 
 ```bash
-swift test                       # 291 pruebas, sin red: todas las respuestas HTTP están simuladas
+swift test                       # 303 pruebas, sin red: todas las respuestas HTTP están simuladas
 swift run iCloudy                # iterar sobre la interfaz
 python3 scripts/mockups/generar.py  # rehacer las maquetas del README
 swift scripts/render-mockups.swift  # y convertirlas en PNG

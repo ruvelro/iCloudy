@@ -26,15 +26,18 @@ enum O2API {
         var isExpiredSession: Bool { ["SEC-1001", "SEC-1002", "SEC-1004", "SEC-1005"].contains(code) }
     }
 
-    static func url(host: String, path: String, action: String, state: O2Session?, query: [URLQueryItem] = []) -> URL {
+    static func url(host: String, path: String, action: String, validationKey: String?, query: [URLQueryItem] = []) -> URL {
         var components = URLComponents()
         components.scheme = "https"
         components.host = host
         components.path = "/sapi/" + path
         components.queryItems = [URLQueryItem(name: "action", value: action)] + query
-            + (state.map { [URLQueryItem(name: "validationkey", value: $0.validationKey)] } ?? [])
+            + (validationKey.map { [URLQueryItem(name: "validationkey", value: $0)] } ?? [])
         return components.url!
     }
+    /// Nothing here is worth reusing from a cache: the validation key travels in the query, so a cached answer would
+    /// be one given to a key that has since rotated, and a listing served from disk would hide what changed.
+    static func uncached(_ request: inout URLRequest) { request.cachePolicy = .reloadIgnoringLocalCacheData }
 
     /// The error code alone, for the diagnostic record. Never the message, which can quote a file name.
     static func errorCode(_ data: Data) -> String? {
@@ -74,20 +77,33 @@ enum O2API {
         }
     }
 
-    static func call(_ path: String, action: String, query: [URLQueryItem], body: [String: Any]?, method: String?,
-                     state: O2Session, session: URLSession) async throws -> [String: Any] {
-        var request = URLRequest(url: url(host: state.host, path: path, action: action, state: state, query: query))
+    /// The request one SAPI call travels in, already carrying the session.
+    @MainActor
+    static func request(_ path: String, action: String, query: [URLQueryItem], body: [String: Any]?, method: String?,
+                        state: O2Session) throws -> URLRequest {
+        var request = URLRequest(url: url(host: state.host, path: path, action: action, validationKey: state.validationKey, query: query))
         request.httpMethod = method ?? "POST"
+        uncached(&request)
         state.apply(to: &request)
         if let body {
             request.setValue("application/json;charset=UTF-8", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
         }
-        let sent = state.validationKey
-        let (data, response) = try await session.data(for: request)
+        return request
+    }
+
+    /// What an answer from this server means, whatever the request was for.
+    ///
+    /// The upload and the download used to build their own requests and skip all of this: a session that expired
+    /// halfway through a transfer failed with a message about a password nobody had typed, left the account looking
+    /// healthy, and threw away the renewed cookies the server had just handed back. It runs on the main actor so the
+    /// session's cookies and key are read and written without another call slipping in between.
+    @MainActor
+    static func interpret(_ response: URLResponse, data: Data, state: O2Session,
+                          path: String, action: String, sentKey: String) throws {
         guard let http = response as? HTTPURLResponse else { throw CloudError.message(L("Respuesta HTTP no válida.")) }
         var arrived: [HTTPCookie] = []
-        if let fields = http.allHeaderFields as? [String: String], let address = request.url {
+        if let fields = http.allHeaderFields as? [String: String], let address = response.url {
             arrived = HTTPCookie.cookies(withResponseHeaderFields: fields, for: address)
             // A refusal comes with a brand-new anonymous session. Keeping it would replace a session that is merely
             // stale with one that was never signed in, and bury the reason.
@@ -96,7 +112,7 @@ enum O2API {
         // Only the shape of the exchange, never its contents. See O2Log for what is and is not written.
         O2Log.record(O2Log.describe(path: path, action: action, status: http.statusCode,
                                     error: errorCode(data),
-                                    keyChanged: state.validationKey != sent,
+                                    keyChanged: state.validationKey != sentKey,
                                     cookieNames: arrived.map(\.name)))
         guard http.statusCode != 401, http.statusCode != 403 else {
             throw Failure(code: "SEC-1002", message: L("O2 Cloud rechazó la sesión. Vuelve a iniciar sesión."), data: nil,
@@ -105,16 +121,31 @@ enum O2API {
         guard (200..<300).contains(http.statusCode) else {
             throw CloudError.message(L("O2 Cloud devolvió HTTP \(http.statusCode) en \(path) \(action)."))
         }
+    }
+    /// Reads the envelope of an answer that has already been interpreted, tagging the failure with where it happened
+    /// and with the key the cookie may have brought instead of the body.
+    @MainActor
+    static func result(_ data: Data, state: O2Session, path: String, action: String, sentKey: String) throws -> [String: Any] {
         do { return try payload(data) }
         catch var failure as Failure {
             failure.origin = "\(path) \(action)"
             // The platform's own client, when told the key is stale and given no replacement, looks at the cookie:
             // if it no longer matches what was sent, that is the new key. Same thing here.
-            if failure.code == "SEC-1003", failure.data == nil, state.validationKey != sent {
+            if failure.code == "SEC-1003", failure.data == nil, state.validationKey != sentKey {
                 failure.data = state.validationKey
             }
             throw failure
         }
+    }
+
+    @MainActor
+    static func call(_ path: String, action: String, query: [URLQueryItem], body: [String: Any]?, method: String?,
+                     state: O2Session, session: URLSession) async throws -> [String: Any] {
+        let request = try request(path, action: action, query: query, body: body, method: method, state: state)
+        let sent = state.validationKey
+        let (data, response) = try await session.data(for: request)
+        try interpret(response, data: data, state: state, path: path, action: action, sentKey: sent)
+        return try result(data, state: state, path: path, action: action, sentKey: sent)
     }
 
     /// What iCloudy keeps after a web sign-in: the key every later call carries, and the cookies that identify the
@@ -150,6 +181,7 @@ enum O2API {
     }
 
     /// Who the session belongs to, so the account has a name the person recognises.
+    @MainActor
     static func identity(host: String, state: O2Session, session: URLSession) async throws -> String {
         let profile = try await call("profile", action: "get", query: [], body: nil, method: "GET",
                                      state: state, session: session)

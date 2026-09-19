@@ -19,9 +19,13 @@ final class O2CloudTests: XCTestCase {
             let url = try XCTUnwrap(request.url)
             let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
             let query = Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { first, _ in first })
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Referer"), "https://cloud.o2online.es/")
 
-            if url.host == "descargas.ejemplo.com" { return (200, [:], Data("contenido descargado".utf8)) }
+            // The file itself may come from another fleet entirely, and nothing of the session goes there.
+            if url.host == "descargas.ejemplo.com" {
+                XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"), "La sesión no viaja a otro servidor")
+                return (200, [:], Data("contenido descargado".utf8))
+            }
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Referer"), "https://cloud.o2online.es/")
 
             let path = String(url.path.dropFirst("/sapi/".count))
             let action = query["action"] ?? ""
@@ -185,6 +189,11 @@ final class O2CloudTests: XCTestCase {
         return CloudAPI(account: account, session: URLSession(configuration: configuration), credentials: store)
     }
     private func withRoot() { replies["media/folder get"] = ["folders": [["id": 10, "name": "Mi nube"]]] }
+    /// An account whose top level holds more than one folder, which is where picking the first was a guess.
+    private func withSeveralTopFolders() {
+        replies["media/folder get"] = ["folders": [["id": 77, "name": "Álbumes", "parentid": 10],
+                                                   ["id": 10, "name": "Mi nube"]]]
+    }
 
     // MARK: - The session
 
@@ -326,8 +335,8 @@ final class O2CloudTests: XCTestCase {
             }
             if url.path == "/sapi/media/folder" {
                 folderPages += 1
-                // A full page means there may be more; a short one ends it.
-                let names = folderPages == 1 ? (1...200).map { "carpeta \($0)" } : ["última"]
+                // A page that brings something new means there may be more; one that brings nothing ends it.
+                let names = folderPages == 1 ? (1...200).map { "carpeta \($0)" } : (folderPages == 2 ? ["última"] : [])
                 let folders = names.enumerated().map { ["id": $0.offset + folderPages * 1000, "name": $0.element] }
                 return (200, [:], try JSONSerialization.data(withJSONObject: ["data": ["folders": folders]]))
             }
@@ -337,7 +346,7 @@ final class O2CloudTests: XCTestCase {
             return (200, [:], try JSONSerialization.data(withJSONObject: ["data": ["more": more, "media": media]]))
         }
         let files = try await client().list(parent: "root")
-        XCTAssertEqual(folderPages, 2, "La primera página venía llena, así que se pide otra")
+        XCTAssertEqual(folderPages, 3, "Se sigue pidiendo mientras cada página traiga algo nuevo")
         XCTAssertEqual(mediaPages, 2, "El servidor avisó de que había más")
         XCTAssertEqual(files.filter(\.isFolder).count, 201)
         XCTAssertEqual(files.filter { !$0.isFolder }.count, 2)
@@ -534,6 +543,263 @@ final class O2CloudTests: XCTestCase {
                              size: 1, modified: nil, webURL: nil, isFolder: false)
         do { _ = try await api.publicLink(for: file); XCTFail("Un archivo suelto no tiene enlace aquí") }
         catch { XCTAssertTrue(error.localizedDescription.contains("enlaces de carpetas"), error.localizedDescription) }
+    }
+
+    // MARK: - The root of the account
+
+    func testTheRootIsTheFolderWithoutAParentRatherThanTheFirstOneAnswered() async throws {
+        // Asking for one folder and taking it was a guess about the order the server answers in. An account whose
+        // first answer is an album inside the root had everything listed one level too deep, and uploads landed there.
+        serve(); withSeveralTopFolders()
+        _ = try await client().list(parent: "root")
+        let ask = try XCTUnwrap(calls.first { $0.path == "media/folder" && $0.action == "get" })
+        XCTAssertEqual(ask.query["limit"], "20", "Se piden varias para poder elegir")
+        let listing = try XCTUnwrap(calls.first { $0.path == "media/folder" && $0.action == "list" })
+        XCTAssertEqual(listing.query["parentid"], "10", "La raíz es la que no cuelga de ninguna otra")
+    }
+
+    func testAServerThatIgnoresTheOffsetDoesNotGoRoundForever() async throws {
+        // Some deployments answer the same page whatever offset is asked for. Counting what is new, instead of how
+        // full the page came back, is what ends the walk.
+        serve()
+        var pages = 0
+        StubProtocol.handler = { request in
+            let url = try XCTUnwrap(request.url)
+            let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            let query = Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { first, _ in first })
+            if query["action"] == "get", url.path == "/sapi/media/folder" {
+                return (200, [:], try JSONSerialization.data(withJSONObject: ["data": ["folders": [["id": 10, "name": "raíz"]]]]))
+            }
+            if url.path == "/sapi/media/folder" {
+                pages += 1
+                XCTAssertLessThan(pages, 10, "Se quedó dando vueltas")
+                let folders = [["id": 21, "name": "Facturas"], ["id": 22, "name": "Fotos"]]
+                return (200, [:], try JSONSerialization.data(withJSONObject: ["data": ["folders": folders]]))
+            }
+            return (200, [:], Data(#"{"data":{"more":false,"media":[]}}"#.utf8))
+        }
+        let files = try await client().list(parent: "root")
+        XCTAssertEqual(pages, 2, "La segunda página no trajo nada nuevo y ahí se paró")
+        XCTAssertEqual(files.map(\.name), ["Facturas", "Fotos"], "Y nada aparece repetido")
+    }
+
+    func testNothingIsServedFromACachedAnswer() throws {
+        // The validation key travels in the query, so a cached answer is one given to a key that has since rotated,
+        // and a listing read from disk hides what changed a moment ago.
+        let state = O2Session(host: "cloud.o2online.es", validationKey: "clave-1")
+        let request = try O2API.request("media", action: "get", query: [], body: nil, method: "GET", state: state)
+        XCTAssertEqual(request.cachePolicy, .reloadIgnoringLocalCacheData)
+        XCTAssertFalse(request.httpShouldHandleCookies, "La sesión se manda a mano, no desde el tarro compartido")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Referer"), "https://cloud.o2online.es/")
+    }
+
+    func testACookieThatHasAlreadyExpiredDoesNotReplaceALiveOne() throws {
+        // Emptying a cookie is one way a server deletes it; dating it in the past is the other. Both used to be
+        // stored over the session, which then travelled dead on the next call.
+        let live = try XCTUnwrap(HTTPCookie(properties: [.name: "JSESSIONID", .value: "abc",
+                                                         .domain: "cloud.o2online.es", .path: "/"]))
+        let state = O2Session(host: "cloud.o2online.es", validationKey: "clave-1", cookies: [live])
+        let stale = try XCTUnwrap(HTTPCookie(properties: [.name: "JSESSIONID", .value: "muerta",
+                                                          .domain: "cloud.o2online.es", .path: "/",
+                                                          .expires: Date(timeIntervalSinceNow: -60)]))
+        state.absorb([stale])
+        XCTAssertEqual(state.cookieHeader, "JSESSIONID=abc")
+        XCTAssertFalse(state.renewed, "No ha cambiado nada que guardar")
+    }
+
+    // MARK: - Transfers and the session
+
+    func testAKeyThatRotatesDuringAnUploadDoesNotCostTheWholeUpload() async throws {
+        // The upload used to build its own request and skip the retry entirely: a key that rotated mid-transfer
+        // failed the file with a message about a password nobody had typed.
+        var attempts: [String] = []
+        StubProtocol.handler = { request in
+            let url = try XCTUnwrap(request.url)
+            let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            let key = items.first { $0.name == "validationkey" }?.value ?? ""
+            guard url.path == "/sapi/upload" else {
+                return (200, [:], try JSONSerialization.data(withJSONObject: ["data": ["folders": [["id": 10, "name": "raíz"]]]]))
+            }
+            attempts.append(key)
+            if key == "clave-1" {
+                return (200, [:], Data(#"{"error":{"code":"SEC-1003","message":"stale","data":"clave-2"}}"#.utf8))
+            }
+            XCTAssertTrue(String(decoding: requestData(request), as: UTF8.self).contains("bytes del archivo"),
+                          "El segundo intento manda el archivo entero otra vez")
+            return (200, [:], Data(#"{"data":{"id":77}}"#.utf8))
+        }
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data("bytes del archivo".utf8).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let stamp = try source.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        let receipt = try await client().resumableUpload(local: source, parent: "root", name: "nota.txt", replacing: nil,
+                                                         checkpoint: UploadCheckpoint(total: 17, modified: stamp),
+                                                         save: { _ in }, progress: { _, _ in })
+        XCTAssertEqual(receipt.remoteID, CloudAPI.o2MediaID("77", kind: .file))
+        XCTAssertEqual(attempts, ["clave-1", "clave-2"], "Se reintenta con la clave nueva en vez de perder el archivo")
+    }
+
+    func testAnUploadThatEndsWithADeadSessionSaysSoInsteadOfBlamingTheFile() async throws {
+        // A 401 during the transfer used to surface as an unreadable failure, with the account still looking healthy.
+        StubProtocol.handler = { request in
+            let url = try XCTUnwrap(request.url)
+            guard url.path == "/sapi/upload" else {
+                return (200, [:], try JSONSerialization.data(withJSONObject: ["data": ["folders": [["id": 10, "name": "raíz"]]]]))
+            }
+            return (401, [:], Data())
+        }
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data("bytes del archivo".utf8).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let stamp = try source.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        let api = client()
+        var reason: String?
+        api.sessionDidExpire = { reason = $0 }
+        do {
+            _ = try await api.resumableUpload(local: source, parent: "root", name: "nota.txt", replacing: nil,
+                                              checkpoint: UploadCheckpoint(total: 17, modified: stamp),
+                                              save: { _ in }, progress: { _, _ in })
+            XCTFail("Una sesión muerta no puede dar una subida por buena")
+        } catch {
+            guard case CloudError.sessionExpired = error else { return XCTFail("Otro error: \(error)") }
+        }
+        XCTAssertTrue(try XCTUnwrap(reason).contains("upload save"), reason ?? "")
+    }
+
+    func testReplacingAFileSaysSoWhenTheOldCopyStaysBehind() async throws {
+        // The platform has no overwrite: replacing means uploading beside the old copy and then binning it. Letting
+        // that second step fail quietly left two files with the same name and a transfer claiming to have replaced one.
+        StubProtocol.handler = { request in
+            let url = try XCTUnwrap(request.url)
+            let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            let action = items.first { $0.name == "action" }?.value ?? ""
+            if url.path == "/sapi/upload" { return (200, [:], Data(#"{"data":{"id":77}}"#.utf8)) }
+            if action == "delete" { return (200, [:], Data(#"{"error":{"code":"MED-1006","message":"no such media"}}"#.utf8)) }
+            return (200, [:], try JSONSerialization.data(withJSONObject: ["data": ["folders": [["id": 10, "name": "raíz"]]]]))
+        }
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data("bytes del archivo".utf8).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let stamp = try source.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        do {
+            _ = try await client().resumableUpload(local: source, parent: "root", name: "nota.txt",
+                                                   replacing: CloudAPI.o2MediaID("31", kind: .file),
+                                                   checkpoint: UploadCheckpoint(total: 17, modified: stamp),
+                                                   save: { _ in }, progress: { _, _ in })
+            XCTFail("Hay que contar que la copia vieja sigue ahí")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("papelera"), error.localizedDescription)
+            XCTAssertTrue(error.localizedDescription.contains("nota.txt"), error.localizedDescription)
+        }
+    }
+
+    func testADownloadFromO2sOwnServerCarriesTheSession() async throws {
+        // The address may point at O2's own host, and there the session is needed: without it the file comes back as
+        // a sign-in page.
+        var cookieOnFile: String??
+        StubProtocol.handler = { request in
+            let url = try XCTUnwrap(request.url)
+            if url.path == "/descarga/31" {
+                cookieOnFile = request.value(forHTTPHeaderField: "Cookie")
+                return (200, [:], Data("contenido".utf8))
+            }
+            if url.path == "/sapi/media" {
+                return (200, [:], Data(#"{"data":{"media":[{"id":31,"name":"recibo.pdf","url":"https://cloud.o2online.es/descarga/31"}]}}"#.utf8))
+            }
+            return (200, [:], try JSONSerialization.data(withJSONObject: ["data": ["folders": [["id": 10, "name": "raíz"]]]]))
+        }
+        let file = CloudFile(id: CloudAPI.o2MediaID("31", kind: .file), name: "recibo.pdf", mime: "application/pdf",
+                             size: 9, modified: nil, webURL: nil, isFolder: false)
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        try await client().download(file: file, to: destination) { _, _ in }
+        XCTAssertEqual(try Data(contentsOf: destination), Data("contenido".utf8))
+        XCTAssertEqual(cookieOnFile, "JSESSIONID=abc")
+    }
+
+    func testASessionThatDiesWhileTheFileIsComingDownIsReportedAsSuch() async throws {
+        // The download used to read only the bytes, so a refusal arrived as a zero-length file written over the
+        // destination, with the account still marked healthy.
+        StubProtocol.handler = { request in
+            let url = try XCTUnwrap(request.url)
+            if url.path == "/descarga/31" { return (401, [:], Data()) }
+            if url.path == "/sapi/media" {
+                return (200, [:], Data(#"{"data":{"media":[{"id":31,"name":"recibo.pdf","url":"https://cloud.o2online.es/descarga/31"}]}}"#.utf8))
+            }
+            return (200, [:], try JSONSerialization.data(withJSONObject: ["data": ["folders": [["id": 10, "name": "raíz"]]]]))
+        }
+        let file = CloudFile(id: CloudAPI.o2MediaID("31", kind: .file), name: "recibo.pdf", mime: "application/pdf",
+                             size: 9, modified: nil, webURL: nil, isFolder: false)
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data("lo que ya había".utf8).write(to: destination)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let api = client()
+        var reason: String?
+        api.sessionDidExpire = { reason = $0 }
+        do { try await api.download(file: file, to: destination) { _, _ in }; XCTFail("Eso no es el archivo") }
+        catch {
+            guard case CloudError.sessionExpired = error else { return XCTFail("Otro error: \(error)") }
+        }
+        XCTAssertTrue(try XCTUnwrap(reason).contains("descarga"), reason ?? "")
+        XCTAssertEqual(try Data(contentsOf: destination), Data("lo que ya había".utf8),
+                       "Y lo que había en el destino sigue ahí")
+    }
+
+    func testTwoCallsAtOnceDoNotTreadOnEachOthersSession() async throws {
+        // The session is one object shared by every call, and its cookies and key are written after an await. Two
+        // transfers running together is the ordinary case here, not a corner one.
+        var keys: [String] = []
+        StubProtocol.handler = { request in
+            let url = try XCTUnwrap(request.url)
+            let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            let key = items.first { $0.name == "validationkey" }?.value ?? ""
+            guard url.path == "/sapi/media" else {
+                return (200, [:], try JSONSerialization.data(withJSONObject: ["data": ["folders": [["id": 10, "name": "raíz"]]]]))
+            }
+            keys.append(key)
+            if key == "clave-1" {
+                return (200, [:], Data(#"{"error":{"code":"SEC-1003","message":"stale","data":"clave-2"}}"#.utf8))
+            }
+            return (200, [:], Data(#"{"data":{"used":1,"quota":2,"nolimit":false}}"#.utf8))
+        }
+        let api = client()
+        async let first = api.storageQuota()
+        async let second = api.storageQuota()
+        let both = try await [first, second]
+        XCTAssertEqual(both.map(\.used), [1, 1], "Ninguna de las dos se pierde por culpa de la otra")
+        XCTAssertEqual(keys.filter { $0 == "clave-2" }.count, keys.count - keys.filter { $0 == "clave-1" }.count)
+        XCTAssertTrue(keys.last == "clave-2", keys.description)
+    }
+
+    // MARK: - The web sign-in
+
+    func testThisMacKeepsIntroducingItselfTheSameWay() {
+        // Funambol keeps a list of devices per account, and some deployments cap it and start expelling the oldest.
+        // A fresh identifier on every sign-in and every silent renewal filled it by itself.
+        let key = "o2DeviceID.pruebas.ejemplo.com"
+        UserDefaults.standard.removeObject(forKey: key)
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+        let first = O2WebSession.deviceID(host: "pruebas.ejemplo.com")
+        XCTAssertFalse(first.isEmpty)
+        XCTAssertEqual(O2WebSession.deviceID(host: "pruebas.ejemplo.com"), first, "El mismo Mac, el mismo dispositivo")
+        XCTAssertNotEqual(O2WebSession.deviceID(host: "cloud.o2online.es"), first, "Cada servidor lleva su lista")
+
+        let start = O2WebSession.start(host: "pruebas.ejemplo.com")
+        XCTAssertEqual(start.host, "pruebas.ejemplo.com")
+        XCTAssertEqual(start.path, "/sapi/oauth/pkce/authorize")
+        XCTAssertTrue(try XCTUnwrap(start.query).contains("deviceid=" + first), start.absoluteString)
+    }
+
+    func testDisconnectingTakesTheSignInThatSurvivesTheSession() {
+        // What makes a silent renewal possible is the sign-in kept at Telefónica, which outlives the O2 session.
+        // Leaving it behind would make "desconectar" mean rather less than it says.
+        XCTAssertTrue(O2WebSession.belongs("cloud.o2online.es", host: "cloud.o2online.es"))
+        XCTAssertTrue(O2WebSession.belongs("o2online.es", host: "cloud.o2online.es"), "El dominio de arriba también")
+        XCTAssertTrue(O2WebSession.belongs("telefonica.es", host: "cloud.o2online.es"), "Ahí vive el acceso de verdad")
+        XCTAssertTrue(O2WebSession.belongs("o2.de", host: "cloud.o2.de"))
+        XCTAssertFalse(O2WebSession.belongs("google.com", host: "cloud.o2online.es"))
+        XCTAssertFalse(O2WebSession.belongs("otro-o2online.es", host: "cloud.o2online.es"),
+                       "Un nombre que acaba parecido no es el mismo dominio")
     }
 
     func testCapabilitiesSayWhatThePlatformCanAndCannotDo() {

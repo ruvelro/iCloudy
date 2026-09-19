@@ -86,6 +86,14 @@ final class AccountsAndBundleTests: XCTestCase {
         XCTAssertNotNil(plist?["NSServices"], "The Services menu entry is still declared")
         XCTAssertFalse((plist?["NSHumanReadableCopyright"] as? String ?? "").contains("Google Drive y OneDrive"), "Nine providers, not two")
 
+        // The version people read and the version the system reads have to be the same one, or a report about
+        // "0.5.0" is about a build nobody can identify.
+        let version = try XCTUnwrap(plist?["CFBundleShortVersionString"] as? String)
+        let readme = try String(contentsOf: URL(fileURLWithPath: "README.md"), encoding: .utf8)
+        XCTAssertTrue(readme.contains("versión-\(version)-"), "El distintivo del README dice otra versión")
+        let changelog = try String(contentsOf: URL(fileURLWithPath: "CHANGELOG.md"), encoding: .utf8)
+        XCTAssertTrue(changelog.contains("## \(version)"), "Esa versión no está contada en el registro de cambios")
+
         let script = try String(contentsOf: URL(fileURLWithPath: "scripts/build-app.sh"), encoding: .utf8)
         XCTAssertTrue(script.contains("appintentsmetadataprocessor"))
         XCTAssertTrue(script.contains("-emit-const-values"), "The processor reads the constant values the compiler extracts")
