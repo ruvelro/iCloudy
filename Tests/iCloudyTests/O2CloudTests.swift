@@ -53,6 +53,37 @@ final class O2CloudTests: XCTestCase {
         return (CloudAPI(account: account, session: URLSession(configuration: configuration), credentials: store), store)
     }
 
+    func testTheSignInCookiesAreKeptSoASessionCanBeRenewedLater() throws {
+        // Measured against the real thing: the renewal stopped at Telefónica's login page three times in a row,
+        // because these cookies are only kept by the web view for as long as the app runs. Keeping them is what
+        // makes a session survive closing the app.
+        let session = HTTPCookie(properties: [.name: "JSESSIONID", .value: "abc",
+                                              .domain: "cloud.o2online.es", .path: "/"])!
+        let signIn = HTTPCookie(properties: [.name: "SSOSESSION", .value: "xyz",
+                                             .domain: "t3.o2online.es", .path: "/", .secure: "TRUE"])!
+        let stored = O2API.store(validationKey: "clave", cookies: [session], userAgent: nil, sso: [signIn])
+
+        let back = O2API.restoreSSO(stored)
+        XCTAssertEqual(back.map(\.name), ["SSOSESSION"], "Las del acceso vuelven listas para devolverlas a la vista web")
+        XCTAssertEqual(back.first?.domain, "t3.o2online.es")
+        XCTAssertTrue(try XCTUnwrap(back.first).isSecure)
+
+        let restored = try XCTUnwrap(O2API.restore(stored))
+        XCTAssertEqual(restored.cookies.map(\.name), ["JSESSIONID"], "Y no se mezclan con las de la sesión")
+        XCTAssertTrue(O2API.restoreSSO(O2API.store(validationKey: "clave", cookies: [session])).isEmpty,
+                      "Una sesión guardada antes de esto simplemente no tiene ninguna")
+    }
+
+    func testOnlyTheSignInDomainsCount() {
+        // The window visits nothing else, but naming them keeps it that way.
+        for host in ["t3.o2online.es", "apiseg.telefonica.es", "cloud.o2online.es"] {
+            XCTAssertTrue(O2SilentRenewal.signInDomains.contains { host.hasSuffix($0) }, host)
+        }
+        for host in ["ejemplo.com", "google.com", "o2online.es.malicioso.com"] {
+            XCTAssertFalse(O2SilentRenewal.signInDomains.contains { host.hasSuffix($0) }, host)
+        }
+    }
+
     func testTheSessionKeepsPresentingTheClientItWasGrantedTo() async throws {
         // The session is created inside a window that introduces itself as a browser. Continuing as a different
         // program is the kind of change a server treats as a session worth dropping.

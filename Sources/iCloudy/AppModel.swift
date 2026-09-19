@@ -363,17 +363,19 @@ final class AppModel: ObservableObject {
         renewingAccountIDs.insert(account.id)
         let host = account.options["host"] ?? "cloud.o2online.es"
         Task { [weak self] in
-            let renewed = await O2SilentRenewal(host: host).attempt()
+            let stored = try? Vault.read(Credential.self, key: account.credentialKey)
+            let sso = stored.map { O2API.restoreSSO($0.secret) } ?? []
+            let renewed = await O2SilentRenewal(host: host).attempt(sso: sso)
             guard let self else { return }
             renewingAccountIDs.remove(account.id)
             guard let renewed else { return }
             await completeO2(host: host, validationKey: renewed.key, cookies: renewed.cookies,
-                             userAgent: renewed.userAgent, select: false)
+                             userAgent: renewed.userAgent, sso: renewed.sso, select: false)
         }
     }
 
     func completeO2(host: String, validationKey: String, cookies: [HTTPCookie], userAgent: String?,
-                    select shouldSelect: Bool = true) async {
+                    sso: [HTTPCookie] = [], select shouldSelect: Bool = true) async {
         connectionError = nil
         connecting = shouldSelect
         defer { connecting = false }
@@ -392,7 +394,7 @@ final class AppModel: ObservableObject {
                                   options: ["host": host])
             let credential = Credential(accessToken: "", refreshToken: "", expires: .distantFuture,
                                         secret: O2API.store(validationKey: validationKey, cookies: cookies,
-                                                            userAgent: userAgent))
+                                                            userAgent: userAgent, sso: sso))
             try Vault.save(credential, key: account.id)
             var updated = accounts.filter { $0.id != account.id }; updated.append(account)
             try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")

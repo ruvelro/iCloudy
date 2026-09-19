@@ -22,7 +22,7 @@ final class O2WebLoginModel: ObservableObject {
     @Published var status: String = L("Abriendo el acceso de O2…")
     @Published var failed: String?
     /// Receives the session once O2 has granted one.
-    var onSuccess: (@MainActor (String, [HTTPCookie], String?) -> Void)?
+    var onSuccess: (@MainActor (String, [HTTPCookie], String?, [HTTPCookie]) -> Void)?
     /// The persistent store, on purpose. O2's server ends a session after about an hour of silence, so a Mac that
     /// spends the night switched off always comes back to a dead one. What survives that is the sign-in at
     /// Telefónica, and it only survives if its cookies are kept, exactly as a browser keeps them. With them, renewing
@@ -58,7 +58,7 @@ final class O2WebLoginModel: ObservableObject {
                 guard let key = mine.first(where: { $0.name == "validationKey" })?.value, !key.isEmpty else { continue }
                 self.done = true
                 self.status = L("Sesión iniciada. Cerrando…")
-                self.onSuccess?(key, mine, await self.identity())
+                self.onSuccess?(key, mine, await self.identity(), await self.signInCookies())
                 return
             }
             self?.failed = L("No se completó el acceso. Cierra esta ventana y vuelve a intentarlo.")
@@ -77,8 +77,19 @@ final class O2WebLoginModel: ObservableObject {
     private func sessionCookies() async -> [HTTPCookie] {
         guard let webView else { return [] }
         let cookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
-        // Only this server's cookies. Whatever the sign-in pages of Telefónica set is theirs and stays there.
         return cookies.filter { host.hasSuffix($0.domain) || $0.domain.hasSuffix(host) }
+    }
+    /// The cookies of the sign-in itself, which belong to Telefónica rather than to O2. They are kept because they
+    /// are what lets the session be renewed later without asking anyone anything, and because the web view throws
+    /// them away when the app quits: they carry no expiry, so WebKit treats them as belonging to that run alone.
+    /// Nothing outside the sign-in is taken: the window visits no other site.
+    private func signInCookies() async -> [HTTPCookie] {
+        guard let webView else { return [] }
+        let cookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+        return cookies.filter { cookie in
+            O2SilentRenewal.signInDomains.contains { cookie.domain.hasSuffix($0) }
+                && !(host.hasSuffix(cookie.domain) || cookie.domain.hasSuffix(host))
+        }
     }
 
     /// The way out if the session is established but the key never shows up on its own. Nothing is stored unless the
@@ -91,7 +102,8 @@ final class O2WebLoginModel: ObservableObject {
             return
         }
         done = true
-        onSuccess?(cookies.first { $0.name == "validationKey" }?.value ?? "", cookies, await identity())
+        onSuccess?(cookies.first { $0.name == "validationKey" }?.value ?? "", cookies, await identity(),
+                   await signInCookies())
     }
 }
 
@@ -159,9 +171,10 @@ struct O2WebLoginView: View {
         }
         .frame(width: 720, height: 720)
         .onAppear {
-            login.onSuccess = { key, cookies, agent in
+            login.onSuccess = { key, cookies, agent, sso in
                 Task {
-                    await model.completeO2(host: login.host, validationKey: key, cookies: cookies, userAgent: agent)
+                    await model.completeO2(host: login.host, validationKey: key, cookies: cookies,
+                                           userAgent: agent, sso: sso)
                     finish()
                 }
             }
@@ -188,10 +201,12 @@ struct O2WebLoginView: View {
 final class O2SilentRenewal {
     private var webView: WKWebView?
     private let host: String
+    /// Where the sign-in happens. Cookies from these are kept so it can be repeated without anyone taking part.
+    static let signInDomains = ["o2online.es", "telefonica.es", "movistar.es"]
     init(host: String) { self.host = host }
 
     /// Returns the new session, or nil when it could not be had without the person taking part.
-    func attempt(timeout: TimeInterval = 25) async -> (key: String, cookies: [HTTPCookie], userAgent: String?)? {
+    func attempt(sso: [HTTPCookie] = [], timeout: TimeInterval = 25) async -> (key: String, cookies: [HTTPCookie], userAgent: String?, sso: [HTTPCookie])? {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = WKWebsiteDataStore.default()
         let webView = WKWebView(frame: .init(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
@@ -206,6 +221,10 @@ final class O2SilentRenewal {
         for cookie in await jar.allCookies() where cookie.name == "validationKey" {
             await jar.deleteCookie(cookie)
         }
+        // Put the sign-in back the way it was. Without this the web view arrives as a stranger and Telefónica shows
+        // its login page, which is exactly what a real record showed happening three times in a row.
+        for cookie in sso { await jar.setCookie(cookie) }
+        O2Log.record("renovación silenciosa · \(sso.count) cookies de acceso restauradas")
         webView.load(URLRequest(url: start))
 
         O2Log.record("renovación silenciosa · empieza")
@@ -216,8 +235,12 @@ final class O2SilentRenewal {
             let mine = cookies.filter { host.hasSuffix($0.domain) || $0.domain.hasSuffix(host) }
             if let key = mine.first(where: { $0.name == "validationKey" })?.value, !key.isEmpty {
                 let agent = (try? await webView.evaluateJavaScript("navigator.userAgent")) as? String
+                let fresh = cookies.filter { cookie in
+                    Self.signInDomains.contains { cookie.domain.hasSuffix($0) }
+                        && !(host.hasSuffix(cookie.domain) || cookie.domain.hasSuffix(host))
+                }
                 O2Log.record("renovación silenciosa · conseguida sin intervención")
-                return (key, mine, agent)
+                return (key, mine, agent, fresh)
             }
         }
         // Normally this means Telefónica wants to see the person again. Saying which page it stopped on is the only

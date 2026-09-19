@@ -124,6 +124,10 @@ enum O2API {
         var cookies: [StoredCookie]
         /// How the client that was granted this session introduces itself.
         var userAgent: String?
+        /// The cookies of the sign-in itself, at Telefónica rather than at O2. They are what lets a session be
+        /// renewed without asking anyone anything, and they have to be kept here because the web view discards them
+        /// when the app quits: they carry no expiry date, so WebKit treats them as belonging to that run alone.
+        var sso: [StoredCookie]?
         struct StoredCookie: Codable {
             var name: String
             var value: String
@@ -132,20 +136,30 @@ enum O2API {
             var secure: Bool
         }
     }
-    static func store(validationKey: String, cookies: [HTTPCookie], userAgent: String? = nil) -> String {
-        let stored = StoredSession(validationKey: validationKey, cookies: cookies.map {
-            StoredSession.StoredCookie(name: $0.name, value: $0.value, domain: $0.domain, path: $0.path, secure: $0.isSecure)
-        }, userAgent: userAgent)
+    static func store(validationKey: String, cookies: [HTTPCookie], userAgent: String? = nil,
+                      sso: [HTTPCookie] = []) -> String {
+        let stored = StoredSession(validationKey: validationKey, cookies: cookies.map(shrink),
+                                   userAgent: userAgent, sso: sso.map(shrink))
         return (try? JSONEncoder().encode(stored)).map { String(decoding: $0, as: UTF8.self) } ?? ""
+    }
+    private static func shrink(_ cookie: HTTPCookie) -> StoredSession.StoredCookie {
+        StoredSession.StoredCookie(name: cookie.name, value: cookie.value, domain: cookie.domain,
+                                   path: cookie.path, secure: cookie.isSecure)
+    }
+    /// The cookies of the sign-in, ready to be put back into a web view.
+    static func restoreSSO(_ text: String) -> [HTTPCookie] {
+        guard let stored = try? JSONDecoder().decode(StoredSession.self, from: Data(text.utf8)) else { return [] }
+        return (stored.sso ?? []).compactMap(inflate)
+    }
+    private static func inflate(_ value: StoredSession.StoredCookie) -> HTTPCookie? {
+        HTTPCookie(properties: [.name: value.name, .value: value.value, .domain: value.domain,
+                                .path: value.path.isEmpty ? "/" : value.path,
+                                .secure: value.secure ? "TRUE" : "FALSE"])
     }
     static func restore(_ text: String) -> (validationKey: String, cookies: [HTTPCookie], userAgent: String?)? {
         guard let stored = try? JSONDecoder().decode(StoredSession.self, from: Data(text.utf8)),
               !stored.validationKey.isEmpty else { return nil }
-        let cookies = stored.cookies.compactMap { value -> HTTPCookie? in
-            HTTPCookie(properties: [.name: value.name, .value: value.value, .domain: value.domain,
-                                    .path: value.path.isEmpty ? "/" : value.path,
-                                    .secure: value.secure ? "TRUE" : "FALSE"])
-        }
+        let cookies = stored.cookies.compactMap(inflate)
         return (stored.validationKey, cookies, stored.userAgent)
     }
 
