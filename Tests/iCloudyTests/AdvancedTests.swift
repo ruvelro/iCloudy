@@ -145,6 +145,48 @@ final class AdvancedTests: XCTestCase {
         XCTAssertEqual(corpora, [["drive"], ["user"]])
     }
 
+    func testAScopedAccountOffersNeitherPersonalListsNorABorrowedQuota() async throws {
+        // "Recientes" and "Compartido conmigo" are the person's own activity, not a drive's, and Drive answers a
+        // request that mixes them with a drive scope with nothing or a refusal. The quota is the same lie the other
+        // way round: `about` reports the person's storage, which is not the shared drive's.
+        let parent = account(.google)
+        let drive = Account.scoped(to: "0ABCdrive", named: "Marketing", from: parent)
+        XCTAssertTrue(parent.capabilities.recents)
+        XCTAssertTrue(parent.capabilities.sharedWithMe)
+        XCTAssertFalse(drive.capabilities.recents)
+        XCTAssertFalse(drive.capabilities.sharedWithMe)
+        XCTAssertEqual(AppModel.collections(for: drive), [.files], "La cabecera no ofrece lo que no existe")
+        let library = Account.scoped(to: "b!lib", named: "Documentos", from: account(.microsoft))
+        XCTAssertFalse(library.capabilities.recents)
+
+        StubProtocol.handler = { _ in XCTFail("Una unidad compartida no tiene cuota que preguntar"); return (500, [:], Data()) }
+        do {
+            _ = try await stubbed(drive).storageQuota()
+            XCTFail("Debe decir que no la informa")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("unidad compartida"), error.localizedDescription) }
+
+        // A document library does have one of its own, and it is asked for on the library's endpoint.
+        var asked: URL?
+        StubProtocol.handler = { request in
+            asked = request.url
+            return (200, [:], Data(#"{"quota":{"used":10,"total":100}}"#.utf8))
+        }
+        let quota = try await stubbed(library).storageQuota()
+        XCTAssertEqual(quota.total, 100)
+        XCTAssertTrue(try XCTUnwrap(asked?.absoluteString).contains("/drives/"), asked?.absoluteString ?? "")
+    }
+
+    func testOnlyTheProvidersThatIgnoreTheLoopbackPortFallBackToAnotherOne() {
+        // Google ignores the port of a loopback redirect and Box checks only scheme, host and path, so a busy 53682
+        // does not block them. Microsoft and Dropbox compare the whole address, so falling back would just fail later
+        // with an unregistered redirect instead of a clear message now.
+        XCTAssertTrue(OAuthRequest.toleratesAnyPort(.google))
+        XCTAssertTrue(OAuthRequest.toleratesAnyPort(.box))
+        XCTAssertFalse(OAuthRequest.toleratesAnyPort(.microsoft))
+        XCTAssertFalse(OAuthRequest.toleratesAnyPort(.dropbox))
+        XCTAssertEqual(OAuthRequest.redirectURI(port: 1234), "http://127.0.0.1:1234/callback")
+    }
+
     func testOnlyNextcloudFlavouredWebDAVOffersPublicLinks() async throws {
         XCTAssertFalse(account(.webdav).capabilities.publicLinks, "WebDAV por sí solo no sabe compartir")
         XCTAssertTrue(account(.webdav, options: ["flavor": "nextcloud"]).capabilities.publicLinks)

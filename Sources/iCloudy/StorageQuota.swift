@@ -72,7 +72,13 @@ extension CloudAPI {
         if let demo { return try demo.storageQuota() }
         let endpoint: String
         switch account.cloud {
-        case .google: endpoint = "https://www.googleapis.com/drive/v3/about?fields=storageQuota"
+        case .google:
+            // `about` describes the person's own storage. A shared drive draws on the organisation's pool and reports
+            // nothing of its own, so showing the personal figure under its name would be a plain lie.
+            guard account.driveID == nil else {
+                throw CloudError.message(L("Una unidad compartida de Google no informa de su propio espacio."))
+            }
+            endpoint = "https://www.googleapis.com/drive/v3/about?fields=storageQuota"
         case .microsoft: endpoint = "\(graphDrive)?$select=quota"
         case .dropbox: return try await dropboxQuota()
         case .box: return try await boxQuota()

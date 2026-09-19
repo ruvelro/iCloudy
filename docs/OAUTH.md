@@ -102,7 +102,7 @@ En [Box Developer Console](https://app.box.com/developers/console):
 4. Copia **Client ID** y **Client Secret**. **Box es el único de los cuatro que no admite PKCE**: no documenta `code_challenge` en ninguna parte y exige el secreto al canjear el código. Así que con Box el secreto viaja dentro del binario, como en cualquier otro cliente de escritorio de Box. Es metadato de un cliente instalado, no una credencial de servidor, pero conviene no contarlo como si fuera un cliente público de verdad.
 5. Las aplicaciones creadas por una cuenta gratuita de desarrollador se autorizan solas. Si la cuenta es de empresa, un administrador debe aprobarla en **Admin Console → Apps → Platform Apps Manager**, y hay que volver a autorizarla cada vez que cambien los permisos.
 
-Box acepta explícitamente `http://` en loopback, y además tolera que cambie el puerto mientras coincidan esquema, dominio y ruta. Es el más permisivo de los cuatro en esto.
+Box acepta explícitamente `http://` en loopback, y además tolera que cambie el puerto mientras coincidan esquema, dominio y ruta. Es el más permisivo de los cuatro en esto, así que iCloudy también recurre a un puerto efímero con Box cuando el 53682 está ocupado, igual que con Google. Con Microsoft y Dropbox no: comparan la dirección entera, y cambiar de puerto solo cambiaría el error por otro más confuso.
 
 ```sh
 swift scripts/configure-oauth.swift --box CLIENT_ID:CLIENT_SECRET

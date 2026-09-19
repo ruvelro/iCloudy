@@ -286,6 +286,7 @@ final class AppModel: ObservableObject {
         if let client = clients[account.id] { return client }
         if account.isDemo && demo == nil { demo = try DemoStore() }
         let client = CloudAPI(account: account, demo: account.isDemo ? demo : nil)
+        client.credentialSaveDidFail = { [weak self] message in self?.error = message }
         client.sessionDidExpire = { [weak self] reason in
             self?.expiredAccountIDs.insert(account.id)
             if let reason { self?.expiryReasons[account.id] = reason }

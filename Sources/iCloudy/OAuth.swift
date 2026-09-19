@@ -18,7 +18,8 @@ enum HTTP {
         guard (200..<300).contains(response.statusCode) else {
             let (code, message) = errorDetails(data)
             let fallback = "El servicio devolvió HTTP \(response.statusCode). \(response.statusCode == 401 ? L("Vuelve a conectar la cuenta.") : L("Inténtalo de nuevo más tarde."))"
-            throw ServiceError(status: response.statusCode, detail: message ?? fallback, code: code)
+            throw ServiceError(status: response.statusCode, detail: message ?? fallback, code: code,
+                               retryAfter: Double(response.value(forHTTPHeaderField: "Retry-After") ?? ""))
         }
     }
     /// Drive and Graph nest the error as an object; the OAuth token endpoints follow RFC 6749 with `error` and `error_description` strings.
@@ -83,12 +84,13 @@ final class OAuth {
         let verifier = Self.random()
         expectedState = Self.random()
         defer { stop() }
-        // Microsoft validates the registered port, so it must be the fixed one. Google ignores the port of a loopback
-        // redirect, which lets a second instance or another app on 53682 fall back to an ephemeral port.
+        // Microsoft and Dropbox validate the registered port, so for them it has to be the fixed one. Google ignores
+        // the port of a loopback redirect and Box only checks scheme, host and path, so with those two a busy 53682
+        // falls back to an ephemeral port instead of blocking the sign-in.
         let port: UInt16
         do { port = try await listen(on: OAuthRequest.defaultPort) }
         catch {
-            guard cloud == .google else { throw CloudError.message(L("No se pudo preparar el inicio de sesión: el puerto \(OAuthRequest.defaultPort) está ocupado. Cierra otras instancias de iCloudy y vuelve a intentarlo.")) }
+            guard OAuthRequest.toleratesAnyPort(cloud) else { throw CloudError.message(L("No se pudo preparar el inicio de sesión: el puerto \(OAuthRequest.defaultPort) está ocupado. Cierra otras instancias de iCloudy y vuelve a intentarlo.")) }
             port = try await listen(on: 0)
         }
         let redirect = OAuthRequest.redirectURI(port: port)

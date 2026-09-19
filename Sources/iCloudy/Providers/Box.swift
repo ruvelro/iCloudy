@@ -24,18 +24,21 @@ extension CloudAPI {
                          isFolder: folder)
     }
 
+    /// Paged with a marker rather than an offset: Box refuses an offset past 10 000, so a folder with more items than
+    /// that was silently cut short at the ten thousandth.
     func boxList(parent: String, onPage: (([CloudFile]) -> Void)?) async throws -> [CloudFile] {
         var files: [CloudFile] = []
-        var offset = 0
+        var marker: String?
         while true {
             var url = URLComponents(string: "https://api.box.com/2.0/folders/\(Self.segment(boxID(parent)))/items")!
-            url.queryItems = [URLQueryItem(name: "fields", value: Self.boxListFields), URLQueryItem(name: "limit", value: "1000"), URLQueryItem(name: "offset", value: String(offset))]
+            url.queryItems = [URLQueryItem(name: "fields", value: Self.boxListFields), URLQueryItem(name: "limit", value: "1000"),
+                              URLQueryItem(name: "usemarker", value: "true")]
+                + (marker.map { [URLQueryItem(name: "marker", value: $0)] } ?? [])
             let result = try await json(url.url!)
             let entries = result["entries"] as? [[String: Any]] ?? []
             files += entries.compactMap(Self.boxFile)
-            let total = (result["total_count"] as? NSNumber)?.intValue ?? files.count
-            offset += entries.count
-            guard !entries.isEmpty, offset < total else { break }
+            guard !entries.isEmpty, let next = result["next_marker"] as? String, !next.isEmpty else { break }
+            marker = next
             onPage?(Self.sorted(files))
         }
         return Self.sorted(files)
@@ -68,6 +71,10 @@ extension CloudAPI {
         // Box reports an enormous allocation for unlimited accounts; treat a non-positive value as unknown.
         return StorageQuota(used: used, total: (total ?? 0) > 0 ? total : nil)
     }
+    /// Box stops answering its search beyond this offset, and there is no marker for it as there is for a listing.
+    /// Asking past the cap returns an error instead of a page, so the results end here and say nothing more.
+    static let boxSearchCap = 10_000
+
     func boxSearch(term: String, cursor: String?) async throws -> SearchPage {
         let offset = Int(cursor ?? "0") ?? 0
         var url = URLComponents(string: "https://api.box.com/2.0/search")!
@@ -80,7 +87,8 @@ extension CloudAPI {
             return SearchHit(accountID: account.id, file: file, parentID: (value["parent"] as? [String: Any])?["id"] as? String)
         }
         let total = (result["total_count"] as? NSNumber)?.intValue ?? entries.count
-        return SearchPage(hits: hits, next: offset + entries.count < total && !entries.isEmpty ? String(offset + entries.count) : nil)
+        let next = offset + entries.count
+        return SearchPage(hits: hits, next: next < total && next < Self.boxSearchCap && !entries.isEmpty ? String(next) : nil)
     }
     /// `path_collection` already carries every ancestor, so one request rebuilds the whole breadcrumb trail.
     func boxTrail(id: String) async throws -> [CloudFile] {
@@ -148,7 +156,7 @@ extension CloudAPI {
             upload.setValue("bytes \(cursor.offset)-\(cursor.offset + Int64(chunk.count) - 1)/\(total)", forHTTPHeaderField: "Content-Range")
             upload.setValue("sha=" + Data(Insecure.SHA1.hash(data: chunk)).base64EncodedString(), forHTTPHeaderField: "Digest")
             upload.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-            let (data, response) = try await session.upload(for: upload, from: chunk)
+            let (data, response) = try await self.upload(&upload, from: chunk)
             try HTTP.validate(response, data: data)
             guard let part = (try? HTTP.json(data))?["part"] as? [String: Any],
                   let encoded = try? JSONSerialization.data(withJSONObject: part), let text = String(data: encoded, encoding: .utf8) else {
@@ -162,7 +170,18 @@ extension CloudAPI {
         let digest = whole.finalize()
         var commit = try await request(URL(string: "https://upload.box.com/api/2.0/files/upload_sessions/\(Self.segment(sessionID))/commit")!, method: "POST", body: ["parts": parts])
         commit.setValue("sha=" + Data(digest).base64EncodedString(), forHTTPHeaderField: "Digest")
-        let (data, response) = try await send(&commit)
+        // Box answers 202 while it is still assembling the parts, with a Retry-After. The file exists only once it
+        // answers 201, so the commit is asked again instead of returning a transfer with no file behind it.
+        var committed: (Data, URLResponse)?
+        for attempt in 0..<6 {
+            let answer = try await send(&commit)
+            committed = answer
+            guard (answer.1 as? HTTPURLResponse)?.statusCode == 202 else { break }
+            guard attempt < 5 else { throw CloudError.message(L("Box sigue ensamblando «\(name)» y no ha confirmado la subida. Compruébalo en su web antes de volver a subirlo.")) }
+            let announced = Double((answer.1 as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After") ?? "")
+            try await Task.sleep(for: .seconds(min(max(1, announced ?? pow(2, Double(attempt))), 30)))
+        }
+        guard let (data, response) = committed else { throw CloudError.message(L("Box no confirmó la subida.")) }
         try HTTP.validate(response, data: data)
         cursor.complete = true; try save(cursor); progress(total, total)
         let entry = ((try? HTTP.json(data))?["entries"] as? [[String: Any]])?.first ?? [:]
@@ -199,7 +218,7 @@ extension CloudAPI {
         // endpoints and is ignored here. Box refuses the upload when it does not match what arrived.
         let sha1 = UploadHasher.hex(Insecure.SHA1.hash(data: payload))
         request.setValue(sha1, forHTTPHeaderField: "content-md5")
-        let (data, response) = try await session.upload(for: request, from: body)
+        let (data, response) = try await upload(&request, from: body)
         try HTTP.validate(response, data: data)
         cursor.offset = cursor.total; cursor.complete = true; try save(cursor); progress(cursor.total, cursor.total)
         let entry = ((try? HTTP.json(data))?["entries"] as? [[String: Any]])?.first ?? [:]

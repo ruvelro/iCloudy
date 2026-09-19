@@ -128,23 +128,141 @@ final class ProviderTests: XCTestCase {
 
     // MARK: - Box
 
-    func testBoxPaginatesByOffsetAndBuildsTrailFromPathCollection() async throws {
+    func testBoxPaginatesByMarkerAndBuildsTrailFromPathCollection() async throws {
+        // Box refuses an offset past 10 000, so a folder with more items than that was cut short at the ten
+        // thousandth without a word. A marker has no such ceiling.
         var urls: [URL] = []
         StubProtocol.handler = { request in
             urls.append(request.url!)
             if request.url!.path.hasSuffix("/items") {
-                let offset = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!.first { $0.name == "offset" }!.value!
-                if offset == "0" { return (200, [:], Data(#"{"total_count":2,"entries":[{"type":"folder","id":"11","name":"Fotos"}]}"#.utf8)) }
-                return (200, [:], Data(#"{"total_count":2,"entries":[{"type":"file","id":"12","name":"a.pdf","size":9}]}"#.utf8))
+                let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
+                XCTAssertEqual(query.first { $0.name == "usemarker" }?.value, "true")
+                XCTAssertNil(query.first { $0.name == "offset" }, "El desplazamiento numérico ya no se usa")
+                guard let marker = query.first(where: { $0.name == "marker" })?.value else {
+                    return (200, [:], Data(#"{"entries":[{"type":"folder","id":"11","name":"Fotos"}],"next_marker":"m1"}"#.utf8))
+                }
+                XCTAssertEqual(marker, "m1")
+                return (200, [:], Data(#"{"entries":[{"type":"file","id":"12","name":"a.pdf","size":9}]}"#.utf8))
             }
             return (200, [:], Data(#"{"id":"11","name":"Fotos","path_collection":{"entries":[{"type":"folder","id":"0","name":"All Files"},{"type":"folder","id":"5","name":"Trabajo"}]}}"#.utf8))
         }
         let api = client(.box)
         let files = try await api.list(parent: "root")
         XCTAssertEqual(urls[0].path, "/2.0/folders/0/items", "iCloudy's root maps to Box's folder 0")
-        XCTAssertEqual(files.map(\.id), ["11", "12"])
+        XCTAssertEqual(files.map(\.id), ["11", "12"], "Las dos páginas llegan")
         let trail = try await api.folderTrail(id: "11")
         XCTAssertEqual(trail.map(\.name), ["Trabajo", "Fotos"], "The root entry is dropped and the folder itself closes the trail")
+    }
+
+    func testBoxSearchStopsWhereBoxStopsAnswering() async throws {
+        // Box's search has no marker, and asking past its cap returns an error instead of a page. The results end
+        // there and say nothing more, rather than promising a "load more" that cannot work.
+        StubProtocol.handler = { request in
+            let offset = Int(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!.first { $0.name == "offset" }!.value!)!
+            let entries = (0..<100).map { #"{"type":"file","id":"\#(offset + $0)","name":"a.txt"}"# }.joined(separator: ",")
+            return (200, [:], Data(#"{"total_count":50000,"entries":[\#(entries)]}"#.utf8))
+        }
+        let api = client(.box)
+        let early = try await api.searchPage(term: "a", cursor: "0")
+        XCTAssertEqual(early.next, "100", "Al principio sí hay más")
+        let atTheCap = try await api.searchPage(term: "a", cursor: String(CloudAPI.boxSearchCap - 100))
+        XCTAssertNil(atTheCap.next, "Y en el tope se para, aunque el total diga que hay más")
+        XCTAssertEqual(atTheCap.hits.count, 100, "Sin perder la última página")
+    }
+
+    func testBoxWaitsWhileItIsStillAssemblingTheUpload() async throws {
+        // Box answers 202 while it puts the parts together. Taking that for a finished upload returned a transfer
+        // with no file behind it, and the id came back empty.
+        let size = Int(CloudAPI.boxSessionThreshold) + 512
+        let large = try temporaryFile(Data(repeating: 9, count: size))
+        defer { try? FileManager.default.removeItem(at: large) }
+        let sha1 = UploadHasher.hex(Insecure.SHA1.hash(data: Data(repeating: 9, count: size)))
+        var commits = 0
+        StubProtocol.handler = { request in
+            let path = request.url!.path
+            if path == "/api/2.0/files/upload_sessions" { return (201, [:], Data(#"{"id":"s1","part_size":\#(8 * 1024 * 1024)}"#.utf8)) }
+            if path.hasSuffix("/commit") {
+                commits += 1
+                if commits < 3 { return (202, ["Retry-After": "1"], Data()) }
+                return (201, [:], Data(#"{"entries":[{"id":"77","sha1":"\#(sha1)"}]}"#.utf8))
+            }
+            return (200, [:], Data(#"{"part":{"part_id":"p","offset":0,"size":1}}"#.utf8))
+        }
+        let stamp = try large.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        let receipt = try await client(.box).resumableUpload(local: large, parent: "5", name: "big.bin", replacing: nil,
+                                                             checkpoint: UploadCheckpoint(total: Int64(size), modified: stamp), save: { _ in }, progress: { _, _ in })
+        XCTAssertEqual(commits, 3, "Se vuelve a preguntar hasta que Box confirma")
+        XCTAssertEqual(receipt.remoteID, "77")
+        XCTAssertEqual(receipt.verification, .verified)
+    }
+
+    func testATokenThatExpiresMidUploadIsRenewedInsteadOfFailingTheTransfer() async throws {
+        // The block uploads of Dropbox and Box go straight to their own hosts, outside the path that renews a token
+        // after a 401. A long upload that crossed the hour failed with a bare "HTTP 401".
+        let payload = Data(repeating: 4, count: 1024)
+        let file = try temporaryFile(payload)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let expected = UploadHasher.hex(SHA256.hash(data: Data(SHA256.hash(data: payload))))
+        let store = MemoryCredentials()
+        store.stored["dropbox:1"] = Credential(accessToken: "viejo", refreshToken: "r1", expires: Date().addingTimeInterval(3600))
+        var refreshes = 0, unauthorized = 0
+        StubProtocol.handler = { request in
+            if request.url?.host == "api.dropboxapi.com", request.url?.path == "/oauth2/token" {
+                refreshes += 1
+                return (200, [:], Data(#"{"access_token":"nuevo","refresh_token":"r2","expires_in":3600}"#.utf8))
+            }
+            if request.value(forHTTPHeaderField: "Authorization") == "Bearer viejo", request.url!.path.hasSuffix("append_v2") {
+                unauthorized += 1
+                return (401, [:], Data())
+            }
+            if request.url!.path.hasSuffix("start") { return (200, [:], Data(#"{"session_id":"s1"}"#.utf8)) }
+            if request.url!.path.hasSuffix("append_v2") { return (200, [:], Data()) }
+            return (200, [:], Data(#"{"path_lower":"/x","content_hash":"\#(expected)"}"#.utf8))
+        }
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let account = Account(id: "dropbox:1", cloud: .dropbox, name: "Ana", email: "ana@ejemplo.com", clientID: "c", clientSecret: nil)
+        let api = CloudAPI(account: account, session: URLSession(configuration: config), credentials: store)
+        let stamp = try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        let receipt = try await api.resumableUpload(local: file, parent: "/", name: "x", replacing: nil,
+                                                    checkpoint: UploadCheckpoint(total: 1024, modified: stamp), save: { _ in }, progress: { _, _ in })
+        XCTAssertEqual(unauthorized, 1)
+        XCTAssertEqual(refreshes, 1, "Se renueva una vez y el bloque se repite")
+        XCTAssertEqual(receipt.remoteID, "/x")
+        XCTAssertFalse(api.sessionExpired)
+    }
+
+    func testDropboxFollowsTheOffsetItSaysItIsWaitingFor() async throws {
+        // Dropbox cannot be asked how far a session got, and the local checkpoint is written in batches, so after a
+        // crash it can be behind. Its 409 says which offset it expects; ignoring it left the transfer failed for good.
+        let payload = Data(repeating: 6, count: 3 * 1024 * 1024)
+        let file = try temporaryFile(payload)
+        defer { try? FileManager.default.removeItem(at: file) }
+        var offsets: [Int64] = []
+        var refused = false
+        StubProtocol.handler = { request in
+            let argument = request.value(forHTTPHeaderField: "Dropbox-API-Arg") ?? ""
+            if request.url!.path.hasSuffix("start") { return (200, [:], Data(#"{"session_id":"s1"}"#.utf8)) }
+            if request.url!.path.hasSuffix("append_v2") {
+                let sent = (try? JSONSerialization.jsonObject(with: Data(argument.utf8))) as? [String: Any]
+                let offset = ((sent?["cursor"] as? [String: Any])?["offset"] as? NSNumber)?.int64Value ?? -1
+                offsets.append(offset)
+                if !refused {
+                    refused = true
+                    return (409, [:], Data(#"{"error_summary":"incorrect_offset/","error":{".tag":"incorrect_offset","correct_offset":1048576}}"#.utf8))
+                }
+                return (200, [:], Data())
+            }
+            return (200, [:], Data(#"{"path_lower":"/x"}"#.utf8))
+        }
+        let stamp = try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        var saved: [UploadCheckpoint] = []
+        let receipt = try await client(.dropbox).resumableUpload(local: file, parent: "/", name: "x", replacing: nil,
+                                                                 checkpoint: UploadCheckpoint(total: Int64(payload.count), modified: stamp),
+                                                                 save: { saved.append($0) }, progress: { _, _ in })
+        XCTAssertEqual(offsets, [0, 1_048_576], "Se reanuda donde Dropbox dice, no donde creíamos")
+        XCTAssertEqual(saved.last?.offset, Int64(payload.count))
+        XCTAssertTrue(saved.last?.complete == true)
+        XCTAssertEqual(receipt.verification, .unavailable, "Saltarse bloques impide comprobar la suma, y se dice")
     }
 
     func testBoxChoosesSimpleOrChunkedUploadAndSendsDigests() async throws {

@@ -27,11 +27,22 @@ extension CloudAPI {
         return mime
     }
 
-    func dropboxRPC(_ endpoint: String, _ body: [String: Any]? = nil) async throws -> [String: Any] {
+    /// Every Dropbox call is a POST, reads included, so without `repeatable` none of them would ever be retried and
+    /// a single 429 during a busy minute failed the whole operation. `repeatable` is set on the calls that only read,
+    /// which can be repeated as often as needed; a create or a move is left alone unless Dropbox says it refused it.
+    func dropboxRPC(_ endpoint: String, _ body: [String: Any]? = nil, repeatable: Bool = false) async throws -> [String: Any] {
         var request = try await request(URL(string: "https://api.dropboxapi.com/2/" + endpoint)!, method: "POST", body: body)
-        let (data, response) = try await send(&request)
-        try HTTP.validate(response, data: data)
-        return (try? HTTP.json(data)) ?? [:]
+        for attempt in 0..<4 {
+            try Task.checkCancellation()
+            let (data, response) = try await send(&request)
+            if attempt < 3, let delay = CloudAPI.retryDelay(response, method: "POST", attempt: attempt, repeatable: repeatable) {
+                try await Task.sleep(for: .seconds(delay))
+                continue
+            }
+            try HTTP.validate(response, data: data)
+            return (try? HTTP.json(data)) ?? [:]
+        }
+        throw CloudError.message(L("El servicio no responde."))
     }
 
     static func dropboxFile(_ value: [String: Any]) -> CloudFile? {
@@ -46,12 +57,12 @@ extension CloudAPI {
 
     func dropboxList(parent: String, onPage: (([CloudFile]) -> Void)?) async throws -> [CloudFile] {
         var files: [CloudFile] = []
-        var result = try await dropboxRPC("files/list_folder", ["path": dropboxPath(parent), "limit": 1000])
+        var result = try await dropboxRPC("files/list_folder", ["path": dropboxPath(parent), "limit": 1000], repeatable: true)
         while true {
             files += (result["entries"] as? [[String: Any]] ?? []).compactMap(Self.dropboxFile)
             guard result["has_more"] as? Bool == true, let cursor = result["cursor"] as? String else { break }
             onPage?(Self.sorted(files))
-            result = try await dropboxRPC("files/list_folder/continue", ["cursor": cursor])
+            result = try await dropboxRPC("files/list_folder/continue", ["cursor": cursor], repeatable: true)
         }
         return Self.sorted(files)
     }
@@ -85,7 +96,7 @@ extension CloudAPI {
         } catch let error as ServiceError where error.status == 409 {
             // Dropbox refuses to create a second link for the same item; reuse the one already there.
         }
-        let existing = try await dropboxRPC("sharing/list_shared_links", ["path": file.id, "direct_only": true])
+        let existing = try await dropboxRPC("sharing/list_shared_links", ["path": file.id, "direct_only": true], repeatable: true)
         guard let link = (existing["links"] as? [[String: Any]])?.first, let url = (link["url"] as? String).flatMap(URL.init(string:)) else {
             throw CloudError.message(L("Dropbox no devolvió el enlace. La cuenta puede tener restringido compartir."))
         }
@@ -93,7 +104,7 @@ extension CloudAPI {
     }
 
     func dropboxQuota() async throws -> StorageQuota {
-        let result = try await dropboxRPC("users/get_space_usage")
+        let result = try await dropboxRPC("users/get_space_usage", nil, repeatable: true)
         guard let used = (result["used"] as? NSNumber)?.int64Value else { throw CloudError.message(L("El proveedor no ha informado del espacio utilizado.")) }
         let allocation = result["allocation"] as? [String: Any] ?? [:]
         // Team members report `user_within_team_space_allocated`, which is 0 when the team space is unlimited.
@@ -103,8 +114,8 @@ extension CloudAPI {
 
     func dropboxSearch(term: String, cursor: String?) async throws -> SearchPage {
         let result: [String: Any]
-        if let cursor { result = try await dropboxRPC("files/search/continue_v2", ["cursor": cursor]) }
-        else { result = try await dropboxRPC("files/search_v2", ["query": term, "options": ["max_results": 100, "filename_only": false]]) }
+        if let cursor { result = try await dropboxRPC("files/search/continue_v2", ["cursor": cursor], repeatable: true) }
+        else { result = try await dropboxRPC("files/search_v2", ["query": term, "options": ["max_results": 100, "filename_only": false]], repeatable: true) }
         let hits = (result["matches"] as? [[String: Any]] ?? []).compactMap { match -> SearchHit? in
             guard let wrapper = match["metadata"] as? [String: Any],
                   let metadata = wrapper["metadata"] as? [String: Any],
@@ -126,6 +137,19 @@ extension CloudAPI {
     /// Upload sessions take 4 MiB blocks, the same size Dropbox's content hash is defined over.
     nonisolated static let dropboxChunk: Int64 = 4 * 1024 * 1024
 
+    /// The offset Dropbox says it is waiting for, when it refuses the one that was sent.
+    ///
+    /// Unlike Drive and Graph, Dropbox has no way to ask a session how far it got, and the local checkpoint is
+    /// written in batches, so it can be seconds behind after a crash. Its 409 carries the answer: without reading it,
+    /// every retry sent the same stale offset, was refused again, and the transfer stayed failed for good.
+    static func dropboxCorrectOffset(_ response: URLResponse, _ data: Data) -> Int64? {
+        guard (response as? HTTPURLResponse)?.statusCode == 409,
+              let body = try? HTTP.json(data), let error = body["error"] as? [String: Any],
+              error[".tag"] as? String == "incorrect_offset",
+              let offset = (error["correct_offset"] as? NSNumber)?.int64Value, offset >= 0 else { return nil }
+        return offset
+    }
+
     func dropboxUpload(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint,
                        save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
         let total = cursor.total
@@ -138,7 +162,7 @@ extension CloudAPI {
             var start = try await request(URL(string: "https://content.dropboxapi.com/2/files/upload_session/start")!, method: "POST")
             start.setValue(Self.asciiJSON(["close": false]), forHTTPHeaderField: "Dropbox-API-Arg")
             start.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-            let (data, response) = try await session.upload(for: start, from: Data())
+            let (data, response) = try await upload(&start, from: Data())
             try HTTP.validate(response, data: data)
             guard let id = (try? HTTP.json(data))?["session_id"] as? String else { throw CloudError.message(L("No se pudo iniciar la sesión de subida.")) }
             cursor.sessionID = id
@@ -155,7 +179,17 @@ extension CloudAPI {
             append.timeoutInterval = 180
             append.setValue(Self.asciiJSON(["cursor": ["session_id": cursor.sessionID!, "offset": cursor.offset], "close": false]), forHTTPHeaderField: "Dropbox-API-Arg")
             append.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-            let (data, response) = try await session.upload(for: append, from: chunk)
+            let (data, response) = try await upload(&append, from: chunk)
+            if let corrected = Self.dropboxCorrectOffset(response, data) {
+                guard corrected <= total else { throw CloudError.message(L("Dropbox espera un avance que no cabe en el archivo. Cancela la transferencia y vuelve a subirlo.")) }
+                // Some of the file was sent by an attempt whose answer never arrived, so these bytes no longer
+                // passed through the hasher in order. The upload continues; it just cannot be verified afterwards.
+                hasher = nil
+                cursor.offset = corrected
+                try await blockingIO { try handle.seek(toOffset: UInt64(corrected)) }
+                try save(cursor); progress(cursor.offset, total)
+                continue
+            }
             try HTTP.validate(response, data: data)
             cursor.offset += Int64(chunk.count)
             try save(cursor); progress(cursor.offset, total)
@@ -165,7 +199,7 @@ extension CloudAPI {
                                         "commit": ["path": destination, "mode": replacing == nil ? "add" : "overwrite", "autorename": false, "mute": true]]),
                         forHTTPHeaderField: "Dropbox-API-Arg")
         finish.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-        let (data, response) = try await session.upload(for: finish, from: Data())
+        let (data, response) = try await upload(&finish, from: Data())
         try HTTP.validate(response, data: data)
         cursor.complete = true; try save(cursor); progress(total, total)
         let metadata = (try? HTTP.json(data)) ?? [:]

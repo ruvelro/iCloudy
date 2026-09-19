@@ -260,7 +260,10 @@ final class TransferQueue: ObservableObject {
                         let transient = (error as? ServiceError)?.retryable == true || [.timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost].contains((error as? URLError)?.code)
                         guard transient, current.attempts < 3 else { throw error }
                         try edit(id) { $0.attempts += 1; $0.detail = L("Conexión interrumpida. Reintento \($0.attempts)/3…") }
-                        try await Task.sleep(for: .seconds(retryDelay * pow(2, Double(current.attempts))))
+                        // A provider that answered 429 said how long to wait. Waiting less is what turns one refusal
+                        // into a string of them and burns the three attempts in a few seconds.
+                        let announced = (error as? ServiceError)?.retryAfter.map { min(max(1, $0), 60) }
+                        try await Task.sleep(for: .seconds(announced ?? retryDelay * pow(2, Double(current.attempts))))
                     }
                 }
                 // If the user cancelled just after the server committed, preserve the completed checkpoint but keep their state.
