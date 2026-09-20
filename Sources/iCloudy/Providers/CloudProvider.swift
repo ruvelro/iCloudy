@@ -20,6 +20,7 @@ protocol CloudProvider: CloudSession {
     func remoteCopyStatus(_ url: URL) async throws -> RemoteCopy.State
     func abandonUploadSessions(urls: [URL], boxSessions: [String]) async
     var requiresVerifiedLegacyCheckpoint: Bool { get }
+    func canResumeWithoutSource(_ checkpoint: UploadCheckpoint?) -> Bool
     func download(file: CloudFile, to destination: URL, exportMime: String?, maxBytes: Int64?, progress: @escaping (Int64, Int64) -> Void) async throws
     func uploadFile(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt
     func resumeCommittedUpload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt?
@@ -30,6 +31,7 @@ extension CloudProvider {
         RemoteIdentityChange(oldID: file.id, newID: file.id, name: name, descendants: file.isFolder)
     }
     var requiresVerifiedLegacyCheckpoint: Bool { false }
+    func canResumeWithoutSource(_ checkpoint: UploadCheckpoint?) -> Bool { false }
     func rootID() async throws -> String { account.cloud.rootAlias }
     func availableDrives() async throws -> [RemoteDrive] { throw CloudError.message(L("\(account.cloud.title) no tiene unidades compartidas.")) }
     func remoteCopyStatus(_ url: URL) async throws -> RemoteCopy.State { throw CloudError.message(L("Este proveedor no usa copias asíncronas.")) }

@@ -25,6 +25,7 @@ final class CloudAPI {
         self.demo = demo
         provider = CloudProviderFactory.make(account: account, session: session, tokenProvider: tokenProvider, credentials: credentials)
     }
+    func canResumeWithoutSource(_ checkpoint: UploadCheckpoint?) -> Bool { demo == nil && provider.canResumeWithoutSource(checkpoint) }
     func dropCaches() { provider.dropCaches() }
     func invalidate() { provider.invalidate() }
     func token(force: Bool = false) async throws -> String { try await provider.token(force: force) }

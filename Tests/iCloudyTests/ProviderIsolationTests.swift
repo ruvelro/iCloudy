@@ -75,4 +75,15 @@ final class ProviderIsolationTests: XCTestCase {
         XCTAssertTrue(first.sessionExpired)
         XCTAssertFalse(second.sessionExpired)
     }
+
+    func testOnlyAProviderWithAPendingRemoteCommitCanResumeWithoutTheSource() {
+        var checkpoint = UploadCheckpoint(total: 10, remoteID: "committed")
+        for cloud in Cloud.allCases {
+            let api = client(cloud)
+            XCTAssertFalse(api.canResumeWithoutSource(nil))
+            XCTAssertEqual(api.canResumeWithoutSource(checkpoint), cloud == .mega)
+        }
+        checkpoint.complete = true
+        XCTAssertFalse(client(.mega).canResumeWithoutSource(checkpoint))
+    }
 }

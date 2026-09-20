@@ -505,8 +505,8 @@ final class TransferQueue: ObservableObject {
                 done += file.size ?? 0; mark(id, done: done)
                 return
             }
-            let committedMegaNode = target.account.cloud == .mega && checkpoint?.remoteID != nil
-            if !FileManager.default.fileExists(atPath: staged.path), !committedMegaNode {
+            let canResumeWithoutSource = target.canResumeWithoutSource(checkpoint)
+            if !FileManager.default.fileExists(atPath: staged.path), !canResumeWithoutSource {
                 // No staged copy (first run, or scratch cleaned): the upload session, if any, is worthless now.
                 checkpoint = nil
                 try edit(id, coalesce: true) { $0.uploads[key] = nil; $0.detail = L("Descargando «\(file.name)» de \(source.account.cloud.title)…") }

@@ -457,7 +457,14 @@ extension MegaProvider {
         try await megaDownload(file: file, to: destination, maxBytes: maxBytes, progress: progress)
     }
     func resumeCommittedUpload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt? {
-        guard var committed = checkpoint, committed.remoteID != nil, !committed.complete else { return nil }
+        guard canResumeWithoutSource(checkpoint), var committed = checkpoint else { return nil }
         return try await megaUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &committed, save: save, progress: progress)
+    }
+}
+
+extension MegaProvider {
+    func canResumeWithoutSource(_ checkpoint: UploadCheckpoint?) -> Bool {
+        guard let checkpoint else { return false }
+        return checkpoint.remoteID != nil && !checkpoint.complete
     }
 }
