@@ -3,14 +3,14 @@ import XCTest
 
 final class StorageTests: XCTestCase {
     func testGoogleUsesAccountWideUsageRatherThanDriveOnly() throws {
-        let quota = try StorageQuota.parse(["storageQuota": ["usage": "12000000000", "usageInDrive": "1000", "limit": "15000000000"]], cloud: .google)
+        let quota = try parseQuota(["storageQuota": ["usage": "12000000000", "usageInDrive": "1000", "limit": "15000000000"]], cloud: .google)
         XCTAssertEqual(quota.used, 12_000_000_000)
         XCTAssertEqual(quota.total, 15_000_000_000)
         XCTAssertEqual(quota.fraction!, 0.8, accuracy: 0.0001)
     }
 
     func testGoogleBreakdownSeparatesFilesTrashAndOtherServices() throws {
-        let quota = try StorageQuota.parse(["storageQuota": ["usage": "1000", "usageInDrive": "600", "usageInDriveTrash": "100", "limit": "2000"]], cloud: .google)
+        let quota = try parseQuota(["storageQuota": ["usage": "1000", "usageInDrive": "600", "usageInDriveTrash": "100", "limit": "2000"]], cloud: .google)
         XCTAssertEqual(quota.files, 600); XCTAssertEqual(quota.trash, 100)
         let segments = quota.segments
         XCTAssertEqual(segments.map(\.kind), [.files, .trash, .other])
@@ -20,11 +20,11 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(segments.reduce(0) { $0 + $1.fraction }, quota.fraction!, accuracy: 0.0001)
         XCTAssertTrue(quota.breakdown.contains("Papelera"))
         XCTAssertTrue(quota.breakdown.contains("Otros servicios"))
-        XCTAssertTrue(try StorageQuota.parse(["storageQuota": ["usage": "5"]], cloud: .google).segments.isEmpty, "no total, no pie")
+        XCTAssertTrue(try parseQuota(["storageQuota": ["usage": "5"]], cloud: .google).segments.isEmpty, "no total, no pie")
     }
 
     func testMissingAndZeroLimitNeverInventsAPercentage() throws {
-        let unknown = try StorageQuota.parse(["storageQuota": ["usage": "0"]], cloud: .google)
+        let unknown = try parseQuota(["storageQuota": ["usage": "0"]], cloud: .google)
         XCTAssertEqual(unknown.used, 0)
         XCTAssertNil(unknown.total)
         XCTAssertNil(unknown.fraction)
@@ -35,21 +35,21 @@ final class StorageTests: XCTestCase {
     }
 
     func testMicrosoftSupportsNumbersAndRemainingFallback() throws {
-        let quota = try StorageQuota.parse(["quota": ["used": 1234, "total": 5000, "deleted": 34]], cloud: .microsoft)
+        let quota = try parseQuota(["quota": ["used": 1234, "total": 5000, "deleted": 34]], cloud: .microsoft)
         XCTAssertEqual(quota, StorageQuota(used: 1234, total: 5000, trash: 34))
         XCTAssertEqual(quota.segments.map(\.kind), [.files, .trash])
         XCTAssertEqual(quota.segments[0].fraction, 0.24, accuracy: 0.0001)
-        let fallback = try StorageQuota.parse(["quota": ["remaining": 4000, "total": 5000]], cloud: .microsoft)
+        let fallback = try parseQuota(["quota": ["remaining": 4000, "total": 5000]], cloud: .microsoft)
         XCTAssertEqual(fallback.used, 1000)
-        XCTAssertThrowsError(try StorageQuota.parse(["quota": ["remaining": 6000, "total": 5000]], cloud: .microsoft))
+        XCTAssertThrowsError(try parseQuota(["quota": ["remaining": 6000, "total": 5000]], cloud: .microsoft))
     }
 
     func testMissingMalformedAndNegativeUsageAreNotZero() throws {
         for value: [String: Any] in [[:], ["usage": "oops"], ["usage": "-1"], ["usage": true], ["usage": 1.5]] {
-            XCTAssertThrowsError(try StorageQuota.parse(["storageQuota": value], cloud: .google))
+            XCTAssertThrowsError(try parseQuota(["storageQuota": value], cloud: .google))
         }
-        XCTAssertThrowsError(try StorageQuota.parse([:], cloud: .microsoft))
-        let quota = try StorageQuota.parse(["storageQuota": ["usage": "2", "limit": "-1"]], cloud: .google)
+        XCTAssertThrowsError(try parseQuota([:], cloud: .microsoft))
+        let quota = try parseQuota(["storageQuota": ["usage": "2", "limit": "-1"]], cloud: .google)
         XCTAssertNil(quota.total)
     }
 
@@ -194,5 +194,14 @@ final class StorageTests: XCTestCase {
         for _ in 0..<100 where queue.isWorking { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertFalse(queue.isWorking)
         XCTAssertFalse(queue.hasActive(accountID: "busy"))
+    }
+}
+
+// Exercise the concrete parsers with the persisted response fixtures used before the split.
+func parseQuota(_ response: [String: Any], cloud: Cloud) throws -> StorageQuota {
+    switch cloud {
+    case .google: return try GoogleDriveProvider.parseQuota(response)
+    case .microsoft: return try OneDriveProvider.parseQuota(response)
+    default: throw CloudError.message("Unsupported test provider")
     }
 }

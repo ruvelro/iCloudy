@@ -151,7 +151,7 @@ extension OneDriveProvider {
     func storageQuota() async throws -> StorageQuota {
         let endpoint: String
         endpoint = "\(graphDrive)?$select=quota"
-        return try StorageQuota.parse(await json(URL(string: endpoint)!), cloud: account.cloud)
+        return try Self.parseQuota(await json(URL(string: endpoint)!))
     }
 
     func rootID() async throws -> String {

@@ -186,7 +186,7 @@ extension GoogleDriveProvider {
             throw CloudError.message(L("Una unidad compartida de Google no informa de su propio espacio."))
         }
         endpoint = "https://www.googleapis.com/drive/v3/about?fields=storageQuota"
-        return try StorageQuota.parse(await json(URL(string: endpoint)!), cloud: account.cloud)
+        return try Self.parseQuota(await json(URL(string: endpoint)!))
     }
 
     func rootID() async throws -> String {
