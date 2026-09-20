@@ -8,6 +8,14 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
 La primera versión numerada. Recoge una auditoría completa de la app y la tanda de correcciones que salió de ella,
 proveedor por proveedor. 305 pruebas, todas en verde, sin red: las respuestas de los servidores están simuladas.
 
+### Refactor interno del 20 de septiembre de 2026 (misma versión)
+
+- Implementaciones independientes de las nueve nubes, con su estado y autenticación propios; fachada y contrato comunes.
+- Modelos, persistencia, transporte, servicios de cuentas, coordinación y pantallas separados por responsabilidad.
+- Pruebas adicionales de aislamiento, compatibilidad de datos y respuestas tardías de cuotas.
+- Compilación debug independiente en `dist/debug/iCloudy.app`, manteniendo la versión 0.5.0 y los entitlements de release.
+- Detalles y pasos para depurar en [REFACTOR-0.5.0.md](docs/REFACTOR-0.5.0.md).
+
 ### O2 Cloud
 
 - La subida y la descarga usan la misma política de sesión que el resto. Antes montaban sus propias peticiones: una

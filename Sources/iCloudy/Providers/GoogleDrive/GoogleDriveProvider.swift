@@ -158,9 +158,7 @@ extension GoogleDriveProvider {
         var result: [CloudFile] = []
         var current: String? = id
         var seen: Set<String> = []
-        var googleRoot: String? = nil
-
-        googleRoot = try await json(googleURL("https://www.googleapis.com/drive/v3/files/root?fields=id"))["id"] as? String
+        let googleRoot = try await json(googleURL("https://www.googleapis.com/drive/v3/files/root?fields=id"))["id"] as? String
 
         while let folderID = current, folderID != "root", folderID != googleRoot, folderID != account.driveID {
             try Task.checkCancellation()

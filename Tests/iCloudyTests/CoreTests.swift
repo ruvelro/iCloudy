@@ -91,7 +91,7 @@ final class CoreTests: XCTestCase {
             if request.url!.host == "www.googleapis.com" { return (200, [:], Data(#"{"files":[{"id":"r1","name":"Reciente.pdf","mimeType":"application/pdf"}]}"#.utf8)) }
             return (200, [:], Data(#"{"value":[{"id":"s1","name":"Compartida","folder":{},"remoteItem":{"id":"x"},"webUrl":"https://1drv.ms/f/s1"}]}"#.utf8))
         }
-        let google = try await makeClient(.google)
+        let google = makeClient(.google)
         let recent = try await google.list(parent: Collection.recent.rootID)
         XCTAssertEqual(recent.map(\.id), ["r1"])
         var query = URLComponents(url: urls[0], resolvingAgainstBaseURL: false)!.queryItems!
@@ -101,7 +101,7 @@ final class CoreTests: XCTestCase {
         query = URLComponents(url: urls[1], resolvingAgainstBaseURL: false)!.queryItems!
         XCTAssertEqual(query.first { $0.name == "q" }?.value, "sharedWithMe = true and trashed = false")
 
-        let microsoft = try await makeClient(.microsoft)
+        let microsoft = makeClient(.microsoft)
         _ = try await microsoft.list(parent: Collection.recent.rootID)
         XCTAssertEqual(urls[2].path, "/v1.0/me/drive/recent")
         let shared = try await microsoft.list(parent: Collection.shared.rootID)
@@ -334,7 +334,7 @@ final class CoreTests: XCTestCase {
             }
             XCTFail("Unexpected request \(request.url!)"); return (500, [:], Data())
         }
-        let google = try await makeClient(.google)
+        let google = makeClient(.google)
         do { try await google.copy(file: folder, to: "dest"); XCTFail("Drive cannot copy folders") }
         catch { XCTAssertTrue(error.localizedDescription.contains("carpetas")) }
         try await google.copy(file: file, to: "dest")

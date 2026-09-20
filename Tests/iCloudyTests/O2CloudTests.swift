@@ -360,7 +360,7 @@ final class O2CloudTests: XCTestCase {
         serve(); withRoot()
         var folderPages = 0
         var mediaPages = 0
-        StubProtocol.handler = { [self] request in
+        StubProtocol.handler = { request in
             let url = try XCTUnwrap(request.url)
             let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
             let query = Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { first, _ in first })
@@ -388,7 +388,7 @@ final class O2CloudTests: XCTestCase {
 
     func testBreadcrumbsWalkUpToTheRootAndStopThere() async throws {
         serve()
-        StubProtocol.handler = { [self] request in
+        StubProtocol.handler = { request in
             let url = try XCTUnwrap(request.url)
             let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
             let query = Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { first, _ in first })
@@ -534,7 +534,7 @@ final class O2CloudTests: XCTestCase {
         serve(); withRoot()
         var uploaded: Data?
         var contentType: String?
-        StubProtocol.handler = { [self] request in
+        StubProtocol.handler = { request in
             let url = try XCTUnwrap(request.url)
             if url.path == "/sapi/upload" {
                 uploaded = requestData(request)

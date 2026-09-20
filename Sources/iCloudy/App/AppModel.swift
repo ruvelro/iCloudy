@@ -78,7 +78,7 @@ final class AppModel: ObservableObject {
     var appearanceStore: AppearanceStore?
     var demo: DemoStore?
     let sessions = AccountClientRegistry()
-    let quotas = StorageQuotaController()
+    let quotas = StorageQuotaController(refreshInterval: AppModel.quotaRefreshInterval)
     var quotaSubscription: AnyCancellable?
     var navigationTask: Task<Void, Never>?
     var navigationID = UUID()

@@ -129,9 +129,7 @@ extension OneDriveProvider {
         var result: [CloudFile] = []
         var current: String? = id
         var seen: Set<String> = []
-        var googleRoot: String? = nil
-        googleRoot = nil
-        while let folderID = current, folderID != "root", folderID != googleRoot, folderID != account.driveID {
+        while let folderID = current, folderID != "root", folderID != account.driveID {
             try Task.checkCancellation()
             guard seen.insert(folderID).inserted, seen.count <= 64 else { throw CloudError.message(L("No se pudo resolver la ruta de la carpeta.")) }
             let value: [String: Any]

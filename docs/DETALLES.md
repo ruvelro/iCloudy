@@ -103,11 +103,13 @@ La configuración local queda fuera de Git y se incorpora al `.app` al compilar.
 
 ## Estructura
 
-- `Models.swift`: cuentas, archivos, Llavero y nombres locales.
-- `OAuth.swift`: login de navegador con loopback, PKCE y canje de tokens.
-- `CloudAPI.swift`: listado, renovación de token, descargas y exportación. `ResumableUpload.swift`: la única ruta de subida, por bloques y con puntos de control.
-- `AppModel.swift`: navegación, cuentas y cola de transferencias.
-- `iCloudyApp.swift`: explorador SwiftUI y formulario de conexión.
+- `Providers/`: una implementación por nube, con sus sesiones, autenticación y operaciones.
+- `CloudAPI.swift`: fachada común; `Networking/` y `Authentication/`: transporte y autenticación compartidos.
+- `Models/`, `Persistence/` y `Utilities/`: dominio, almacenamiento y utilidades independientes.
+- `Accounts/`, `Explorer/`, `Transfers/` e `Integration/`: coordinación de cada funcionalidad.
+- `App/`: arranque y estado observable; `Views/`: pantallas y componentes SwiftUI.
+
+La [guía del refactor 0.5.0](REFACTOR-0.5.0.md) describe las responsabilidades, las pruebas y la compilación de depuración.
 
 ## Referencias
 
