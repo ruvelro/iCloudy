@@ -155,7 +155,7 @@ extension CloudAPI {
         return clauses
     }
 
-    func searchPage(term: String, cursor: String? = nil, filters: SearchFilters = SearchFilters()) async throws -> SearchPage {
+    func searchPage(term: String, cursor: String? = nil, filters: SearchFilters = SearchFilters(), referenceDate: Date = Date()) async throws -> SearchPage {
         if let demo { return try demo.searchPage(term: term, cursor: cursor, accountID: account.id) }
         switch account.cloud {
         case .dropbox: return try await dropboxSearch(term: term, cursor: cursor)
@@ -173,7 +173,7 @@ extension CloudAPI {
             }
             var url = URLComponents(string: "https://www.googleapis.com/drive/v3/files")!
             url.queryItems = [
-                URLQueryItem(name: "q", value: (["trashed = false"] + terms.map { "(name contains '\($0)' or fullText contains '\($0)')" } + Self.googleFilterClauses(filters)).joined(separator: " and ")),
+                URLQueryItem(name: "q", value: (["trashed = false"] + terms.map { "(name contains '\($0)' or fullText contains '\($0)')" } + Self.googleFilterClauses(filters, now: referenceDate)).joined(separator: " and ")),
                 URLQueryItem(name: "spaces", value: "drive"),
                 URLQueryItem(name: "pageSize", value: "100"), URLQueryItem(name: "pageToken", value: cursor),
                 URLQueryItem(name: "fields", value: "nextPageToken,incompleteSearch,files(id,name,mimeType,size,modifiedTime,webViewLink,parents,driveId)")

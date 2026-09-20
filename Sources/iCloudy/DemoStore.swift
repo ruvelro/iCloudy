@@ -112,13 +112,16 @@ final class DemoStore {
     }
     private func persist() throws { try LocalStore.save(entries, to: indexURL) }
 
-    func upload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: (Int64, Int64) -> Void) async throws {
+    func upload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: (Int64, Int64) -> Void) async throws -> String? {
         try check()
+        let stamp = try UploadSourceStamp(local)
         let attributes = try local.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         let total = Int64(attributes.fileSize ?? 0)
         var cursor = checkpoint ?? UploadCheckpoint(total: total, modified: attributes.contentModificationDate)
         guard cursor.total == total, cursor.modified == attributes.contentModificationDate else { throw CloudError.message(L("El archivo de origen ha cambiado. Inicia otra subida.")) }
-        if cursor.complete { progress(total, total); return }
+        if let original = cursor.sourceStamp { try original.validate(local) }
+        cursor.sourceStamp = stamp
+        if cursor.complete { progress(total, total); return cursor.remoteID }
         if cursor.url == nil { cursor.url = directory.appendingPathComponent(UUID().uuidString + ".part"); try save(cursor) }
         let temporary = cursor.url!
         guard temporary.deletingLastPathComponent().standardizedFileURL.path == directory.standardizedFileURL.path else { throw CloudError.message(L("Sesión demo no válida.")) }
@@ -133,13 +136,16 @@ final class DemoStore {
         while cursor.offset < total {
             try await Task.sleep(for: latency)
             try check()
+            try stamp.validate(local)
             let data = try input.read(upToCount: 256 * 1024) ?? Data()
+            try stamp.validate(local)
             guard !data.isEmpty else { throw CloudError.message(L("El archivo de origen cambió.")) }
             try output.write(contentsOf: data)
             try output.synchronize()
             cursor.offset += Int64(data.count)
             try save(cursor); progress(cursor.offset, total)
         }
+        try stamp.validate(local)
         let id = replacing ?? temporary.deletingPathExtension().lastPathComponent
         let target = directory.appendingPathComponent(id)
         if FileManager.default.fileExists(atPath: target.path) {
@@ -147,7 +153,8 @@ final class DemoStore {
         } else { try FileManager.default.moveItem(at: temporary, to: target) }
         entries[id] = Entry(file: CloudFile(id: id, name: name, mime: "application/octet-stream", size: total, modified: Date(), webURL: nil, isFolder: false), parent: parent)
         try persist()
-        cursor.complete = true; try save(cursor); progress(total, total)
+        cursor.complete = true; cursor.remoteID = id; try save(cursor); progress(total, total)
+        return id
     }
     func download(_ file: CloudFile, to target: URL, maxBytes: Int64? = nil, progress: (Int64, Int64) -> Void) async throws {
         try check()

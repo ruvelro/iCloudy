@@ -90,7 +90,7 @@ extension CloudAPI {
         }
         let total = (result["total_count"] as? NSNumber)?.intValue ?? entries.count
         let next = offset + entries.count
-        return SearchPage(hits: hits, next: next < total && next < Self.boxSearchCap && !entries.isEmpty ? String(next) : nil)
+        return SearchPage(hits: hits, next: next < total && next < Self.boxSearchCap && !entries.isEmpty ? String(next) : nil, incomplete: next < total && (next >= Self.boxSearchCap || entries.isEmpty))
     }
     /// `path_collection` already carries every ancestor, so one request rebuilds the whole breadcrumb trail.
     func boxTrail(id: String) async throws -> [CloudFile] {
@@ -150,6 +150,7 @@ extension CloudAPI {
         progress(cursor.offset, total)
         let stamp = try local.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         while cursor.offset < total {
+            try cursor.sourceStamp?.validate(local)
             try Task.checkCancellation()
             // Drive and Graph check this between blocks and Box did not, so a file edited mid-upload arrived as a
             // mixture of both versions and Box's own hash check was the only thing that noticed.
@@ -158,6 +159,7 @@ extension CloudAPI {
                 throw CloudError.message(L("El archivo cambió durante la subida."))
             }
             let chunk = try await blockingIO { try handle.read(upToCount: Int(partSize)) ?? Data() }
+            try cursor.sourceStamp?.validate(local)
             guard !chunk.isEmpty else { throw CloudError.message(L("El tamaño del origen ha cambiado.")) }
             whole.update(data: chunk)
             var upload = try await request(URL(string: "https://upload.box.com/api/2.0/files/upload_sessions/\(Self.segment(sessionID))")!, method: "PUT")
@@ -181,6 +183,7 @@ extension CloudAPI {
         commit.setValue("sha=" + Data(digest).base64EncodedString(), forHTTPHeaderField: "Digest")
         // Box answers 202 while it is still assembling the parts, with a Retry-After. The file exists only once it
         // answers 201, so the commit is asked again instead of returning a transfer with no file behind it.
+        try cursor.sourceStamp?.validate(local)
         var committed: (Data, URLResponse)?
         for attempt in 0..<6 {
             let answer = try await send(&commit)
@@ -192,9 +195,9 @@ extension CloudAPI {
         }
         guard let (data, response) = committed else { throw CloudError.message(L("Box no confirmó la subida.")) }
         try HTTP.validate(response, data: data)
-        cursor.complete = true; try save(cursor); progress(total, total)
+        progress(total, total)
         let entry = ((try? HTTP.json(data))?["entries"] as? [[String: Any]])?.first ?? [:]
-        return UploadReceipt(remoteID: entry["id"] as? String, verification: try Self.boxVerify(entry, sha1: UploadHasher.hex(digest), name: name))
+        return try cursor.finish(remoteID: entry["id"] as? String, save: save) { try Self.boxVerify(entry, sha1: UploadHasher.hex(digest), name: name) }
     }
     /// Box stores the SHA-1 of what it kept. Only an answer that matches the bytes sent counts as verified; a stored
     /// hash on its own says the file exists, not that it is the right one.
@@ -210,6 +213,7 @@ extension CloudAPI {
     private func boxSimpleUpload(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint,
                                  save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
         let payload = try await blockingIO { try Data(contentsOf: local) }
+        try cursor.sourceStamp?.validate(local)
         let boundary = "icloudy-" + UUID().uuidString
         var attributes: [String: Any] = ["name": name]
         if replacing == nil { attributes["parent"] = ["id": boxID(parent)] }
@@ -229,8 +233,8 @@ extension CloudAPI {
         request.setValue(sha1, forHTTPHeaderField: "content-md5")
         let (data, response) = try await upload(&request, from: body)
         try HTTP.validate(response, data: data)
-        cursor.offset = cursor.total; cursor.complete = true; try save(cursor); progress(cursor.total, cursor.total)
+        cursor.offset = cursor.total; progress(cursor.total, cursor.total)
         let entry = ((try? HTTP.json(data))?["entries"] as? [[String: Any]])?.first ?? [:]
-        return UploadReceipt(remoteID: entry["id"] as? String, verification: try Self.boxVerify(entry, sha1: sha1, name: name))
+        return try cursor.finish(remoteID: entry["id"] as? String, save: save) { try Self.boxVerify(entry, sha1: sha1, name: name) }
     }
 }

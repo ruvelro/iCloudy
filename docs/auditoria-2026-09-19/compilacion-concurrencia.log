@@ -1,0 +1,705 @@
+Another instance of SwiftPM (PID: 9987) is already running using '/Users/ruvelro/Documents/src/iCloudy/.build', waiting until that process has finished execution...Building for production...
+[Planning deferred tasks]
+[2 / 5] iCloudy-product
+[12 / 97]
+[16 / 97]
+[24 / 97]
+[27 / 97]
+[28 / 97]
+[34 / 97]
+[36 / 97]
+[40 / 97]
+[46 / 97]
+[49 / 97]
+[51 / 97]
+[52 / 97]
+[68 / 97]
+[72 / 97]
+[76 / 97]
+[78 / 97]
+[81 / 97]
+[86 / 97]
+[87 / 97]
+[92 / 97]
+[94 / 97] iCloudy-product
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/CloudAPI.swift:67:9: warning: type 'MegaState' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+ 65 |     var megaStateCache: MegaState?
+ 66 |     /// The tree fetch in flight, so two listings started at once do not both download and decrypt the whole account.
+ 67 |     var megaTreeTask: Task<MegaState, Error>?
+    |         `- warning: type 'MegaState' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+ 68 |     /// Signed-in O2 Cloud session: its validation key and the account's root folder.
+ 69 |     var o2SessionCache: O2Session?
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/MegaSession.swift:34:13: note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 32 | /// A signed-in Mega session: the identifier the server accepts, the master key that unwraps every node key, and the
+ 33 | /// tree itself once it has been fetched.
+ 34 | final class MegaState {
+    |             `- note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 35 |     let sid: String
+ 36 |     let masterKey: Data
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/CloudAPI.swift:85:23: warning: type 'MegaState' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+ 83 |         if volumeScopeOpen, let volumeRootCache { volumeRootCache.stopAccessingSecurityScopedResource() }
+ 84 |         volumeScopeOpen = false; volumeRootCache = nil
+ 85 |         megaTreeTask?.cancel(); megaTreeTask = nil
+    |                       `- warning: type 'MegaState' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+ 86 |         megaStateCache = nil
+ 87 |         o2SessionCache = nil
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/MegaSession.swift:34:13: note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 32 | /// A signed-in Mega session: the identifier the server accepts, the master key that unwraps every node key, and the
+ 33 | /// tree itself once it has been fetched.
+ 34 | final class MegaState {
+    |             `- note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 35 |     let sid: String
+ 36 |     let masterKey: Data
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/FTP.swift:90:34: warning: capture of 'progress' with non-Sendable type '(Int64, Int64) -> Void' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+ 88 |         let total = file.size ?? 0
+ 89 |         try await ftp().retrieve(path: file.id, to: destination) { sent in
+ 90 |             Task { @MainActor in progress(sent, total) }
+    |                                  |- warning: capture of 'progress' with non-Sendable type '(Int64, Int64) -> Void' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+    |                                  `- note: a function type must be marked '@Sendable' to conform to 'Sendable'
+ 91 |         }
+ 92 |     }
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/FTP.swift:100:34: warning: capture of 'progress' with non-Sendable type '(Int64, Int64) -> Void' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+ 98 |         cursor.offset = 0; try save(cursor)
+ 99 |         try await ftp().store(local, to: path) { sent in
+100 |             Task { @MainActor in progress(min(sent, total), total) }
+    |                                  |- warning: capture of 'progress' with non-Sendable type '(Int64, Int64) -> Void' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+    |                                  `- note: a function type must be marked '@Sendable' to conform to 'Sendable'
+101 |         }
+102 |         cursor.offset = total; cursor.complete = true; try save(cursor); progress(total, total)
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/FTPSession.swift:140:25: warning: type 'T' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+136 |     /// next one starts, in the order they arrived.
+137 |     private var lastOperation: Task<Void, Never>?
+138 |     private func exclusive<T>(_ work: @escaping () async throws -> T) async throws -> T {
+    |                            `- note: consider making generic parameter 'T' conform to the 'Sendable' protocol
+139 |         let previous = lastOperation
+140 |         let operation = Task<T, Error> {
+    |                         `- warning: type 'T' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+141 |             await previous?.value
+142 |             try Task.checkCancellation()
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/FTPSession.swift:140:38: warning: type 'T' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+136 |     /// next one starts, in the order they arrived.
+137 |     private var lastOperation: Task<Void, Never>?
+138 |     private func exclusive<T>(_ work: @escaping () async throws -> T) async throws -> T {
+    |                            `- note: consider making generic parameter 'T' conform to the 'Sendable' protocol
+139 |         let previous = lastOperation
+140 |         let operation = Task<T, Error> {
+    |                                      `- warning: type 'T' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+141 |             await previous?.value
+142 |             try Task.checkCancellation()
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/FTPSession.swift:145:57: warning: type 'T' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+136 |     /// next one starts, in the order they arrived.
+137 |     private var lastOperation: Task<Void, Never>?
+138 |     private func exclusive<T>(_ work: @escaping () async throws -> T) async throws -> T {
+    |                            `- note: consider making generic parameter 'T' conform to the 'Sendable' protocol
+139 |         let previous = lastOperation
+140 |         let operation = Task<T, Error> {
+    :
+143 |             return try await work()
+144 |         }
+145 |         lastOperation = Task { _ = try? await operation.value }
+    |                                                         `- warning: type 'T' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+146 |         return try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
+147 |     }
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/FTPSession.swift:146:76: warning: type 'T' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+136 |     /// next one starts, in the order they arrived.
+137 |     private var lastOperation: Task<Void, Never>?
+138 |     private func exclusive<T>(_ work: @escaping () async throws -> T) async throws -> T {
+    |                            `- note: consider making generic parameter 'T' conform to the 'Sendable' protocol
+139 |         let previous = lastOperation
+140 |         let operation = Task<T, Error> {
+    :
+144 |         }
+145 |         lastOperation = Task { _ = try? await operation.value }
+146 |         return try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
+    |                                                                            `- warning: type 'T' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+147 |     }
+148 |     private func failure(_ reply: Reply, _ fallback: String) -> CloudError {
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/FTPSession.swift:146:106: warning: type 'T' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+136 |     /// next one starts, in the order they arrived.
+137 |     private var lastOperation: Task<Void, Never>?
+138 |     private func exclusive<T>(_ work: @escaping () async throws -> T) async throws -> T {
+    |                            `- note: consider making generic parameter 'T' conform to the 'Sendable' protocol
+139 |         let previous = lastOperation
+140 |         let operation = Task<T, Error> {
+    :
+144 |         }
+145 |         lastOperation = Task { _ = try? await operation.value }
+146 |         return try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
+    |                                                                                                          `- warning: type 'T' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+147 |     }
+148 |     private func failure(_ reply: Reply, _ fallback: String) -> CloudError {
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/FTPSession.swift:146:66: warning: non-Sendable type 'Task<T, any Error>' cannot exit caller isolation inheriting-isolated context in call to nonisolated property 'value'; this is an error in the Swift 6 language mode [#NonSendableExitingActor]
+136 |     /// next one starts, in the order they arrived.
+137 |     private var lastOperation: Task<Void, Never>?
+138 |     private func exclusive<T>(_ work: @escaping () async throws -> T) async throws -> T {
+    |                            `- note: consider making generic parameter 'T' conform to the 'Sendable' protocol
+139 |         let previous = lastOperation
+140 |         let operation = Task<T, Error> {
+    :
+144 |         }
+145 |         lastOperation = Task { _ = try? await operation.value }
+146 |         return try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
+    |                                                                  `- warning: non-Sendable type 'Task<T, any Error>' cannot exit caller isolation inheriting-isolated context in call to nonisolated property 'value'; this is an error in the Swift 6 language mode [#NonSendableExitingActor]
+147 |     }
+148 |     private func failure(_ reply: Reply, _ fallback: String) -> CloudError {
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/FTPSession.swift:146:76: warning: non-Sendable type 'T' of nonisolated property 'value' cannot be sent to caller isolation inheriting-isolated context; this is an error in the Swift 6 language mode
+136 |     /// next one starts, in the order they arrived.
+137 |     private var lastOperation: Task<Void, Never>?
+138 |     private func exclusive<T>(_ work: @escaping () async throws -> T) async throws -> T {
+    |                            `- note: consider making generic parameter 'T' conform to the 'Sendable' protocol
+139 |         let previous = lastOperation
+140 |         let operation = Task<T, Error> {
+    :
+144 |         }
+145 |         lastOperation = Task { _ = try? await operation.value }
+146 |         return try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
+    |                                                                            `- warning: non-Sendable type 'T' of nonisolated property 'value' cannot be sent to caller isolation inheriting-isolated context; this is an error in the Swift 6 language mode
+147 |     }
+148 |     private func failure(_ reply: Reply, _ fallback: String) -> CloudError {
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Mega.swift:50:66: warning: type 'MegaState' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+ 48 |         let stale = state.loadedAt.map { Date().timeIntervalSince($0) > Self.megaTreeMaxAge } ?? true
+ 49 |         guard !state.loaded || stale else { return state }
+ 50 |         if let running = megaTreeTask { return try await running.value }
+    |                                                                  `- warning: type 'MegaState' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+ 51 |         let task = Task { try await megaFetchTree(state) }
+ 52 |         megaTreeTask = task
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/MegaSession.swift:34:13: note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 32 | /// A signed-in Mega session: the identifier the server accepts, the master key that unwraps every node key, and the
+ 33 | /// tree itself once it has been fetched.
+ 34 | final class MegaState {
+    |             `- note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 35 |     let sid: String
+ 36 |     let masterKey: Data
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Mega.swift:51:20: warning: type 'MegaState' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+ 49 |         guard !state.loaded || stale else { return state }
+ 50 |         if let running = megaTreeTask { return try await running.value }
+ 51 |         let task = Task { try await megaFetchTree(state) }
+    |                    `- warning: type 'MegaState' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+ 52 |         megaTreeTask = task
+ 53 |         defer { megaTreeTask = nil }
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/MegaSession.swift:34:13: note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 32 | /// A signed-in Mega session: the identifier the server accepts, the master key that unwraps every node key, and the
+ 33 | /// tree itself once it has been fetched.
+ 34 | final class MegaState {
+    |             `- note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 35 |     let sid: String
+ 36 |     let masterKey: Data
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Mega.swift:51:20: warning: type 'MegaState' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+ 49 |         guard !state.loaded || stale else { return state }
+ 50 |         if let running = megaTreeTask { return try await running.value }
+ 51 |         let task = Task { try await megaFetchTree(state) }
+    |                    `- warning: type 'MegaState' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+ 52 |         megaTreeTask = task
+ 53 |         defer { megaTreeTask = nil }
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/MegaSession.swift:34:13: note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 32 | /// A signed-in Mega session: the identifier the server accepts, the master key that unwraps every node key, and the
+ 33 | /// tree itself once it has been fetched.
+ 34 | final class MegaState {
+    |             `- note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 35 |     let sid: String
+ 36 |     let masterKey: Data
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Mega.swift:51:13: warning: type 'MegaState' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+ 49 |         guard !state.loaded || stale else { return state }
+ 50 |         if let running = megaTreeTask { return try await running.value }
+ 51 |         let task = Task { try await megaFetchTree(state) }
+    |             `- warning: type 'MegaState' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+ 52 |         megaTreeTask = task
+ 53 |         defer { megaTreeTask = nil }
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/MegaSession.swift:34:13: note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 32 | /// A signed-in Mega session: the identifier the server accepts, the master key that unwraps every node key, and the
+ 33 | /// tree itself once it has been fetched.
+ 34 | final class MegaState {
+    |             `- note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 35 |     let sid: String
+ 36 |     let masterKey: Data
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Mega.swift:54:31: warning: type 'MegaState' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+ 52 |         megaTreeTask = task
+ 53 |         defer { megaTreeTask = nil }
+ 54 |         return try await task.value
+    |                               `- warning: type 'MegaState' does not conform to the 'Sendable' protocol; this is an error in the Swift 6 language mode
+ 55 |     }
+ 56 |     private func megaFetchTree(_ state: MegaState) async throws -> MegaState {
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/MegaSession.swift:34:13: note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 32 | /// A signed-in Mega session: the identifier the server accepts, the master key that unwraps every node key, and the
+ 33 | /// tree itself once it has been fetched.
+ 34 | final class MegaState {
+    |             `- note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 35 |     let sid: String
+ 36 |     let masterKey: Data
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Mega.swift:50:58: warning: non-Sendable type 'Task<MegaState, any Error>' cannot exit main actor-isolated context in call to nonisolated property 'value'; this is an error in the Swift 6 language mode [#NonSendableExitingActor]
+ 48 |         let stale = state.loadedAt.map { Date().timeIntervalSince($0) > Self.megaTreeMaxAge } ?? true
+ 49 |         guard !state.loaded || stale else { return state }
+ 50 |         if let running = megaTreeTask { return try await running.value }
+    |                                                          `- warning: non-Sendable type 'Task<MegaState, any Error>' cannot exit main actor-isolated context in call to nonisolated property 'value'; this is an error in the Swift 6 language mode [#NonSendableExitingActor]
+ 51 |         let task = Task { try await megaFetchTree(state) }
+ 52 |         megaTreeTask = task
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/MegaSession.swift:34:13: note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 32 | /// A signed-in Mega session: the identifier the server accepts, the master key that unwraps every node key, and the
+ 33 | /// tree itself once it has been fetched.
+ 34 | final class MegaState {
+    |             `- note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 35 |     let sid: String
+ 36 |     let masterKey: Data
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Mega.swift:50:66: warning: non-Sendable type 'MegaState' of nonisolated property 'value' cannot be sent to main actor-isolated context; this is an error in the Swift 6 language mode
+ 48 |         let stale = state.loadedAt.map { Date().timeIntervalSince($0) > Self.megaTreeMaxAge } ?? true
+ 49 |         guard !state.loaded || stale else { return state }
+ 50 |         if let running = megaTreeTask { return try await running.value }
+    |                                                                  `- warning: non-Sendable type 'MegaState' of nonisolated property 'value' cannot be sent to main actor-isolated context; this is an error in the Swift 6 language mode
+ 51 |         let task = Task { try await megaFetchTree(state) }
+ 52 |         megaTreeTask = task
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/MegaSession.swift:34:13: note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 32 | /// A signed-in Mega session: the identifier the server accepts, the master key that unwraps every node key, and the
+ 33 | /// tree itself once it has been fetched.
+ 34 | final class MegaState {
+    |             `- note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 35 |     let sid: String
+ 36 |     let masterKey: Data
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Mega.swift:54:26: warning: non-Sendable type 'Task<MegaState, any Error>' cannot exit main actor-isolated context in call to nonisolated property 'value'; this is an error in the Swift 6 language mode [#NonSendableExitingActor]
+ 52 |         megaTreeTask = task
+ 53 |         defer { megaTreeTask = nil }
+ 54 |         return try await task.value
+    |                          `- warning: non-Sendable type 'Task<MegaState, any Error>' cannot exit main actor-isolated context in call to nonisolated property 'value'; this is an error in the Swift 6 language mode [#NonSendableExitingActor]
+ 55 |     }
+ 56 |     private func megaFetchTree(_ state: MegaState) async throws -> MegaState {
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/MegaSession.swift:34:13: note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 32 | /// A signed-in Mega session: the identifier the server accepts, the master key that unwraps every node key, and the
+ 33 | /// tree itself once it has been fetched.
+ 34 | final class MegaState {
+    |             `- note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 35 |     let sid: String
+ 36 |     let masterKey: Data
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Mega.swift:54:31: warning: non-Sendable type 'MegaState' of nonisolated property 'value' cannot be sent to main actor-isolated context; this is an error in the Swift 6 language mode
+ 52 |         megaTreeTask = task
+ 53 |         defer { megaTreeTask = nil }
+ 54 |         return try await task.value
+    |                               `- warning: non-Sendable type 'MegaState' of nonisolated property 'value' cannot be sent to main actor-isolated context; this is an error in the Swift 6 language mode
+ 55 |     }
+ 56 |     private func megaFetchTree(_ state: MegaState) async throws -> MegaState {
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/MegaSession.swift:34:13: note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 32 | /// A signed-in Mega session: the identifier the server accepts, the master key that unwraps every node key, and the
+ 33 | /// tree itself once it has been fetched.
+ 34 | final class MegaState {
+    |             `- note: class 'MegaState' does not conform to the 'Sendable' protocol
+ 35 |     let sid: String
+ 36 |     let masterKey: Data
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Mega.swift:65:57: warning: capture of 'files' with non-Sendable type '[[String : Any]]' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+ 63 |         let shares = answer["ok"] as? [[String: Any]] ?? []
+ 64 |         let masterKey = state.masterKey
+ 65 |         state.adopt(try await blockingIO { MegaAPI.tree(files, masterKey: masterKey, shares: shares) })
+    |                                                         `- warning: capture of 'files' with non-Sendable type '[[String : Any]]' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+ 66 |         guard !state.root.isEmpty else { throw CloudError.message(L("No se encontró la raíz de la cuenta de Mega.")) }
+ 67 |         return state
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Mega.swift:65:94: warning: capture of 'shares' with non-Sendable type '[[String : Any]]' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+ 63 |         let shares = answer["ok"] as? [[String: Any]] ?? []
+ 64 |         let masterKey = state.masterKey
+ 65 |         state.adopt(try await blockingIO { MegaAPI.tree(files, masterKey: masterKey, shares: shares) })
+    |                                                                                              `- warning: capture of 'shares' with non-Sendable type '[[String : Any]]' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+ 66 |         guard !state.root.isEmpty else { throw CloudError.message(L("No se encontró la raíz de la cuenta de Mega.")) }
+ 67 |         return state
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Volume.swift:232:39: warning: capture of 'progress' with non-Sendable type '(Int64, Int64) -> Void' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+230 |                 written += Int64(chunk.count)
+231 |                 let reported = written
+232 |                 await MainActor.run { progress(reported, max(total, reported)) }
+    |                                       |- warning: capture of 'progress' with non-Sendable type '(Int64, Int64) -> Void' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+    |                                       `- note: a function type must be marked '@Sendable' to conform to 'Sendable'
+233 |             }
+234 |         } catch {
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Shortcuts.swift:17:16: warning: static property 'title' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+ 15 | 
+ 16 | struct PauseTransfersIntent: AppIntent {
+ 17 |     static var title: LocalizedStringResource = "Pausar transferencias de iCloudy"
+    |                |- warning: static property 'title' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+    |                |- note: convert 'title' to a 'let' constant to make 'Sendable' shared state immutable
+    |                |- note: add '@MainActor' to make static property 'title' part of global actor 'MainActor'
+    |                `- note: disable concurrency-safety checks if accesses are protected by an external synchronization mechanism
+ 18 |     static var description = IntentDescription("Pausa todas las transferencias en curso y en cola. Se reanudan con el atajo de reanudar o desde la app.")
+ 19 |     static var openAppWhenRun = false
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Shortcuts.swift:18:16: warning: static property 'description' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+ 16 | struct PauseTransfersIntent: AppIntent {
+ 17 |     static var title: LocalizedStringResource = "Pausar transferencias de iCloudy"
+ 18 |     static var description = IntentDescription("Pausa todas las transferencias en curso y en cola. Se reanudan con el atajo de reanudar o desde la app.")
+    |                |- warning: static property 'description' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+    |                |- note: convert 'description' to a 'let' constant to make 'Sendable' shared state immutable
+    |                |- note: add '@MainActor' to make static property 'description' part of global actor 'MainActor'
+    |                `- note: disable concurrency-safety checks if accesses are protected by an external synchronization mechanism
+ 19 |     static var openAppWhenRun = false
+ 20 | 
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Shortcuts.swift:19:16: warning: static property 'openAppWhenRun' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+ 17 |     static var title: LocalizedStringResource = "Pausar transferencias de iCloudy"
+ 18 |     static var description = IntentDescription("Pausa todas las transferencias en curso y en cola. Se reanudan con el atajo de reanudar o desde la app.")
+ 19 |     static var openAppWhenRun = false
+    |                |- warning: static property 'openAppWhenRun' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+    |                |- note: convert 'openAppWhenRun' to a 'let' constant to make 'Sendable' shared state immutable
+    |                |- note: add '@MainActor' to make static property 'openAppWhenRun' part of global actor 'MainActor'
+    |                `- note: disable concurrency-safety checks if accesses are protected by an external synchronization mechanism
+ 20 | 
+ 21 |     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Shortcuts.swift:30:16: warning: static property 'title' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+ 28 | 
+ 29 | struct ResumeTransfersIntent: AppIntent {
+ 30 |     static var title: LocalizedStringResource = "Reanudar transferencias de iCloudy"
+    |                |- warning: static property 'title' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+    |                |- note: convert 'title' to a 'let' constant to make 'Sendable' shared state immutable
+    |                |- note: add '@MainActor' to make static property 'title' part of global actor 'MainActor'
+    |                `- note: disable concurrency-safety checks if accesses are protected by an external synchronization mechanism
+ 31 |     static var description = IntentDescription("Reanuda las transferencias en pausa, incluidas las recuperadas al abrir la app.")
+ 32 |     static var openAppWhenRun = false
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Shortcuts.swift:31:16: warning: static property 'description' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+ 29 | struct ResumeTransfersIntent: AppIntent {
+ 30 |     static var title: LocalizedStringResource = "Reanudar transferencias de iCloudy"
+ 31 |     static var description = IntentDescription("Reanuda las transferencias en pausa, incluidas las recuperadas al abrir la app.")
+    |                |- warning: static property 'description' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+    |                |- note: convert 'description' to a 'let' constant to make 'Sendable' shared state immutable
+    |                |- note: add '@MainActor' to make static property 'description' part of global actor 'MainActor'
+    |                `- note: disable concurrency-safety checks if accesses are protected by an external synchronization mechanism
+ 32 |     static var openAppWhenRun = false
+ 33 | 
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Shortcuts.swift:32:16: warning: static property 'openAppWhenRun' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+ 30 |     static var title: LocalizedStringResource = "Reanudar transferencias de iCloudy"
+ 31 |     static var description = IntentDescription("Reanuda las transferencias en pausa, incluidas las recuperadas al abrir la app.")
+ 32 |     static var openAppWhenRun = false
+    |                |- warning: static property 'openAppWhenRun' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+    |                |- note: convert 'openAppWhenRun' to a 'let' constant to make 'Sendable' shared state immutable
+    |                |- note: add '@MainActor' to make static property 'openAppWhenRun' part of global actor 'MainActor'
+    |                `- note: disable concurrency-safety checks if accesses are protected by an external synchronization mechanism
+ 33 | 
+ 34 |     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Shortcuts.swift:42:16: warning: static property 'title' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+ 40 | 
+ 41 | struct SyncMirrorsIntent: AppIntent {
+ 42 |     static var title: LocalizedStringResource = "Sincronizar reflejos de iCloudy"
+    |                |- warning: static property 'title' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+    |                |- note: convert 'title' to a 'let' constant to make 'Sendable' shared state immutable
+    |                |- note: add '@MainActor' to make static property 'title' part of global actor 'MainActor'
+    |                `- note: disable concurrency-safety checks if accesses are protected by an external synchronization mechanism
+ 43 |     static var description = IntentDescription("Comprueba ahora las carpetas reflejadas y sube lo que haya cambiado.")
+ 44 |     static var openAppWhenRun = false
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Shortcuts.swift:43:16: warning: static property 'description' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+ 41 | struct SyncMirrorsIntent: AppIntent {
+ 42 |     static var title: LocalizedStringResource = "Sincronizar reflejos de iCloudy"
+ 43 |     static var description = IntentDescription("Comprueba ahora las carpetas reflejadas y sube lo que haya cambiado.")
+    |                |- warning: static property 'description' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+    |                |- note: convert 'description' to a 'let' constant to make 'Sendable' shared state immutable
+    |                |- note: add '@MainActor' to make static property 'description' part of global actor 'MainActor'
+    |                `- note: disable concurrency-safety checks if accesses are protected by an external synchronization mechanism
+ 44 |     static var openAppWhenRun = false
+ 45 | 
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Shortcuts.swift:44:16: warning: static property 'openAppWhenRun' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+ 42 |     static var title: LocalizedStringResource = "Sincronizar reflejos de iCloudy"
+ 43 |     static var description = IntentDescription("Comprueba ahora las carpetas reflejadas y sube lo que haya cambiado.")
+ 44 |     static var openAppWhenRun = false
+    |                |- warning: static property 'openAppWhenRun' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+    |                |- note: convert 'openAppWhenRun' to a 'let' constant to make 'Sendable' shared state immutable
+    |                |- note: add '@MainActor' to make static property 'openAppWhenRun' part of global actor 'MainActor'
+    |                `- note: disable concurrency-safety checks if accesses are protected by an external synchronization mechanism
+ 45 | 
+ 46 |     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Shortcuts.swift:54:16: warning: static property 'title' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+ 52 | 
+ 53 | struct StorageReportIntent: AppIntent {
+ 54 |     static var title: LocalizedStringResource = "Espacio de las nubes de iCloudy"
+    |                |- warning: static property 'title' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+    |                |- note: convert 'title' to a 'let' constant to make 'Sendable' shared state immutable
+    |                |- note: add '@MainActor' to make static property 'title' part of global actor 'MainActor'
+    |                `- note: disable concurrency-safety checks if accesses are protected by an external synchronization mechanism
+ 55 |     static var description = IntentDescription("Indica el espacio usado y total de cada cuenta conectada, según el último dato del proveedor.")
+ 56 |     static var openAppWhenRun = false
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Shortcuts.swift:55:16: warning: static property 'description' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+ 53 | struct StorageReportIntent: AppIntent {
+ 54 |     static var title: LocalizedStringResource = "Espacio de las nubes de iCloudy"
+ 55 |     static var description = IntentDescription("Indica el espacio usado y total de cada cuenta conectada, según el último dato del proveedor.")
+    |                |- warning: static property 'description' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+    |                |- note: convert 'description' to a 'let' constant to make 'Sendable' shared state immutable
+    |                |- note: add '@MainActor' to make static property 'description' part of global actor 'MainActor'
+    |                `- note: disable concurrency-safety checks if accesses are protected by an external synchronization mechanism
+ 56 |     static var openAppWhenRun = false
+ 57 | 
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Shortcuts.swift:56:16: warning: static property 'openAppWhenRun' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+ 54 |     static var title: LocalizedStringResource = "Espacio de las nubes de iCloudy"
+ 55 |     static var description = IntentDescription("Indica el espacio usado y total de cada cuenta conectada, según el último dato del proveedor.")
+ 56 |     static var openAppWhenRun = false
+    |                |- warning: static property 'openAppWhenRun' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+    |                |- note: convert 'openAppWhenRun' to a 'let' constant to make 'Sendable' shared state immutable
+    |                |- note: add '@MainActor' to make static property 'openAppWhenRun' part of global actor 'MainActor'
+    |                `- note: disable concurrency-safety checks if accesses are protected by an external synchronization mechanism
+ 57 | 
+ 58 |     @MainActor func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Shortcuts.swift:66:16: warning: static property 'title' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+ 64 | 
+ 65 | struct SearchCloudsIntent: AppIntent {
+ 66 |     static var title: LocalizedStringResource = "Buscar en las nubes de iCloudy"
+    |                |- warning: static property 'title' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+    |                |- note: convert 'title' to a 'let' constant to make 'Sendable' shared state immutable
+    |                |- note: add '@MainActor' to make static property 'title' part of global actor 'MainActor'
+    |                `- note: disable concurrency-safety checks if accesses are protected by an external synchronization mechanism
+ 67 |     static var description = IntentDescription("Abre iCloudy y busca el término en todas las cuentas conectadas.")
+ 68 |     static var openAppWhenRun = true
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Shortcuts.swift:67:16: warning: static property 'description' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+ 65 | struct SearchCloudsIntent: AppIntent {
+ 66 |     static var title: LocalizedStringResource = "Buscar en las nubes de iCloudy"
+ 67 |     static var description = IntentDescription("Abre iCloudy y busca el término en todas las cuentas conectadas.")
+    |                |- warning: static property 'description' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+    |                |- note: convert 'description' to a 'let' constant to make 'Sendable' shared state immutable
+    |                |- note: add '@MainActor' to make static property 'description' part of global actor 'MainActor'
+    |                `- note: disable concurrency-safety checks if accesses are protected by an external synchronization mechanism
+ 68 |     static var openAppWhenRun = true
+ 69 | 
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Shortcuts.swift:68:16: warning: static property 'openAppWhenRun' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+ 66 |     static var title: LocalizedStringResource = "Buscar en las nubes de iCloudy"
+ 67 |     static var description = IntentDescription("Abre iCloudy y busca el término en todas las cuentas conectadas.")
+ 68 |     static var openAppWhenRun = true
+    |                |- warning: static property 'openAppWhenRun' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+    |                |- note: convert 'openAppWhenRun' to a 'let' constant to make 'Sendable' shared state immutable
+    |                |- note: add '@MainActor' to make static property 'openAppWhenRun' part of global actor 'MainActor'
+    |                `- note: disable concurrency-safety checks if accesses are protected by an external synchronization mechanism
+ 69 | 
+ 70 |     @Parameter(title: "Texto que buscar")
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Shortcuts.swift:81:16: warning: static property 'title' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+ 79 | 
+ 80 | struct UploadFilesIntent: AppIntent {
+ 81 |     static var title: LocalizedStringResource = "Subir archivos a iCloudy"
+    |                |- warning: static property 'title' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+    |                |- note: convert 'title' to a 'let' constant to make 'Sendable' shared state immutable
+    |                |- note: add '@MainActor' to make static property 'title' part of global actor 'MainActor'
+    |                `- note: disable concurrency-safety checks if accesses are protected by an external synchronization mechanism
+ 82 |     static var description = IntentDescription("Añade los archivos a la cola de subida, en la carpeta abierta en iCloudy.")
+ 83 |     static var openAppWhenRun = true
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Shortcuts.swift:82:16: warning: static property 'description' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+ 80 | struct UploadFilesIntent: AppIntent {
+ 81 |     static var title: LocalizedStringResource = "Subir archivos a iCloudy"
+ 82 |     static var description = IntentDescription("Añade los archivos a la cola de subida, en la carpeta abierta en iCloudy.")
+    |                |- warning: static property 'description' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+    |                |- note: convert 'description' to a 'let' constant to make 'Sendable' shared state immutable
+    |                |- note: add '@MainActor' to make static property 'description' part of global actor 'MainActor'
+    |                `- note: disable concurrency-safety checks if accesses are protected by an external synchronization mechanism
+ 83 |     static var openAppWhenRun = true
+ 84 | 
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Shortcuts.swift:83:16: warning: static property 'openAppWhenRun' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+ 81 |     static var title: LocalizedStringResource = "Subir archivos a iCloudy"
+ 82 |     static var description = IntentDescription("Añade los archivos a la cola de subida, en la carpeta abierta en iCloudy.")
+ 83 |     static var openAppWhenRun = true
+    |                |- warning: static property 'openAppWhenRun' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode [#MutableGlobalVariable]
+    |                |- note: convert 'openAppWhenRun' to a 'let' constant to make 'Sendable' shared state immutable
+    |                |- note: add '@MainActor' to make static property 'openAppWhenRun' part of global actor 'MainActor'
+    |                `- note: disable concurrency-safety checks if accesses are protected by an external synchronization mechanism
+ 84 | 
+ 85 |     @Parameter(title: "Archivos")
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/iCloudyApp.swift:708:69: warning: converting non-Sendable function value to '@isolated(any) @Sendable (Collection) -> Void' may introduce data races
+ 706 | 
+ 707 |     var body: some View {
+ 708 |         Picker("Vista", selection: Binding(get: { selection }, set: select)) {
+     |                                                                     `- warning: converting non-Sendable function value to '@isolated(any) @Sendable (Collection) -> Void' may introduce data races
+ 709 |             ForEach(choices) { Label($0.title, systemImage: $0.icon).tag($0) }
+ 710 |         }
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/FTPSession.swift:145:25: warning: sending value of non-Sendable type '() async -> Void' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+143 |             return try await work()
+144 |         }
+145 |         lastOperation = Task { _ = try? await operation.value }
+    |                         |- warning: sending value of non-Sendable type '() async -> Void' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+    |                         `- note: Passing value of non-Sendable type '() async -> Void' as a 'sending' argument to initializer 'init(name:priority:operation:)' risks causing races in between local and caller code
+146 |         return try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
+    |                                                      `- note: access can happen concurrently
+147 |     }
+148 |     private func failure(_ reply: Reply, _ fallback: String) -> CloudError {
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/FTPSession.swift:146:26: warning: sending value of non-Sendable type '@noescape @callee_guaranteed () -> ()' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+144 |         }
+145 |         lastOperation = Task { _ = try? await operation.value }
+146 |         return try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
+    |                          |- warning: sending value of non-Sendable type '@noescape @callee_guaranteed () -> ()' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+    |                          |- note: Passing value of non-Sendable type '@noescape @callee_guaranteed () -> ()' as a 'sending' argument to global function 'withTaskCancellationHandler(operation:onCancel:)' risks causing races in between local and caller code
+    |                          `- note: access can happen concurrently
+147 |     }
+148 |     private func failure(_ reply: Reply, _ fallback: String) -> CloudError {
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/FTPSession.swift:140:38: warning: passing closure as a 'sending' parameter risks causing data races between 'self'-isolated code and concurrent execution of the closure; this is an error in the Swift 6 language mode [#RegionIsolation::SendingClosureRisksDataRace]
+138 |     private func exclusive<T>(_ work: @escaping () async throws -> T) async throws -> T {
+139 |         let previous = lastOperation
+140 |         let operation = Task<T, Error> {
+    |                                      `- warning: passing closure as a 'sending' parameter risks causing data races between 'self'-isolated code and concurrent execution of the closure; this is an error in the Swift 6 language mode [#RegionIsolation::SendingClosureRisksDataRace]
+141 |             await previous?.value
+142 |             try Task.checkCancellation()
+143 |             return try await work()
+    |                              `- note: closure captures 'work' which is accessible to 'self'-isolated code
+144 |         }
+145 |         lastOperation = Task { _ = try? await operation.value }
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Mega.swift:32:39: warning: sending 'payload' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+ 30 |     func megaCall(_ payload: [String: Any]) async throws -> Any {
+ 31 |         let state = try await megaSession()
+ 32 |         do { return try await MegaAPI.call(payload, sid: state.sid, sequence: state.next(), session: session) }
+    |                                       |- warning: sending 'payload' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+    |                                       `- note: sending main actor-isolated 'payload' to @concurrent static method 'call(_:sid:sequence:session:)' risks causing data races between @concurrent and main actor-isolated uses
+ 33 |         catch {
+ 34 |             if case CloudError.sessionExpired(let reason) = error { expireSession(reason) }
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Volume.swift:232:39: warning: sending 'progress' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+230 |                 written += Int64(chunk.count)
+231 |                 let reported = written
+232 |                 await MainActor.run { progress(reported, max(total, reported)) }
+    |                                       |- warning: sending 'progress' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+    |                                       `- note: 'progress' is captured by a main actor-isolated closure. main actor-isolated uses in closure may race against code in the current isolation context
+233 |             }
+234 |         } catch {
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Volume.swift:184:24: warning: sending 'progress' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+182 |     func volumeDownload(file: CloudFile, to destination: URL, progress: @escaping (Int64, Int64) -> Void) async throws {
+183 |         try volumeCheckMounted()
+184 |         try await Self.volumeCopyContents(from: try volumeURL(file.id), to: destination, progress: progress)
+    |                        |- warning: sending 'progress' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+    |                        `- note: sending main actor-isolated 'progress' to @concurrent static method 'volumeCopyContents(from:to:progress:)' risks causing data races between @concurrent and main actor-isolated uses
+185 |     }
+186 |     func volumeUpload(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint,
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/MenuBar.swift:75:35: warning: sending 'self' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+73 |         }
+74 |         Task { @MainActor [weak self] in
+75 |             guard let model = self?.model else { return }
+   |                                   |- warning: sending 'self' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+   |                                   `- note: 'self' is captured by a main actor-isolated closure. main actor-isolated uses in closure may race against code in the current isolation context
+76 |             NSApp.activate(ignoringOtherApps: true)
+77 |             if !urls.isEmpty { _ = model.enqueueUploads(urls) }
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/FTP.swift:90:34: warning: sending 'progress' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+ 88 |         let total = file.size ?? 0
+ 89 |         try await ftp().retrieve(path: file.id, to: destination) { sent in
+ 90 |             Task { @MainActor in progress(sent, total) }
+    |                                  |- warning: sending 'progress' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+    |                                  `- note: 'progress' is captured by a main actor-isolated closure. main actor-isolated uses in closure may race against code in the current isolation context
+ 91 |         }
+ 92 |     }
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/FTP.swift:100:34: warning: sending 'progress' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+ 98 |         cursor.offset = 0; try save(cursor)
+ 99 |         try await ftp().store(local, to: path) { sent in
+100 |             Task { @MainActor in progress(min(sent, total), total) }
+    |                                  |- warning: sending 'progress' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+    |                                  `- note: 'progress' is captured by a main actor-isolated closure. main actor-isolated uses in closure may race against code in the current isolation context
+101 |         }
+102 |         cursor.offset = total; cursor.complete = true; try save(cursor); progress(total, total)
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Volume.swift:197:32: warning: sending 'progress' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+195 |             let staging = target.deletingLastPathComponent().appendingPathComponent(".icloudy-" + UUID().uuidString + ".part")
+196 |             do {
+197 |                 try await Self.volumeCopyContents(from: local, to: staging, progress: progress)
+    |                                |- warning: sending 'progress' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+    |                                `- note: sending main actor-isolated 'progress' to @concurrent static method 'volumeCopyContents(from:to:progress:)' risks causing data races between @concurrent and main actor-isolated uses
+198 |                 try await blockingIO {
+199 |                     if FileManager.default.fileExists(atPath: target.path) { _ = try FileManager.default.replaceItemAt(target, withItemAt: staging) }
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Volume.swift:207:28: warning: sending 'progress' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+205 |             }
+206 |         } else {
+207 |             try await Self.volumeCopyContents(from: local, to: target, progress: progress)
+    |                            |- warning: sending 'progress' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+    |                            `- note: sending main actor-isolated 'progress' to @concurrent static method 'volumeCopyContents(from:to:progress:)' risks causing data races between @concurrent and main actor-isolated uses
+208 |         }
+209 |         cursor.offset = cursor.total; cursor.complete = true; try save(cursor); progress(cursor.total, cursor.total)
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/SpotlightIndex.swift:114:44: warning: sending 'index' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+112 |         persist()
+113 |         guard !domains.isEmpty else { return }
+114 |         Task { [index] in try? await index.deleteItems(withDomainIdentifiers: Array(domains)) }
+    |                                            |- warning: sending 'index' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+    |                                            `- note: sending main actor-isolated 'index' to @concurrent instance method 'deleteItems(withDomainIdentifiers:)' risks causing data races between @concurrent and main actor-isolated uses
+115 |     }
+116 |     /// Disconnecting an account must leave nothing of it in Spotlight.
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/SpotlightIndex.swift:120:44: warning: sending 'index' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+118 |         items.removeAll { $0.accountID == accountID }
+119 |         persist()
+120 |         Task { [index] in try? await index.deleteItems(withDomainIdentifiers: [accountID]) }
+    |                                            |- warning: sending 'index' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+    |                                            `- note: sending main actor-isolated 'index' to @concurrent instance method 'deleteItems(withDomainIdentifiers:)' risks causing data races between @concurrent and main actor-isolated uses
+121 |     }
+122 |     /// Drops one item, which is what sending it to the bin means for Spotlight. A hit left behind opens on a file
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/SpotlightIndex.swift:129:44: warning: sending 'index' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+127 |         persist()
+128 |         let identifier = Self.identifier(accountID: accountID, fileID: fileID)
+129 |         Task { [index] in try? await index.deleteItems(withIdentifiers: [identifier]) }
+    |                                            |- warning: sending 'index' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+    |                                            `- note: sending main actor-isolated 'index' to @concurrent instance method 'deleteItems(withIdentifiers:)' risks causing data races between @concurrent and main actor-isolated uses
+130 |     }
+131 |     /// Keeps an indexed item's name current, because a rename left Spotlight offering the old one.
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/SpotlightIndex.swift:140:44: warning: sending 'searchable' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+138 |     private func publish(_ entries: [IndexedItem], label: String) {
+139 |         let searchable = entries.map { Self.searchableItem(for: $0, accountLabel: label) }
+140 |         Task { [index] in try? await index.index(searchable) }
+    |                                            |- warning: sending 'searchable' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+    |                                            `- note: sending main actor-isolated 'searchable' to @concurrent instance method 'index' risks causing data races between @concurrent and main actor-isolated uses
+141 |     }
+142 |     private func persist() { try? LocalStore.save(items, to: storeURL) }
+
+/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/SpotlightIndex.swift:140:44: warning: sending 'index' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+138 |     private func publish(_ entries: [IndexedItem], label: String) {
+139 |         let searchable = entries.map { Self.searchableItem(for: $0, accountLabel: label) }
+140 |         Task { [index] in try? await index.index(searchable) }
+    |                                            |- warning: sending 'index' risks causing data races; this is an error in the Swift 6 language mode [#RegionIsolation::SendingRisksDataRace]
+    |                                            `- note: sending main actor-isolated 'index' to @concurrent instance method 'index' risks causing data races between @concurrent and main actor-isolated uses
+141 |     }
+142 |     private func persist() { try? LocalStore.save(items, to: storeURL) }
+
+[#MutableGlobalVariable]: <https://docs.swift.org/compiler/documentation/diagnostics/mutable-global-variable>
+[#NonSendableExitingActor]: <https://docs.swift.org/compiler/documentation/diagnostics/getting-non-sendable-values-out-of-actors>
+[#RegionIsolation]: <https://docs.swift.org/compiler/documentation/diagnostics/region-isolation>
+[#SendableClosureCaptures]: <https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures>
+[#SendingClosureRisksDataRace]: <https://docs.swift.org/compiler/documentation/diagnostics/sending-closure-risks-data-race>
+[#SendingRisksDataRace]: <https://docs.swift.org/compiler/documentation/diagnostics/sending-risks-data-race>
+[96 / 97] iCloudy-product
+[97 / 97] iCloudy-product
+Build complete! (47,31 s)

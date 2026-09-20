@@ -5,7 +5,7 @@ struct SettingsView: View {
     @ObservedObject var model: AppModel
     var body: some View {
         TabView {
-            GeneralSettings().tabItem { Label("General", systemImage: "gearshape") }
+            GeneralSettings(model: model).tabItem { Label("General", systemImage: "gearshape") }
             TransferSettings(model: model).tabItem { Label("Transferencias", systemImage: "arrow.up.arrow.down") }
             StorageSettings(model: model).tabItem { Label("Almacenamiento", systemImage: "internaldrive") }
         }.frame(width: 540, height: 430)
@@ -13,6 +13,7 @@ struct SettingsView: View {
 }
 
 private struct GeneralSettings: View {
+    @ObservedObject var model: AppModel
     @AppStorage(Prefs.menuBar) private var menuBar = true
     @AppStorage(Prefs.previewFollowsSelection) private var previewFollows = true
     @AppStorage(Prefs.previewConsentMB) private var previewConsent = 100
@@ -51,6 +52,7 @@ private struct GeneralSettings: View {
             }
             Section {
                 Toggle("Recordar el último listado de cada carpeta", isOn: $listingCache)
+                    .onChange(of: listingCache) { _, value in model.listings.enabled = value }
                 Text("Muestra al instante lo que había la última vez mientras el proveedor responde, y deja navegar sin conexión. Solo nombres y metadatos.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
@@ -182,14 +184,7 @@ private struct StorageSettings: View {
     }
     private func clear(_ kind: Maintenance.Kind) {
         failure = nil
-        // Indexes kept in memory are cleared through their owner, which rewrites the file as it goes.
-        switch kind {
-        case .localCopies: model.localCopies.clear()
-        case .history: model.history.clear()
-        case .spotlight: model.spotlight.clear()
-        default: break
-        }
-        do { try Maintenance.clear(kind) } catch { failure = error.localizedDescription }
+        do { try model.clearMaintenance(kind) } catch { failure = error.localizedDescription }
         Task { await measure() }
     }
 }

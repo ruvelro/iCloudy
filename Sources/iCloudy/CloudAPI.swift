@@ -18,20 +18,30 @@ enum TokenRefresher {
     }
 }
 
-/// Keeps the `Authorization` header from following a redirect to a different server.
-///
-/// The header is set by hand on every request, and URLSession carries a hand-set header across redirects without
-/// asking. A WebDAV box that answers with a 302 to somewhere else would therefore be handed the account's Basic
-/// password. Within the same host a redirect is ordinary and the header rides along as before.
-final class RedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+/// A shared policy for every HTTP path, including progress delegates and authentication retries.
+class RedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     static let shared = RedirectGuard()
+    private static func origin(_ url: URL) -> String? {
+        guard let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme),
+              let host = url.host?.lowercased(), url.user == nil, url.password == nil else { return nil }
+        return "\(scheme)://\(host):\(url.port ?? (scheme == "https" ? 443 : 80))"
+    }
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest) async -> URLRequest? {
-        guard let from = task.originalRequest?.url?.host?.lowercased(), let to = request.url?.host?.lowercased(),
-              from != to else { return request }
+        guard let original = task.originalRequest, let from = original.url, let to = request.url,
+              let sourceOrigin = Self.origin(from), let targetOrigin = Self.origin(to),
+              !(response.url?.scheme?.lowercased() == "https" && to.scheme?.lowercased() != "https"),
+              !(from.scheme?.lowercased() == "https" && to.scheme?.lowercased() != "https") else { return nil }
+        guard sourceOrigin != targetOrigin else { return request }
+        // Never replay a token exchange, API mutation or upload body at another origin (including another port).
+        guard ["GET", "HEAD"].contains(original.httpMethod ?? "GET"),
+              original.httpBody == nil, original.httpBodyStream == nil,
+              ["GET", "HEAD"].contains(request.httpMethod ?? "GET"),
+              request.httpBody == nil, request.httpBodyStream == nil else { return nil }
         var stripped = request
-        stripped.setValue(nil, forHTTPHeaderField: "Authorization")
-        stripped.setValue(nil, forHTTPHeaderField: "Cookie")
+        for header in ["Authorization", "Proxy-Authorization", "Cookie"] {
+            stripped.setValue(nil, forHTTPHeaderField: header)
+        }
         return stripped
     }
 }
@@ -185,7 +195,7 @@ final class CloudAPI {
         }
         guard (response as? HTTPURLResponse)?.statusCode == 401, tokenProvider == nil else { return (data, response) }
         request.setValue(account.cloud.authorizationScheme + " " + (try await token(force: true)), forHTTPHeaderField: "Authorization")
-        let (retriedData, retriedResponse) = try await session.data(for: request)
+        let (retriedData, retriedResponse) = try await session.data(for: request, delegate: RedirectGuard.shared)
         if (retriedResponse as? HTTPURLResponse)?.statusCode == 401 { expireSession(); throw CloudError.sessionExpired(nil) }
         return (retriedData, retriedResponse)
     }
@@ -210,7 +220,7 @@ final class CloudAPI {
         for url in urls where url.scheme == "https" {
             var request = URLRequest(url: url)
             request.httpMethod = "DELETE"
-            _ = try? await session.data(for: request)
+            _ = try? await session.data(for: request, delegate: RedirectGuard.shared)
         }
         guard account.cloud == .box else { return }
         for id in boxSessions {
@@ -223,10 +233,10 @@ final class CloudAPI {
     /// block, a second means the account is gone. The block uploads of Dropbox and Box go straight to their own hosts
     /// and used to miss that, so a token that expired mid-upload failed the transfer with a bare "HTTP 401".
     func upload(_ request: inout URLRequest, from data: Data) async throws -> (Data, URLResponse) {
-        let (body, response) = try await session.upload(for: request, from: data)
+        let (body, response) = try await session.upload(for: request, from: data, delegate: RedirectGuard.shared)
         guard (response as? HTTPURLResponse)?.statusCode == 401, tokenProvider == nil else { return (body, response) }
         request.setValue(account.cloud.authorizationScheme + " " + (try await token(force: true)), forHTTPHeaderField: "Authorization")
-        let (retriedBody, retriedResponse) = try await session.upload(for: request, from: data)
+        let (retriedBody, retriedResponse) = try await session.upload(for: request, from: data, delegate: RedirectGuard.shared)
         if (retriedResponse as? HTTPURLResponse)?.statusCode == 401 { expireSession(); throw CloudError.sessionExpired(nil) }
         return (retriedBody, retriedResponse)
     }
@@ -416,15 +426,15 @@ final class CloudAPI {
     func download(file: CloudFile, to destination: URL, exportMime: String? = nil, maxBytes: Int64? = nil, progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws {
         if let demo { try await demo.download(file, to: destination, maxBytes: maxBytes, progress: progress); return }
         if account.cloud == .o2 {
-            try await o2Download(file: file, to: destination, progress: progress)
+            try await o2Download(file: file, to: destination, maxBytes: maxBytes, progress: progress)
             return
         }
         if account.cloud == .mega {
-            try await megaDownload(file: file, to: destination, progress: progress)
+            try await megaDownload(file: file, to: destination, maxBytes: maxBytes, progress: progress)
             return
         }
         if account.cloud == .volume {
-            try await volumeDownload(file: file, to: destination, progress: progress)
+            try await volumeDownload(file: file, to: destination, maxBytes: maxBytes, progress: progress)
             if let maxBytes, Int64((try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > maxBytes {
                 try? FileManager.default.removeItem(at: destination)
                 throw CloudError.message(L("La vista previa supera el límite de descarga autorizado."))
@@ -432,7 +442,7 @@ final class CloudAPI {
             return
         }
         if account.cloud == .ftp {
-            try await ftpDownload(file: file, to: destination, progress: progress)
+            try await ftpDownload(file: file, to: destination, maxBytes: maxBytes, progress: progress)
             if let maxBytes, Int64((try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > maxBytes {
                 try? FileManager.default.removeItem(at: destination)
                 throw CloudError.message(L("La vista previa supera el límite de descarga autorizado."))
@@ -473,7 +483,7 @@ final class CloudAPI {
     }
 }
 
-final class DownloadProgress: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+final class DownloadProgress: RedirectGuard, URLSessionDownloadDelegate, @unchecked Sendable {
     let report: (Int64, Int64) -> Void
     let maxBytes: Int64?
     private let lock = NSLock()

@@ -174,8 +174,10 @@ extension CloudAPI {
         // the failure this recovery replaces.
         var corrections = 0
         while cursor.offset < total {
+            try cursor.sourceStamp?.validate(local)
             try Task.checkCancellation()
             let chunk = try await blockingIO { try handle.read(upToCount: Int(Self.dropboxChunk)) ?? Data() }
+            try cursor.sourceStamp?.validate(local)
             guard !chunk.isEmpty else { throw CloudError.message(L("El tamaño del origen ha cambiado.")) }
             hasher?.update(chunk)
             var append = try await request(URL(string: "https://content.dropboxapi.com/2/files/upload_session/append_v2")!, method: "POST")
@@ -200,6 +202,7 @@ extension CloudAPI {
             cursor.offset += Int64(chunk.count)
             try save(cursor); progress(cursor.offset, total)
         }
+        try cursor.sourceStamp?.validate(local)
         var finish = try await request(URL(string: "https://content.dropboxapi.com/2/files/upload_session/finish")!, method: "POST")
         finish.setValue(Self.asciiJSON(["cursor": ["session_id": cursor.sessionID!, "offset": cursor.offset],
                                         "commit": ["path": destination, "mode": replacing == nil ? "add" : "overwrite", "autorename": false, "mute": true]]),
@@ -207,16 +210,18 @@ extension CloudAPI {
         finish.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         let (data, response) = try await upload(&finish, from: Data())
         try HTTP.validate(response, data: data)
-        cursor.complete = true; try save(cursor); progress(total, total)
+        progress(total, total)
         let metadata = (try? HTTP.json(data)) ?? [:]
-        var verification = UploadVerification.unavailable
-        if let expected = metadata["content_hash"] as? String, let hasher {
-            guard expected.lowercased() == hasher.finalize() else {
-                throw CloudError.message(L("La suma de verificación de «\(name)» no coincide con la que informa el servidor. La copia remota puede estar dañada: revísala o vuelve a subirla."))
+        return try cursor.finish(remoteID: metadata["path_lower"] as? String, save: save) {
+            var verification = UploadVerification.unavailable
+            if let expected = metadata["content_hash"] as? String, let hasher {
+                guard expected.lowercased() == hasher.finalize() else {
+                    throw CloudError.message(L("La suma de verificación de «\(name)» no coincide con la que informa el servidor. La copia remota puede estar dañada: revísala o vuelve a subirla."))
+                }
+                verification = .verified
             }
-            verification = .verified
+            return verification
         }
-        return UploadReceipt(remoteID: metadata["path_lower"] as? String, verification: verification)
     }
 }
 

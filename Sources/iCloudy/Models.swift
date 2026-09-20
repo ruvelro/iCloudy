@@ -213,6 +213,10 @@ struct UploadCheckpoint: Codable {
     var parts: [String] = []
     /// Block size imposed by the provider; Box chooses it when the session starts.
     var chunkSize: Int64?
+    var integrity: UploadIntegrity?
+    var remoteID: String?
+    var sourceStamp: UploadSourceStamp?
+    var pendingRetirementID: String?
 }
 struct Transfer: Identifiable, Codable {
     var id = UUID()
@@ -245,6 +249,8 @@ struct Transfer: Identifiable, Codable {
     var unverifiedFiles = 0
     /// Destination account of a cross-cloud transfer; `accountID` is then the source.
     var targetAccountID: String?
+    /// nil for ordinary transfers; mirrors keep the exact remote object and its last observed version per path.
+    var mirrorEntries: [String: CloudFile]?
     var finished: Bool { [.completed, .cancelled, .failed].contains(state) }
     var failed: Bool { state == .failed }
     var progress: Double { state == .completed ? 1 : (total > 0 ? min(1, Double(bytes) / Double(total)) : 0) }
@@ -331,55 +337,58 @@ enum CloudError: LocalizedError {
 }
 
 enum Vault {
-    /// Writes a value, replacing the entry rather than updating it in place.
-    ///
-    /// That distinction matters more than it looks. An entry in the classic keychain keeps the access list it was
-    /// born with, and `SecItemUpdate` never touches it. So an entry first written by a build signed differently, for
-    /// instance before this project had a signing certificate, goes on asking for permission after every rebuild,
-    /// for ever, no matter how many times the answer is "always allow". Replacing it gives it an access list that
-    /// belongs to the build running now, and the asking stops.
-    static func save<T: Encodable>(_ value: T, key: String) throws {
-        try write(try JSONEncoder().encode(value), key: key)
-    }
-    private static func write(_ data: Data, key: String) throws {
-        var insert = descriptor(key)
-        insert[kSecValueData as String] = data
-        insert[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        SecItemDelete(descriptor(key) as CFDictionary)
-        let result = SecItemAdd(insert as CFDictionary, nil)
-        guard result == errSecSuccess else {
-            throw CloudError.message(L("No se pudo guardar en el Llavero (\(result)). Puede que haya que volver a conectar esa cuenta."))
-        }
-    }
-    private static func descriptor(_ key: String) -> [String: Any] {
+    private static let storage = KeychainStorage()
+    static func save<T: Encodable>(_ value: T, key: String) throws { try storage.save(value, key: key) }
+    static func read<T: Decodable>(_ type: T.Type, key: String) throws -> T? { try storage.read(type, key: key) }
+    static func delete(key: String) throws { try storage.delete(key: key) }
+}
+
+/// Injectable Security operations; tests never read or mutate the user's Keychain.
+struct KeychainOperations {
+    var update: (CFDictionary, CFDictionary) -> OSStatus = SecItemUpdate
+    var add: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = SecItemAdd
+    var copy: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = SecItemCopyMatching
+    var delete: (CFDictionary) -> OSStatus = SecItemDelete
+}
+final class KeychainStorage: @unchecked Sendable {
+    private let operations: KeychainOperations
+    private let lock = NSLock()
+    init(operations: KeychainOperations = KeychainOperations()) { self.operations = operations }
+    private func descriptor(_ key: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "dev.icloudy.credentials",
          kSecAttrAccount as String: key]
     }
-    /// Rewrites entries so their access lists belong to the build running now. Each one asks for permission once
-    /// while being read, and then stops asking for good. Anything unreadable is left exactly as it was.
-    @discardableResult
-    static func refreshAccess(keys: [String]) -> Int {
-        var repaired = 0
-        for key in keys {
-            var query = descriptor(key)
-            query[kSecReturnData as String] = true
-            query[kSecMatchLimit as String] = kSecMatchLimitOne
-            var value: CFTypeRef?
-            guard SecItemCopyMatching(query as CFDictionary, &value) == errSecSuccess, let data = value as? Data else { continue }
-            if (try? write(data, key: key)) != nil { repaired += 1 }
+    func save<T: Encodable>(_ value: T, key: String) throws {
+        let data = try JSONEncoder().encode(value)
+        lock.lock(); defer { lock.unlock() }
+        let query = descriptor(key) as CFDictionary
+        let attributes = [kSecValueData as String: data] as CFDictionary
+        var status = operations.update(query, attributes)
+        if status == errSecItemNotFound {
+            var insert = descriptor(key)
+            insert[kSecValueData as String] = data
+            insert[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            status = operations.add(insert as CFDictionary, nil)
+            // Another process may have created the item between update and add. Never delete it to retry.
+            if status == errSecDuplicateItem { status = operations.update(query, attributes) }
         }
-        return repaired
+        guard status == errSecSuccess else {
+            throw CloudError.message(L("No se pudo guardar en el Llavero (\(status)). Puede que haya que volver a conectar esa cuenta."))
+        }
     }
-    static func read<T: Decodable>(_ type: T.Type, key: String) throws -> T? {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "dev.icloudy.credentials", kSecAttrAccount as String: key, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+    func read<T: Decodable>(_ type: T.Type, key: String) throws -> T? {
+        lock.lock(); defer { lock.unlock() }
+        var query = descriptor(key)
+        query[kSecReturnData as String] = true; query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let status = operations.copy(query as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess, let data = result as? Data else { throw CloudError.message(L("No se pudo leer el Llavero (\(status)).")) }
         return try JSONDecoder().decode(type, from: data)
     }
-    static func delete(key: String) throws {
-        let result = SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "dev.icloudy.credentials", kSecAttrAccount as String: key] as CFDictionary)
+    func delete(key: String) throws {
+        lock.lock(); defer { lock.unlock() }
+        let result = operations.delete(descriptor(key) as CFDictionary)
         guard result == errSecSuccess || result == errSecItemNotFound else { throw CloudError.message(L("No se pudo eliminar la credencial (\(result)).")) }
     }
 }
@@ -482,7 +491,7 @@ extension CloudFile {
 }
 
 extension UploadCheckpoint {
-    enum CodingKeys: String, CodingKey { case url, offset, total, modified, complete, sessionID, parts, chunkSize }
+    enum CodingKeys: String, CodingKey { case url, offset, total, modified, complete, sessionID, parts, chunkSize, integrity, remoteID, sourceStamp, pendingRetirementID }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         self.init(url: try values.decodeIfPresent(URL.self, forKey: .url),
@@ -492,7 +501,11 @@ extension UploadCheckpoint {
                   complete: try values.decodeIfPresent(Bool.self, forKey: .complete) ?? false,
                   sessionID: try values.decodeIfPresent(String.self, forKey: .sessionID),
                   parts: try values.decodeIfPresent([String].self, forKey: .parts) ?? [],
-                  chunkSize: try values.decodeIfPresent(Int64.self, forKey: .chunkSize))
+                  chunkSize: try values.decodeIfPresent(Int64.self, forKey: .chunkSize),
+                  integrity: try values.decodeIfPresent(UploadIntegrity.self, forKey: .integrity),
+                  remoteID: try values.decodeIfPresent(String.self, forKey: .remoteID),
+                  sourceStamp: try values.decodeIfPresent(UploadSourceStamp.self, forKey: .sourceStamp),
+                  pendingRetirementID: try values.decodeIfPresent(String.self, forKey: .pendingRetirementID))
     }
 }
 
@@ -500,7 +513,7 @@ extension Transfer {
     enum CodingKeys: String, CodingKey {
         case id, batchID, name, destination, accountID, direction, localURL, bookmark, parent, file, exportMime, exportExtension
         case state, detail, bytes, total, bytesPerSecond, attempts, batchChoice, completedPaths, folders, uncertainFolders, names, replacements, uploads
-        case verifiedFiles, unverifiedFiles, targetAccountID
+        case verifiedFiles, unverifiedFiles, targetAccountID, mirrorEntries
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -533,7 +546,8 @@ extension Transfer {
                   uploads: try values.decodeIfPresent([String: UploadCheckpoint].self, forKey: .uploads) ?? [:],
                   verifiedFiles: try values.decodeIfPresent(Int.self, forKey: .verifiedFiles) ?? 0,
                   unverifiedFiles: try values.decodeIfPresent(Int.self, forKey: .unverifiedFiles) ?? 0,
-                  targetAccountID: try values.decodeIfPresent(String.self, forKey: .targetAccountID))
+                  targetAccountID: try values.decodeIfPresent(String.self, forKey: .targetAccountID),
+                  mirrorEntries: try values.decodeIfPresent([String: CloudFile].self, forKey: .mirrorEntries))
     }
 }
 

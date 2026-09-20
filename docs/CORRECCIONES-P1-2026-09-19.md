@@ -1,0 +1,32 @@
+# Correcciones P1 de la auditoría de iCloudy
+
+Esta entrega aborda A01–A07 de la auditoría del 19 de septiembre de 2026. Los hallazgos P2 y las nuevas funciones propuestas siguen fuera de esta entrega. Los cambios están en el árbol de trabajo, sin publicar ni modificar cuentas reales.
+
+| Hallazgo | Corrección | Regresión principal |
+| --- | --- | --- |
+| A01 · Reflejos | Correspondencia persistente entre ruta local e ID, nombre, tamaño y fecha remotos. Una copia conserva su destino, también en subcarpetas. Solo se reemplaza automáticamente la versión conocida. Las colisiones nuevas y modificaciones remotas requieren la decisión habitual. Los elementos omitidos no se marcan como sincronizados. | Conservar ambas copias, editar el origen y comprobar ambos contenidos; carpetas copiadas; cambios remotos; colisiones nuevas; omisiones y persistencia. |
+| A02 · Integridad al reintentar | Estados duraderos `pending`, `verified`, `unavailable` y `failed`, separados de la confirmación del servidor. Se guarda también el ID remoto. Un fallo o una verificación interrumpida no pasan a éxito al reintentar, incluso después de reiniciar. | Hash incorrecto en Box y Dropbox, serialización/restauración del checkpoint, verificación pendiente y recuperación de ID/verificación válidos. |
+| A03 · Origen modificado | Huella persistente de dispositivo, inode, tamaño, fecha de modificación y fecha de cambio con precisión de nanosegundos. Comprobaciones frescas antes y después de leer bloques, antes de confirmar donde el protocolo lo permite y al terminar. Se comprueba también el origen al reanudar. | Modificar Dropbox después del primer bloque manteniendo el tamaño: se detiene antes del siguiente bloque y del commit. Cambiar contenido restaurando la fecha original también se detecta. |
+| A04 · FTP bloqueado | Plazos y cancelación para conectar, recibir, enviar y cerrar el flujo. Una continuación se resuelve una sola vez. Los errores de lectura no se convierten indiscriminadamente en EOF y las descargas fallidas eliminan sus parciales. Se conserva el EOF cuando llega junto con los últimos bytes. | Servidor sin saludo, descarga que se queda abierta, cancelación con plazo de 60 segundos, reconexión y operaciones simultáneas. |
+| A05 · Escape por enlaces | Validación de componentes y apertura con `openat`/`O_NOFOLLOW`. Directorios fijados mediante descriptores para listar, buscar, crear, copiar, mover, renombrar y transferir. Subidas a un temporal exclusivo con publicación atómica; creación sin sobrescribir archivos aparecidos mientras tanto. La papelera coordina la operación con macOS y revalida la ruta dentro del acceso coordinado. | Ancestro enlazado fuera de la raíz, enlace colgante, operaciones de lectura y escritura y sustitución del ancestro después de fijar el descriptor. |
+| A06 · Redirecciones | Una política común para todos los transportes y sus delegados de progreso, incluido OAuth y reintentos tras 401. Comparación de esquema, host y puerto efectivo. Rechazo de degradación de HTTPS y de cuerpos/mutaciones hacia otro origen; eliminación de credenciales en descargas permitidas a otro origen. | Servidores HTTP reales de loopback: descarga 302 entre puertos y rechazo de subidas redirigidas con 302, 307 y 308; pruebas de HTTPS, credenciales en URL y puerto 443 implícito. |
+| A07 · Pérdida del Llavero | Actualización en sitio; inserción solo si falta la entrada; recuperación de una inserción concurrente mediante actualización. Escrituras, lecturas y eliminaciones serializadas. Eliminada la reescritura automática de ACL al arrancar. Backend inyectable para pruebas. | Actualización denegada conserva token y cuentas; inserción denegada conserva otras entradas; inserción duplicada se recupera sin borrar. |
+
+## Compatibilidad y límites
+
+- Los campos nuevos tienen valores por defecto al leer datos antiguos. Los reflejos sin correspondencia remota vuelven a resolver conflictos; no se presume que un archivo pertenece al reflejo solo por compartir nombre.
+- Una subida antigua de Box/Dropbox marcada completa pero sin resultado de integridad se trata de forma conservadora. Debe revisarse el destino y cancelarse la operación antes de iniciar una nueva, en lugar de anunciar éxito sin evidencia.
+- Las comprobaciones del origen detectan modificaciones; no son una instantánea inmutable ni una transacción distribuida. En protocolos que publican al recibir los bytes, un error puede descubrirse después de escribir en remoto. No se promete deshacer automáticamente esa escritura.
+- La detección de cambios remotos del reflejo usa los metadatos disponibles. No equivale a una escritura condicional atómica frente a otra aplicación que edite el mismo objeto entre la comprobación y la subida. Si faltan tamaño o fecha, se vuelve a preguntar.
+- La eliminación en volúmenes conserva la papelera del sistema y su API basada en rutas. La coordinación protege frente a aplicaciones que respetan `NSFileCoordinator`; no se afirma una garantía atómica contra sustituciones realizadas por procesos que ignoren esa coordinación. No hay alternativa de borrado definitivo cuando el sistema no la admite.
+- El cambio del Llavero conserva sus permisos actuales. La autorización de una firma nueva sigue correspondiendo a macOS; esta versión no recrea credenciales para suprimir diálogos.
+- Validación con archivos temporales, credenciales simuladas y servidores locales. Queda pendiente la comprobación de integración con cuentas reales, volúmenes SMB/NFS y una aplicación firmada dentro del sandbox. No se han probado ni modificado credenciales reales.
+
+## Validación
+
+- `swift test`: **327 pruebas aprobadas, cero fallos**, aproximadamente 32 segundos. Son las 305 pruebas anteriores más 22 regresiones nuevas; se han actualizado las expectativas de checkpoints que ahora guardan estados de integridad adicionales.
+- Concurrencia y reconexión FTP: **15 ejecuciones repetidas, 30 comprobaciones aprobadas** tras corregir el EOF que acompaña a los últimos bytes.
+- `git diff --check`: sin errores de espacios ni marcadores de conflicto.
+- `swift build -c release -Xswiftc -strict-concurrency=complete`: **compilación completada**, aproximadamente 51 segundos. Emite 57 avisos de concurrencia; la migración completa a Swift 6 sigue pendiente como trabajo P2.
+
+Las reproducciones históricas de `docs/auditoria-2026-09-19/` siguen describiendo la revisión anterior. Las regresiones corregidas están en `Tests/iCloudyTests/`, principalmente `SafetyRegressionTests`, `MirrorTests`, `RedirectSafetyTests` y `KeychainSafetyTests`.

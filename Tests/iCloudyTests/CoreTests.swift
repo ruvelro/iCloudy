@@ -174,8 +174,11 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(receipt.remoteID, "created")
         XCTAssertEqual(count, 3)
         XCTAssertEqual(offsets.last, 5_242_897)
-        XCTAssertEqual(saved.first?.url?.absoluteString, "https://upload.example/session", "The session is checkpointed before any byte is sent")
-        XCTAssertEqual(saved.map(\.offset), [0, 5_242_880, 5_242_897])
+        XCTAssertEqual(saved.first(where: { $0.url != nil })?.url?.absoluteString, "https://upload.example/session", "The session is checkpointed before any byte is sent")
+        XCTAssertEqual(saved.reduce(into: [Int64]()) { if $0.last != $1.offset { $0.append($1.offset) } }, [0, 5_242_880, 5_242_897])
+        XCTAssertEqual(saved.first?.sourceStamp, try UploadSourceStamp(file))
+        XCTAssertTrue(saved.contains { $0.complete && $0.integrity == .pending })
+        XCTAssertEqual(saved.last?.integrity, .verified)
         XCTAssertEqual(saved.last?.complete, true)
     }
 
@@ -337,6 +340,7 @@ final class CoreTests: XCTestCase {
         try await google.copy(file: file, to: "dest")
 
         StubProtocol.handler = { request in
+            if request.url?.path == "/monitor/1" { return (200, [:], Data(#"{"status":"completed"}"#.utf8)) }
             XCTAssertEqual(request.url?.path, "/v1.0/me/drive/items/d1/copy")
             XCTAssertTrue(requestBody(request).contains(#""parentReference":{"id":"dest""#))
             return (202, ["Location": "https://graph.microsoft.com/monitor/1"], Data())

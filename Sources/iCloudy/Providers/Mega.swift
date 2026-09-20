@@ -122,9 +122,9 @@ extension CloudAPI {
                 return true
             }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-            .prefix(500)
+            .prefix(501)
             .map { SearchHit(accountID: account.id, file: Self.megaFile($0), parentID: $0.parent) }
-        return SearchPage(hits: Array(hits), next: nil)
+        return SearchPage(hits: Array(hits.prefix(500)), next: nil, incomplete: hits.count > 500)
     }
     func megaQuota() async throws -> StorageQuota {
         guard let answer = try await megaCall(["a": "uq", "strg": 1, "xfer": 1]) as? [String: Any] else {
@@ -217,18 +217,20 @@ extension CloudAPI {
 
     // MARK: - Contents
 
-    func megaDownload(file: CloudFile, to destination: URL, progress: @escaping (Int64, Int64) -> Void) async throws {
+    func megaDownload(file: CloudFile, to destination: URL, maxBytes: Int64? = nil, progress: @escaping (Int64, Int64) -> Void) async throws {
         let state = try await megaTree()
         let node = try megaNode(file.id, in: state)
         guard !node.isFolder, let parts = MegaCrypto.unpack(fileKey: node.key) else {
             throw CloudError.message(L("Este archivo de Mega no se puede descargar porque su clave no es de esta cuenta."))
         }
         var (base, size) = try await megaTransferAddress(node)
+        try DownloadBudget.check(size, maximum: maxBytes)
         guard FileManager.default.createFile(atPath: destination.path, contents: nil) else {
             throw CloudError.message(L("No se pudo crear el archivo de destino."))
         }
         let output = try FileHandle(forWritingTo: destination)
-        defer { try? output.close() }
+        var complete = false
+        defer { try? output.close(); if !complete { try? FileManager.default.removeItem(at: destination) } }
 
         var macs: [Data] = []
         for chunk in MegaCrypto.chunks(of: size) {
@@ -248,6 +250,7 @@ extension CloudAPI {
             try? FileManager.default.removeItem(at: destination)
             throw CloudError.message(L("El archivo descargado de Mega no supera su comprobación de integridad."))
         }
+        complete = true
     }
 
     /// Where the bytes of a file live right now, and how many there are. The address is temporary: Mega hands out one
@@ -269,7 +272,11 @@ extension CloudAPI {
                 throw CloudError.message(L("Mega no devolvió la dirección de descarga."))
             }
             do {
-                let (data, response) = try await session.data(from: url)
+                let delegate = DownloadProgress(maxBytes: chunk.length) { _, _ in }
+                let (temporary, response) = try await session.download(for: URLRequest(url: url), delegate: delegate)
+                defer { try? FileManager.default.removeItem(at: temporary) }
+                try DownloadBudget.check(Int64(try temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0), maximum: chunk.length)
+                let data = try Data(contentsOf: temporary)
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 // 509 is Mega's own code for a free account that has spent its transfer allowance for the day.
                 guard status != 509 else {
@@ -291,6 +298,9 @@ extension CloudAPI {
     func megaUpload(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint,
                     save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
         let state = try await megaTree()
+        if cursor.remoteID != nil {
+            return try await megaFinishReplacement(state: state, cursor: &cursor, save: save)
+        }
         let target = try megaHandle(parent, in: state)
         let total = cursor.total
         guard let answer = try await megaCall(["a": "u", "s": total, "ssl": MegaAPI.useTLS]) as? [String: Any],
@@ -312,7 +322,9 @@ extension CloudAPI {
         let pieces = MegaCrypto.chunks(of: total)
         for chunk in (pieces.isEmpty ? [(offset: Int64(0), length: Int64(0))] : pieces) {
             try Task.checkCancellation()
+            try cursor.sourceStamp?.validate(local)
             let plain = try await blockingIO { try input.read(upToCount: Int(chunk.length)) ?? Data() }
+            try cursor.sourceStamp?.validate(local)
             guard plain.count == Int(chunk.length) else { throw CloudError.message(L("El tamaño del origen ha cambiado.")) }
             let offset = chunk.offset
             let cipher = try await blockingIO { try MegaCrypto.ctr(plain, key: key, nonce: nonce, blockOffset: UInt64(offset / 16)) }
@@ -328,7 +340,7 @@ extension CloudAPI {
             // on that would lose the whole upload over a moment's delay.
             var text = ""
             for attempt in 0..<5 {
-                let (data, response) = try await session.upload(for: request, from: cipher)
+                let (data, response) = try await session.upload(for: request, from: cipher, delegate: RedirectGuard.shared)
                 try HTTP.validate(response, data: data)
                 text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 guard text.hasPrefix("-") else { break }
@@ -350,19 +362,34 @@ extension CloudAPI {
         let entry: [String: Any] = ["h": token, "t": 0,
                                     "a": MegaCrypto.encode(try MegaCrypto.encodeAttributes(["n": name], key: key)),
                                     "k": MegaCrypto.encode(try MegaCrypto.ecb(packed, key: state.masterKey, encrypt: true))]
+        try cursor.sourceStamp?.validate(local)
         let created = try await megaCall(["a": "p", "t": target, "n": [entry]])
         let entries = (created as? [String: Any])?["f"] as? [[String: Any]] ?? []
         state.insert(entries)
         guard let handle = entries.first?["h"] as? String else {
             throw CloudError.message(L("Mega no devolvió el archivo subido."))
         }
-        // Mega never overwrites, so the previous version is replaced by putting it in the bin, where it is recoverable.
-        if let replacing, let old = state.nodes[replacing], !state.trash.isEmpty, old.parent != state.trash {
-            _ = try? await megaCall(["a": "m", "n": old.handle, "t": state.trash])
-            state.reparent(old.handle, to: state.trash)
-        }
-        cursor.offset = total; cursor.complete = true; try save(cursor)
-        // Mega stores the MAC that iCloudy itself computed, so there is no independent value to compare against.
-        return UploadReceipt(remoteID: handle, verification: .unavailable)
+        cursor.remoteID = handle
+        cursor.pendingRetirementID = replacing
+        cursor.offset = total
+        try save(cursor)
+        return try await megaFinishReplacement(state: state, cursor: &cursor, save: save)
+
     }
+    private func megaFinishReplacement(state: MegaState, cursor: inout UploadCheckpoint,
+                                       save: (UploadCheckpoint) throws -> Void) async throws -> UploadReceipt {
+        if let old = cursor.pendingRetirementID {
+            guard !state.trash.isEmpty else { throw CloudError.message(L("Mega no devolvió la papelera para retirar la versión anterior.")) }
+            if state.nodes[old]?.parent != state.trash {
+                _ = try await megaCall(["a": "m", "n": old, "t": state.trash])
+                state.reparent(old, to: state.trash)
+            }
+        }
+        cursor.pendingRetirementID = nil
+        cursor.complete = true
+        cursor.integrity = .unavailable
+        try save(cursor)
+        return UploadReceipt(remoteID: cursor.remoteID, verification: .unavailable)
+    }
+
 }

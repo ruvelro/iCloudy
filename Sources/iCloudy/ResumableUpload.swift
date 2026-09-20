@@ -70,7 +70,7 @@ extension CloudAPI {
     }
 
     /// Copies an item into another folder. Drive cannot copy folders; Graph copies asynchronously and answers 202.
-    func copy(file: CloudFile, to destination: String) async throws {
+    func copy(file: CloudFile, to destination: String, accepted: ((URL) throws -> Void)? = nil) async throws {
         if let demo { _ = try demo.copy(file.id, to: destination); return }
         switch account.cloud {
         case .dropbox: try await dropboxCopy(file: file, to: destination); return
@@ -90,6 +90,20 @@ extension CloudAPI {
             var request = try await request(URL(string: "\(graphDrive)/items/\(Self.segment(file.id))/copy")!, method: "POST", body: ["parentReference": ["id": target]])
             let (data, response) = try await send(&request)
             try HTTP.validate(response, data: data)
+            if (response as? HTTPURLResponse)?.statusCode == 202 {
+                guard let address = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Location"),
+                      let monitor = URL(string: address), Self.validCopyMonitor(monitor) else {
+                    throw CloudError.message(L("OneDrive aceptó la copia pero no devolvió su seguimiento. Comprueba el destino antes de repetirla."))
+                }
+                if let accepted { try accepted(monitor); return }
+                while true {
+                    let status = try await remoteCopyStatus(monitor)
+                    if status == .completed { return }
+                    if status == .failed { throw CloudError.message(L("OneDrive no pudo completar la copia.")) }
+                    try await Task.sleep(for: .seconds(5))
+                }
+            }
+
         }
     }
 
@@ -150,33 +164,62 @@ extension CloudAPI {
     @discardableResult
     func resumableUpload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
         if let demo {
-            try await demo.upload(local: local, parent: parent, name: name, replacing: replacing, checkpoint: checkpoint, save: save, progress: progress)
-            return UploadReceipt(remoteID: nil, verification: .verified)
+            let id = try await demo.upload(local: local, parent: parent, name: name, replacing: replacing, checkpoint: checkpoint, save: save, progress: progress)
+            return UploadReceipt(remoteID: id, verification: .verified)
+        }
+        // Once Mega committed a new node, retry only its pending retirement step. The local source
+        // (or a cross-cloud staging file) may no longer exist, and uploading again would duplicate it.
+        if account.cloud == .mega, var committed = checkpoint, committed.remoteID != nil, !committed.complete {
+            return try await megaUpload(local: local, parent: parent, name: name, replacing: replacing,
+                                        cursor: &committed, save: save, progress: progress)
         }
         let attributes = try local.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey, .isSymbolicLinkKey])
         guard attributes.isRegularFile == true, attributes.isSymbolicLink != true else { throw CloudError.message(L("Solo se admiten archivos regulares, sin enlaces simbólicos.")) }
         let total = Int64(attributes.fileSize ?? 0)
         var cursor = checkpoint ?? UploadCheckpoint(total: total, modified: attributes.contentModificationDate)
         guard cursor.total == total, cursor.modified == attributes.contentModificationDate else { throw CloudError.message(L("El origen ha cambiado. Cancela esta operación y vuelve a subirlo.")) }
-        if cursor.complete { progress(total, total); return UploadReceipt(remoteID: nil, verification: .unavailable) }
+        let source = try UploadSourceStamp(local)
+        if let original = cursor.sourceStamp { try original.validate(local) }
+        cursor.sourceStamp = source
+        if cursor.complete {
+            guard cursor.integrity != .pending, cursor.integrity != .failed,
+                  cursor.integrity != nil || ![.box, .dropbox].contains(account.cloud) else {
+                throw CloudError.message(L("La integridad de esta subida falló o quedó sin confirmar. Revisa la copia remota y cancela esta operación antes de volver a subir el archivo."))
+            }
+            progress(total, total)
+            return UploadReceipt(remoteID: cursor.remoteID, verification: cursor.integrity == .verified ? .verified : .unavailable)
+        }
+        try save(cursor)
+        let persistCheckpoint: (UploadCheckpoint) throws -> Void = { checkpoint in
+            var durable = checkpoint
+            if durable.complete, durable.integrity == nil { durable.integrity = .pending }
+            try save(durable)
+        }
+        let receipt: UploadReceipt
         switch account.cloud {
         case .google, .microsoft:
-            return try await rangeUpload(local: local, parent: parent, name: name, replacing: replacing, attributes: attributes, cursor: &cursor, save: save, progress: progress)
+            receipt = try await rangeUpload(local: local, parent: parent, name: name, replacing: replacing, attributes: attributes, cursor: &cursor, save: persistCheckpoint, progress: progress)
         case .dropbox:
-            return try await dropboxUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+            receipt = try await dropboxUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: persistCheckpoint, progress: progress)
         case .box:
-            return try await boxUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+            receipt = try await boxUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: persistCheckpoint, progress: progress)
         case .webdav:
-            return try await webdavUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+            receipt = try await webdavUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: persistCheckpoint, progress: progress)
         case .ftp:
-            return try await ftpUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+            receipt = try await ftpUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: persistCheckpoint, progress: progress)
         case .volume:
-            return try await volumeUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+            receipt = try await volumeUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: persistCheckpoint, progress: progress)
         case .mega:
-            return try await megaUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+            receipt = try await megaUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: persistCheckpoint, progress: progress)
         case .o2:
-            return try await o2Upload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+            receipt = try await o2Upload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: persistCheckpoint, progress: progress)
         }
+        do { try source.validate(local) }
+        catch { cursor.complete = true; cursor.integrity = .failed; try save(cursor); throw error }
+        cursor.remoteID = receipt.remoteID
+        cursor.integrity = receipt.verification == .verified ? .verified : .unavailable
+        try save(cursor)
+        return receipt
     }
 
     /// Google Drive and Microsoft Graph both resume with `Content-Range` against a session URL the server hands out.
@@ -188,7 +231,7 @@ extension CloudAPI {
             var probe = URLRequest(url: url)
             probe.httpMethod = account.cloud == .google ? "PUT" : "GET"
             if account.cloud == .google { probe.httpBody = Data(); probe.setValue("bytes */\(total)", forHTTPHeaderField: "Content-Range") }
-            let (data, response) = try await session.data(for: probe)
+            let (data, response) = try await session.data(for: probe, delegate: RedirectGuard.shared)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             if account.cloud == .google, [200, 201].contains(status) {
                 cursor.complete = true; cursor.offset = total; try save(cursor); progress(total, total)
@@ -247,24 +290,30 @@ extension CloudAPI {
         var stalled = 0
         repeat {
             try Task.checkCancellation()
+            try cursor.sourceStamp?.validate(local)
             let before = cursor.offset
             let current = try local.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
             guard current.fileSize == attributes.fileSize, current.contentModificationDate == cursor.modified else { throw CloudError.message(L("El archivo cambió durante la subida.")) }
             // Reading 5 MiB blocks on the main actor stalled the interface on slow volumes.
             let data = try await blockingIO { try handle.read(upToCount: 5 * 1024 * 1024) ?? Data() }
+            try cursor.sourceStamp?.validate(local)
             guard total == 0 || !data.isEmpty, cursor.offset + Int64(data.count) <= total else { throw CloudError.message(L("El tamaño del origen ha cambiado.")) }
             var upload = URLRequest(url: url)
             upload.httpMethod = "PUT"; upload.timeoutInterval = 180
             upload.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
             upload.setValue(total == 0 ? "bytes */0" : "bytes \(cursor.offset)-\(cursor.offset + Int64(data.count) - 1)/\(total)", forHTTPHeaderField: "Content-Range")
             hasher?.update(data)
-            let (body, response) = try await session.upload(for: upload, from: data)
+            let (body, response) = try await session.upload(for: upload, from: data, delegate: RedirectGuard.shared)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             if [200, 201].contains(status) {
                 guard cursor.offset + Int64(data.count) == total else { throw CloudError.message(L("El servidor confirmó una subida incompleta.")) }
                 cursor.offset = total; cursor.complete = true
                 let item = (try? HTTP.json(body)) ?? [:]
-                receipt = UploadReceipt(remoteID: item["id"] as? String, verification: try hasher?.verify(against: item, name: name) ?? .unavailable)
+                let stamp = cursor.sourceStamp
+                receipt = try cursor.finish(remoteID: item["id"] as? String, save: save) {
+                    try stamp?.validate(local)
+                    return try hasher?.verify(against: item, name: name) ?? .unavailable
+                }
             } else if account.cloud == .google && status == 308 {
                 let received = Self.googleOffset(response)
                 guard received == cursor.offset + Int64(data.count) else { throw URLError(.networkConnectionLost) }

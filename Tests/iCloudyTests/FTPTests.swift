@@ -27,9 +27,11 @@ final class FakeFTPServer: @unchecked Sendable {
     private(set) var stored: [String: Data] = [:]
     private var files: [String: Data]
     private var listings: [String: String]
+    private let stallRetrievals: Bool
     private(set) var commands: [String] = []
 
-    init(files: [String: Data], listings: [String: String]) throws {
+    init(files: [String: Data], listings: [String: String], stallRetrievals: Bool = false) throws {
+        self.stallRetrievals = stallRetrievals
         self.files = files; self.listings = listings
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
@@ -98,11 +100,12 @@ final class FakeFTPServer: @unchecked Sendable {
         case "RETR":
             guard let payload = files[argument] else { send("550 No existe\r\n"); return }
             startTransfer { connection in
+                if self.stallRetrievals { return }
                 connection.send(content: payload, isComplete: true, completion: .contentProcessed { _ in connection.cancel() })
             }
         case "STOR":
             let path = argument
-            startTransfer { [weak self] connection in
+            startTransfer(automaticCompletion: false) { [weak self] connection in
                 var received = Data()
                 func pump() {
                     connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, complete, _ in
@@ -146,13 +149,15 @@ final class FakeFTPServer: @unchecked Sendable {
         listener.start(queue: queue)
     }
     /// Announces the transfer, then runs `action` as soon as the client opens the data connection.
-    private func startTransfer(_ action: @escaping (NWConnection) -> Void) {
+    private func startTransfer(automaticCompletion: Bool = true, _ action: @escaping (NWConnection) -> Void) {
         send("150 Abriendo el canal de datos\r\n")
         if let connection = dataConnection, dataListener != nil {
             action(connection)
         } else {
             pendingData = action
         }
+        // STOR sends its own 226 when EOF arrives; scheduling a second one corrupts the next operation.
+        guard automaticCompletion else { return }
         // Downloads and listings finish as soon as the data connection closes.
         queue.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             guard let self, self.pendingData == nil else { return }

@@ -25,6 +25,7 @@ actor FTPSession {
     private let password: String
     private var control: NWConnection?
     private var pending = Data()
+    private var receiveEOF: Set<ObjectIdentifier> = []
     /// Set once the server has answered FEAT, so MLSD is only attempted where it exists.
     private var supportsMLSD: Bool?
     /// Seconds any single read, connection or close may take before the operation is abandoned.
@@ -48,21 +49,16 @@ actor FTPSession {
     private func open(port: UInt16) async throws -> NWConnection {
         guard let endpointPort = NWEndpoint.Port(rawValue: port) else { throw CloudError.message(L("Puerto de servidor no válido.")) }
         let connection = NWConnection(host: NWEndpoint.Host(host), port: endpointPort, using: parameters())
-        let grace = Self.pathGrace
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let resumed = Resumed()
+        defer { connection.stateUpdateHandler = nil }
+        try await socketWait(connection, timeout: timeout) { (finish: @escaping @Sendable (Result<Void, Error>) -> Void) in
             connection.stateUpdateHandler = { state in
                 switch state {
-                case .ready: resumed.once { continuation.resume() }
-                case .failed(let error): resumed.once { connection.cancel(); continuation.resume(throwing: Self.describe(error)) }
-                case .cancelled: resumed.once { continuation.resume(throwing: CancellationError()) }
+                case .ready: finish(.success(()))
+                case .failed(let error): finish(.failure(Self.describe(error)))
+                case .cancelled: finish(.failure(CancellationError()))
                 case .waiting(let error):
-                    // `waiting` means the path is not usable yet. Giving up at the first one turned a network that
-                    // was still settling, right after waking the Mac, into a failed transfer. Once the grace is
-                    // spent the connection is closed, or it would go on retrying for the life of the process.
-                    resumed.after(grace) {
-                        connection.cancel()
-                        continuation.resume(throwing: Self.describe(error))
+                    DispatchQueue.global().asyncAfter(deadline: .now() + Self.pathGrace) {
+                        if case .waiting = connection.state { finish(.failure(Self.describe(error))) }
                     }
                 default: break
                 }
@@ -111,7 +107,8 @@ actor FTPSession {
         _ = try? await send("OPTS UTF8 ON")
     }
     func close() {
-        control?.cancel(); control = nil; pending = Data()
+        if let control { receiveEOF.remove(ObjectIdentifier(control)); control.cancel() }
+        control = nil; pending = Data()
     }
     /// The server closed the control connection, or the socket under it failed. Distinct from a refusal so the
     /// operation can be repeated on a fresh connection, and so the person reads "closed", not "refused".
@@ -127,8 +124,9 @@ actor FTPSession {
             try Task.checkCancellation()
             close()
             try await connect()
-            return try await work()
-        }
+            do { return try await work() }
+            catch { close(); throw error }
+        } catch { close(); throw error }
     }
     /// One operation at a time on the control channel. The actor is reentrant at every `await`, so without this a
     /// listing started by the explorer while the queue was in the middle of a STOR would read the upload's closing
@@ -151,54 +149,56 @@ actor FTPSession {
 
     // MARK: - Control channel
 
+    /// A callback race, not a task group: cancelling a child task cannot resume a Network continuation.
+    private func socketWait<T: Sendable>(_ connection: NWConnection, timeout: TimeInterval,
+                               start: (@escaping @Sendable (Result<T, Error>) -> Void) -> Void) async throws -> T {
+        let wait = SocketWait<T>()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard wait.install(continuation) else { return }
+                wait.arm(timeout: timeout) {
+                    connection.cancel()
+                }
+                start { result in
+                    if case .failure = result { connection.cancel() }
+                    wait.resolve(result)
+                }
+            }
+        } onCancel: {
+            wait.resolve(.failure(CancellationError()))
+            connection.cancel()
+        }
+    }
     private func rawSend(_ connection: NWConnection, _ data: Data) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        try await socketWait(connection, timeout: timeout) { (finish: @escaping @Sendable (Result<Void, Error>) -> Void) in
             connection.send(content: data, completion: .contentProcessed { error in
-                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+                if let error { finish(.failure(error)) } else { finish(.success(())) }
             })
         }
     }
-    /// Half-closes the stream so the peer sees a clean end of file. Cancelling outright can surface as a reset.
-    /// The wait is bounded: some stacks never report the completion of a final, empty send.
-    private func finish(_ connection: NWConnection) async {
-        let limit = timeout
-        _ = try? await withThrowingTaskGroup(of: Bool.self) { group in
-            group.addTask {
-                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                    connection.send(content: nil, contentContext: .finalMessage, isComplete: true,
-                                    completion: .contentProcessed { _ in continuation.resume() })
-                }
-                return true
-            }
-            group.addTask {
-                try await Task.sleep(for: .seconds(min(limit, 5)))
-                return false
-            }
-            defer { group.cancelAll() }
-            return try await group.next() ?? false
+    /// Sending EOF is bounded and cancellation remains an error, never a successful upload.
+    private func finish(_ connection: NWConnection) async throws {
+        try await socketWait(connection, timeout: min(timeout, 5)) { (finish: @escaping @Sendable (Result<Void, Error>) -> Void) in
+            connection.send(content: nil, contentContext: .finalMessage, isComplete: true,
+                            completion: .contentProcessed { error in
+                if let error { finish(.failure(error)) } else { finish(.success(())) }
+            })
         }
     }
-    /// A read that cannot hang for ever: a server that stops answering mid-transfer fails the operation instead of
-    /// leaving the transfer stuck with no way back.
     private func rawReceive(_ connection: NWConnection) async throws -> Data? {
-        let limit = timeout
-        return try await withThrowingTaskGroup(of: Data?.self) { group in
-            group.addTask {
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data?, Error>) in
-                    connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, complete, error in
-                        if let error { continuation.resume(throwing: error) }
-                        else if let data, !data.isEmpty { continuation.resume(returning: data) }
-                        else { continuation.resume(returning: complete ? nil : Data()) }
-                    }
-                }
+        let id = ObjectIdentifier(connection)
+        guard !receiveEOF.contains(id) else { return nil }
+        let packet: (Data?, Bool) = try await socketWait(connection, timeout: timeout) { finish in
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, complete, error in
+                if let error { finish(.failure(error)) }
+                else { finish(.success((data, complete))) }
             }
-            group.addTask {
-                try await Task.sleep(for: .seconds(limit))
-                throw CloudError.message(L("El servidor FTP no respondió a tiempo."))
-            }
-            defer { group.cancelAll() }
-            return try await group.next() ?? nil
         }
+        // Network can deliver the final bytes and EOF together. Reading again after that raises ENOSTR;
+        // treating every error as EOF used to hide this bug, along with timeouts and real network failures.
+        if packet.1 { receiveEOF.insert(id) }
+        if let data = packet.0, !data.isEmpty { return data }
+        return packet.1 ? nil : Data()
     }
     /// Reads one complete reply, joining the continuation lines of a multi-line answer.
     private func reply() async throws -> Reply {
@@ -280,7 +280,7 @@ actor FTPSession {
     private func receiveData(command line: String, into sink: (Data) throws -> Void) async throws {
         let port = try await passivePort()
         let data = try await open(port: port)
-        defer { data.cancel() }
+        defer { receiveEOF.remove(ObjectIdentifier(data)); data.cancel() }
         let started = try await send(line)
         // 125 and 150 both mean the transfer is about to start.
         guard [125, 150].contains(started.code) else { throw failure(started, L("El servidor no pudo iniciar la transferencia.")) }
@@ -288,11 +288,14 @@ actor FTPSession {
             // Most servers end a transfer by closing the data connection, which can surface as EOF or as a reset
             // depending on timing. Either way the control channel's closing reply is what decides success.
             let chunk: Data?
-            do { chunk = try await rawReceive(data) } catch { break }
+            try Task.checkCancellation()
+            do { chunk = try await rawReceive(data) }
+            catch NWError.posix(.ECONNRESET) { break }
             guard let chunk else { break }
             if !chunk.isEmpty { try sink(chunk) }
         }
         data.cancel()
+        try Task.checkCancellation()
         let finished = try await reply()
         guard finished.isPositive else { throw failure(finished, L("La transferencia no se completó.")) }
     }
@@ -301,28 +304,33 @@ actor FTPSession {
         try await receiveData(command: line) { buffer.append($0) }
         return String(decoding: buffer, as: UTF8.self)
     }
-    func retrieve(path: String, to destination: URL, progress: @Sendable @escaping (Int64) -> Void) async throws {
-        try await exclusive { try await self.withConnection { try await self.retrieveUnlocked(path: path, to: destination, progress: progress) } }
+    func retrieve(path: String, to destination: URL, maxBytes: Int64? = nil, progress: @Sendable @escaping (Int64) -> Void) async throws {
+        try await exclusive { try await self.withConnection { try await self.retrieveUnlocked(path: path, to: destination, maxBytes: maxBytes, progress: progress) } }
     }
-    private func retrieveUnlocked(path: String, to destination: URL, progress: @Sendable @escaping (Int64) -> Void) async throws {
+    private func retrieveUnlocked(path: String, to destination: URL, maxBytes: Int64? = nil, progress: @Sendable @escaping (Int64) -> Void) async throws {
         FileManager.default.createFile(atPath: destination.path, contents: nil)
         let handle = try FileHandle(forWritingTo: destination)
         defer { try? handle.close() }
         var written: Int64 = 0
+        var complete = false
+        defer { if !complete { try? FileManager.default.removeItem(at: destination) } }
         try await receiveData(command: "RETR " + path) { chunk in
+            try DownloadBudget.check(written + Int64(chunk.count), maximum: maxBytes)
             try handle.write(contentsOf: chunk)
             written += Int64(chunk.count)
             progress(written)
         }
+        complete = true
     }
     /// Sends a local file. FTP has no checksum of its own, so the only confirmation is the server's closing reply.
     func store(_ source: URL, to path: String, progress: @Sendable @escaping (Int64) -> Void) async throws {
         try await exclusive { try await self.withConnection { try await self.storeUnlocked(source, to: path, progress: progress) } }
     }
     private func storeUnlocked(_ source: URL, to path: String, progress: @Sendable @escaping (Int64) -> Void) async throws {
+        let sourceStamp = try UploadSourceStamp(source)
         let port = try await passivePort()
         let data = try await open(port: port)
-        defer { data.cancel() }
+        defer { receiveEOF.remove(ObjectIdentifier(data)); data.cancel() }
         let started = try await send("STOR " + path)
         guard [125, 150].contains(started.code) else { throw failure(started, L("El servidor no pudo iniciar la subida.")) }
         let handle = try FileHandle(forReadingFrom: source)
@@ -332,14 +340,18 @@ actor FTPSession {
             // Cancelling a transfer must stop the bytes, not just mark the job; without this a 4 GB upload kept
             // going to the end after the person had cancelled it.
             try Task.checkCancellation()
+            try sourceStamp.validate(source)
             let chunk = try handle.read(upToCount: 256 * 1024) ?? Data()
+            try sourceStamp.validate(source)
             if chunk.isEmpty { break }
             try await rawSend(data, chunk)
             sent += Int64(chunk.count)
             progress(sent)
         }
         // A clean end of file is what tells the server the upload is complete.
-        await finish(data)
+        try sourceStamp.validate(source)
+        try await finish(data)
+        try Task.checkCancellation()
         let finished = try await reply()
         guard finished.isPositive else { throw failure(finished, L("El servidor no confirmó la subida.")) }
     }
@@ -364,31 +376,40 @@ actor FTPSession {
     }
 }
 
-/// Resumes a continuation exactly once even though Network.framework may report several states, and holds the timer
-/// that gives a path still settling a moment to become usable.
-private final class Resumed: @unchecked Sendable {
+/// Handles cancellation before registration, timeout, and late callbacks with exactly one resume.
+private final class SocketWait<T: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
-    private var done = false
-    private var grace: Task<Void, Never>?
-    func once(_ body: () -> Void) {
+    private var continuation: CheckedContinuation<T, Error>?
+    private var result: Result<T, Error>?
+    private var timer: DispatchWorkItem?
+    func install(_ continuation: CheckedContinuation<T, Error>) -> Bool {
         lock.lock()
-        let first = !done
-        done = true
-        let pending = grace; grace = nil
+        if let result { lock.unlock(); continuation.resume(with: result); return false }
+        self.continuation = continuation
         lock.unlock()
-        pending?.cancel()
-        if first { body() }
+        return true
     }
-    /// Runs `body` after `seconds` unless something resumes first. Repeated calls keep the first timer.
-    func after(_ seconds: TimeInterval, _ body: @escaping @Sendable () -> Void) {
+    @discardableResult
+    func resolve(_ value: Result<T, Error>) -> Bool {
         lock.lock()
-        guard !done, grace == nil else { lock.unlock(); return }
-        grace = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(seconds))
-            guard !Task.isCancelled else { return }
-            self?.once(body)
-        }
+        guard result == nil else { lock.unlock(); return false }
+        result = value
+        let continuation = self.continuation; self.continuation = nil
+        let timer = self.timer; self.timer = nil
         lock.unlock()
+        timer?.cancel()
+        continuation?.resume(with: value)
+        return true
+    }
+    func arm(timeout: TimeInterval, cancel: @escaping @Sendable () -> Void) {
+        let timer = DispatchWorkItem { [weak self] in
+            if self?.resolve(.failure(CloudError.message(L("El servidor FTP no respondió a tiempo.")))) == true { cancel() }
+        }
+        lock.lock()
+        guard result == nil else { lock.unlock(); return }
+        self.timer = timer
+        lock.unlock()
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
     }
 }
 

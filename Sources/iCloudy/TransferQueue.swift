@@ -73,12 +73,41 @@ final class TransferQueue: ObservableObject {
     func hasActive(accountID: String) -> Bool {
         items.contains { ($0.accountID == accountID || $0.targetAccountID == accountID) && ([.queued, .running].contains($0.state) || $0.id == activeID) }
     }
+    func remap(_ change: RemoteIdentityChange, accountID: String) throws {
+        for i in items.indices where !items[i].finished {
+            if items[i].accountID == accountID, let file = items[i].file {
+                items[i].file = change.file(file)
+                if items[i].direction != .upload {
+                    items[i].completedPaths = Set(items[i].completedPaths.map(change.treeKey))
+                    items[i].uncertainFolders = Set(items[i].uncertainFolders.map(change.treeKey))
+                    items[i].names = Dictionary(items[i].names.map { (change.treeKey($0.key), $0.value) }, uniquingKeysWith: { _, last in last })
+                    items[i].folders = Dictionary(items[i].folders.map { (change.treeKey($0.key), $0.value) }, uniquingKeysWith: { _, last in last })
+                    items[i].replacements = Dictionary(items[i].replacements.map { (change.treeKey($0.key), $0.value) }, uniquingKeysWith: { _, last in last })
+                    items[i].uploads = Dictionary(items[i].uploads.map { (change.treeKey($0.key), $0.value) }, uniquingKeysWith: { _, last in last })
+                }
+            }
+            if (items[i].targetAccountID ?? items[i].accountID) == accountID {
+                items[i].parent = change.id(items[i].parent)
+                items[i].folders = items[i].folders.mapValues(change.id)
+                items[i].replacements = items[i].replacements.mapValues(change.id)
+                items[i].mirrorEntries = items[i].mirrorEntries?.mapValues(change.file)
+                items[i].uploads = items[i].uploads.mapValues { checkpoint in
+                    var updated = checkpoint
+                    updated.remoteID = checkpoint.remoteID.map(change.id)
+                    updated.pendingRetirementID = checkpoint.pendingRetirementID.map(change.id)
+                    return updated
+                }
+            }
+        }
+        try persist()
+    }
+    var protectedLocalURLs: [URL] { items.filter { !$0.finished || $0.id == activeID }.map(\.localURL) }
     /// Where cross-cloud transfers stage their bytes. One folder per job, removed when the job completes or is cancelled.
     var scratchRoot = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("iCloudy/Transfers", isDirectory: true)
     func scratchDirectory(for id: UUID) -> URL { scratchRoot.appendingPathComponent(id.uuidString, isDirectory: true) }
     /// Drops staging folders that no unfinished transfer can still use, e.g. after a crash.
     func cleanScratch() {
-        let live = Set(items.filter { $0.direction == .transfer && !$0.finished }.map { $0.id.uuidString })
+        let live = Set(items.filter { $0.direction == .transfer && (!$0.finished || $0.id == activeID) }.map { $0.id.uuidString })
         for child in (try? FileManager.default.contentsOfDirectory(at: scratchRoot, includingPropertiesForKeys: nil)) ?? [] where !live.contains(child.lastPathComponent) {
             try? FileManager.default.removeItem(at: child)
         }
@@ -147,7 +176,7 @@ final class TransferQueue: ObservableObject {
             abandonSessions(items[index])
             items[index].uploads = [:]
         }
-        if !pause, items[index].direction == .transfer { try? FileManager.default.removeItem(at: items[index].localURL) }
+        if !pause, items[index].direction == .transfer, activeID != id { try? FileManager.default.removeItem(at: items[index].localURL) }
         if activeID == id {
             task?.cancel()
             conflictContinuation?.resume(throwing: CancellationError()); conflictContinuation = nil; conflict = nil
@@ -161,7 +190,7 @@ final class TransferQueue: ObservableObject {
         let urls = transfer.uploads.values.compactMap(\.url)
         let boxSessions = transfer.uploads.values.compactMap(\.sessionID)
         guard !urls.isEmpty || !boxSessions.isEmpty, let lookup = client,
-              let api = try? lookup(transfer.accountID) else { return }
+              let api = try? lookup(transfer.targetAccountID ?? transfer.accountID) else { return }
         Task { await api.abandonUploadSessions(urls: urls, boxSessions: boxSessions) }
     }
     /// True for jobs that can be re-prioritised: waiting or paused. The running job and finished ones keep their place.
@@ -297,6 +326,7 @@ final class TransferQueue: ObservableObject {
                 }
                 if let finished = items.first(where: { $0.id == id && $0.state == .completed }) { didFinish?(finished) }
                 didComplete?(next.accountID)
+                if let target = next.targetAccountID, target != next.accountID { didComplete?(target) }
             } catch is NetworkGone {
                 pausedByNetwork.insert(id)
                 if let index = index(id), !items[index].finished {
@@ -313,6 +343,7 @@ final class TransferQueue: ObservableObject {
                 }
             }
             activeID = nil; task = nil
+            cleanScratch()
             stateChanges.send()
             kick()
         }
@@ -462,7 +493,20 @@ final class TransferQueue: ObservableObject {
         } else {
             let staged = scratch.appendingPathComponent(Self.stagedName(key, name))
             var checkpoint = current.uploads[key]
-            if !FileManager.default.fileExists(atPath: staged.path) {
+            if let checkpoint, checkpoint.complete {
+                guard checkpoint.integrity == .verified || checkpoint.integrity == .unavailable else {
+                    throw CloudError.message(L("La copia remota quedó sin verificar. Revisa el destino antes de reintentar."))
+                }
+                try edit(id) {
+                    $0.completedPaths.insert(key)
+                    if checkpoint.integrity == .verified { $0.verifiedFiles += 1 } else { $0.unverifiedFiles += 1 }
+                }
+                try? FileManager.default.removeItem(at: staged)
+                done += file.size ?? 0; mark(id, done: done)
+                return
+            }
+            let committedMegaNode = target.account.cloud == .mega && checkpoint?.remoteID != nil
+            if !FileManager.default.fileExists(atPath: staged.path), !committedMegaNode {
                 // No staged copy (first run, or scratch cleaned): the upload session, if any, is worthless now.
                 checkpoint = nil
                 try edit(id, coalesce: true) { $0.uploads[key] = nil; $0.detail = L("Descargando «\(file.name)» de \(source.account.cloud.title)…") }
@@ -491,7 +535,11 @@ final class TransferQueue: ObservableObject {
             let receipt = try await target.resumableUpload(local: staged, parent: parent, name: name, replacing: current.replacements[key], checkpoint: checkpoint, save: { checkpoint in
                 try self.edit(id, coalesce: checkpoint.offset > 0 && !checkpoint.complete) { $0.uploads[key] = checkpoint }
             }, progress: { bytes, total in self.report(id, base: base, bytes: bytes, total: total) })
-            try edit(id, coalesce: true) { if receipt.verification == .verified { $0.verifiedFiles += 1 } else { $0.unverifiedFiles += 1 } }
+            // Persist the terminal state before deleting the only staged copy.
+            try edit(id) {
+                $0.completedPaths.insert(key)
+                if receipt.verification == .verified { $0.verifiedFiles += 1 } else { $0.unverifiedFiles += 1 }
+            }
             try? FileManager.default.removeItem(at: staged)
             done += file.size ?? 0
             mark(id, done: done)
@@ -539,16 +587,33 @@ final class TransferQueue: ObservableObject {
         if current.names[key] == nil {
             if siblings[parent] == nil { siblings[parent] = try await api.list(parent: parent) }
             let existing = siblings[parent] ?? []
-            let matches = existing.filter { $0.name.localizedCaseInsensitiveCompare(local.lastPathComponent) == .orderedSame }
-            var name = local.lastPathComponent
+            let remembered = current.mirrorEntries?[key]
+            var name = remembered?.name ?? local.lastPathComponent
+            let matches = existing.filter { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame || $0.id == remembered?.id }
             var replacing: String?
             if let match = matches.first {
-                let choice = try await choose(id, name: name, replace: matches.count == 1 && match.isFolder == folder && !match.isGoogleDocument, folder: folder)
-                if choice == .skip { try edit(id) { $0.completedPaths.insert(key) }; done += try await blockingIO { try Self.localSize(local) }; mark(id, done: done); return }
+                let owned = remembered.map { old in
+                    old.id == match.id && old.name == match.name && old.isFolder == match.isFolder &&
+                    (folder || (old.size != nil && old.modified != nil && old.size == match.size && old.modified == match.modified))
+                } ?? false
+                let choice: ConflictChoice
+                if owned, matches.count == 1 { choice = .replace }
+                else { choice = try await choose(id, name: name, replace: matches.count == 1 && match.isFolder == folder && !match.isGoogleDocument, folder: folder) }
+                if choice == .skip { try edit(id) {
+                    $0.completedPaths.insert(key)
+                    $0.mirrorEntries = $0.mirrorEntries?.filter { $0.key != key && !$0.key.hasPrefix(key + "/") }
+                }; done += try await blockingIO { try Self.localSize(local) }; mark(id, done: done); return }
                 if choice == .copy { name = Self.unique(name, existing: existing.map(\.name)) }
-                if choice == .replace { replacing = match.id }
+                if choice == .replace { replacing = match.id; if folder { name = match.name } }
             }
-            try edit(id, coalesce: true) { $0.names[key] = name; $0.replacements[key] = replacing }
+            try edit(id, coalesce: true) {
+                $0.names[key] = name; $0.replacements[key] = replacing
+                if folder, replacing == nil, $0.mirrorEntries != nil {
+                    // A newly created/copied folder has none of the old destination's unchanged children.
+                    $0.completedPaths = $0.completedPaths.filter { !$0.hasPrefix(key + "/") }
+                    $0.mirrorEntries = $0.mirrorEntries?.filter { !$0.key.hasPrefix(key + "/") }
+                }
+            }
             current = try job(id)
         }
         let name = current.names[key]!
@@ -565,6 +630,10 @@ final class TransferQueue: ObservableObject {
                 // A folder created a moment ago is empty: its children need no listing at all.
                 siblings[remote] = []
             }
+            if current.mirrorEntries != nil {
+                let entry = CloudFile(id: remote, name: name, mime: "application/vnd.google-apps.folder", size: nil, modified: nil, webURL: nil, isFolder: true)
+                try edit(id) { $0.mirrorEntries?[key] = entry }
+            }
             let children = try await blockingIO { try FileManager.default.contentsOfDirectory(at: local, includingPropertiesForKeys: nil).sorted(by: { $0.path < $1.path }) }
             for child in children {
                 try await uploadTree(id, api: api, local: child, parent: remote, key: key + "/" + child.lastPathComponent, done: &done, siblings: &siblings)
@@ -577,6 +646,13 @@ final class TransferQueue: ObservableObject {
                 try self.edit(id, coalesce: checkpoint.offset > 0 && !checkpoint.complete) { $0.uploads[key] = checkpoint }
             }, progress: { bytes, total in self.report(id, base: base, bytes: bytes, total: total) })
             try edit(id, coalesce: true) { if receipt.verification == .verified { $0.verifiedFiles += 1 } else { $0.unverifiedFiles += 1 } }
+            if current.mirrorEntries != nil {
+                // Only an identity returned by this upload may become an automatically replaceable mirror target.
+                let remote = try await api.list(parent: parent)
+                let entry = receipt.remoteID.flatMap { id in remote.first { $0.id == id } }
+                try edit(id) { $0.mirrorEntries?[key] = entry }
+                siblings[parent] = remote
+            }
             done += Int64(values.fileSize ?? 0)
             mark(id, done: done)
             if let remoteID = receipt.remoteID {
@@ -585,7 +661,7 @@ final class TransferQueue: ObservableObject {
                                              bookmark: try job(id).bookmark, size: Int64(values.fileSize ?? 0),
                                              remoteModified: Date(), savedAt: Date(), origin: .upload))
             }
-            if replacing == nil {
+            if replacing == nil, current.mirrorEntries == nil {
                 siblings[parent, default: []].append(CloudFile(id: "", name: name, mime: "application/octet-stream", size: values.fileSize.map(Int64.init), modified: nil, webURL: nil, isFolder: false))
             }
         }

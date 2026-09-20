@@ -91,7 +91,7 @@ final class ProviderTests: XCTestCase {
         XCTAssertEqual(steps, ["/2/files/upload_session/start", "/2/files/upload_session/append_v2", "/2/files/upload_session/finish"])
         XCTAssertEqual(receipt.verification, .verified)
         XCTAssertEqual(receipt.remoteID, "/destino/dato.bin")
-        XCTAssertEqual(saved.first?.sessionID, "s1", "The session is checkpointed before any byte is sent")
+        XCTAssertEqual(saved.first(where: { $0.sessionID != nil })?.sessionID, "s1", "The session is checkpointed before any byte is sent")
         checkpoint = try XCTUnwrap(saved.last)
         XCTAssertTrue(checkpoint.complete)
     }

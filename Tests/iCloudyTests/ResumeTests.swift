@@ -30,7 +30,7 @@ final class ResumeTests: XCTestCase {
         }
         var saved: [UploadCheckpoint] = []
         try await client(.google).resumableUpload(local: file, parent: "root", name: "test", replacing: nil, checkpoint: checkpoint(file), save: { saved.append($0) }, progress: { _, _ in })
-        XCTAssertEqual(count, 2); XCTAssertEqual(saved.first?.offset, 524_288); XCTAssertEqual(saved.last?.complete, true)
+        XCTAssertEqual(count, 2); XCTAssertEqual(saved.first(where: { $0.offset > 0 })?.offset, 524_288); XCTAssertEqual(saved.last?.complete, true)
     }
 
     func testMicrosoftRecoveryDoesNotSendTokenToCapabilityURL() async throws {

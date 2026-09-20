@@ -165,12 +165,17 @@ extension CloudAPI {
     /// Writes a renewed session back to the Keychain. Without this the next launch would start from a key the
     /// server had already replaced, and the account would look expired before doing anything.
     func o2Persist(_ state: O2Session) {
-        guard state.renewed else { return }
-        state.renewed = false
-        guard var credential = try? credentials.read(account.credentialKey) else { return }
-        credential.secret = O2API.store(validationKey: state.validationKey, cookies: state.cookies,
-                                        userAgent: state.userAgent)
-        try? credentials.save(credential, key: account.credentialKey)
+        guard state.renewed, !invalidated else { return }
+        do {
+            guard var credential = try credentials.read(account.credentialKey) else { return }
+            let sso = O2API.restoreSSO(credential.secret)
+            credential.secret = O2API.store(validationKey: state.validationKey, cookies: state.cookies,
+                                            userAgent: state.userAgent, sso: sso)
+            try credentials.save(credential, key: account.credentialKey)
+            state.renewed = false
+        } catch {
+            credentialSaveDidFail?(L("No se pudo guardar la sesión renovada de O2 Cloud: \(error.localizedDescription)"))
+        }
     }
 
     func o2Root() async throws -> String {
@@ -336,7 +341,7 @@ extension CloudAPI {
 
     // MARK: - Contents
 
-    func o2Download(file: CloudFile, to destination: URL, progress: @escaping (Int64, Int64) -> Void) async throws {
+    func o2Download(file: CloudFile, to destination: URL, maxBytes: Int64? = nil, progress: @escaping (Int64, Int64) -> Void) async throws {
         let media = try o2Media(file)
         try await o2Retrying("media", "get") { state in
             let answer = try await O2API.call("media", action: "get", query: [],
@@ -358,10 +363,11 @@ extension CloudAPI {
             }
             let sent = state.validationKey
             // A transfer of any size deserves a moving bar; this one reported nothing until the last byte.
-            let reporter = DownloadProgress { bytes, total in Task { @MainActor in progress(bytes, total) } }
+            let reporter = DownloadProgress(maxBytes: maxBytes) { bytes, total in Task { @MainActor in progress(bytes, total) } }
             let (temporary, response) = try await session.download(for: request, delegate: reporter)
             defer { try? FileManager.default.removeItem(at: temporary) }
             try O2API.interpret(response, data: Data(), state: state, path: "descarga", action: media.kind.rawValue, sentKey: sent)
+            try DownloadBudget.check(Int64(try temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0), maximum: maxBytes)
             try? FileManager.default.removeItem(at: destination)
             try FileManager.default.moveItem(at: temporary, to: destination)
             let written = Int64((try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
@@ -447,7 +453,7 @@ extension CloudAPI {
 
 /// Reports how much of the upload has left this Mac. Funambol offers no resumable protocol, so this is the only
 /// progress there is.
-final class O2UploadReporter: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+final class O2UploadReporter: RedirectGuard, @unchecked Sendable {
     private let total: Int64
     private let progress: (Int64, Int64) -> Void
     init(total: Int64, progress: @escaping (Int64, Int64) -> Void) { self.total = total; self.progress = progress }

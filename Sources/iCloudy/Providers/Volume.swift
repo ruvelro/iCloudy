@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import Darwin
 
 /// A folder on this Mac or on a mounted volume, treated as a provider. macOS already speaks SMB, AFP and NFS, so
 /// mounting is its job: the user connects the share in the Finder, picks the folder once, and iCloudy keeps a
@@ -37,6 +38,7 @@ extension CloudAPI {
         guard target.path == base || target.path.hasPrefix(base + "/") else {
             throw CloudError.message(L("Ese elemento está fuera de la carpeta conectada."))
         }
+        _ = try VolumePath(root: root, url: target)
         return target
     }
     private func volumeCheckMounted() throws {
@@ -60,15 +62,19 @@ extension CloudAPI {
     func volumeList(parent: String) async throws -> [CloudFile] {
         try volumeCheckMounted()
         let directory = try volumeURL(parent)
+        let path = try VolumePath(root: volumeRoot(), url: directory)
         let files = try await blockingIO {
-            try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: [])
-                .compactMap(Self.volumeFile)
+            let fd = try path.directory(); defer { close(fd) }
+            return try VolumePath.names(fd).map { name in
+                try VolumePath.file(parent: fd, name: name, url: directory.appendingPathComponent(name))
+            }
         }
         return Self.sorted(files)
     }
     func volumeCreateFolder(name: String, parent: String) async throws -> String {
         let target = try volumeURL(parent).appendingPathComponent(name)
-        try await blockingIO { try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false) }
+        let path = try VolumePath(root: volumeRoot(), url: target)
+        try await blockingIO { guard mkdirat(path.parent, path.name, 0o700) == 0 else { throw VolumePath.error() } }
         return target.standardizedFileURL.path
     }
     func volumeRename(file: CloudFile, name: String) async throws {
@@ -83,47 +89,46 @@ extension CloudAPI {
         let source = try volumeURL(file.id)
         try await volumeRelocate(from: source, to: try volumeURL(destination).appendingPathComponent(file.name), copy: true)
     }
-    /// True when both paths name the very same file on disk, which is how a case-insensitive volume answers to
-    /// "Foto" and "foto" at once.
-    nonisolated static func volumeSameFile(_ first: URL, _ second: URL) -> Bool {
-        guard let a = try? first.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier,
-              let b = try? second.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier else { return false }
-        return (a as? NSObject)?.isEqual(b) ?? false
-    }
     private func volumeRelocate(from source: URL, to target: URL, copy: Bool) async throws {
+        guard !target.standardizedFileURL.path.hasPrefix(source.standardizedFileURL.path + "/") else {
+            throw CloudError.message(L("Una carpeta no puede moverse ni copiarse dentro de sí misma."))
+        }
+        let root = try volumeRoot()
+        let from = try VolumePath(root: root, url: source)
+        let to = try VolumePath(root: root, url: target)
         try await blockingIO {
-            // Renaming only the capitalisation used to be refused as a name clash: on APFS and HFS+ the file being
-            // renamed already answers to the new name. Comparing the files themselves tells the two cases apart.
-            if !copy, source.path != target.path, Self.volumeSameFile(source, target) {
-                let intermediate = source.deletingLastPathComponent().appendingPathComponent(".icloudy-" + UUID().uuidString)
-                try FileManager.default.moveItem(at: source, to: intermediate)
-                do { try FileManager.default.moveItem(at: intermediate, to: target) }
-                catch {
-                    guard (try? FileManager.default.moveItem(at: intermediate, to: source)) != nil else {
-                        // Both moves failed, so the file is sitting under a hidden name. Saying which one is the
-                        // difference between recovering it and believing it was lost.
-                        throw CloudError.message(L("No se pudo renombrar y el archivo quedó como «\(intermediate.lastPathComponent)» en la misma carpeta. Renómbralo desde el Finder. (\(error.localizedDescription))"))
-                    }
-                    throw error
-                }
+            if copy {
+                try VolumePath.copy(sourceParent: from.parent, source: from.name, targetParent: to.parent, target: to.name)
                 return
             }
-            guard !FileManager.default.fileExists(atPath: target.path) else {
-                throw CloudError.message(L("Ya existe un elemento con ese nombre en el destino."))
-            }
-            if copy { try FileManager.default.copyItem(at: source, to: target) }
-            else { try FileManager.default.moveItem(at: source, to: target) }
+            var original = stat(), destination = stat()
+            guard fstatat(from.parent, from.name, &original, AT_SYMLINK_NOFOLLOW) == 0 else { throw VolumePath.error() }
+            let same = fstatat(to.parent, to.name, &destination, AT_SYMLINK_NOFOLLOW) == 0 &&
+                original.st_dev == destination.st_dev && original.st_ino == destination.st_ino
+            // The exclusive rename cannot clobber a destination created after the conflict check.
+            let flags = same ? UInt32(0) : UInt32(RENAME_EXCL)
+            guard renameatx_np(from.parent, from.name, to.parent, to.name, flags) == 0 else { throw VolumePath.error() }
         }
     }
     /// The only provider whose delete is undoable from the Finder: items go to the user's own Trash.
     func volumeTrash(file: CloudFile) async throws {
         let target = try volumeURL(file.id)
+        let root = try volumeRoot()
         try await blockingIO {
-            do { try FileManager.default.trashItem(at: target, resultingItemURL: nil) }
-            catch {
-                // Network volumes often have no Trash of their own; say so instead of deleting behind the user's back.
-                throw CloudError.message(L("Este volumen no admite papelera. Elimina el elemento desde el Finder si quieres borrarlo definitivamente."))
+            let coordinator = NSFileCoordinator()
+            var coordinationError: NSError?
+            var failure: Error?
+            coordinator.coordinate(writingItemAt: target, options: .forDeleting, error: &coordinationError) { coordinated in
+                do {
+                    // Recheck after acquiring coordination: Finder or another cooperating app may have moved an
+                    // ancestor since the initial selection. Foundation owns the reversible Trash operation.
+                    _ = try VolumePath(root: root, url: coordinated)
+                    do { try FileManager.default.trashItem(at: coordinated, resultingItemURL: nil) }
+                    catch { throw CloudError.message(L("Este volumen no admite papelera. Elimina el elemento desde el Finder si quieres borrarlo definitivamente.")) }
+                } catch { failure = error }
             }
+            if let coordinationError { throw coordinationError }
+            if let failure { throw failure }
         }
     }
     func volumeQuota() async throws -> StorageQuota {
@@ -153,16 +158,29 @@ extension CloudAPI {
             var hits: [SearchHit] = []
             var truncated = false
             var scanned = 0
-            let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey],
-                                                            options: [.skipsPackageDescendants])
-            while let url = enumerator?.nextObject() as? URL {
-                scanned += 1
-                try Task.checkCancellation()
-                if hits.count >= limit || scanned > scanLimit { truncated = true; break }
-                guard url.lastPathComponent.localizedCaseInsensitiveContains(needle), let file = Self.volumeFile(url) else { continue }
-                hits.append(SearchHit(accountID: accountID, file: file,
-                                      parentID: url.deletingLastPathComponent().standardizedFileURL.path))
+            func walk(_ directory: URL, fd: Int32, depth: Int = 0) throws {
+                guard depth < 128 else { truncated = true; return }
+                for name in try VolumePath.names(fd, limit: scanLimit - scanned + 1) {
+                    try Task.checkCancellation()
+                    scanned += 1
+                    if hits.count >= limit || scanned > scanLimit { truncated = true; return }
+                    let url = directory.appendingPathComponent(name)
+                    let file = try VolumePath.file(parent: fd, name: name, url: url)
+                    if name.localizedCaseInsensitiveContains(needle) {
+                        hits.append(SearchHit(accountID: accountID, file: file, parentID: directory.standardizedFileURL.path))
+                    }
+                    if file.isFolder, (try? url.resourceValues(forKeys: [.isPackageKey]).isPackage) != true {
+                        let child = openat(fd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+                        guard child >= 0 else { throw VolumePath.error() }
+                        do { try walk(url, fd: child, depth: depth + 1) } catch { close(child); throw error }
+                        close(child)
+                        if truncated { return }
+                    }
+                }
             }
+            let path = try VolumePath(root: root, url: root)
+            let fd = try path.directory(); defer { close(fd) }
+            try walk(root, fd: fd)
             return SearchPage(hits: hits, next: nil, incomplete: truncated)
         }
     }
@@ -179,53 +197,56 @@ extension CloudAPI {
         }
     }
 
-    func volumeDownload(file: CloudFile, to destination: URL, progress: @escaping (Int64, Int64) -> Void) async throws {
+    func volumeDownload(file: CloudFile, to destination: URL, maxBytes: Int64? = nil, progress: @escaping (Int64, Int64) -> Void) async throws {
         try volumeCheckMounted()
-        try await Self.volumeCopyContents(from: try volumeURL(file.id), to: destination, progress: progress)
+        let source = try volumeURL(file.id)
+        let path = try VolumePath(root: volumeRoot(), url: source)
+        try await Self.volumeCopyContents(from: source, to: destination, input: path.openFile(O_RDONLY), maxBytes: maxBytes, progress: progress)
     }
     func volumeUpload(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint,
                       save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
         try volumeCheckMounted()
         let target = try replacing.map { try volumeURL($0) } ?? volumeURL(parent).appendingPathComponent(name)
+        let path = try VolumePath(root: volumeRoot(), url: target)
         cursor.offset = 0; try save(cursor)
-        if replacing != nil {
-            // Replacing used to delete the old file and then copy over it, so cancelling or losing the volume halfway
-            // left neither the original nor a whole replacement. The new bytes land beside it under a temporary name
-            // and only take its place once they are all there.
-            let staging = target.deletingLastPathComponent().appendingPathComponent(".icloudy-" + UUID().uuidString + ".part")
-            do {
-                try await Self.volumeCopyContents(from: local, to: staging, progress: progress)
-                try await blockingIO {
-                    if FileManager.default.fileExists(atPath: target.path) { _ = try FileManager.default.replaceItemAt(target, withItemAt: staging) }
-                    else { try FileManager.default.moveItem(at: staging, to: target) }
-                }
-            } catch {
-                try? FileManager.default.removeItem(at: staging)
-                throw error
-            }
-        } else {
-            try await Self.volumeCopyContents(from: local, to: target, progress: progress)
-        }
+        let staging = ".icloudy-" + UUID().uuidString + ".part"
+        let fd = openat(path.parent, staging, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { throw VolumePath.error() }
+        let output = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        defer { try? output.close(); unlinkat(path.parent, staging, 0) }
+        try await Self.volumeCopyContents(from: local, to: target, output: output, progress: progress)
+        try cursor.sourceStamp?.validate(local)
+        // rename replaces the directory entry itself and never follows a substituted final symlink.
+        let flags = replacing == nil ? UInt32(RENAME_EXCL) : 0
+        guard renameatx_np(path.parent, staging, path.parent, path.name, flags) == 0 else { throw VolumePath.error() }
         cursor.offset = cursor.total; cursor.complete = true; try save(cursor); progress(cursor.total, cursor.total)
         // A copy either completes or throws, so there is no checksum to compare against.
         return UploadReceipt(remoteID: target.standardizedFileURL.path, verification: .unavailable)
     }
     /// Copies in blocks so large files report progress and can be cancelled, unlike a single copyItem call.
-    nonisolated static func volumeCopyContents(from source: URL, to destination: URL, progress: @escaping (Int64, Int64) -> Void) async throws {
-        let total = Int64((try? source.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
-        let input = try FileHandle(forReadingFrom: source)
+    nonisolated static func volumeCopyContents(from source: URL, to destination: URL, input suppliedInput: FileHandle? = nil, output suppliedOutput: FileHandle? = nil, maxBytes: Int64? = nil, progress: @escaping (Int64, Int64) -> Void) async throws {
+        let stamp = try UploadSourceStamp(source)
+        let total = stamp.size
+        try DownloadBudget.check(total, maximum: maxBytes)
+        let input = try suppliedInput ?? FileHandle(forReadingFrom: source)
         defer { try? input.close() }
-        guard FileManager.default.createFile(atPath: destination.path, contents: nil) else {
-            throw CloudError.message(L("No se pudo crear el archivo de destino."))
+        let output: FileHandle
+        if let suppliedOutput { output = suppliedOutput }
+        else {
+            let fd = open(destination.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+            guard fd >= 0 else { throw VolumePath.error() }
+            output = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         }
-        let output = try FileHandle(forWritingTo: destination)
         var written: Int64 = 0
         do {
             defer { try? output.close() }
             while true {
                 try Task.checkCancellation()
+                try stamp.validate(source)
                 let chunk = try await blockingIO { try input.read(upToCount: 4 * 1024 * 1024) ?? Data() }
+                try stamp.validate(source)
                 if chunk.isEmpty { break }
+                try DownloadBudget.check(written + Int64(chunk.count), maximum: maxBytes)
                 try await blockingIO { try output.write(contentsOf: chunk) }
                 written += Int64(chunk.count)
                 let reported = written
@@ -233,7 +254,7 @@ extension CloudAPI {
             }
         } catch {
             // Half a file is worse than none: it looks complete to anything that only checks whether it is there.
-            try? FileManager.default.removeItem(at: destination)
+            if suppliedOutput == nil { try? FileManager.default.removeItem(at: destination) }
             throw error
         }
     }

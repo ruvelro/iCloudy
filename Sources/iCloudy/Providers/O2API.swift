@@ -143,7 +143,7 @@ enum O2API {
                      state: O2Session, session: URLSession) async throws -> [String: Any] {
         let request = try request(path, action: action, query: query, body: body, method: method, state: state)
         let sent = state.validationKey
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: request, delegate: RedirectGuard.shared)
         try interpret(response, data: data, state: state, path: path, action: action, sentKey: sent)
         return try result(data, state: state, path: path, action: action, sentKey: sent)
     }

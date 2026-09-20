@@ -1,0 +1,33 @@
+Building for debugging...
+[2 / 7] iCloudyTests-product
+[4 / 9] iCloudyTests-product
+[8 / 11] iCloudyTests-product
+[10 / 14] iCloudyTests-product
+Build complete! (2,21 s)
+Test Suite 'Selected tests' started at 2026-09-19 18:06:34.092.
+Test Suite 'iCloudyTests.xctest' started at 2026-09-19 18:06:34.093.
+Test Suite 'AuditProbeTests' started at 2026-09-19 18:06:34.093.
+Test Case '-[iCloudyTests.AuditProbeTests testBoxChecksumFailureBecomesSuccessOnRetryWithoutVerification]' started.
+Test Case '-[iCloudyTests.AuditProbeTests testBoxChecksumFailureBecomesSuccessOnRetryWithoutVerification]' passed (0.011 seconds).
+Test Case '-[iCloudyTests.AuditProbeTests testCrossCloudCancelLooksUpSourceInsteadOfDestination]' started.
+Test Case '-[iCloudyTests.AuditProbeTests testCrossCloudCancelLooksUpSourceInsteadOfDestination]' passed (0.003 seconds).
+Test Case '-[iCloudyTests.AuditProbeTests testDropboxDoesNotRejectSourceMutationBetweenBlocks]' started.
+Test Case '-[iCloudyTests.AuditProbeTests testDropboxDoesNotRejectSourceMutationBetweenBlocks]' passed (0.016 seconds).
+Test Case '-[iCloudyTests.AuditProbeTests testFTPTimeoutDoesNotReleasePendingReceive]' started.
+Test Case '-[iCloudyTests.AuditProbeTests testFTPTimeoutDoesNotReleasePendingReceive]' passed (0.425 seconds).
+Test Case '-[iCloudyTests.AuditProbeTests testMirrorCopyThenEditOverwritesTheOriginalStrangersFile]' started.
+Test Case '-[iCloudyTests.AuditProbeTests testMirrorCopyThenEditOverwritesTheOriginalStrangersFile]' passed (0.054 seconds).
+Test Case '-[iCloudyTests.AuditProbeTests testO2DownloadIgnoresAuthorizedByteLimit]' started.
+Test Case '-[iCloudyTests.AuditProbeTests testO2DownloadIgnoresAuthorizedByteLimit]' passed (0.003 seconds).
+Test Case '-[iCloudyTests.AuditProbeTests testO2PersistDropsSavedSSOCookies]' started.
+Test Case '-[iCloudyTests.AuditProbeTests testO2PersistDropsSavedSSOCookies]' passed (0.000 seconds).
+Test Case '-[iCloudyTests.AuditProbeTests testRedirectGuardRetainsAuthorizationOnDifferentPort]' started.
+Test Case '-[iCloudyTests.AuditProbeTests testRedirectGuardRetainsAuthorizationOnDifferentPort]' passed (0.000 seconds).
+Test Case '-[iCloudyTests.AuditProbeTests testVolumeAcceptsSymlinkedAncestorOutsideRoot]' started.
+Test Case '-[iCloudyTests.AuditProbeTests testVolumeAcceptsSymlinkedAncestorOutsideRoot]' passed (0.001 seconds).
+Test Suite 'AuditProbeTests' passed at 2026-09-19 18:06:34.608.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.513 (0.515) seconds
+Test Suite 'iCloudyTests.xctest' passed at 2026-09-19 18:06:34.608.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.513 (0.515) seconds
+Test Suite 'Selected tests' passed at 2026-09-19 18:06:34.608.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.513 (0.516) seconds

@@ -406,7 +406,7 @@ struct ExplorerView: View {
             Text("Cualquier persona con el enlace podrá ver «\(model.pendingShare?.file.name ?? "")» sin iniciar sesión. El permiso queda en \(model.pendingShare?.account.cloud.title ?? "la nube") hasta que lo revoques desde su web.")
         }
         .confirmationDialog(trashTitle, isPresented: Binding(get: { model.pendingTrash != nil }, set: { if !$0 { model.pendingTrash = nil } }), titleVisibility: .visible) {
-            Button("Enviar a la papelera", role: .destructive) {
+            Button(model.account?.capabilities.reversibleTrash == false ? "Eliminar definitivamente" : "Enviar a la papelera", role: .destructive) {
                 if let files = model.pendingTrash { Task { await model.trash(files) } }
                 model.pendingTrash = nil
             }
@@ -414,6 +414,7 @@ struct ExplorerView: View {
         } message: {
             Text(model.account?.capabilities.reversibleTrash == false
                  ? L("Este servidor no tiene papelera: lo que elimines se borra de forma definitiva, con todo el contenido de las carpetas. iCloudy no puede deshacerlo.")
+                 : model.account?.cloud == .volume ? L("Los elementos van a la papelera del Mac y se pueden restaurar desde el Finder.")
                  : L("Los elementos van a la papelera de \(model.account?.cloud.title ?? "la nube") y se pueden restaurar desde su web. Las carpetas se envían con todo su contenido. iCloudy no borra nada de forma definitiva."))
         }
         .confirmationDialog("¿Desconectar esta cuenta?", isPresented: $confirmDisconnect, titleVisibility: .visible, presenting: disconnectTarget) { account in
@@ -786,6 +787,7 @@ struct TransferPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Transferencias").font(.headline)
+            RemoteCopyRows(copies: model.remoteCopies)
             Picker("", selection: $tab) {
                 ForEach(TransferTab.allCases) { Text($0.title).tag($0) }
             }.pickerStyle(.segmented).labelsHidden().controlSize(.small)
@@ -1491,5 +1493,33 @@ struct AdvancedDriveView: View {
         do { drives = try await model.client(host).availableDrives() }
         catch { failure = error.localizedDescription }
         loading = false
+    }
+}
+
+private struct RemoteCopyRows: View {
+    @ObservedObject var copies: RemoteCopies
+    var body: some View {
+        if !copies.items.isEmpty {
+            DisclosureGroup("Copias en OneDrive (\(copies.items.count))") {
+                ScrollView {
+                    ForEach(copies.items) { item in
+                        VStack(alignment: .leading) {
+                            Text(item.name).lineLimit(1)
+                            Text(label(item.state)).font(.caption).foregroundStyle(.secondary)
+                            if !item.detail.isEmpty { Text(item.detail).font(.caption).foregroundStyle(.red) }
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }.frame(maxHeight: 120)
+            }.font(.caption)
+        }
+    }
+    private func label(_ state: RemoteCopy.State) -> String {
+        switch state {
+        case .starting: return L("Enviando solicitud…")
+        case .monitoring: return L("Esperando confirmación de OneDrive…")
+        case .completed: return L("Copia completada")
+        case .failed: return L("Copia fallida")
+        case .uncertain: return L("Resultado sin confirmar: revisa el destino")
+        }
     }
 }

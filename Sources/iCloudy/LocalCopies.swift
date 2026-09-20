@@ -6,7 +6,7 @@ import SwiftUI
 struct LocalCopy: Codable, Equatable, Identifiable {
     enum Origin: String, Codable { case download, upload, preview, mirror }
     let accountID: String
-    let fileID: String
+    var fileID: String
     var name: String
     /// Absolute path of the local file, plus the bookmark needed to reach it again under the sandbox.
     var path: String
@@ -16,12 +16,13 @@ struct LocalCopy: Codable, Equatable, Identifiable {
     var remoteModified: Date?
     var savedAt: Date
     var origin: Origin
+    var bookmarkRelativePath: String?
     var id: String { LocalCopyIndex.key(accountID: accountID, fileID: fileID) }
     var url: URL { URL(fileURLWithPath: path) }
 }
 
 extension LocalCopy {
-    enum CodingKeys: String, CodingKey { case accountID, fileID, name, path, bookmark, size, remoteModified, savedAt, origin }
+    enum CodingKeys: String, CodingKey { case accountID, fileID, name, path, bookmark, size, remoteModified, savedAt, origin, bookmarkRelativePath }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         accountID = try values.decode(String.self, forKey: .accountID)
@@ -32,6 +33,7 @@ extension LocalCopy {
         size = try values.decodeIfPresent(Int64.self, forKey: .size) ?? 0
         remoteModified = try values.decodeIfPresent(Date.self, forKey: .remoteModified)
         savedAt = try values.decodeIfPresent(Date.self, forKey: .savedAt) ?? .distantPast
+        bookmarkRelativePath = try values.decodeIfPresent(String.self, forKey: .bookmarkRelativePath)
         origin = try values.decodeIfPresent(String.self, forKey: .origin).flatMap(Origin.init(rawValue:)) ?? .download
     }
 }
@@ -44,12 +46,14 @@ enum LocalCopyStatus: Equatable {
     case downloaded(LocalCopy)
     /// A copy exists, but the provider reports a newer version: the local file is behind.
     case outdated(LocalCopy)
+    case unavailable(LocalCopy)
 
     var copy: LocalCopy? {
-        switch self { case .cloudOnly: return nil; case .downloaded(let copy), .outdated(let copy): return copy }
+        switch self { case .cloudOnly: return nil; case .downloaded(let copy), .outdated(let copy), .unavailable(let copy): return copy }
     }
     var symbol: String {
         switch self {
+        case .unavailable: return "externaldrive.badge.questionmark"
         case .cloudOnly: return "icloud"
         case .downloaded: return "checkmark.circle.fill"
         case .outdated: return "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90.icloud.fill"
@@ -57,6 +61,7 @@ enum LocalCopyStatus: Equatable {
     }
     var label: String {
         switch self {
+        case .unavailable: return L("Copia local sin acceso: revisa el permiso o conecta el volumen")
         case .cloudOnly: return L("Solo en la nube")
         case .downloaded: return L("Descargado en este Mac")
         case .outdated: return L("Copia local desactualizada")
@@ -69,6 +74,7 @@ enum LocalCopyStatus: Equatable {
 @MainActor
 final class LocalCopyIndex: ObservableObject {
     @Published private(set) var copies: [String: LocalCopy] = [:]
+    @Published private(set) var unavailable: Set<String> = []
     let storeURL: URL
     private var verifying = false
     /// Delay before a coalesced write reaches disk. Every file of a transfer records a copy, and writing the whole
@@ -86,11 +92,21 @@ final class LocalCopyIndex: ObservableObject {
     func status(for file: CloudFile, accountID: String) -> LocalCopyStatus {
         // Folders are never marked: iCloudy cannot tell whether everything inside is still present and current.
         guard !file.isFolder, let copy = copies[Self.key(accountID: accountID, fileID: file.id)] else { return .cloudOnly }
+        if unavailable.contains(copy.id) { return .unavailable(copy) }
         if let remote = file.modified, let saved = copy.remoteModified, remote > saved.addingTimeInterval(1) { return .outdated(copy) }
         return .downloaded(copy)
     }
-    func record(_ copy: LocalCopy) {
-        copies[copy.id] = copy
+    func record(_ original: LocalCopy) {
+        var copy = original
+        if copy.bookmarkRelativePath == nil, let bookmark = copy.bookmark {
+            var stale = false
+            if let root = try? URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope, .withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale) {
+                let base = root.resolvingSymlinksInPath().path
+                let path = copy.url.resolvingSymlinksInPath().path
+                if path.hasPrefix(base + "/") { copy.bookmarkRelativePath = String(path.dropFirst(base.count + 1)) }
+            }
+        }
+        copies[copy.id] = copy; unavailable.remove(copy.id)
         persist(coalesce: true)
     }
     func forget(accountID: String, fileID: String) {
@@ -103,7 +119,7 @@ final class LocalCopyIndex: ObservableObject {
     }
     /// Forgets every local copy. The files themselves are left alone: this only clears what iCloudy remembers.
     func clear() {
-        copies = [:]
+        copies = [:]; unavailable = []
         persist()
     }
     var totalBytes: Int64 { copies.values.reduce(0) { $0 + $1.size } }
@@ -116,32 +132,77 @@ final class LocalCopyIndex: ObservableObject {
         guard !candidates.isEmpty else { return }
         verifying = true
         Task { [weak self] in
-            let paths = candidates.map(\.path)
-            let missing = (try? await blockingIO { paths.filter { !FileManager.default.fileExists(atPath: $0) } }) ?? []
+            let checked = (try? await blockingIO { candidates.map { ($0, Self.resolve($0)) } }) ?? []
             guard let self else { return }
             self.verifying = false
-            guard !missing.isEmpty else { return }
-            let gone = Set(missing)
-            self.copies = self.copies.filter { !gone.contains($0.value.path) }
+            for (original, result) in checked where self.copies[original.id] == original {
+                switch result {
+                case .available(let updated): self.copies[original.id] = updated; self.unavailable.remove(original.id)
+                case .missing: self.copies[original.id] = nil; self.unavailable.remove(original.id)
+                case .unavailable: self.unavailable.insert(original.id)
+                }
+            }
             self.persist()
         }
     }
-    /// Opens the Finder on the local file, resolving the bookmark first so the sandbox grants access.
-    func reveal(_ copy: LocalCopy) -> Bool {
-        var target = copy.url
+    enum Resolution { case available(LocalCopy), missing, unavailable }
+    nonisolated static func resolve(_ copy: LocalCopy) -> Resolution {
+        var updated = copy
+        var scopedURL: URL?
+        var scoped = false
+        defer { if scoped { scopedURL?.stopAccessingSecurityScopedResource() } }
         if let bookmark = copy.bookmark {
             var stale = false
-            if let resolved = try? URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale) {
-                let scoped = resolved.startAccessingSecurityScopedResource()
-                defer { if scoped { resolved.stopAccessingSecurityScopedResource() } }
-                if FileManager.default.fileExists(atPath: target.path) { NSWorkspace.shared.activateFileViewerSelecting([target]); return true }
-                target = resolved
+            guard let resolved = try? URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope, .withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale) else { return .unavailable }
+            scopedURL = resolved; scoped = resolved.startAccessingSecurityScopedResource()
+            guard let values = try? resolved.resourceValues(forKeys: [.isRegularFileKey]) else { return .unavailable }
+            if values.isRegularFile == true { updated.path = resolved.path }
+            else if let relative = copy.bookmarkRelativePath, !relative.hasPrefix("/"), !relative.split(separator: "/").contains("..") {
+                updated.path = resolved.appendingPathComponent(relative).path
             }
+            // Old folder bookmarks do not contain the child's relative path. Preserve the record if the
+            // folder moved instead of claiming the inaccessible child was deleted.
+            if stale, let renewed = try? resolved.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil) { updated.bookmark = renewed }
         }
-        guard FileManager.default.fileExists(atPath: target.path) else { return false }
-        NSWorkspace.shared.activateFileViewerSelecting([target])
+        do {
+            _ = try FileManager.default.attributesOfItem(atPath: updated.path)
+            return .available(updated)
+        } catch {
+            let error = error as NSError
+            guard copy.bookmark == nil, !updated.path.hasPrefix("/Volumes/"),
+                  error.domain == NSCocoaErrorDomain, error.code == NSFileNoSuchFileError || error.code == NSFileReadNoSuchFileError else { return .unavailable }
+            // A missing mount or inaccessible parent is not evidence that this file was deleted.
+            guard (try? FileManager.default.contentsOfDirectory(atPath: updated.url.deletingLastPathComponent().path)) != nil else { return .unavailable }
+            return .missing
+        }
+    }
+    func remap(_ change: RemoteIdentityChange, accountID: String) {
+        var updated: [String: LocalCopy] = [:]
+        for var copy in copies.values {
+            if copy.accountID == accountID {
+                copy.fileID = change.id(copy.fileID)
+                if copy.fileID == change.newID { copy.name = change.name }
+            }
+            updated[copy.id] = copy
+        }
+        copies = updated; persist()
+    }
+    /// Opens the Finder on the local file, resolving the bookmark first so the sandbox grants access.
+    func reveal(_ copy: LocalCopy) -> Bool {
+        var scope: URL?
+        var accessed = false
+        defer { if accessed { scope?.stopAccessingSecurityScopedResource() } }
+        if let bookmark = copy.bookmark {
+            var stale = false
+            scope = try? URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope, .withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale)
+            accessed = scope?.startAccessingSecurityScopedResource() ?? false
+        }
+        guard case .available(let updated) = Self.resolve(copy) else { return false }
+        record(updated)
+        NSWorkspace.shared.activateFileViewerSelecting([updated.url])
         return true
     }
+
     /// Writes now, or soon. A coalesced write is scheduled; anything the user would notice losing writes at once.
     private func persist(coalesce: Bool = false) {
         guard coalesce else { flushTask?.cancel(); flushTask = nil; dirty = false; write(); return }
@@ -175,6 +236,7 @@ private struct Snapshot: Codable {
     struct Entry: Codable {
         var accountID: String, fileID: String, name: String, path: String
         var bookmarkID: String?
+        var bookmarkRelativePath: String?
         /// Written by versions that kept a bookmark inside every entry. Still read, never written again.
         var bookmark: Data?
         var size: Int64, remoteModified: Date?, savedAt: Date, origin: String
@@ -189,7 +251,7 @@ private struct Snapshot: Codable {
                 LocalCopy(accountID: entry.accountID, fileID: entry.fileID, name: entry.name, path: entry.path,
                           bookmark: entry.bookmark ?? entry.bookmarkID.flatMap { snapshot.bookmarks[$0] },
                           size: entry.size, remoteModified: entry.remoteModified, savedAt: entry.savedAt,
-                          origin: LocalCopy.Origin(rawValue: entry.origin) ?? .download)
+                          origin: LocalCopy.Origin(rawValue: entry.origin) ?? .download, bookmarkRelativePath: entry.bookmarkRelativePath)
             }
             return Dictionary(restored.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
         }
@@ -206,7 +268,7 @@ private struct Snapshot: Codable {
                 id = key
             }
             snapshot.copies.append(Entry(accountID: copy.accountID, fileID: copy.fileID, name: copy.name,
-                                         path: copy.path, bookmarkID: id, bookmark: nil, size: copy.size,
+                                         path: copy.path, bookmarkID: id, bookmarkRelativePath: copy.bookmarkRelativePath, bookmark: nil, size: copy.size,
                                          remoteModified: copy.remoteModified, savedAt: copy.savedAt,
                                          origin: copy.origin.rawValue))
         }
@@ -230,11 +292,13 @@ struct LocalCopyBadge: View {
         case .cloudOnly: return .secondary
         case .downloaded: return .green
         case .outdated: return .orange
+        case .unavailable: return .orange
         }
     }
     private var help: String {
         guard let copy = status.copy else { return L("Solo en la nube. iCloudy no ha descargado este archivo.") }
         switch status {
+        case .unavailable: return L("Copia local sin acceso: revisa el permiso o conecta el volumen")
         case .outdated: return L("Copia local desactualizada en \(copy.path). La versión de la nube es más reciente.")
         default: return L("Descargado en este Mac: \(copy.path)")
         }

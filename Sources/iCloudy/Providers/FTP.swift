@@ -16,7 +16,9 @@ extension CloudAPI {
             throw CloudError.message(L("Esta cuenta FTP no tiene una dirección de servidor válida. Vuelve a conectarla."))
         }
         let secure = (components.scheme ?? "ftp").lowercased() == "ftps"
-        let port = UInt16(components.port ?? (secure ? 990 : 21))
+        guard let port = UInt16(exactly: components.port ?? (secure ? 990 : 21)), port > 0 else {
+            throw CloudError.message(L("El puerto FTP debe estar entre 1 y 65535."))
+        }
         var base = components.path
         if base.hasSuffix("/"), base.count > 1 { base = String(base.dropLast()) }
         return FTPEndpoint(host: host, port: port, base: base.isEmpty ? "/" : base, security: secure ? .implicitTLS : .none)
@@ -84,9 +86,9 @@ extension CloudAPI {
         for child in try await session.list(path: file.id) { try await ftpDelete(file: child) }
         try await session.require("RMD " + file.id, L("No se pudo eliminar la carpeta."))
     }
-    func ftpDownload(file: CloudFile, to destination: URL, progress: @escaping (Int64, Int64) -> Void) async throws {
+    func ftpDownload(file: CloudFile, to destination: URL, maxBytes: Int64? = nil, progress: @escaping (Int64, Int64) -> Void) async throws {
         let total = file.size ?? 0
-        try await ftp().retrieve(path: file.id, to: destination) { sent in
+        try await ftp().retrieve(path: file.id, to: destination, maxBytes: maxBytes) { sent in
             Task { @MainActor in progress(sent, total) }
         }
     }

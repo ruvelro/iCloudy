@@ -701,3 +701,32 @@
 "Última copia conocida · sin respuesta del proveedor" = "Last known copy · no answer from the provider";
 "Últimos %lld días" = "Last %lld days";
 "Úsalo solo si has iniciado sesión y esta ventana no se cierra sola" = "Use it only if you have signed in and this window does not close by itself";
+
+"La integridad de esta subida falló o quedó sin confirmar. Revisa la copia remota y cancela esta operación antes de volver a subir el archivo." = "This upload failed its integrity check or its verification was interrupted. Check the remote copy and cancel this operation before uploading the file again.";
+
+// P2 audit corrections
+"La demo tiene transferencias pendientes. Termínalas o cancélalas antes de vaciarla." = "The demo has pending transfers. Finish or cancel them before clearing it.";
+"Pausa las transferencias de esta cuenta antes de mover sus archivos." = "Pause transfers for this account before moving its files.";
+"Pausa las transferencias de esta cuenta antes de renombrar sus archivos." = "Pause transfers for this account before renaming its files.";
+"Copia enviada a OneDrive. Su estado se muestra en Transferencias hasta que el servidor confirme el resultado." = "Copy submitted to OneDrive. Its status appears in Transfers until the server confirms the result.";
+"El puerto FTP debe estar entre 1 y 65535." = "The FTP port must be between 1 and 65535.";
+"Mega no devolvió la papelera para retirar la versión anterior." = "Mega did not return a trash folder to retire the previous version.";
+"La copia remota quedó sin verificar. Revisa el destino antes de reintentar." = "The remote copy was not verified. Check the destination before retrying.";
+"Enviando solicitud…" = "Sending request…";
+"Esperando confirmación de OneDrive…" = "Waiting for confirmation from OneDrive…";
+"Copia completada" = "Copy completed";
+"Copia fallida" = "Copy failed";
+"Resultado sin confirmar: revisa el destino" = "Result unconfirmed: check the destination";
+"OneDrive aceptó la copia pero no devolvió su seguimiento. Comprueba el destino antes de repetirla." = "OneDrive accepted the copy but did not return a monitor URL. Check the destination before repeating it.";
+"OneDrive no pudo completar la copia." = "OneDrive could not complete the copy.";
+"La copia se interrumpió sin confirmación. Comprueba el destino antes de repetirla." = "The copy was interrupted without confirmation. Check the destination before repeating it.";
+"OneDrive devolvió una dirección de seguimiento no válida." = "OneDrive returned an invalid monitor URL.";
+"OneDrive todavía no ha confirmado el resultado de la copia." = "OneDrive has not confirmed the result of the copy yet.";
+"No se pudo guardar la sesión renovada de O2 Cloud: %@" = "Could not save the renewed O2 Cloud session: %@";
+"%lld elementos eliminados del servidor de forma permanente." = "%lld items permanently deleted from the server.";
+"%lld elementos enviados a la papelera. Puedes restaurarlos desde el Finder." = "%lld items moved to Trash. You can restore them in Finder.";
+"Copias en OneDrive (%lld)" = "OneDrive copies (%lld)";
+
+"Los elementos van a la papelera del Mac y se pueden restaurar desde el Finder." = "Items go to the Mac Trash and can be restored in Finder.";
+
+"Copia local sin acceso: revisa el permiso o conecta el volumen" = "Local copy unavailable: check permission or connect the volume";

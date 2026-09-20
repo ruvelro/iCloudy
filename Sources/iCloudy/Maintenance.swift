@@ -97,10 +97,12 @@ enum Maintenance {
         return roots.contains { path == $0.standardizedFileURL.path || path.hasPrefix($0.standardizedFileURL.path + "/") }
     }
     /// Empties a directory-backed item. Object-backed items are cleared by their owner, which rewrites the file.
-    nonisolated static func clear(_ kind: Kind) throws {
+    nonisolated static func clear(_ kind: Kind, preserving protected: [URL] = []) throws {
         guard let directory = kind.directory else { return }
         guard isOwned(directory) else { throw CloudError.message(L("Se rechazó limpiar una carpeta ajena a iCloudy.")) }
         for child in (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [] {
+            let path = child.standardizedFileURL.path
+            guard !protected.contains(where: { $0.standardizedFileURL.path == path || $0.standardizedFileURL.path.hasPrefix(path + "/") }) else { continue }
             try FileManager.default.removeItem(at: child)
         }
     }

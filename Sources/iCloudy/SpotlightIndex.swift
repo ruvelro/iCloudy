@@ -3,6 +3,7 @@ import CoreSpotlight
 import UniformTypeIdentifiers
 
 /// Seam over CoreSpotlight so indexing can be exercised without touching the user's real Spotlight database.
+@MainActor
 protocol SearchableIndexing {
     func index(_ items: [CSSearchableItem]) async throws
     func deleteItems(withDomainIdentifiers identifiers: [String]) async throws
@@ -10,6 +11,7 @@ protocol SearchableIndexing {
 }
 
 struct SystemSearchableIndex: SearchableIndexing {
+    nonisolated init() {}
     func index(_ items: [CSSearchableItem]) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             CSSearchableIndex.default().indexSearchableItems(items) { error in
@@ -134,6 +136,23 @@ final class SpotlightIndex {
         items[position] = IndexedItem(accountID: accountID, file: file, path: items[position].path, seen: Date())
         persist()
         publish([items[position]], label: accountLabel)
+    }
+    func remap(_ change: RemoteIdentityChange, accountID: String, accountLabel: String, oldParent: [String] = [], newParent: [String]? = nil) {
+        let old = items.filter { $0.accountID == accountID && (change.id($0.file.id) != $0.file.id || $0.file.id == change.oldID) }
+        let updated = old.map { entry -> IndexedItem in
+            let trail: [String]
+            if entry.file.id == change.oldID { trail = newParent ?? entry.path }
+            else if entry.path.starts(with: oldParent) {
+                trail = (newParent ?? oldParent) + [change.name] + entry.path.dropFirst(oldParent.count + 1)
+            } else { trail = [] }
+            return IndexedItem(accountID: accountID, file: change.file(entry.file), path: trail, seen: Date())
+        }
+        items.removeAll { entry in old.contains { $0.accountID == entry.accountID && $0.file.id == entry.file.id } }
+        items.append(contentsOf: updated); persist()
+        Task { [index] in
+            try? await index.deleteItems(withIdentifiers: old.map { Self.identifier(accountID: accountID, fileID: $0.file.id) })
+            try? await index.index(updated.map { Self.searchableItem(for: $0, accountLabel: accountLabel) })
+        }
     }
     private func publish(_ entries: [IndexedItem], label: String) {
         let searchable = entries.map { Self.searchableItem(for: $0, accountLabel: label) }

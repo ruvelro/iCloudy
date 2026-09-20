@@ -110,6 +110,7 @@ final class PreviewModel: ObservableObject {
     var availableCapacity: (() throws -> Int64)?
     private let store: PreviewStore?
     private let initializationError: String?
+    var protectedDirectories: [URL] { directory.map { [$0] } ?? [] }
     private var directory: URL?
     private var task: Task<Void, Never>?
     private var generation = UUID()

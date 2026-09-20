@@ -58,6 +58,7 @@ final class AppModel: ObservableObject {
     @Published var editingFile: CloudFile?
     @Published var demoOffline = false { didSet { demo?.offline = demoOffline } }
     let queue = TransferQueue()
+    let remoteCopies = RemoteCopies()
     let history = TransferHistory()
     let connectivity = Connectivity()
     let mirrors = MirrorManager()
@@ -153,10 +154,10 @@ final class AppModel: ObservableObject {
         // Only structural queue changes reach the explorer; progress ticks re-render the transfer panel alone.
         subscription = queue.stateChanges.sink { [weak self] _ in self?.objectWillChange.send() }
         if let message = queue.persistenceError { error = message }
+        listings.enabled = Prefs.bool(Prefs.listingCache, default: true)
         queue.cleanScratch()
         mirrors.queue = queue
         mirrors.accountLookup = { [weak self] id in self?.accounts.first { $0.id == id } }
-        mirrors.start()
         loadAccounts()
         preview.download = { [weak self] file, account in
             Task { await self?.saveMany([file], targetAccount: account) }
@@ -215,9 +216,11 @@ final class AppModel: ObservableObject {
         showGlobalSearch = true
         globalSearch.query = String(term.prefix(256))
         // Providers without a search API would only add an error row to every search.
+        let submittedFilters = globalSearch.filters
+        let submittedAt = Date()
         globalSearch.start(accounts: accounts.filter { $0.capabilities.search }) { [weak self] account, query, cursor in
             guard let self else { throw CancellationError() }
-            return try await self.client(account).searchPage(term: query, cursor: cursor, filters: self.globalSearch.filters)
+            return try await self.client(account).searchPage(term: query, cursor: cursor, filters: submittedFilters, referenceDate: submittedAt)
         }
     }
     /// A Spotlight result opened before the stored accounts had been read. The Keychain is read after the window is
@@ -276,12 +279,40 @@ final class AppModel: ObservableObject {
     /// Reads the stored accounts off the main thread. The Keychain call can block for a long time: macOS asks the user
     /// for permission whenever the app's signature changes, and doing that inside `init` froze the launch before SwiftUI
     /// had built any window, leaving a running app with nothing on screen.
+    func clearMaintenance(_ kind: Maintenance.Kind) throws {
+        switch kind {
+        case .listings: listings.clear()
+        case .scratch: queue.cleanScratch()
+        case .pasteboard:
+            try Maintenance.clear(kind, preserving: queue.protectedLocalURLs)
+        case .previews:
+            // The viewer owns its active directory; old directories can be removed without interrupting it.
+            try Maintenance.clear(kind, preserving: preview.model.protectedDirectories)
+        case .localCopies: localCopies.clear()
+        case .history: history.clear()
+        case .spotlight: spotlight.clear()
+        case .demo:
+            guard !queue.items.contains(where: { (!$0.finished || queue.hasActive(accountID: $0.accountID) || ($0.targetAccountID.map { queue.hasActive(accountID: $0) } ?? false)) && ($0.accountID.hasPrefix("demo:") || ($0.targetAccountID?.hasPrefix("demo:") ?? false)) }) else {
+                throw CloudError.message(L("La demo tiene transferencias pendientes. Termínalas o cancélalas antes de vaciarla."))
+            }
+            preview.close()
+            clients = clients.filter { !$0.key.hasPrefix("demo:") }; demo = nil
+            try Maintenance.clear(kind)
+        }
+    }
+
+    private var accountLoadError: Error?
+    func waitUntilReady() async throws {
+        while loadingAccounts { try await Task.sleep(for: .milliseconds(20)) }
+        if let accountLoadError { throw accountLoadError }
+    }
     private func loadAccounts() {
         loadingAccounts = true
         Task { [favoritesKey = "accounts"] in
             let stored: [Account]
             do { stored = try await Task.detached { try Vault.read([Account].self, key: favoritesKey) ?? [] }.value }
             catch {
+                accountLoadError = error
                 loadingAccounts = false
                 self.error = L("No se pudieron leer las cuentas guardadas: \(error.localizedDescription)")
                 return
@@ -289,27 +320,20 @@ final class AppModel: ObservableObject {
             loadingAccounts = false
             // The demo account is local and may already be in the list.
             accounts = stored + accounts.filter(\.isDemo)
+            mirrors.start()
+            remoteCopies.client = queue.client
+            remoteCopies.didComplete = queue.didComplete
+            remoteCopies.resume()
             if selectedAccountID == nil { selectedAccountID = accounts.first?.id }
             refreshSpotlightFavorites()
             if let waiting = pendingSpotlightItem { pendingSpotlightItem = nil; openSpotlightItem(identifier: waiting) }
             if account != nil { reload() }
             for account in accounts where account.id != selectedAccountID { refreshStorage(account) }
-            repairKeychainAccessOnce()
             startKeepAlive()
         }
     }
-    /// Entries written by earlier builds keep the access list they were born with, which is why macOS asks for the
-    /// keychain password again after every rebuild however often "always allow" is chosen. Rewriting them once binds
-    /// them to the signature in use now. It asks once per entry while it runs, and then stops asking for good.
-    private func repairKeychainAccessOnce() {
-        let done = "keychainAccessRepaired"
-        guard !UserDefaults.standard.bool(forKey: done), !accounts.isEmpty else { return }
-        let keys = ["accounts"] + accounts.filter { !$0.isDemo }.map(\.credentialKey)
-        Task.detached {
-            Vault.refreshAccess(keys: Array(Set(keys)))
-            await MainActor.run { UserDefaults.standard.set(true, forKey: done) }
-        }
-    }
+    // Keychain ACLs are deliberately preserved. Signature/ACL migration is separate from credential writes;
+    // startup must never read and rewrite stale tokens while another client is refreshing them.
 
     func client(_ account: Account) throws -> CloudAPI {
         if let client = clients[account.id] { return client }
@@ -606,6 +630,7 @@ final class AppModel: ObservableObject {
     }
     /// Drops everything kept locally about an account: its client, quota, listings, mirrors, index and search rows.
     private func forget(_ account: Account) {
+        remoteCopies.removeAccount(account.id)
         quotaTasks.removeValue(forKey: account.id)?.cancel()
         quotaRequestIDs[account.id] = nil; storageQuotas[account.id] = nil
         clients[account.id]?.invalidate(); clients[account.id] = nil
@@ -842,8 +867,14 @@ final class AppModel: ObservableObject {
             guard clashes.isEmpty else {
                 throw CloudError.message(L("En la carpeta de destino ya existe ") + clashes.map { "«\($0.name)»" }.joined(separator: ", ") + ". Renombra antes de mover o copiar.")
             }
+            if request.isMove, queue.hasActive(accountID: request.account.id) { throw CloudError.message(L("Pausa las transferencias de esta cuenta antes de mover sus archivos.")) }
             for file in request.files {
-                if request.isMove { try await api.move(file: file, to: destination) } else { try await api.copy(file: file, to: destination) }
+                if request.isMove {
+                    try await api.move(file: file, to: destination)
+                    try applyIdentityChange(api.identityChange(file: file, name: file.name, destination: destination), account: request.account, destinationPath: destinationPath)
+                } else if request.account.cloud == .microsoft && !request.account.isDemo {
+                    try await remoteCopies.start(file: file, destination: destination, api: api)
+                } else { try await api.copy(file: file, to: destination) }
                 done += 1
                 if request.isMove {
                     for i in favorites.indices where favorites[i].accountID == request.account.id && favorites[i].file.id == file.id {
@@ -853,6 +884,11 @@ final class AppModel: ObservableObject {
             }
             if request.isMove { try LocalStore.save(favorites, to: favoritesURL) }
             let target = destinationPath.last?.name ?? "Mis archivos"
+            if !request.isMove, request.account.cloud == .microsoft, !request.account.isDemo {
+                info = L("Copia enviada a OneDrive. Su estado se muestra en Transferencias hasta que el servidor confirme el resultado.")
+                reload(fresh: true)
+                return
+            }
             let verb = request.isMove ? (done == 1 ? "movido" : "movidos") : (done == 1 ? "copiado" : "copiados")
             info = L("\(done == 1 ? L("«\(request.files[0].name)»") : L("\(done) elementos")) \(verb) a «\(target)».") + (!request.isMove && request.account.cloud == .microsoft ? L(" OneDrive puede tardar unos segundos en mostrar la copia.") : L(""))
         } catch {
@@ -890,7 +926,13 @@ final class AppModel: ObservableObject {
                 favorites.removeAll { $0.accountID == account.id && ($0.file.id == file.id || $0.path.contains { $0.id == file.id }) }
             }
             try LocalStore.save(favorites, to: favoritesURL)
+            if [.ftp, .webdav].contains(account.cloud), !account.isDemo {
+                info = L("\(moved) elementos eliminados del servidor de forma permanente.")
+            } else if account.cloud == .volume {
+                info = L("\(moved) elementos enviados a la papelera. Puedes restaurarlos desde el Finder.")
+            } else {
             info = moved == 1 ? L("«\(files[0].name)» está en la papelera de \(account.cloud.title). Puedes restaurarlo desde su web.") : L("\(moved) elementos enviados a la papelera de \(account.cloud.title).")
+            }
         } catch {
             self.error = (moved > 0 ? L("Se enviaron \(moved) de \(files.count) elementos. ") : L("")) + error.localizedDescription
         }
@@ -951,6 +993,27 @@ final class AppModel: ObservableObject {
         guard let account, file != nil || canWrite else { return }
         editingFile = file; editName = file?.name ?? ""; editContext = (account, folderID); showNameDialog = true
     }
+    private func applyIdentityChange(_ change: RemoteIdentityChange, account: Account, destinationPath: [CloudFile]? = nil) throws {
+        let previousParent = path.map(\.name)
+        for i in favorites.indices where favorites[i].accountID == account.id {
+            let old = favorites[i].file.id
+            favorites[i].file = change.file(favorites[i].file)
+            favorites[i].path = favorites[i].path.map(change.file)
+            if let destinationPath {
+                if old == change.oldID { favorites[i].path = destinationPath }
+                else if let position = favorites[i].path.firstIndex(where: { $0.id == change.newID }) {
+                    favorites[i].path = destinationPath + favorites[i].path[position...]
+                }
+            }
+        }
+        try LocalStore.save(favorites, to: favoritesURL)
+        if selectedAccountID == account.id { path = path.map(change.file); files = files.map(change.file) }
+        listings.removeAll(accountID: account.id)
+        localCopies.remap(change, accountID: account.id)
+        spotlight.remap(change, accountID: account.id, accountLabel: accountTitle(account), oldParent: previousParent, newParent: destinationPath?.map(\.name))
+        try mirrors.remap(change, accountID: account.id)
+        try queue.remap(change, accountID: account.id)
+    }
     func commitName() async {
         guard let (account, parent) = editContext else { return }
         let file = editingFile, name = editName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -960,14 +1023,9 @@ final class AppModel: ObservableObject {
             let siblings = try await api.list(parent: parent)
             guard !siblings.contains(where: { $0.id != file?.id && $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }) else { throw CloudError.message(L("Ya existe un elemento con ese nombre. Elige otro.")) }
             if let file {
+                guard !queue.hasActive(accountID: account.id) else { throw CloudError.message(L("Pausa las transferencias de esta cuenta antes de renombrar sus archivos.")) }
                 try await api.rename(file: file, name: name)
-                let updated = CloudFile(id: file.id, name: name, mime: file.mime, size: file.size, modified: Date(), webURL: file.webURL, isFolder: file.isFolder)
-                spotlight.rename(updated, accountID: account.id, accountLabel: accountTitle(account))
-                for i in favorites.indices where favorites[i].accountID == account.id {
-                    if favorites[i].file.id == file.id { favorites[i].file = updated }
-                    favorites[i].path = favorites[i].path.map { $0.id == file.id ? updated : $0 }
-                }
-                try LocalStore.save(favorites, to: favoritesURL)
+                try applyIdentityChange(api.identityChange(file: file, name: name), account: account)
             } else { _ = try await api.createFolder(name: name, parent: parent) }
             showNameDialog = false; reload(fresh: true)
         } catch { self.error = error.localizedDescription }

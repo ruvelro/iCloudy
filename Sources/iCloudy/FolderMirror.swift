@@ -13,7 +13,7 @@ struct FileStamp: Codable, Equatable {
 struct FolderMirror: Identifiable, Codable {
     var id = UUID()
     let accountID: String
-    let remoteFolderID: String
+    var remoteFolderID: String
     /// Human-readable remote location, e.g. "user@example.com / Proyectos / Fotos".
     let remoteName: String
     let localURL: URL
@@ -24,10 +24,11 @@ struct FolderMirror: Identifiable, Codable {
     var lastSync: Date?
     var activeTransferID: UUID?
     var lastError: String?
+    var remoteEntries: [String: CloudFile] = [:]
 }
 
 extension FolderMirror {
-    enum CodingKeys: String, CodingKey { case id, accountID, remoteFolderID, remoteName, localURL, bookmark, stamps, pendingStamps, lastSync, activeTransferID, lastError }
+    enum CodingKeys: String, CodingKey { case id, accountID, remoteFolderID, remoteName, localURL, bookmark, stamps, pendingStamps, lastSync, activeTransferID, lastError, remoteEntries }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
@@ -41,6 +42,7 @@ extension FolderMirror {
         lastSync = try values.decodeIfPresent(Date.self, forKey: .lastSync)
         activeTransferID = try values.decodeIfPresent(UUID.self, forKey: .activeTransferID)
         lastError = try values.decodeIfPresent(String.self, forKey: .lastError)
+        remoteEntries = try values.decodeIfPresent([String: CloudFile].self, forKey: .remoteEntries) ?? [:]
     }
 }
 
@@ -50,14 +52,15 @@ enum MirrorPlanner {
     nonisolated static func stamps(of root: URL) throws -> [String: FileStamp] {
         var result: [String: FileStamp] = [:]
         let base = root.standardizedFileURL.path
-        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey], options: []) else { return result }
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey], options: []) else { return result }
         for case let url as URL in enumerator {
-            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey])
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey])
             if values.isSymbolicLink == true { enumerator.skipDescendants(); continue }
-            guard values.isRegularFile == true, let modified = values.contentModificationDate else { continue }
+            guard values.isRegularFile == true || values.isDirectory == true else { continue }
+            let modified = values.isDirectory == true ? Date(timeIntervalSince1970: 0) : (values.contentModificationDate ?? .distantPast)
             let path = url.standardizedFileURL.path
             guard path.hasPrefix(base + "/") else { continue }
-            result[String(path.dropFirst(base.count + 1))] = FileStamp(size: Int64(values.fileSize ?? 0), modified: modified)
+            result[String(path.dropFirst(base.count + 1))] = FileStamp(size: values.isDirectory == true ? -1 : Int64(values.fileSize ?? 0), modified: modified)
         }
         return result
     }
@@ -69,7 +72,10 @@ enum MirrorPlanner {
         var allDirectories: Set<String> = []
         for (path, stamp) in current {
             let unchanged = previous[path] == stamp
-            if unchanged { keys.insert("./" + path) }
+            if stamp.size == -1 {
+                allDirectories.insert(path)
+                if !unchanged { changedDirectories.insert(path) }
+            } else if unchanged { keys.insert("./" + path) }
             var components = path.split(separator: "/").map(String.init); components.removeLast()
             var prefix = ""
             for component in components {
@@ -161,11 +167,20 @@ final class MirrorManager: ObservableObject {
         scheduleSync(mirror.id, immediate: true)
     }
     func remove(_ id: UUID) {
+        let transfer = mirrors.first(where: { $0.id == id })?.activeTransferID
         watchers.removeValue(forKey: id)?.stop()
         if let url = scopedURLs.removeValue(forKey: id) { url.stopAccessingSecurityScopedResource() }
         scheduled.removeValue(forKey: id)?.cancel(); dirty.remove(id); pending.remove(id)
         mirrors.removeAll { $0.id == id }
+        if let transfer { queue?.cancel(transfer) }
         do { try persist() } catch { persistenceError = error.localizedDescription }
+    }
+    func remap(_ change: RemoteIdentityChange, accountID: String) throws {
+        for i in mirrors.indices where mirrors[i].accountID == accountID {
+            mirrors[i].remoteFolderID = change.id(mirrors[i].remoteFolderID)
+            mirrors[i].remoteEntries = mirrors[i].remoteEntries.mapValues(change.file)
+        }
+        try persist()
     }
     func removeAll(accountID: String) { for mirror in mirrors where mirror.accountID == accountID { remove(mirror.id) } }
     func syncNow(_ id: UUID) { scheduleSync(id, immediate: true) }
@@ -230,10 +245,11 @@ final class MirrorManager: ObservableObject {
             }
             // Closing the app pauses whatever was running. Planning a second sync left the first one orphaned in the
             // panel, with a plan made against a folder that had since moved on; the person had to notice and clear it.
-            if resumeInterrupted, item.state == .paused {
+            if item.state == .paused, item.mirrorEntries != nil {
                 queue.retry(active)
                 dirty.insert(id); pending.remove(id); return
             }
+            if item.state == .paused, item.mirrorEntries == nil { queue.cancel(active) }
         }
         pending.remove(id)
         let mirror = mirrors[index]
@@ -242,20 +258,17 @@ final class MirrorManager: ObservableObject {
             guard FileManager.default.fileExists(atPath: url.path) else { throw CloudError.message(L("La carpeta local ya no existe en \(url.path).")) }
             let current = try await blockingIO { try MirrorPlanner.stamps(of: url) }
             guard let position = mirrors.firstIndex(where: { $0.id == id }) else { return }
-            let unchanged = MirrorPlanner.completedKeys(current: current, previous: mirrors[position].stamps)
-            if unchanged.count == current.count + unchanged.filter({ !current.keys.contains(String($0.dropFirst(2))) }).count, current.allSatisfy({ mirrors[position].stamps[$0.key] == $0.value }), mirrors[position].lastSync != nil {
+            let unchanged = MirrorPlanner.completedKeys(current: current, previous: mirrors[position].stamps.filter { mirrors[position].remoteEntries["./" + $0.key] != nil })
+            if unchanged.count == current.count + unchanged.filter({ !current.keys.contains(String($0.dropFirst(2))) }).count, current.allSatisfy({ mirrors[position].stamps[$0.key] == $0.value && mirrors[position].remoteEntries["./" + $0.key] != nil }), mirrors[position].lastSync != nil {
                 // Nothing new since the last sync: no transfer, no network.
                 mirrors[position].lastError = nil; try persist(); return
             }
             var job = Transfer(batchID: UUID(), name: "Reflejo · " + url.lastPathComponent, destination: mirror.remoteName, accountID: mirror.accountID, direction: .upload, localURL: url, bookmark: mirror.bookmark, parent: mirror.remoteFolderID)
-            // The remote folder already exists and receives the *contents*: the root level is pre-resolved, and files
-            // that changed replace their remote counterpart instead of prompting.
+            // The root receives the contents. Only unchanged remote identities previously written by this mirror
+            // may be replaced automatically; new collisions and remote edits still go through the conflict dialog.
             job.names["."] = url.lastPathComponent
             job.folders["."] = mirror.remoteFolderID
-            // Only what this mirror has uploaded before is replaced without asking. On the very first sync there is
-            // nothing to compare against, so anything already in the destination is a stranger's file and the usual
-            // conflict dialog decides what happens to it.
-            if mirrors[position].lastSync != nil { job.batchChoice = .replace }
+            job.mirrorEntries = mirrors[position].remoteEntries
             job.completedPaths = unchanged
             try queue.add([job])
             mirrors[position].activeTransferID = job.id
@@ -269,7 +282,9 @@ final class MirrorManager: ObservableObject {
     /// Hooked to the queue's `didFinish`: promotes the planned stamps and re-syncs if the folder changed meanwhile.
     func handleFinished(_ transfer: Transfer) {
         guard let index = mirrors.firstIndex(where: { $0.activeTransferID == transfer.id }) else { return }
-        mirrors[index].stamps = mirrors[index].pendingStamps ?? mirrors[index].stamps
+        let entries = transfer.mirrorEntries ?? [:]
+        mirrors[index].remoteEntries = entries
+        mirrors[index].stamps = (mirrors[index].pendingStamps ?? mirrors[index].stamps).filter { entries["./" + $0.key] != nil }
         mirrors[index].pendingStamps = nil
         mirrors[index].lastSync = Date()
         mirrors[index].activeTransferID = nil

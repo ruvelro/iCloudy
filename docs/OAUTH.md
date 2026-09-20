@@ -170,6 +170,8 @@ Los elementos creados por compilaciones anteriores a la existencia del certifica
 así que preguntarán una vez cada uno hasta que se les diga «Permitir siempre». Con una cuenta por elemento, eso son
 varias preguntas seguidas la primera vez, y ninguna después.
 
+Las escrituras de credenciales actualizan la entrada existente sin borrarla y conservan su lista de acceso. El arranque no reescribe credenciales para cambiar permisos: una migración de firma o ACL debe tratarse por separado, para no perder tokens ni competir con su renovación.
+
 ### Por qué no se usa el Llavero moderno, que no pregunta nunca
 
 El llavero con protección de datos no tiene listas de acceso ni diálogos: el acceso se decide por el identificador

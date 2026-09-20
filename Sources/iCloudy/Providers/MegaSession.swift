@@ -114,7 +114,7 @@ enum MegaAPI {
         while true {
             try Task.checkCancellation()
             let data: Data, response: URLResponse
-            do { (data, response) = try await session.data(for: request) }
+            do { (data, response) = try await session.data(for: request, delegate: RedirectGuard.shared) }
             catch let error as URLError {
                 guard error.code != .cancelled else { throw CancellationError() }
                 guard Self.worthRepeating(error.code), drops < Self.maxDrops else { throw unreachable(error) }

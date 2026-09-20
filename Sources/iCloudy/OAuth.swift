@@ -43,7 +43,7 @@ enum HTTP {
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = form(values)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: request, delegate: RedirectGuard.shared)
         try validate(response, data: data)
         return try json(data)
     }
@@ -113,7 +113,7 @@ final class OAuth {
         // Dropbox exposes the current account through an RPC, so it is a POST even though it only reads.
         if cloud == .dropbox { request.httpMethod = "POST" }
         request.setValue("Bearer \(access)", forHTTPHeaderField: "Authorization")
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: request, delegate: RedirectGuard.shared)
         guard !cancelled else { throw CancellationError() }
         try HTTP.validate(response, data: data)
         let profile = try HTTP.json(data)
@@ -190,7 +190,7 @@ final class OAuth {
         probe.setValue("Basic " + secret, forHTTPHeaderField: "Authorization")
         probe.setValue("application/xml; charset=utf-8", forHTTPHeaderField: "Content-Type")
         probe.httpBody = Data("<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>".utf8)
-        let (data, response) = try await session.data(for: probe)
+        let (data, response) = try await session.data(for: probe, delegate: RedirectGuard.shared)
         guard let http = response as? HTTPURLResponse else { throw CloudError.message(L("Respuesta HTTP no válida.")) }
         switch http.statusCode {
         case 401, 403:
@@ -223,7 +223,9 @@ final class OAuth {
         components.query = nil; components.fragment = nil
         if components.path.hasSuffix("/"), components.path.count > 1 { components.path = String(components.path.dropLast()) }
         let secure = components.scheme?.lowercased() == "ftps"
-        let port = UInt16(components.port ?? (secure ? 990 : 21))
+        guard let port = UInt16(exactly: components.port ?? (secure ? 990 : 21)), port > 0 else {
+            throw CloudError.message(L("El puerto FTP debe estar entre 1 y 65535."))
+        }
         let session = FTPSession(host: host, port: port, user: username, password: password,
                                  security: secure ? .implicitTLS : .none)
         do {
