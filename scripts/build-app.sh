@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+build_configuration="${ICLOUDY_BUILD_CONFIGURATION:-release}"
+case "$build_configuration" in
+    debug|release) ;;
+    *) echo "Configuración no válida: $build_configuration (usa debug o release)." >&2; exit 2 ;;
+esac
 oauth_config="${ICLOUDY_OAUTH_CONFIG:-$PWD/Configuration/OAuth.local.plist}"
 if [[ ! -f "$oauth_config" ]]; then
     oauth_config="$PWD/Configuration/OAuth.example.plist"
@@ -30,9 +35,12 @@ fi
 
 # `-emit-const-values` makes the compiler write the constant values the App Intents processor reads below. Without
 # that pass the bundle has no Metadata.appintents, and the Shortcuts app does not list the intents at all.
-swift build -c release -Xswiftc -emit-const-values
-binary_dir="$(swift build -c release --show-bin-path)"
+swift build -c "$build_configuration" -Xswiftc -emit-const-values
+binary_dir="$(swift build -c "$build_configuration" --show-bin-path)"
 app_dir="$PWD/dist/iCloudy.app"
+if [[ "$build_configuration" == "debug" ]]; then
+    app_dir="$PWD/dist/debug/iCloudy.app"
+fi
 mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
 cp "$binary_dir/iCloudy" "$app_dir/Contents/MacOS/iCloudy"
 cp Resources/Info.plist "$app_dir/Contents/Info.plist"
@@ -76,5 +84,13 @@ if [[ "$metadata_ok" != true ]]; then
     echo "Aviso: no se generó Metadata.appintents; las acciones de iCloudy no aparecerán en Atajos ni en Automator." >&2
 fi
 # Self-signed certificates cannot be timestamped by Apple; Developer ID builds get a timestamp automatically.
-codesign --force --options runtime --timestamp=none --entitlements Resources/iCloudy.entitlements --sign "$identity" "$app_dir"
+entitlements="Resources/iCloudy.entitlements"
+if [[ "$build_configuration" == "debug" ]]; then
+    # Debugger attachment is allowed only in the local debug bundle, never in the release entitlement file.
+    entitlements="$(mktemp)"
+    cp Resources/iCloudy.entitlements "$entitlements"
+    /usr/libexec/PlistBuddy -c "Add :com.apple.security.get-task-allow bool true" "$entitlements"
+    trap 'rm -f "$entitlements"' EXIT
+fi
+codesign --force --options runtime --timestamp=none --entitlements "$entitlements" --sign "$identity" "$app_dir"
 echo "Aplicación creada: $app_dir (firma: ${identity})"
