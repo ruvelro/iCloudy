@@ -256,17 +256,6 @@ final class CloudAPI {
         throw CloudError.message(L("El servicio no responde."))
     }
 
-    static func googleFile(_ value: [String: Any]) -> CloudFile? {
-        guard let id = value["id"] as? String, let name = value["name"] as? String else { return nil }
-        let mime = value["mimeType"] as? String ?? "application/octet-stream"
-        return CloudFile(id: id, name: name, mime: mime, size: (value["size"] as? String).flatMap(Int64.init), modified: date(value["modifiedTime"] as? String), webURL: (value["webViewLink"] as? String).flatMap(URL.init(string:)), isFolder: mime == "application/vnd.google-apps.folder")
-    }
-    static func microsoftFile(_ value: [String: Any]) -> CloudFile? {
-        guard let id = value["id"] as? String, let name = value["name"] as? String else { return nil }
-        // Shared remote items need another drive identity; expose them as browser links in this MVP.
-        let remote = value["remoteItem"] != nil
-        return CloudFile(id: id, name: name, mime: remote ? "application/vnd.google-apps.shortcut" : ((value["file"] as? [String: Any])?["mimeType"] as? String ?? "application/octet-stream"), size: (value["size"] as? NSNumber)?.int64Value, modified: date(value["lastModifiedDateTime"] as? String), webURL: (value["webUrl"] as? String).flatMap(URL.init(string:)), isFolder: !remote && value["folder"] != nil)
-    }
     /// Transfer addresses often come from a different fleet of servers than the API, and more than one provider
     /// hands them out over plain HTTP. macOS refuses to load those, and rightly so: even when the bytes are already
     /// encrypted, the address, the size and the timing would travel in the clear. Every provider here is reachable
@@ -283,31 +272,11 @@ final class CloudAPI {
         return formatter.date(from: string) ?? ISO8601DateFormatter().date(from: string)
     }
     /// Base of every Graph call: the signed-in user's own drive, or the document library this account is scoped to.
-    var graphDrive: String {
-        account.driveID.map { "https://graph.microsoft.com/v1.0/drives/" + Self.segment($0) } ?? "https://graph.microsoft.com/v1.0/me/drive"
-    }
     /// Every Drive API call touching an item of a shared drive must opt in, or the server pretends it does not exist.
-    var googleAllDrives: [URLQueryItem] {
-        account.driveID == nil ? [] : [URLQueryItem(name: "supportsAllDrives", value: "true")]
-    }
     /// Drive API calls of a shared-drive account must opt in explicitly, or the server pretends the items do not exist.
-    func googleURL(_ string: String) -> URL {
-        guard account.driveID != nil, var components = URLComponents(string: string) else { return URL(string: string)! }
-        components.queryItems = (components.queryItems ?? []) + googleAllDrives
-        return components.url ?? URL(string: string)!
-    }
     /// Query items that restrict a listing or a search to the shared drive this account represents.
-    var googleDriveScope: [URLQueryItem] {
-        guard let drive = account.driveID else { return [] }
-        return [URLQueryItem(name: "corpora", value: "drive"), URLQueryItem(name: "driveId", value: drive),
-                URLQueryItem(name: "includeItemsFromAllDrives", value: "true"), URLQueryItem(name: "supportsAllDrives", value: "true")]
-    }
     /// The identifier a shared drive uses for its own top level is the drive id itself.
-    func googleParent(_ parent: String) -> String {
-        parent == "root" ? (account.driveID ?? "root") : parent
-    }
 
-    func graphItem(_ id: String) -> String { id == "root" ? "root" : "items/" + Self.segment(id) }
     static func segment(_ value: String) -> String { value.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~")))! }
 
     /// Folders first, then by name. `onPage` receives the accumulated, sorted listing after each intermediate page so the
@@ -326,51 +295,6 @@ final class CloudAPI {
         case .box: return try await boxList(parent: parent, onPage: onPage)
         case .webdav: return try await webdavList(parent: parent, onPage: onPage)
         }
-    }
-    private func googleList(parent: String, onPage: (([CloudFile]) -> Void)?) async throws -> [CloudFile] {
-        var files: [CloudFile] = []
-        let fields = "nextPageToken,files(id,name,mimeType,size,modifiedTime,webViewLink)"
-
-        var page: String?
-        repeat {
-            var url = URLComponents(string: "https://www.googleapis.com/drive/v3/files")!
-            switch parent {
-            case Collection.recent.rootID:
-                // One page of what the user opened last; folders are noise here.
-                url.queryItems = [URLQueryItem(name: "q", value: "trashed = false and mimeType != 'application/vnd.google-apps.folder'"), URLQueryItem(name: "orderBy", value: "viewedByMeTime desc"), URLQueryItem(name: "pageSize", value: "100"), URLQueryItem(name: "fields", value: fields)]
-            case Collection.shared.rootID:
-                url.queryItems = [URLQueryItem(name: "q", value: "sharedWithMe = true and trashed = false"), URLQueryItem(name: "pageSize", value: "1000"), URLQueryItem(name: "fields", value: fields), URLQueryItem(name: "pageToken", value: page)]
-            default:
-                let escaped = googleParent(parent).replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
-                url.queryItems = [URLQueryItem(name: "q", value: "'\(escaped)' in parents and trashed = false"), URLQueryItem(name: "pageSize", value: "1000"), URLQueryItem(name: "fields", value: fields), URLQueryItem(name: "pageToken", value: page)]
-            }
-            url.queryItems = (url.queryItems ?? []) + googleDriveScope
-            let result = try await json(url.url!)
-            files += (result["files"] as? [[String: Any]] ?? []).compactMap(Self.googleFile)
-            page = parent == Collection.recent.rootID ? nil : result["nextPageToken"] as? String
-            if page != nil { onPage?(Self.sorted(files)) }
-        } while page != nil
-        return Self.sorted(files)
-    }
-    private func graphList(parent: String, onPage: (([CloudFile]) -> Void)?) async throws -> [CloudFile] {
-        var files: [CloudFile] = []
-        let select = "$select=id,name,size,folder,file,remoteItem,webUrl,lastModifiedDateTime"
-
-        let route: String
-        switch parent {
-        case Collection.recent.rootID: route = "recent?\(select)"
-        case Collection.shared.rootID: route = "sharedWithMe?\(select)"
-        default: route = "\(graphItem(parent))/children?$top=200&\(select)"
-        }
-        var next: URL? = URL(string: "\(graphDrive)/\(route)")!
-        while let url = next {
-            guard url.scheme == "https", url.host == "graph.microsoft.com" else { throw CloudError.message(L("Paginación no válida.")) }
-            let result = try await json(url)
-            files += (result["value"] as? [[String: Any]] ?? []).compactMap(Self.microsoftFile)
-            next = (result["@odata.nextLink"] as? String).flatMap(URL.init(string:))
-            if next != nil { onPage?(Self.sorted(files)) }
-        }
-        return Self.sorted(files)
     }
     static func sorted(_ files: [CloudFile]) -> [CloudFile] {
         files.sorted { a, b in a.isFolder != b.isFolder ? a.isFolder : a.name.localizedStandardCompare(b.name) == .orderedAscending }
