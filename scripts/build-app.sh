@@ -63,6 +63,13 @@ if [[ -n "$processor" ]]; then
     const_list="$(mktemp)"; source_list="$(mktemp)"
     find "$binary_dir/iCloudy.build" "$PWD" -maxdepth 1 -name '*.swiftconstvalues' 2>/dev/null > "$const_list" || true
     find "$binary_dir/iCloudy.build" -name '*.swiftconstvalues' 2>/dev/null >> "$const_list" || true
+    # Xcode's SwiftPM build system puts target intermediates beside Products, not inside the binary directory.
+    # Select this configuration and the executable target only; test targets carry duplicate intent declarations.
+    if [[ "$build_configuration" == "release" ]]; then configuration_title="Release"; else configuration_title="Debug"; fi
+    xcode_intermediates="$PWD/.build/out/Intermediates.noindex/iCloudy.build/$configuration_title/iCloudy-p.build"
+    if [[ -d "$xcode_intermediates" ]]; then
+        find "$xcode_intermediates" -name '*.swiftconstvalues' >> "$const_list"
+    fi
     sort -u -o "$const_list" "$const_list"
     find "$PWD/Sources/iCloudy" -name '*.swift' > "$source_list"
     if [[ -s "$const_list" ]]; then
