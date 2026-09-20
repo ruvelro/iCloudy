@@ -1,0 +1,182 @@
+import AppKit
+import SwiftUI
+import Combine
+
+extension AppModel {
+    /// Copies the provider's own web link; it opens only for people who already have access.
+    func copyLink(_ file: CloudFile) {
+        guard let url = file.webURL else { error = L("Este elemento no tiene enlace web."); return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+        info = L("Enlace copiado. Solo funciona para quien ya tenga acceso a «\(file.name)».")
+    }
+
+    /// Sharing with anyone is irreversible from the app, so the view asks for confirmation before calling this.
+    func createPublicLink(_ file: CloudFile, account target: Account? = nil) async {
+        guard let account = target ?? account else { return }
+        do {
+            let link = try await client(account).publicLink(for: file)
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(link.absoluteString, forType: .string)
+            info = L("Enlace público copiado. Cualquiera que lo tenga podrá ver «\(file.name)». Para revocarlo, usa la web del proveedor.")
+        } catch { self.error = error.localizedDescription }
+    }
+
+    /// Whether "copy to…" can do anything with this selection. Drive cannot copy a folder, and offering the action
+    /// only to answer with a refusal afterwards is a worse way of saying so.
+    func canCopy(_ files: [CloudFile]) -> Bool {
+        guard let account, account.capabilities.copy, !files.isEmpty else { return false }
+        return account.cloud != .google || !files.contains(where: \.isFolder)
+    }
+
+    func requestRelocation(_ files: [CloudFile], copy: Bool) {
+        guard let account, !files.isEmpty else { return }
+        if copy, account.cloud == .google, files.contains(where: \.isFolder) {
+            error = L("Google Drive no permite copiar carpetas. Copia los archivos que contiene."); return
+        }
+        if copy, !account.capabilities.copy { error = L("\(account.cloud.title) no permite copiar desde iCloudy."); return }
+        relocation = Relocation(files: files, kind: copy ? .copy : .move, account: account, origin: path.isEmpty && collection != .files ? nil : folderID)
+    }
+
+    func requestCrossCloud(_ files: [CloudFile]) {
+        guard let account, !files.isEmpty else { return }
+        guard accounts.count > 1 else { error = L("Conecta otra cuenta para poder enviar archivos entre nubes."); return }
+        crossCloud = CrossCloudRequest(files: files, source: account)
+    }
+
+    /// Queues one job per item; the queue stages each file locally and uploads it with checkpoints and verification.
+    func enqueueCrossCloud(_ files: [CloudFile], from source: Account, to target: Account, parent: String, destinationPath: [CloudFile]) {
+        let label = ([target.email] + destinationPath.map(\.name)).joined(separator: " / ")
+        let batch = UUID()
+        let jobs = files.map { file -> Transfer in
+            var job = Transfer(batchID: batch, name: file.name, destination: label, accountID: source.id, direction: .transfer, localURL: URL(fileURLWithPath: "/"), parent: parent, file: file)
+            job.localURL = queue.scratchDirectory(for: job.id)
+            job.targetAccountID = target.id
+            return job
+        }
+        do { try queue.add(jobs); info = L("\(jobs.count == 1 ? L("«\(files[0].name)»") : L("\(jobs.count) elementos")) en cola hacia \(accountTitle(target)). Sigue el progreso en Transferencias.") }
+        catch { self.error = error.localizedDescription }
+    }
+
+    /// Checks cycles and name clashes first, then processes item by item and stops at the first failure.
+    func relocate(_ request: Relocation, to destination: String, destinationPath: [CloudFile]) async {
+        if case .transfer(let source) = request.kind {
+            enqueueCrossCloud(request.files, from: source, to: request.account, parent: destination, destinationPath: destinationPath); return
+        }
+        let ids = Set(request.files.map(\.id))
+        guard !ids.contains(destination), !destinationPath.contains(where: { ids.contains($0.id) }) else {
+            error = L("Una carpeta no puede moverse ni copiarse dentro de sí misma."); return
+        }
+        var done = 0
+        do {
+            let api = try client(request.account)
+            let siblings = try await api.list(parent: destination)
+            let clashes = request.files.filter { file in siblings.contains { $0.id != file.id && $0.name.localizedCaseInsensitiveCompare(file.name) == .orderedSame } }
+            guard clashes.isEmpty else {
+                throw CloudError.message(L("En la carpeta de destino ya existe ") + clashes.map { "«\($0.name)»" }.joined(separator: ", ") + ". Renombra antes de mover o copiar.")
+            }
+            if request.isMove, queue.hasActive(accountID: request.account.id) { throw CloudError.message(L("Pausa las transferencias de esta cuenta antes de mover sus archivos.")) }
+            for file in request.files {
+                if request.isMove {
+                    try await api.move(file: file, to: destination)
+                    try applyIdentityChange(api.identityChange(file: file, name: file.name, destination: destination), account: request.account, destinationPath: destinationPath)
+                } else if request.account.cloud == .microsoft && !request.account.isDemo {
+                    try await remoteCopies.start(file: file, destination: destination, api: api)
+                } else { try await api.copy(file: file, to: destination) }
+                done += 1
+                if request.isMove {
+                    for i in favorites.indices where favorites[i].accountID == request.account.id && favorites[i].file.id == file.id {
+                        favorites[i].path = destinationPath; favorites[i].collection = .files
+                    }
+                }
+            }
+            if request.isMove { try LocalStore.save(favorites, to: favoritesURL) }
+            let target = destinationPath.last?.name ?? "Mis archivos"
+            if !request.isMove, request.account.cloud == .microsoft, !request.account.isDemo {
+                info = L("Copia enviada a OneDrive. Su estado se muestra en Transferencias hasta que el servidor confirme el resultado.")
+                reload(fresh: true)
+                return
+            }
+            let verb = request.isMove ? (done == 1 ? "movido" : "movidos") : (done == 1 ? "copiado" : "copiados")
+            info = L("\(done == 1 ? L("«\(request.files[0].name)»") : L("\(done) elementos")) \(verb) a «\(target)».") + (!request.isMove && request.account.cloud == .microsoft ? L(" OneDrive puede tardar unos segundos en mostrar la copia.") : L(""))
+        } catch {
+            self.error = (done > 0 ? L("Se completaron \(done) de \(request.files.count). ") : L("")) + error.localizedDescription
+        }
+        reload(fresh: true)
+    }
+
+    func requestTrash(_ files: [CloudFile]) {
+        guard account != nil, !files.isEmpty else { return }
+        pendingTrash = files
+    }
+
+    /// Sends the items to the trash one by one and stops at the first failure so the user sees exactly what remains.
+    func trash(_ files: [CloudFile]) async {
+        guard let account else { return }
+        var moved = 0
+        do {
+            let api = try client(account)
+            for file in files {
+                try await api.trash(file: file)
+                moved += 1
+                spotlight.forget(accountID: account.id, fileID: file.id)
+                favorites.removeAll { $0.accountID == account.id && ($0.file.id == file.id || $0.path.contains { $0.id == file.id }) }
+            }
+            try LocalStore.save(favorites, to: favoritesURL)
+            if [.ftp, .webdav].contains(account.cloud), !account.isDemo {
+                info = L("\(moved) elementos eliminados del servidor de forma permanente.")
+            } else if account.cloud == .volume {
+                info = L("\(moved) elementos enviados a la papelera. Puedes restaurarlos desde el Finder.")
+            } else {
+            info = moved == 1 ? L("«\(files[0].name)» está en la papelera de \(account.cloud.title). Puedes restaurarlo desde su web.") : L("\(moved) elementos enviados a la papelera de \(account.cloud.title).")
+            }
+        } catch {
+            self.error = (moved > 0 ? L("Se enviaron \(moved) de \(files.count) elementos. ") : L("")) + error.localizedDescription
+        }
+        reload(fresh: true)
+    }
+
+    func promptName(_ file: CloudFile? = nil) {
+        guard let account, file != nil || canWrite else { return }
+        editingFile = file; editName = file?.name ?? ""; editContext = (account, folderID); showNameDialog = true
+    }
+
+    func applyIdentityChange(_ change: RemoteIdentityChange, account: Account, destinationPath: [CloudFile]? = nil) throws {
+        let previousParent = path.map(\.name)
+        for i in favorites.indices where favorites[i].accountID == account.id {
+            let old = favorites[i].file.id
+            favorites[i].file = change.file(favorites[i].file)
+            favorites[i].path = favorites[i].path.map(change.file)
+            if let destinationPath {
+                if old == change.oldID { favorites[i].path = destinationPath }
+                else if let position = favorites[i].path.firstIndex(where: { $0.id == change.newID }) {
+                    favorites[i].path = destinationPath + favorites[i].path[position...]
+                }
+            }
+        }
+        try LocalStore.save(favorites, to: favoritesURL)
+        if selectedAccountID == account.id { path = path.map(change.file); files = files.map(change.file) }
+        listings.removeAll(accountID: account.id)
+        localCopies.remap(change, accountID: account.id)
+        spotlight.remap(change, accountID: account.id, accountLabel: accountTitle(account), oldParent: previousParent, newParent: destinationPath?.map(\.name))
+        try mirrors.remap(change, accountID: account.id)
+        try queue.remap(change, accountID: account.id)
+    }
+
+    func commitName() async {
+        guard let (account, parent) = editContext else { return }
+        let file = editingFile, name = editName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let problem = FileNames.problem(with: name, for: account.cloud) { error = problem; return }
+        do {
+            let api = try client(account)
+            let siblings = try await api.list(parent: parent)
+            guard !siblings.contains(where: { $0.id != file?.id && $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }) else { throw CloudError.message(L("Ya existe un elemento con ese nombre. Elige otro.")) }
+            if let file {
+                guard !queue.hasActive(accountID: account.id) else { throw CloudError.message(L("Pausa las transferencias de esta cuenta antes de renombrar sus archivos.")) }
+                try await api.rename(file: file, name: name)
+                try applyIdentityChange(api.identityChange(file: file, name: name), account: account)
+            } else { _ = try await api.createFolder(name: name, parent: parent) }
+            showNameDialog = false; reload(fresh: true)
+        } catch { self.error = error.localizedDescription }
+    }
+}
