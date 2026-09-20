@@ -530,19 +530,19 @@ final class ProviderTests: XCTestCase {
         // A Basic password travels in every request. macOS blocks plain HTTP off the local network anyway, and over
         // the internet it would be handing the password to whoever is listening.
         for local in ["nas.local", "192.168.1.10", "10.0.0.5", "172.16.3.1", "127.0.0.1", "localhost", "diskstation"] {
-            XCTAssertTrue(OAuth.isLocalNetwork(local), local)
+            XCTAssertTrue(LoginAddress.isLocalNetwork(local), local)
         }
         for remote in ["nube.ejemplo.com", "8.8.8.8", "172.32.0.1", "11.0.0.1"] {
-            XCTAssertFalse(OAuth.isLocalNetwork(remote), remote)
+            XCTAssertFalse(LoginAddress.isLocalNetwork(remote), remote)
         }
         // An IPv6 literal has no dots either, and a NAS reachable over native IPv6 is as public as any other server.
-        XCTAssertFalse(OAuth.isLocalNetwork("2606:4700::1111"), "Una dirección IPv6 pública no es la red local")
-        XCTAssertFalse(OAuth.isLocalNetwork("[2606:4700::1111]"))
-        XCTAssertTrue(OAuth.isLocalNetwork("::1"))
-        XCTAssertTrue(OAuth.isLocalNetwork("fe80::1"), "Enlace local")
-        XCTAssertTrue(OAuth.isLocalNetwork("fd00::1"), "Rango privado de IPv6")
+        XCTAssertFalse(LoginAddress.isLocalNetwork("2606:4700::1111"), "Una dirección IPv6 pública no es la red local")
+        XCTAssertFalse(LoginAddress.isLocalNetwork("[2606:4700::1111]"))
+        XCTAssertTrue(LoginAddress.isLocalNetwork("::1"))
+        XCTAssertTrue(LoginAddress.isLocalNetwork("fe80::1"), "Enlace local")
+        XCTAssertTrue(LoginAddress.isLocalNetwork("fd00::1"), "Rango privado de IPv6")
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        let oauth = OAuth(session: URLSession(configuration: config)) { _ in false }
+        let oauth = WebDAVAuthentication(session: URLSession(configuration: config))
         StubProtocol.handler = { _ in (207, [:], Data(#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"></d:multistatus>"#.utf8)) }
         let nas = try await oauth.signInWebDAV(server: "http://nas.local/dav", username: "ana", password: "secreta")
         XCTAssertEqual(nas.0.serverURL, "http://nas.local/dav", "En la red local se permite")
@@ -661,7 +661,7 @@ final class ProviderTests: XCTestCase {
 
     func testWebDAVSignInValidatesTheServerBeforeStoringAnything() async throws {
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        let oauth = OAuth(session: URLSession(configuration: config)) { _ in XCTFail("WebDAV must not open a browser"); return false }
+        let oauth = WebDAVAuthentication(session: URLSession(configuration: config))
         StubProtocol.handler = { request in
             XCTAssertEqual(request.httpMethod, "PROPFIND")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Basic " + Data("ana:secreta".utf8).base64EncodedString())
@@ -686,7 +686,7 @@ final class ProviderTests: XCTestCase {
         // Password managers hand out `https://ana:secreta@nas/dav`. The address lives in accounts.json, outside the
         // Keychain, so what rides in it is stripped and treated as the credentials it is.
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        let oauth = OAuth(session: URLSession(configuration: config)) { _ in false }
+        let oauth = WebDAVAuthentication(session: URLSession(configuration: config))
         var authorization: String?
         StubProtocol.handler = { request in
             authorization = request.value(forHTTPHeaderField: "Authorization")

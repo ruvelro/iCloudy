@@ -17,15 +17,7 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
         case .o2: return L("O2 Cloud")
         }
     }
-    var tokenURL: String {
-        switch self {
-        case .google: return "https://oauth2.googleapis.com/token"
-        case .microsoft: return "https://login.microsoftonline.com/common/oauth2/v2.0/token"
-        case .dropbox: return "https://api.dropboxapi.com/oauth2/token"
-        case .box: return "https://api.box.com/oauth2/token"
-        case .webdav, .ftp, .volume, .mega, .o2: return "" // no token endpoint: password, file-system access or a session identifier
-        }
-    }
+    var tokenURL: String { OAuthProviderSettings.settings(for: self)?.tokenEndpoint ?? "" }
     /// HTTP authorization scheme for the value stored in `Credential.accessToken`.
     var authorizationScheme: String { [.webdav, .ftp].contains(self) ? "Basic" : "Bearer" }
     /// True when the user brings their own server and credentials instead of signing in at a provider.

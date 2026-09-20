@@ -47,3 +47,14 @@ final class OAuthTests: XCTestCase {
         XCTAssertEqual(try PropertyListDecoder().decode(OAuthConfiguration.self, from: data).microsoftClientID, config.microsoftClientID)
     }
 }
+
+@MainActor
+final class AuthenticationIsolationTests: XCTestCase {
+    func testPasswordAndVolumeProvidersCannotEnterTheBrowserOAuthFlow() async {
+        let oauth = OAuth(openURL: { _ in XCTFail("Unsupported providers must not open the browser"); return false })
+        for cloud in [Cloud.webdav, .ftp, .volume, .mega, .o2] {
+            do { _ = try await oauth.signIn(cloud: cloud, clientID: "", clientSecret: ""); XCTFail("Expected rejection for \(cloud)") }
+            catch { XCTAssertTrue(error.localizedDescription.contains("OAuth")) }
+        }
+    }
+}

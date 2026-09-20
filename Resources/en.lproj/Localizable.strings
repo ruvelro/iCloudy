@@ -732,3 +732,5 @@
 "Copia local sin acceso: revisa el permiso o conecta el volumen" = "Local copy unavailable: check permission or connect the volume";
 
 "Este proveedor no usa copias asíncronas." = "This provider does not use asynchronous copies.";
+
+"Este proveedor no usa OAuth." = "This provider does not use OAuth.";

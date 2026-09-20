@@ -72,36 +72,14 @@ enum OAuthRequest {
     /// True when the provider accepts a loopback redirect on a port other than the registered one, which lets a busy
     /// 53682 fall back to an ephemeral one. Google ignores the port of a loopback redirect and Box checks only
     /// scheme, host and path; Microsoft and Dropbox compare the whole address. See `docs/OAUTH.md`.
-    static func toleratesAnyPort(_ cloud: Cloud) -> Bool { [.google, .box].contains(cloud) }
+    static func toleratesAnyPort(_ cloud: Cloud) -> Bool { OAuthProviderSettings.settings(for: cloud)?.toleratesAnyPort ?? false }
 
-    static func authorizationEndpoint(_ cloud: Cloud) -> String {
-        switch cloud {
-        case .google: return "https://accounts.google.com/o/oauth2/v2/auth"
-        case .microsoft: return "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
-        case .dropbox: return "https://www.dropbox.com/oauth2/authorize"
-        case .box: return "https://account.box.com/api/oauth2/authorize"
-        case .webdav, .ftp, .volume, .mega, .o2: return ""
-        }
-    }
+    static func authorizationEndpoint(_ cloud: Cloud) -> String { OAuthProviderSettings.settings(for: cloud)?.authorizationEndpoint ?? "" }
     static func authorizationURL(cloud: Cloud, clientID: String, state: String, challenge: String, port: UInt16 = defaultPort) -> URL {
         var url = URLComponents(string: authorizationEndpoint(cloud))!
         var values = ["client_id": clientID, "redirect_uri": redirectURI(port: port), "response_type": "code", "state": state, "code_challenge": challenge, "code_challenge_method": "S256", "prompt": "select_account"]
-        if cloud == .google {
-            values["scope"] = "openid email profile https://www.googleapis.com/auth/drive"
-            values["access_type"] = "offline"
-            // Explicit consent ensures a refresh token, including when adding a previously used account.
-            values["prompt"] = "consent select_account"
-        } else if cloud == .microsoft {
-            values["scope"] = "openid profile email offline_access User.Read Files.ReadWrite"
-        } else if cloud == .dropbox {
-            // Without offline access Dropbox returns a short-lived token and no way to renew it.
-            values["token_access_type"] = "offline"
-            values["scope"] = "account_info.read files.metadata.read files.content.read files.content.write sharing.read sharing.write"
-            values.removeValue(forKey: "prompt")
-        } else if cloud == .box {
-            // Box grants whatever the application is configured for; it rejects an explicit scope parameter it does not know.
-            values.removeValue(forKey: "prompt")
-        }
+        values.removeValue(forKey: "prompt")
+        values.merge(OAuthProviderSettings.settings(for: cloud)?.authorizationParameters ?? [:]) { _, providerValue in providerValue }
         url.queryItems = values.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
         return url.url!
     }

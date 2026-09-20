@@ -418,7 +418,7 @@ final class FTPTests: XCTestCase {
         let server = try FakeFTPServer(files: [:], listings: ["/": ""])
         let port = try await server.start()
         defer { server.stop() }
-        let oauth = OAuth { _ in XCTFail("FTP must not open a browser"); return false }
+        let oauth = FTPAuthentication()
         let (account, credential) = try await oauth.signInFTP(server: "ftp://ana:secreta@127.0.0.1:\(port)/", username: "", password: "")
         XCTAssertEqual(account.serverURL, "ftp://127.0.0.1:\(port)/", "La contraseña no acaba en accounts.json")
         XCTAssertFalse(account.id.contains("secreta"))

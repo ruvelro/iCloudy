@@ -518,9 +518,9 @@ final class AppModel: ObservableObject {
         do {
             let result: (Account, Credential)
             switch cloud {
-            case .webdav: result = try await oauth.signInWebDAV(server: server, username: username, password: password)
-            case .ftp: result = try await oauth.signInFTP(server: server, username: username, password: password)
-            case .mega: result = try await oauth.signInMega(email: username, password: password)
+            case .webdav: result = try await WebDAVAuthentication().signInWebDAV(server: server, username: username, password: password)
+            case .ftp: result = try await FTPAuthentication().signInFTP(server: server, username: username, password: password)
+            case .mega: result = try await MegaAuthentication().signInMega(email: username, password: password)
             default: throw CloudError.message(L("\(cloud.title) no se conecta con usuario y contraseña."))
             }
             var (account, credential) = result
