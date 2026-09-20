@@ -26,6 +26,15 @@ swift test
 
 Las pruebas usan respuestas HTTP simuladas, servidores FTP locales y directorios temporales. No sustituyen la comprobación manual con cuentas reales de cada servicio.
 
+Comprobación final del 20 de septiembre de 2026:
+
+- 360 tests ejecutados, sin fallos.
+- Bundles release y debug compilados con Xcode 27.0, firmados con `iCloudy Development` y verificados con `codesign --verify --deep --strict`.
+- Versión `0.5.0` y número de compilación `2` conservados en ambos bundles.
+- Metadatos de App Intents presentes: seis acciones y cinco accesos directos en ambos bundles. El script admite tanto la distribución tradicional de SwiftPM como sus intermediarios de Xcode.
+- `get-task-allow` activo solo en debug; release mantiene sus permisos originales.
+
+
 ## Compilar y depurar
 
 Compilación habitual, con la configuración OAuth local y la identidad de firma que utiliza el proyecto:
