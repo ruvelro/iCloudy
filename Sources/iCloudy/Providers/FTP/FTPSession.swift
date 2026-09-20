@@ -435,7 +435,7 @@ enum FTPListing {
             guard type != "cdir", type != "pdir" else { return nil }
             let folder = type == "dir"
             return CloudFile(id: join(parent, name), name: name,
-                             mime: folder ? "application/vnd.google-apps.folder" : CloudAPI.mime(forName: name),
+                             mime: folder ? "application/vnd.google-apps.folder" : CloudSession.mime(forName: name),
                              size: folder ? nil : facts["size"].flatMap(Int64.init),
                              modified: facts["modify"].flatMap(timestamp), webURL: nil, isFolder: folder)
         }
@@ -477,7 +477,7 @@ enum FTPListing {
         // A symbolic link points somewhere iCloudy cannot verify; it is listed but never treated as a folder.
         let clean = line.hasPrefix("l") ? String(name.split(separator: " -> ").first ?? Substring(name)) : name
         return CloudFile(id: join(parent, clean), name: clean,
-                         mime: folder ? "application/vnd.google-apps.folder" : CloudAPI.mime(forName: clean),
+                         mime: folder ? "application/vnd.google-apps.folder" : CloudSession.mime(forName: clean),
                          size: folder ? nil : Int64(fields[4]), modified: nil, webURL: nil, isFolder: folder)
     }
     private static func dos(_ line: String, parent: String) -> CloudFile? {
@@ -493,7 +493,7 @@ enum FTPListing {
         let name = String(remainder)
         guard !name.isEmpty else { return nil }
         return CloudFile(id: join(parent, name), name: name,
-                         mime: folder ? "application/vnd.google-apps.folder" : CloudAPI.mime(forName: name),
+                         mime: folder ? "application/vnd.google-apps.folder" : CloudSession.mime(forName: name),
                          size: folder ? nil : Int64(fields[2]), modified: nil, webURL: nil, isFolder: folder)
     }
 }

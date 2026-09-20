@@ -238,19 +238,19 @@ final class FTPTests: XCTestCase {
     }
 
     func testEndpointParsingChoosesSchemePortAndBase() throws {
-        let plain = try CloudAPI.ftpEndpoint("ftp://servidor.example.com/carpeta/")
+        let plain = try FTPProvider.ftpEndpoint("ftp://servidor.example.com/carpeta/")
         XCTAssertEqual(plain.host, "servidor.example.com")
         XCTAssertEqual(plain.port, 21)
         XCTAssertEqual(plain.base, "/carpeta")
         if case .none = plain.security {} else { XCTFail("ftp:// no debe cifrarse") }
 
-        let secure = try CloudAPI.ftpEndpoint("ftps://nas.local")
+        let secure = try FTPProvider.ftpEndpoint("ftps://nas.local")
         XCTAssertEqual(secure.port, 990, "FTPS implícito usa el 990 por omisión")
         XCTAssertEqual(secure.base, "/")
         if case .implicitTLS = secure.security {} else { XCTFail("ftps:// debe cifrarse") }
 
-        XCTAssertEqual(try CloudAPI.ftpEndpoint("ftp://nas.local:2121/x").port, 2121)
-        XCTAssertThrowsError(try CloudAPI.ftpEndpoint("no es una dirección"))
+        XCTAssertEqual(try FTPProvider.ftpEndpoint("ftp://nas.local:2121/x").port, 2121)
+        XCTAssertThrowsError(try FTPProvider.ftpEndpoint("no es una dirección"))
     }
 
     func testTheRootHasNoBreadcrumbsOfItsOwn() async throws {
@@ -260,13 +260,13 @@ final class FTPTests: XCTestCase {
         let port = try await server.start()
         defer { server.stop() }
         let api = client(port: port)
-        XCTAssertTrue(try api.ftpTrail(id: "root").isEmpty, "El alias no es una carpeta")
-        XCTAssertEqual(try api.ftpTrail(id: "/uno/dos").map(\.name), ["uno", "dos"])
+        XCTAssertTrue(try (api.provider as! FTPProvider).ftpTrail(id: "root").isEmpty, "El alias no es una carpeta")
+        XCTAssertEqual(try (api.provider as! FTPProvider).ftpTrail(id: "/uno/dos").map(\.name), ["uno", "dos"])
         // WebDAV addresses items the same way and had the same phantom.
         let webdav = CloudAPI(account: Account(id: "webdav:test", cloud: .webdav, name: "Test", email: "ana@test",
                                                clientID: "", clientSecret: nil, serverURL: "https://dav.example.com/dav"))
-        XCTAssertTrue(webdav.webdavTrail(id: "root").isEmpty)
-        XCTAssertEqual(webdav.webdavTrail(id: "/uno/dos").map(\.name), ["uno", "dos"])
+        XCTAssertTrue((webdav.provider as! WebDAVProvider).webdavTrail(id: "root").isEmpty)
+        XCTAssertEqual((webdav.provider as! WebDAVProvider).webdavTrail(id: "/uno/dos").map(\.name), ["uno", "dos"])
     }
 
     func testTheSessionAsksForUTF8AndExplainsARefusedCertificate() async throws {
@@ -314,7 +314,7 @@ final class FTPTests: XCTestCase {
         CloudAPI(account: account(port: port), tokenProvider: { Data("ana:secreta".utf8).base64EncodedString() })
     }
     /// Keeps a broken expectation from stalling the suite for the full production timeout.
-    private func hurry(_ api: CloudAPI) async throws { await (try await api.ftp()).setTimeout(6) }
+    private func hurry(_ api: CloudAPI) async throws { await (try await (api.provider as! FTPProvider).ftp()).setTimeout(6) }
 
     func testListsDownloadsAndUploadsAgainstARealServer() async throws {
         let payload = Data(repeating: 65, count: 5000)
@@ -408,7 +408,7 @@ final class FTPTests: XCTestCase {
         defer { server.stop() }
         let api = client(port: port)
         try await hurry(api)
-        let session = try await api.ftp()
+        let session = try await (api.provider as! FTPProvider).ftp()
         do { _ = try await session.command("STOR a\r\nDELE /b"); XCTFail("Debe rechazarse") }
         catch { XCTAssertTrue(error.localizedDescription.contains("salto de línea"), error.localizedDescription) }
         XCTAssertFalse(server.log().contains { $0.hasPrefix("DELE") }, server.log().description)

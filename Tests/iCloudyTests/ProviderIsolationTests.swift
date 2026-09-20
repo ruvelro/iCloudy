@@ -36,4 +36,43 @@ final class ProviderIsolationTests: XCTestCase {
         XCTAssertEqual(third, first)
         XCTAssertEqual(hosts, ["www.googleapis.com", "graph.microsoft.com", "www.googleapis.com"])
     }
+
+    func testInvalidatingOneClientDoesNotInvalidateAnotherForTheSameAccount() async throws {
+        let first = client(.google), second = client(.google)
+        first.invalidate()
+        XCTAssertTrue(first.invalidated)
+        XCTAssertFalse(second.invalidated)
+        do { _ = try await first.token(); XCTFail("An invalidated client must stop authenticating") }
+        catch is CancellationError {} catch { XCTFail("Unexpected error: \(error)") }
+        let token = try await second.token()
+        XCTAssertEqual(token, "test")
+    }
+
+    func testMegaCachesBelongToTheirProviderAndAreClearedIndependently() throws {
+        let first = client(.mega), second = client(.mega)
+        let a = try XCTUnwrap(first.provider as? MegaProvider)
+        let b = try XCTUnwrap(second.provider as? MegaProvider)
+        a.megaStateCache = MegaState(sid: "first", masterKey: Data(repeating: 1, count: 16))
+        b.megaStateCache = MegaState(sid: "second", masterKey: Data(repeating: 2, count: 16))
+        a.megaStateCache?.loaded = true
+        b.megaStateCache?.loaded = true
+        first.dropCaches()
+        XCTAssertFalse(try XCTUnwrap(a.megaStateCache).loaded)
+        XCTAssertTrue(try XCTUnwrap(b.megaStateCache).loaded)
+        first.invalidate()
+        XCTAssertNil(a.megaStateCache)
+        XCTAssertEqual(b.megaStateCache?.sid, "second")
+    }
+
+    func testExpirationCallbacksAreForwardedOnceAndStayWithTheirAccount() {
+        let first = client(.o2), second = client(.o2)
+        var reasons: [String?] = []
+        first.sessionDidExpire = { reasons.append($0) }
+        first.provider.expireSession("expired")
+        first.provider.expireSession("again")
+        XCTAssertEqual(reasons.count, 1)
+        XCTAssertEqual(reasons.first!, "expired")
+        XCTAssertTrue(first.sessionExpired)
+        XCTAssertFalse(second.sessionExpired)
+    }
 }

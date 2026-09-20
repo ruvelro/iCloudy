@@ -4,12 +4,13 @@ import UniformTypeIdentifiers
 
 /// Dropbox addresses everything by path, so iCloudy uses `path_lower` as the item id and the empty string as the root.
 /// Ids therefore change when an item is renamed or moved, which is why every write is followed by a fresh listing.
-extension CloudAPI {
+@MainActor
+final class DropboxProvider: CloudSession, CloudProvider {
+    
+}
+
+extension DropboxProvider {
     func dropboxPath(_ id: String) -> String { id == "root" || id == Cloud.dropbox.rootAlias ? "" : id }
-    static func dropboxParent(_ path: String) -> String {
-        let parts = path.split(separator: "/").dropLast()
-        return parts.isEmpty ? "" : "/" + parts.joined(separator: "/")
-    }
     static func dropboxJoin(_ parent: String, _ name: String) -> String {
         (parent == "/" ? "" : parent) + "/" + name
     }
@@ -21,11 +22,6 @@ extension CloudAPI {
             else { for unit in String(scalar).utf16 { result += String(format: "\\u%04x", unit) } }
         }
     }
-    nonisolated static func mime(forName name: String) -> String {
-        let ext = (name as NSString).pathExtension
-        guard !ext.isEmpty, let type = UTType(filenameExtension: ext), let mime = type.preferredMIMEType else { return "application/octet-stream" }
-        return mime
-    }
 
     /// Every Dropbox call is a POST, reads included, so without `repeatable` none of them would ever be retried and
     /// a single 429 during a busy minute failed the whole operation. `repeatable` is set on the calls that only read,
@@ -35,7 +31,7 @@ extension CloudAPI {
         for attempt in 0..<4 {
             try Task.checkCancellation()
             let (data, response) = try await send(&request)
-            if attempt < 3, let delay = CloudAPI.retryDelay(response, method: "POST", attempt: attempt, repeatable: repeatable) {
+            if attempt < 3, let delay = CloudSession.retryDelay(response, method: "POST", attempt: attempt, repeatable: repeatable) {
                 try await Task.sleep(for: .seconds(delay))
                 continue
             }
@@ -76,7 +72,7 @@ extension CloudAPI {
     }
 
     func dropboxRename(file: CloudFile, name: String) async throws {
-        _ = try await dropboxRPC("files/move_v2", ["from_path": file.id, "to_path": Self.dropboxJoin(Self.dropboxParent(file.id), name), "autorename": false])
+        _ = try await dropboxRPC("files/move_v2", ["from_path": file.id, "to_path": Self.dropboxJoin(CloudSession.dropboxParent(file.id), name), "autorename": false])
     }
     func dropboxMove(file: CloudFile, to destination: String) async throws {
         _ = try await dropboxRPC("files/move_v2", ["from_path": file.id, "to_path": Self.dropboxJoin(dropboxPath(destination), file.name), "autorename": false])
@@ -120,7 +116,7 @@ extension CloudAPI {
             guard let wrapper = match["metadata"] as? [String: Any],
                   let metadata = wrapper["metadata"] as? [String: Any],
                   let file = Self.dropboxFile(metadata) else { return nil }
-            return SearchHit(accountID: account.id, file: file, parentID: Self.dropboxParent(file.id))
+            return SearchHit(accountID: account.id, file: file, parentID: CloudSession.dropboxParent(file.id))
         }
         return SearchPage(hits: hits, next: result["has_more"] as? Bool == true ? result["cursor"] as? String : nil)
     }
@@ -231,10 +227,10 @@ struct DropboxContentHash {
     private var pending = Data()
     mutating func update(_ data: Data) {
         pending.append(data)
-        while pending.count >= Int(CloudAPI.dropboxChunk) {
-            let block = pending.prefix(Int(CloudAPI.dropboxChunk))
+        while pending.count >= Int(DropboxProvider.dropboxChunk) {
+            let block = pending.prefix(Int(DropboxProvider.dropboxChunk))
             digests.append(contentsOf: SHA256.hash(data: block))
-            pending.removeFirst(Int(CloudAPI.dropboxChunk))
+            pending.removeFirst(Int(DropboxProvider.dropboxChunk))
         }
     }
     /// Not mutating, so the result can be read from a captured copy after the last block was fed in.
@@ -242,5 +238,69 @@ struct DropboxContentHash {
         var all = digests
         if !pending.isEmpty { all.append(contentsOf: SHA256.hash(data: pending)) }
         return UploadHasher.hex(SHA256.hash(data: all))
+    }
+}
+
+extension DropboxProvider {
+    func list(parent: String, onPage: (([CloudFile]) -> Void)? = nil) async throws -> [CloudFile] {
+        return try await dropboxList(parent: parent, onPage: onPage)
+    }
+
+    func createFolder(name: String, parent: String) async throws -> String {
+        return try await dropboxCreateFolder(name: name, parent: parent)
+    }
+
+    func contentRequest(for file: CloudFile, exportMime: String?) async throws -> URLRequest {
+        var request = try await request(URL(string: "https://content.dropboxapi.com/2/files/download")!, method: "POST")
+                    request.setValue(Self.asciiJSON(["path": dropboxPath(file.id)]), forHTTPHeaderField: "Dropbox-API-Arg")
+                    return request
+    }
+
+    func rename(file: CloudFile, name: String) async throws {
+        try await dropboxRename(file: file, name: name)
+    }
+
+    func move(file: CloudFile, to destination: String) async throws {
+        try await dropboxMove(file: file, to: destination); return
+    }
+
+    func copy(file: CloudFile, to destination: String, accepted: ((URL) throws -> Void)? = nil) async throws {
+        try await dropboxCopy(file: file, to: destination); return
+    }
+
+    func trash(file: CloudFile) async throws {
+        try await dropboxTrash(file: file); return
+    }
+
+    func publicLink(for file: CloudFile) async throws -> URL {
+        return try await dropboxPublicLink(for: file)
+    }
+
+    func searchPage(term: String, cursor: String? = nil, filters: SearchFilters = SearchFilters(), referenceDate: Date = Date()) async throws -> SearchPage {
+        return try await dropboxSearch(term: term, cursor: cursor)
+    }
+
+    func folderTrail(id: String) async throws -> [CloudFile] {
+        return dropboxTrail(id: id)
+    }
+
+    func storageQuota() async throws -> StorageQuota {
+        return try await dropboxQuota()
+    }
+    func uploadFile(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
+        return try await dropboxUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+    }
+}
+
+extension DropboxProvider {
+    var requiresVerifiedLegacyCheckpoint: Bool { true }
+}
+
+extension DropboxProvider {
+    func identityChange(file: CloudFile, name: String, destination: String?) throws -> RemoteIdentityChange {
+        let newID: String
+
+                newID = Self.dropboxJoin(destination.map(dropboxPath) ?? CloudSession.dropboxParent(file.id), name).lowercased()
+        return RemoteIdentityChange(oldID: file.id, newID: newID, name: name, descendants: file.isFolder)
     }
 }

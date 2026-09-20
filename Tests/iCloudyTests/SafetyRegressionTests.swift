@@ -120,7 +120,7 @@ final class SafetyRegressionTests: XCTestCase {
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
         let account = Account(id: "audit-volume", cloud: .volume, name: "audit", email: "audit", clientID: "", clientSecret: nil, serverURL: inside.path)
         let api = CloudAPI(account: account)
-        XCTAssertThrowsError(try api.volumeURL(link.appendingPathComponent("private.txt").path))
+        XCTAssertThrowsError(try (api.provider as! VolumeProvider).volumeURL(link.appendingPathComponent("private.txt").path))
         XCTAssertEqual(try String(contentsOf: outside.appendingPathComponent("private.txt")), "outside")
     }
     func testBoxChecksumFailureRemainsFailureAfterRestart() async throws {
@@ -151,7 +151,7 @@ final class SafetyRegressionTests: XCTestCase {
     func testDropboxRejectsSourceMutationBetweenBlocks() async throws {
         let root = try root(); defer { try? FileManager.default.removeItem(at: root); StubProtocol.handler = nil }
         let local = root.appendingPathComponent("a.dat")
-        let count = Int(CloudAPI.dropboxChunk)
+        let count = Int(DropboxProvider.dropboxChunk)
         try Data(repeating: 65, count: count + 8).write(to: local)
         let account = Account(id: "audit-dropbox", cloud: .dropbox, name: "audit", email: "audit", clientID: "", clientSecret: nil)
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
@@ -243,13 +243,13 @@ final class SafetyRegressionTests: XCTestCase {
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
         let api = CloudAPI(account: Account(id: "v", cloud: .volume, name: "", email: "", clientID: "", clientSecret: nil, serverURL: inside.path))
         let file = CloudFile(id: link.appendingPathComponent("private.txt").path, name: "private.txt", mime: "text/plain", size: 8, modified: nil, webURL: nil, isFolder: false)
-        do { _ = try await api.volumeList(parent: link.path); XCTFail() } catch {}
-        do { _ = try await api.volumeCreateFolder(name: "new", parent: link.path); XCTFail() } catch {}
-        do { try await api.volumeRename(file: file, name: "renamed"); XCTFail() } catch {}
-        do { try await api.volumeTrash(file: file); XCTFail() } catch {}
-        do { try await api.volumeMove(file: file, to: "root"); XCTFail() } catch {}
-        do { try await api.volumeCopy(file: file, to: "root"); XCTFail() } catch {}
-        do { try await api.volumeDownload(file: file, to: root.appendingPathComponent("download"), progress: { _, _ in }); XCTFail() } catch {}
+        do { _ = try await (api.provider as! VolumeProvider).volumeList(parent: link.path); XCTFail() } catch {}
+        do { _ = try await (api.provider as! VolumeProvider).volumeCreateFolder(name: "new", parent: link.path); XCTFail() } catch {}
+        do { try await (api.provider as! VolumeProvider).volumeRename(file: file, name: "renamed"); XCTFail() } catch {}
+        do { try await (api.provider as! VolumeProvider).volumeTrash(file: file); XCTFail() } catch {}
+        do { try await (api.provider as! VolumeProvider).volumeMove(file: file, to: "root"); XCTFail() } catch {}
+        do { try await (api.provider as! VolumeProvider).volumeCopy(file: file, to: "root"); XCTFail() } catch {}
+        do { try await (api.provider as! VolumeProvider).volumeDownload(file: file, to: root.appendingPathComponent("download"), progress: { _, _ in }); XCTFail() } catch {}
         let dangling = inside.appendingPathComponent("dangling")
         try FileManager.default.createSymbolicLink(at: dangling, withDestinationURL: outside.appendingPathComponent("missing"))
         do {

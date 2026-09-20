@@ -125,21 +125,21 @@ final class TokenTests: XCTestCase {
     func testWhatIsWorthRepeatingDependsOnTheStatusAndTheMethod() {
         // A 429 means the provider did not process the request at all, so repeating it is safe whatever it was. A 5xx
         // may have been applied before the error came back, so a POST that creates something is not repeated.
-        XCTAssertNil(CloudAPI.retryDelay(response(429), method: "POST", attempt: 0), "Podría haber creado la carpeta")
-        XCTAssertNil(CloudAPI.retryDelay(response(503), method: "POST", attempt: 0))
-        XCTAssertNotNil(CloudAPI.retryDelay(response(429), method: "POST", attempt: 0, repeatable: true), "Salvo que sea una lectura")
-        XCTAssertNotNil(CloudAPI.retryDelay(response(503), method: "POST", attempt: 0, repeatable: true))
+        XCTAssertNil(CloudSession.retryDelay(response(429), method: "POST", attempt: 0), "Podría haber creado la carpeta")
+        XCTAssertNil(CloudSession.retryDelay(response(503), method: "POST", attempt: 0))
+        XCTAssertNotNil(CloudSession.retryDelay(response(429), method: "POST", attempt: 0, repeatable: true), "Salvo que sea una lectura")
+        XCTAssertNotNil(CloudSession.retryDelay(response(503), method: "POST", attempt: 0, repeatable: true))
         for method in ["GET", "PUT", "DELETE", "PATCH"] {
-            XCTAssertNotNil(CloudAPI.retryDelay(response(429), method: method, attempt: 0), method)
-            XCTAssertNotNil(CloudAPI.retryDelay(response(503), method: method, attempt: 0), method)
+            XCTAssertNotNil(CloudSession.retryDelay(response(429), method: method, attempt: 0), method)
+            XCTAssertNotNil(CloudSession.retryDelay(response(503), method: method, attempt: 0), method)
         }
-        XCTAssertNil(CloudAPI.retryDelay(response(404), method: "GET", attempt: 0))
-        XCTAssertNil(CloudAPI.retryDelay(response(200), method: "GET", attempt: 0))
-        XCTAssertNil(CloudAPI.retryDelay(nil, method: "GET", attempt: 0))
+        XCTAssertNil(CloudSession.retryDelay(response(404), method: "GET", attempt: 0))
+        XCTAssertNil(CloudSession.retryDelay(response(200), method: "GET", attempt: 0))
+        XCTAssertNil(CloudSession.retryDelay(nil, method: "GET", attempt: 0))
         // What the provider asks for wins over the backoff, within reason.
-        XCTAssertEqual(CloudAPI.retryDelay(response(429, retryAfter: "7"), method: "GET", attempt: 0), 7)
-        XCTAssertEqual(CloudAPI.retryDelay(response(429, retryAfter: "9999"), method: "GET", attempt: 0), 30, "Con un tope")
-        XCTAssertEqual(CloudAPI.retryDelay(response(429), method: "GET", attempt: 3), 8, "Sin cabecera, se duplica la espera")
+        XCTAssertEqual(CloudSession.retryDelay(response(429, retryAfter: "7"), method: "GET", attempt: 0), 7)
+        XCTAssertEqual(CloudSession.retryDelay(response(429, retryAfter: "9999"), method: "GET", attempt: 0), 30, "Con un tope")
+        XCTAssertEqual(CloudSession.retryDelay(response(429), method: "GET", attempt: 3), 8, "Sin cabecera, se duplica la espera")
     }
     private func response(_ status: Int, retryAfter: String? = nil) -> HTTPURLResponse {
         HTTPURLResponse(url: URL(string: "https://example.com")!, statusCode: status, httpVersion: nil,

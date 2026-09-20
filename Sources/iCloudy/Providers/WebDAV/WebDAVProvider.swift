@@ -2,7 +2,12 @@ import Foundation
 
 /// Plain WebDAV, which also covers Nextcloud, ownCloud and most home NAS boxes. Items are addressed by their path
 /// under the configured base URL, and "root" is that base. There is no OAuth, no search and no recycle bin here.
-extension CloudAPI {
+@MainActor
+final class WebDAVProvider: CloudSession, CloudProvider {
+    
+}
+
+extension WebDAVProvider {
     func webdavBase() throws -> URLComponents {
         guard let server = account.serverURL, let components = URLComponents(string: server), components.host != nil else {
             throw CloudError.message(L("Esta cuenta WebDAV no tiene una dirección de servidor válida. Vuelve a conectarla."))
@@ -93,7 +98,7 @@ extension CloudAPI {
         webdavNormalize(id).split(separator: "/").last.map(String.init) ?? id
     }
     func webdavRename(file: CloudFile, name: String) async throws {
-        let parent = Self.dropboxParent(Self.webdavNormalize(file.id))
+        let parent = CloudSession.dropboxParent(Self.webdavNormalize(file.id))
         try await webdavRelocate(file, to: (parent == "" ? "" : parent) + "/" + name, method: "MOVE")
     }
     func webdavMove(file: CloudFile, to destination: String) async throws {
@@ -276,10 +281,10 @@ final class WebDAVParserDelegate: NSObject, XMLParserDelegate {
         // Some servers, and most reverse proxies, echo the base with different capitalisation. Leaving it in made
         // every id carry the prefix twice once it was turned back into a URL.
         if !basePath.isEmpty, path.lowercased().hasPrefix(basePath.lowercased()) { path = String(path.dropFirst(basePath.count)) }
-        path = CloudAPI.webdavNormalize(path.isEmpty ? "/" : path)
+        path = WebDAVProvider.webdavNormalize(path.isEmpty ? "/" : path)
         let name = properties["displayname"] ?? path.split(separator: "/").last.map(String.init) ?? "/"
         let file = CloudFile(id: path, name: name,
-                             mime: isCollection ? "application/vnd.google-apps.folder" : (properties["getcontenttype"] ?? CloudAPI.mime(forName: name)),
+                             mime: isCollection ? "application/vnd.google-apps.folder" : (properties["getcontenttype"] ?? CloudSession.mime(forName: name)),
                              size: isCollection ? nil : properties["getcontentlength"].flatMap(Int64.init),
                              modified: properties["getlastmodified"].flatMap(Self.rfc1123.date(from:)),
                              webURL: nil, isFolder: isCollection)
@@ -295,5 +300,68 @@ final class UploadProgress: RedirectGuard, @unchecked Sendable {
     init(report: @escaping (Int64) -> Void) { self.report = report }
     func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
         report(totalBytesSent)
+    }
+}
+
+extension WebDAVProvider {
+    func list(parent: String, onPage: (([CloudFile]) -> Void)? = nil) async throws -> [CloudFile] {
+        return try await webdavList(parent: parent, onPage: onPage)
+    }
+
+    func createFolder(name: String, parent: String) async throws -> String {
+        return try await webdavCreateFolder(name: name, parent: parent)
+    }
+
+    func contentRequest(for file: CloudFile, exportMime: String?) async throws -> URLRequest {
+        return try await request(webdavURL(file.id))
+    }
+
+    func rename(file: CloudFile, name: String) async throws {
+        try await webdavRename(file: file, name: name)
+    }
+
+    func move(file: CloudFile, to destination: String) async throws {
+        try await webdavMove(file: file, to: destination); return
+    }
+
+    func copy(file: CloudFile, to destination: String, accepted: ((URL) throws -> Void)? = nil) async throws {
+        try await webdavCopy(file: file, to: destination); return
+    }
+
+    func trash(file: CloudFile) async throws {
+        try await webdavDelete(file: file); return
+    }
+
+    func publicLink(for file: CloudFile) async throws -> URL {
+        guard account.flavor == "nextcloud" else {
+                        throw CloudError.message(L("Este servidor WebDAV no admite enlaces públicos desde iCloudy. Créalos en su interfaz web."))
+                    }
+                    return try await nextcloudPublicLink(for: file)
+    }
+
+    func searchPage(term: String, cursor: String? = nil, filters: SearchFilters = SearchFilters(), referenceDate: Date = Date()) async throws -> SearchPage {
+        throw CloudError.message(L("WebDAV no ofrece búsqueda. Navega por las carpetas o usa el filtro de la carpeta actual."))
+    }
+
+    func folderTrail(id: String) async throws -> [CloudFile] {
+        return webdavTrail(id: id)
+    }
+
+    func storageQuota() async throws -> StorageQuota {
+        return try await webdavQuota()
+    }
+    func uploadFile(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
+        return try await webdavUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+    }
+}
+
+extension WebDAVProvider {
+    func identityChange(file: CloudFile, name: String, destination: String?) throws -> RemoteIdentityChange {
+        let newID: String
+
+                let parent = destination.map { Self.webdavNormalize($0 == "root" ? "/" : $0) } ?? CloudSession.dropboxParent(Self.webdavNormalize(file.id))
+                let leaf = destination == nil ? name : Self.webdavName(file.id)
+                newID = Self.webdavNormalize(parent + "/" + leaf)
+        return RemoteIdentityChange(oldID: file.id, newID: newID, name: name, descendants: file.isFolder)
     }
 }

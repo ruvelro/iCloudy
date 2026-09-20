@@ -88,24 +88,3 @@ final class RemoteCopies: ObservableObject {
     }
 }
 
-extension CloudAPI {
-    nonisolated static func validCopyMonitor(_ url: URL) -> Bool {
-        guard url.scheme == "https", url.user == nil, url.password == nil, url.port == nil || url.port == 443,
-              let host = url.host?.lowercased() else { return false }
-        return host == "graph.microsoft.com" || host == "api.onedrive.com" || host.hasSuffix(".sharepoint.com")
-    }
-    func remoteCopyStatus(_ url: URL) async throws -> RemoteCopy.State {
-        guard Self.validCopyMonitor(url) else { throw CloudError.message(L("OneDrive devolvió una dirección de seguimiento no válida.")) }
-        // Monitor URLs on storage servers are capability URLs. Never forward the Graph bearer token to them.
-        let request = url.host == "graph.microsoft.com" ? try await request(url) : URLRequest(url: url)
-        let (data, response) = try await session.data(for: request, delegate: RedirectGuard.shared)
-        try HTTP.validate(response, data: data)
-        let body = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        switch (body?["status"] as? String)?.lowercased() {
-        case "completed": return .completed
-        case "failed", "deletefailed": return .failed
-        case "inprogress", "notstarted", "updating", "waiting": return .monitoring
-        default: throw CloudError.message(L("OneDrive todavía no ha confirmado el resultado de la copia."))
-        }
-    }
-}

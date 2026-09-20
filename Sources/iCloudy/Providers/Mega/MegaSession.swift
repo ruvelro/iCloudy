@@ -43,7 +43,7 @@ final class MegaState {
     /// up as "Elemento sin acceso".
     var shareKeys: [String: Data] = [:]
     /// When the tree was last fetched. Mega does not push changes made elsewhere, so a tree older than
-    /// `CloudAPI.megaTreeMaxAge` is fetched again on the next listing; until then changes are applied in place.
+    /// `MegaProvider.megaTreeMaxAge` is fetched again on the next listing; until then changes are applied in place.
     var loadedAt: Date?
     var loaded = false
     /// Mega numbers requests so a retried call is not applied twice.

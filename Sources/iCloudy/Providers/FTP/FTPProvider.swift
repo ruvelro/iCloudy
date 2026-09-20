@@ -3,7 +3,17 @@ import Foundation
 /// FTP as a provider. Items are addressed by their absolute path on the server, like WebDAV, and "root" is the base
 /// path of the account. The protocol offers no search, no sharing links, no recycle bin and no checksums, which the
 /// capability table reflects so the interface never offers them.
-extension CloudAPI {
+@MainActor
+final class FTPProvider: CloudSession, CloudProvider {
+    var ftpSession: FTPSession?
+    override func invalidate() {
+        super.invalidate()
+        if let ftpSession { Task { await ftpSession.close() } }
+        ftpSession = nil
+    }
+}
+
+extension FTPProvider {
     /// Host, port, base path and whether the connection is wrapped in TLS, taken from the account's stored address.
     struct FTPEndpoint {
         let host: String
@@ -62,7 +72,7 @@ extension CloudAPI {
         return path
     }
     func ftpRename(file: CloudFile, name: String) async throws {
-        let parent = CloudAPI.dropboxParent(file.id)
+        let parent = CloudSession.dropboxParent(file.id)
         try await ftpMove(file: file, toPath: FTPListing.join(parent.isEmpty ? "/" : parent, name))
     }
     func ftpMove(file: CloudFile, to destination: String) async throws {
@@ -119,5 +129,67 @@ extension CloudAPI {
             return CloudFile(id: path, name: parts[index], mime: "application/vnd.google-apps.folder",
                              size: nil, modified: nil, webURL: nil, isFolder: true)
         }
+    }
+}
+
+extension FTPProvider {
+    func list(parent: String, onPage: (([CloudFile]) -> Void)? = nil) async throws -> [CloudFile] {
+        return try await ftpList(parent: parent, onPage: onPage)
+    }
+
+    func createFolder(name: String, parent: String) async throws -> String {
+        return try await ftpCreateFolder(name: name, parent: parent)
+    }
+
+    func contentRequest(for file: CloudFile, exportMime: String?) async throws -> URLRequest {
+        // None of them fetches with a plain request; `download` branches before reaching here.
+                    throw CloudError.message(L("Este proveedor no usa peticiones HTTP."))
+    }
+
+    func rename(file: CloudFile, name: String) async throws {
+        try await ftpRename(file: file, name: name)
+    }
+
+    func move(file: CloudFile, to destination: String) async throws {
+        try await ftpMove(file: file, to: destination); return
+    }
+
+    func copy(file: CloudFile, to destination: String, accepted: ((URL) throws -> Void)? = nil) async throws {
+        throw CloudError.message(L("FTP no puede copiar en el servidor. Descarga el archivo y vuelve a subirlo."))
+    }
+
+    func trash(file: CloudFile) async throws {
+        try await ftpDelete(file: file); return
+    }
+
+    func publicLink(for file: CloudFile) async throws -> URL {
+        throw CloudError.message(L("FTP no tiene enlaces públicos."))
+    }
+
+    func searchPage(term: String, cursor: String? = nil, filters: SearchFilters = SearchFilters(), referenceDate: Date = Date()) async throws -> SearchPage {
+        throw CloudError.message(L("FTP no ofrece búsqueda. Navega por las carpetas o usa el filtro de la carpeta actual."))
+    }
+
+    func folderTrail(id: String) async throws -> [CloudFile] {
+        return try ftpTrail(id: id)
+    }
+
+    func storageQuota() async throws -> StorageQuota {
+        throw CloudError.message(L("FTP no informa del espacio disponible."))
+    }
+    func uploadFile(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
+        return try await ftpUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+    }
+    func download(file: CloudFile, to destination: URL, exportMime: String?, maxBytes: Int64?, progress: @escaping (Int64, Int64) -> Void) async throws {
+        try await ftpDownload(file: file, to: destination, maxBytes: maxBytes, progress: progress)
+    }
+}
+
+extension FTPProvider {
+    func identityChange(file: CloudFile, name: String, destination: String?) throws -> RemoteIdentityChange {
+        let newID: String
+
+                newID = FTPListing.join(try destination.map(ftpPath) ?? (file.id as NSString).deletingLastPathComponent, name)
+        return RemoteIdentityChange(oldID: file.id, newID: newID, name: name, descendants: file.isFolder)
     }
 }

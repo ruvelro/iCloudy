@@ -80,7 +80,7 @@ final class VolumePath: @unchecked Sendable {
         guard fstatat(parent, name, &info, AT_SYMLINK_NOFOLLOW) == 0 else { throw error() }
         let folder = info.st_mode & S_IFMT == S_IFDIR
         return CloudFile(id: url.standardizedFileURL.path, name: name,
-                         mime: folder ? "application/vnd.google-apps.folder" : CloudAPI.mime(forName: name),
+                         mime: folder ? "application/vnd.google-apps.folder" : CloudSession.mime(forName: name),
                          size: folder ? nil : info.st_size,
                          modified: Date(timeIntervalSince1970: Double(info.st_mtimespec.tv_sec) + Double(info.st_mtimespec.tv_nsec) / 1e9),
                          webURL: nil, isFolder: folder)

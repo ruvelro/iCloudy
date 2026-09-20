@@ -56,15 +56,15 @@ final class CoreTests: XCTestCase {
     }
 
     @MainActor func testProviderMappingsHandleNativeDocumentsAndRemoteFolders() {
-        let document = CloudAPI.googleFile(["id": "g1", "name": "Informe", "mimeType": "application/vnd.google-apps.document", "modifiedTime": "2026-09-15T12:00:00.000Z"])
+        let document = GoogleDriveProvider.googleFile(["id": "g1", "name": "Informe", "mimeType": "application/vnd.google-apps.document", "modifiedTime": "2026-09-15T12:00:00.000Z"])
         XCTAssertTrue(document!.isGoogleDocument)
         XCTAssertFalse(document!.isFolder)
         XCTAssertEqual(document!.exportOptions.map(\.ext), ["pdf", "docx"])
         XCTAssertNotNil(document!.modified)
-        let remote = CloudAPI.microsoftFile(["id": "r1", "name": "Compartido", "folder": [:], "remoteItem": ["id": "other-drive"]])
+        let remote = OneDriveProvider.microsoftFile(["id": "r1", "name": "Compartido", "folder": [:], "remoteItem": ["id": "other-drive"]])
         XCTAssertFalse(remote!.isFolder, "Remote folders cannot be navigated using the current drive ID")
         XCTAssertTrue(remote!.isGoogleDocument)
-        XCTAssertNil(CloudAPI.googleFile(["name": "missing-id"]))
+        XCTAssertNil(GoogleDriveProvider.googleFile(["name": "missing-id"]))
     }
 
     @MainActor func testGoogleListingFollowsPagesAndSortsFoldersFirst() async throws {
@@ -368,11 +368,11 @@ final class CoreTests: XCTestCase {
     @MainActor func testSearchFiltersTravelToDriveButNotToGraph() async throws {
         var filters = SearchFilters(); filters.type = .images; filters.age = .week; filters.size = .large
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let clauses = CloudAPI.googleFilterClauses(filters, now: now)
+        let clauses = GoogleDriveProvider.googleFilterClauses(filters, now: now)
         XCTAssertEqual(clauses.count, 2)
         XCTAssertEqual(clauses[0], "mimeType contains 'image/'")
         XCTAssertEqual(clauses[1], "modifiedTime > '2027-01-08T08:00:00Z'")
-        XCTAssertTrue(CloudAPI.googleFilterClauses(SearchFilters()).isEmpty, "Default filters leave the query untouched")
+        XCTAssertTrue(GoogleDriveProvider.googleFilterClauses(SearchFilters()).isEmpty, "Default filters leave the query untouched")
         var qs: [String] = []
         StubProtocol.handler = { request in
             qs.append(request.url!.absoluteString)

@@ -246,7 +246,7 @@ enum O2API {
                 if let parsed = formatter.date(from: text) { return parsed }
             }
             if let seconds = Double(text) { return date(NSNumber(value: seconds)) }
-            return CloudAPI.date(text)
+            return CloudSession.date(text)
         }
         if let number = value as? NSNumber {
             let milliseconds = number.doubleValue

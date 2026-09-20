@@ -2,7 +2,12 @@ import Foundation
 import CryptoKit
 
 /// Box uses numeric ids and keeps files and folders on separate routes, so every call needs to know which one it is.
-extension CloudAPI {
+@MainActor
+final class BoxProvider: CloudSession, CloudProvider {
+    
+}
+
+extension BoxProvider {
     func boxID(_ id: String) -> String { id == "root" ? Cloud.box.rootAlias : id }
     static func boxRoute(_ file: CloudFile) -> String { file.isFolder ? "folders" : "files" }
     static let boxListFields = "id,name,size,modified_at,type,shared_link,sha1"
@@ -237,4 +242,71 @@ extension CloudAPI {
         let entry = ((try? HTTP.json(data))?["entries"] as? [[String: Any]])?.first ?? [:]
         return try cursor.finish(remoteID: entry["id"] as? String, save: save) { try Self.boxVerify(entry, sha1: sha1, name: name) }
     }
+}
+
+extension BoxProvider {
+    func list(parent: String, onPage: (([CloudFile]) -> Void)? = nil) async throws -> [CloudFile] {
+        return try await boxList(parent: parent, onPage: onPage)
+    }
+
+    func createFolder(name: String, parent: String) async throws -> String {
+        let result: [String: Any]
+        result = try await json(URL(string: "https://api.box.com/2.0/folders")!, method: "POST", body: ["name": name, "parent": ["id": boxID(parent)]])
+        guard let id = result["id"] as? String else { throw CloudError.message(L("No se pudo crear la carpeta.")) }
+                return id
+    }
+
+    func contentRequest(for file: CloudFile, exportMime: String?) async throws -> URLRequest {
+        return try await request(URL(string: "https://api.box.com/2.0/files/\(Self.segment(file.id))/content")!)
+    }
+
+    func rename(file: CloudFile, name: String) async throws {
+        _ = try await boxUpdate(file, body: ["name": name])
+    }
+
+    func move(file: CloudFile, to destination: String) async throws {
+        _ = try await boxUpdate(file, body: ["parent": ["id": boxID(destination)]]); return
+    }
+
+    func copy(file: CloudFile, to destination: String, accepted: ((URL) throws -> Void)? = nil) async throws {
+        try await boxCopy(file: file, to: destination); return
+    }
+
+    func trash(file: CloudFile) async throws {
+        try await boxTrash(file: file); return
+    }
+
+    func publicLink(for file: CloudFile) async throws -> URL {
+        return try await boxPublicLink(for: file)
+    }
+
+    func searchPage(term: String, cursor: String? = nil, filters: SearchFilters = SearchFilters(), referenceDate: Date = Date()) async throws -> SearchPage {
+        return try await boxSearch(term: term, cursor: cursor)
+    }
+
+    func folderTrail(id: String) async throws -> [CloudFile] {
+        return try await boxTrail(id: id)
+    }
+
+    func storageQuota() async throws -> StorageQuota {
+        return try await boxQuota()
+    }
+    func uploadFile(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
+        return try await boxUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+    }
+    func abandonUploadSessions(urls: [URL], boxSessions: [String]) async {
+        for url in urls where url.scheme == "https" {
+            var request = URLRequest(url: url)
+            request.httpMethod = "DELETE"
+            _ = try? await session.data(for: request, delegate: RedirectGuard.shared)
+        }
+        for id in boxSessions {
+            guard var request = try? await request(URL(string: "https://upload.box.com/api/2.0/files/upload_sessions/\(Self.segment(id))")!, method: "DELETE") else { continue }
+            _ = try? await send(&request)
+        }
+    }
+}
+
+extension BoxProvider {
+    var requiresVerifiedLegacyCheckpoint: Bool { true }
 }

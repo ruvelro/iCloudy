@@ -304,15 +304,15 @@ final class O2CloudTests: XCTestCase {
 
     func testFolderAndFileNumbersNeverGetConfused() throws {
         // Funambol numbers folders and media separately, so a bare "12" would be ambiguous.
-        let folder = CloudAPI.o2FolderID("12")
-        let file = CloudAPI.o2MediaID("12", kind: .picture)
+        let folder = O2Provider.o2FolderID("12")
+        let file = O2Provider.o2MediaID("12", kind: .picture)
         XCTAssertNotEqual(folder, file)
-        XCTAssertNil(try XCTUnwrap(CloudAPI.o2Split(folder)).kind)
-        XCTAssertEqual(try XCTUnwrap(CloudAPI.o2Split(folder)).value, "12")
-        XCTAssertEqual(try XCTUnwrap(CloudAPI.o2Split(file)).kind, .picture)
-        XCTAssertEqual(try XCTUnwrap(CloudAPI.o2Split(file)).value, "12")
-        XCTAssertNil(CloudAPI.o2Split("12"), "Un identificador sin prefijo no se acepta a ciegas")
-        XCTAssertNil(CloudAPI.o2Split("m:inventado:12"))
+        XCTAssertNil(try XCTUnwrap(O2Provider.o2Split(folder)).kind)
+        XCTAssertEqual(try XCTUnwrap(O2Provider.o2Split(folder)).value, "12")
+        XCTAssertEqual(try XCTUnwrap(O2Provider.o2Split(file)).kind, .picture)
+        XCTAssertEqual(try XCTUnwrap(O2Provider.o2Split(file)).value, "12")
+        XCTAssertNil(O2Provider.o2Split("12"), "Un identificador sin prefijo no se acepta a ciegas")
+        XCTAssertNil(O2Provider.o2Split("m:inventado:12"))
     }
 
     func testTheMediaKindFallsBackToTheContentTypeWhenTheServerOmitsIt() {
@@ -344,9 +344,9 @@ final class O2CloudTests: XCTestCase {
         let receipt = try XCTUnwrap(files.first { $0.name == "recibo.pdf" })
         XCTAssertEqual(receipt.size, 1234)
         XCTAssertEqual(receipt.mime, "application/pdf")
-        XCTAssertEqual(receipt.id, CloudAPI.o2MediaID("31", kind: .file))
+        XCTAssertEqual(receipt.id, O2Provider.o2MediaID("31", kind: .file))
         // The picture had no media type of its own, so its content type placed it.
-        XCTAssertEqual(try XCTUnwrap(files.first { $0.name == "foto.jpg" }).id, CloudAPI.o2MediaID("32", kind: .picture))
+        XCTAssertEqual(try XCTUnwrap(files.first { $0.name == "foto.jpg" }).id, O2Provider.o2MediaID("32", kind: .picture))
 
         let listing = calls.first { $0.path == "media/folder" && $0.action == "list" }
         XCTAssertEqual(listing?.query["parentid"], "10", "Se pide dentro de la raíz que devolvió el servidor")
@@ -400,7 +400,7 @@ final class O2CloudTests: XCTestCase {
             return (200, [:], try JSONSerialization.data(withJSONObject: [
                 "data": ["folders": [["id": Int(id)!, "name": node.0, "parentid": node.1]]]]))
         }
-        let trail = try await client().folderTrail(id: CloudAPI.o2FolderID("22"))
+        let trail = try await client().folderTrail(id: O2Provider.o2FolderID("22"))
         XCTAssertEqual(trail.map(\.name), ["Facturas", "2024"], "De fuera hacia dentro, sin incluir la raíz")
     }
 
@@ -422,7 +422,7 @@ final class O2CloudTests: XCTestCase {
     func testRenamingUsesADifferentEndpointForFoldersAndForFiles() async throws {
         serve(); withRoot()
         let api = client()
-        let folder = CloudFile(id: CloudAPI.o2FolderID("21"), name: "Facturas",
+        let folder = CloudFile(id: O2Provider.o2FolderID("21"), name: "Facturas",
                                mime: "application/vnd.google-apps.folder", size: nil, modified: nil, webURL: nil, isFolder: true)
         try await api.rename(file: folder, name: "Recibos")
         let folderCall = try XCTUnwrap(calls.last)
@@ -431,7 +431,7 @@ final class O2CloudTests: XCTestCase {
         XCTAssertEqual(folderCall.body["id"] as? String, "21")
         XCTAssertEqual(folderCall.body["name"] as? String, "Recibos")
 
-        let picture = CloudFile(id: CloudAPI.o2MediaID("31", kind: .picture), name: "foto.jpg", mime: "image/jpeg",
+        let picture = CloudFile(id: O2Provider.o2MediaID("31", kind: .picture), name: "foto.jpg", mime: "image/jpeg",
                                 size: 1, modified: nil, webURL: nil, isFolder: false)
         try await api.rename(file: picture, name: "playa.jpg")
         let fileCall = try XCTUnwrap(calls.last)
@@ -443,14 +443,14 @@ final class O2CloudTests: XCTestCase {
     func testMovingAFileChangesItsFolderAndMovingAFolderChangesItsParent() async throws {
         serve(); withRoot()
         let api = client()
-        let file = CloudFile(id: CloudAPI.o2MediaID("31", kind: .file), name: "recibo.pdf", mime: "application/pdf",
+        let file = CloudFile(id: O2Provider.o2MediaID("31", kind: .file), name: "recibo.pdf", mime: "application/pdf",
                              size: 1, modified: nil, webURL: nil, isFolder: false)
-        try await api.move(file: file, to: CloudAPI.o2FolderID("21"))
+        try await api.move(file: file, to: O2Provider.o2FolderID("21"))
         var call = try XCTUnwrap(calls.last)
         XCTAssertEqual(call.path, "upload/file")
         XCTAssertEqual(call.body["folderid"] as? String, "21")
 
-        let folder = CloudFile(id: CloudAPI.o2FolderID("22"), name: "2024", mime: "application/vnd.google-apps.folder",
+        let folder = CloudFile(id: O2Provider.o2FolderID("22"), name: "2024", mime: "application/vnd.google-apps.folder",
                                size: nil, modified: nil, webURL: nil, isFolder: true)
         try await api.move(file: folder, to: "root")
         call = try XCTUnwrap(calls.last)
@@ -462,7 +462,7 @@ final class O2CloudTests: XCTestCase {
     func testDeletingIsASoftDeleteSoTheBinKeepsTheItem() async throws {
         serve(); withRoot()
         let api = client()
-        let video = CloudFile(id: CloudAPI.o2MediaID("40", kind: .video), name: "clip.mp4", mime: "video/mp4",
+        let video = CloudFile(id: O2Provider.o2MediaID("40", kind: .video), name: "clip.mp4", mime: "video/mp4",
                               size: 1, modified: nil, webURL: nil, isFolder: false)
         try await api.trash(file: video)
         var call = try XCTUnwrap(calls.last)
@@ -471,7 +471,7 @@ final class O2CloudTests: XCTestCase {
         XCTAssertEqual(call.query["softdelete"], "true", "Un borrado definitivo no sería reversible")
         XCTAssertEqual(call.body["videos"] as? [String], ["40"])
 
-        let folder = CloudFile(id: CloudAPI.o2FolderID("21"), name: "Facturas", mime: "application/vnd.google-apps.folder",
+        let folder = CloudFile(id: O2Provider.o2FolderID("21"), name: "Facturas", mime: "application/vnd.google-apps.folder",
                                size: nil, modified: nil, webURL: nil, isFolder: true)
         try await api.trash(file: folder)
         call = try XCTUnwrap(calls.last)
@@ -517,7 +517,7 @@ final class O2CloudTests: XCTestCase {
     func testDownloadingAsksForTheAddressAndThenFetchesIt() async throws {
         serve(); withRoot()
         replies["media get"] = ["media": [["id": 31, "name": "recibo.pdf", "url": "https://descargas.ejemplo.com/31"]]]
-        let file = CloudFile(id: CloudAPI.o2MediaID("31", kind: .file), name: "recibo.pdf", mime: "application/pdf",
+        let file = CloudFile(id: O2Provider.o2MediaID("31", kind: .file), name: "recibo.pdf", mime: "application/pdf",
                              size: 20, modified: nil, webURL: nil, isFolder: false)
         let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: destination) }
@@ -551,7 +551,7 @@ final class O2CloudTests: XCTestCase {
 
         let receipt = try await client().resumableUpload(local: source, parent: "root", name: "nota.txt", replacing: nil,
                                                          checkpoint: checkpoint, save: { _ in }, progress: { _, _ in })
-        XCTAssertEqual(receipt.remoteID, CloudAPI.o2MediaID("77", kind: .file))
+        XCTAssertEqual(receipt.remoteID, O2Provider.o2MediaID("77", kind: .file))
         XCTAssertEqual(receipt.verification, .unavailable, "La plataforma no informa de ninguna suma que comparar")
 
         let body = String(decoding: try XCTUnwrap(uploaded), as: UTF8.self)
@@ -567,13 +567,13 @@ final class O2CloudTests: XCTestCase {
         serve(); withRoot()
         replies["link/folder save"] = ["url": "https://cloud.o2online.es/link/abc123"]
         let api = client()
-        let folder = CloudFile(id: CloudAPI.o2FolderID("21"), name: "Facturas", mime: "application/vnd.google-apps.folder",
+        let folder = CloudFile(id: O2Provider.o2FolderID("21"), name: "Facturas", mime: "application/vnd.google-apps.folder",
                                size: nil, modified: nil, webURL: nil, isFolder: true)
         let link = try await api.publicLink(for: folder)
         XCTAssertEqual(link.absoluteString, "https://cloud.o2online.es/link/abc123")
         XCTAssertEqual(calls.last?.body["folderid"] as? String, "21")
 
-        let file = CloudFile(id: CloudAPI.o2MediaID("31", kind: .file), name: "recibo.pdf", mime: "application/pdf",
+        let file = CloudFile(id: O2Provider.o2MediaID("31", kind: .file), name: "recibo.pdf", mime: "application/pdf",
                              size: 1, modified: nil, webURL: nil, isFolder: false)
         do { _ = try await api.publicLink(for: file); XCTFail("Un archivo suelto no tiene enlace aquí") }
         catch { XCTAssertTrue(error.localizedDescription.contains("enlaces de carpetas"), error.localizedDescription) }
@@ -669,7 +669,7 @@ final class O2CloudTests: XCTestCase {
         let receipt = try await client().resumableUpload(local: source, parent: "root", name: "nota.txt", replacing: nil,
                                                          checkpoint: UploadCheckpoint(total: 17, modified: stamp),
                                                          save: { _ in }, progress: { _, _ in })
-        XCTAssertEqual(receipt.remoteID, CloudAPI.o2MediaID("77", kind: .file))
+        XCTAssertEqual(receipt.remoteID, O2Provider.o2MediaID("77", kind: .file))
         XCTAssertEqual(attempts, ["clave-1", "clave-2"], "Se reintenta con la clave nueva en vez de perder el archivo")
     }
 
@@ -717,7 +717,7 @@ final class O2CloudTests: XCTestCase {
         let stamp = try source.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
         do {
             _ = try await client().resumableUpload(local: source, parent: "root", name: "nota.txt",
-                                                   replacing: CloudAPI.o2MediaID("31", kind: .file),
+                                                   replacing: O2Provider.o2MediaID("31", kind: .file),
                                                    checkpoint: UploadCheckpoint(total: 17, modified: stamp),
                                                    save: { _ in }, progress: { _, _ in })
             XCTFail("Hay que contar que la copia vieja sigue ahí")
@@ -742,7 +742,7 @@ final class O2CloudTests: XCTestCase {
             }
             return (200, [:], try JSONSerialization.data(withJSONObject: ["data": ["folders": [["id": 10, "name": "raíz"]]]]))
         }
-        let file = CloudFile(id: CloudAPI.o2MediaID("31", kind: .file), name: "recibo.pdf", mime: "application/pdf",
+        let file = CloudFile(id: O2Provider.o2MediaID("31", kind: .file), name: "recibo.pdf", mime: "application/pdf",
                              size: 9, modified: nil, webURL: nil, isFolder: false)
         let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: destination) }
@@ -762,7 +762,7 @@ final class O2CloudTests: XCTestCase {
             }
             return (200, [:], try JSONSerialization.data(withJSONObject: ["data": ["folders": [["id": 10, "name": "raíz"]]]]))
         }
-        let file = CloudFile(id: CloudAPI.o2MediaID("31", kind: .file), name: "recibo.pdf", mime: "application/pdf",
+        let file = CloudFile(id: O2Provider.o2MediaID("31", kind: .file), name: "recibo.pdf", mime: "application/pdf",
                              size: 9, modified: nil, webURL: nil, isFolder: false)
         let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try Data("lo que ya había".utf8).write(to: destination)

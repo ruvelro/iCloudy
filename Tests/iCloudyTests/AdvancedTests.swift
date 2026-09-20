@@ -27,31 +27,31 @@ final class AdvancedTests: XCTestCase {
         let scoped = CloudAPI(account: Account.scoped(to: "0ABCdrive", named: "Marketing", from: account(.google)))
         let base = "https://www.googleapis.com/drive/v3/files/abc?fields=id"
 
-        XCTAssertEqual(plain.googleURL(base).absoluteString, base, "Una cuenta normal no cambia de dirección")
-        XCTAssertTrue(scoped.googleURL(base).absoluteString.contains("supportsAllDrives=true"))
-        XCTAssertTrue(scoped.googleURL(base).absoluteString.contains("fields=id"), "Los parámetros originales se conservan")
+        XCTAssertEqual((plain.provider as! GoogleDriveProvider).googleURL(base).absoluteString, base, "Una cuenta normal no cambia de dirección")
+        XCTAssertTrue((scoped.provider as! GoogleDriveProvider).googleURL(base).absoluteString.contains("supportsAllDrives=true"))
+        XCTAssertTrue((scoped.provider as! GoogleDriveProvider).googleURL(base).absoluteString.contains("fields=id"), "Los parámetros originales se conservan")
 
-        XCTAssertTrue(plain.googleDriveScope.isEmpty)
-        let scope = Dictionary(uniqueKeysWithValues: scoped.googleDriveScope.map { ($0.name, $0.value) })
+        XCTAssertTrue((plain.provider as! GoogleDriveProvider).googleDriveScope.isEmpty)
+        let scope = Dictionary(uniqueKeysWithValues: (scoped.provider as! GoogleDriveProvider).googleDriveScope.map { ($0.name, $0.value) })
         XCTAssertEqual(scope["corpora"], "drive")
         XCTAssertEqual(scope["driveId"], "0ABCdrive")
         XCTAssertEqual(scope["includeItemsFromAllDrives"], "true")
         XCTAssertEqual(scope["supportsAllDrives"], "true")
 
         // The top level of a shared drive is addressed by the drive's own id, not by the alias "root".
-        XCTAssertEqual(scoped.googleParent("root"), "0ABCdrive")
-        XCTAssertEqual(plain.googleParent("root"), "root")
-        XCTAssertEqual(scoped.googleParent("1xyz"), "1xyz", "Una carpeta concreta se pide igual en los dos casos")
+        XCTAssertEqual((scoped.provider as! GoogleDriveProvider).googleParent("root"), "0ABCdrive")
+        XCTAssertEqual((plain.provider as! GoogleDriveProvider).googleParent("root"), "root")
+        XCTAssertEqual((scoped.provider as! GoogleDriveProvider).googleParent("1xyz"), "1xyz", "Una carpeta concreta se pide igual en los dos casos")
     }
 
     func testMicrosoftCallsOfAScopedAccountTargetTheLibraryAndNotThePersonalDrive() {
         let plain = CloudAPI(account: account(.microsoft))
         let scoped = CloudAPI(account: Account.scoped(to: "b!raro/ID", named: "Documentos", from: account(.microsoft)))
-        XCTAssertEqual(plain.graphDrive, "https://graph.microsoft.com/v1.0/me/drive")
-        XCTAssertTrue(scoped.graphDrive.hasPrefix("https://graph.microsoft.com/v1.0/drives/"))
-        XCTAssertFalse(scoped.graphDrive.contains("/me/drive"))
-        XCTAssertFalse(scoped.graphDrive.contains("b!raro/ID"), "El identificador viaja escapado, no crudo en la ruta")
-        XCTAssertTrue(scoped.graphDrive.contains("b%21raro%2FID"))
+        XCTAssertEqual((plain.provider as! OneDriveProvider).graphDrive, "https://graph.microsoft.com/v1.0/me/drive")
+        XCTAssertTrue((scoped.provider as! OneDriveProvider).graphDrive.hasPrefix("https://graph.microsoft.com/v1.0/drives/"))
+        XCTAssertFalse((scoped.provider as! OneDriveProvider).graphDrive.contains("/me/drive"))
+        XCTAssertFalse((scoped.provider as! OneDriveProvider).graphDrive.contains("b!raro/ID"), "El identificador viaja escapado, no crudo en la ruta")
+        XCTAssertTrue((scoped.provider as! OneDriveProvider).graphDrive.contains("b%21raro%2FID"))
     }
 
     func testEveryGoogleAndGraphCallGoesThroughTheScopedHelpers() throws {
@@ -69,7 +69,7 @@ final class AdvancedTests: XCTestCase {
                 // The helpers themselves are the one place allowed to name the unscoped endpoints.
                 guard !line.contains("account.driveID") else { continue }
                 // A URL built with URLComponents adds the scope when its query items are set, a few lines below.
-                let nearby = lines[number..<min(number + 12, lines.count)].joined()
+                let nearby = lines[number...].prefix { !$0.contains("try await json(") }.joined()
                 let scopedNearby = nearby.contains("googleDriveScope") || nearby.contains("googleAllDrives")
 
                 XCTAssertFalse(line.contains("graph.microsoft.com/v1.0/me/drive"), "\(place) debería usar graphDrive")
@@ -203,13 +203,13 @@ final class AdvancedTests: XCTestCase {
 
     func testTheSharingEndpointSitsBesideTheWebDAVPathAndNotInsideIt() throws {
         let api = CloudAPI(account: account(.webdav, options: ["flavor": "nextcloud"]))
-        let url = try api.nextcloudSharesURL()
+        let url = try (api.provider as! WebDAVProvider).nextcloudSharesURL()
         XCTAssertEqual(url.absoluteString, "https://nube.ejemplo.com/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json")
 
         // A Nextcloud installed in a subdirectory keeps that prefix; cutting at the host would miss it.
         var inSubdirectory = account(.webdav, options: ["flavor": "nextcloud"])
         inSubdirectory.serverURL = "https://ejemplo.com/nube/remote.php/dav/files/ana"
-        let nested = try CloudAPI(account: inSubdirectory).nextcloudSharesURL()
+        let nested = try (CloudAPI(account: inSubdirectory).provider as! WebDAVProvider).nextcloudSharesURL()
         XCTAssertEqual(nested.path, "/nube/ocs/v2.php/apps/files_sharing/api/v1/shares")
     }
 

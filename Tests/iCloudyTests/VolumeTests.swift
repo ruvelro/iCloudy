@@ -42,10 +42,10 @@ final class VolumeTests: XCTestCase {
 
     func testIdentifiersCannotEscapeTheConnectedFolder() async throws {
         let api = client()
-        XCTAssertEqual(try api.volumeURL("root").standardizedFileURL.path, root.standardizedFileURL.path)
-        XCTAssertNoThrow(try api.volumeURL(root.appendingPathComponent("Fotos").path))
+        XCTAssertEqual(try (api.provider as! VolumeProvider).volumeURL("root").standardizedFileURL.path, root.standardizedFileURL.path)
+        XCTAssertNoThrow(try (api.provider as! VolumeProvider).volumeURL(root.appendingPathComponent("Fotos").path))
         for outside in ["/etc/passwd", root.deletingLastPathComponent().path, root.appendingPathComponent("../fuera").path] {
-            XCTAssertThrowsError(try api.volumeURL(outside), outside) { error in
+            XCTAssertThrowsError(try (api.provider as! VolumeProvider).volumeURL(outside), outside) { error in
                 XCTAssertTrue(error.localizedDescription.contains("fuera de la carpeta"), error.localizedDescription)
             }
         }
@@ -166,7 +166,7 @@ final class VolumeTests: XCTestCase {
         search.cancel()
         do { _ = try await search.value; XCTFail("Una búsqueda cancelada no devuelve resultados") }
         catch { XCTAssertTrue(error is CancellationError, "\(error)") }
-        XCTAssertGreaterThan(CloudAPI.volumeSearchScanLimit, 1000, "Y hay un tope aunque nadie cancele")
+        XCTAssertGreaterThan(VolumeProvider.volumeSearchScanLimit, 1000, "Y hay un tope aunque nadie cancele")
 
         let many = root.appendingPathComponent("Muchos")
         try FileManager.default.createDirectory(at: many, withIntermediateDirectories: true)
@@ -182,17 +182,17 @@ final class VolumeTests: XCTestCase {
         let source = root.appendingPathComponent("grande.bin")
         try Data(repeating: 1, count: 8 * 1024 * 1024).write(to: source)
         let destination = root.appendingPathComponent("a-medias.bin")
-        let job = Task { try await CloudAPI.volumeCopyContents(from: source, to: destination, progress: { _, _ in }) }
+        let job = Task { try await VolumeProvider.volumeCopyContents(from: source, to: destination, progress: { _, _ in }) }
         job.cancel()
         do { _ = try await job.value; XCTFail("Cancelada no debe completarse") } catch {}
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path), "No queda el archivo a medias")
     }
 
     func testBreadcrumbsAreBuiltFromThePath() throws {
-        let trail = try client().volumeTrail(id: root.appendingPathComponent("Fotos/Viaje").path)
+        let trail = try (client().provider as! VolumeProvider).volumeTrail(id: root.appendingPathComponent("Fotos/Viaje").path)
         XCTAssertEqual(trail.map(\.name), ["Fotos", "Viaje"])
         XCTAssertTrue(trail.allSatisfy(\.isFolder))
-        XCTAssertTrue(try client().volumeTrail(id: "root").isEmpty)
+        XCTAssertTrue(try (client().provider as! VolumeProvider).volumeTrail(id: "root").isEmpty)
     }
 
     func testQuotaComesFromTheVolumeItself() async throws {

@@ -8,7 +8,18 @@ import Foundation
 /// structure and contents are encrypted under a key derived from the password, so the tree arrives as ciphertext and
 /// is decrypted on this Mac. That has two happy consequences: the whole tree comes in one response, which makes
 /// search and breadcrumbs free, and downloads are verified against a MAC stored inside each file's own key.
-extension CloudAPI {
+@MainActor
+final class MegaProvider: CloudSession, CloudProvider {
+    var megaStateCache: MegaState?
+    var megaTreeTask: Task<MegaState, Error>?
+    override func dropCaches() { megaStateCache?.expire() }
+    override func invalidate() {
+        super.invalidate()
+        megaTreeTask?.cancel(); megaTreeTask = nil; megaStateCache = nil
+    }
+}
+
+extension MegaProvider {
     // MARK: - Session
 
     /// Signs in if needed. The session identifier and the master key live in the Keychain, so this is normally free.
@@ -257,7 +268,7 @@ extension CloudAPI {
     /// that stops working after a while, which is long enough for most files and not for a large one.
     private func megaTransferAddress(_ node: MegaNode) async throws -> (URL, Int64) {
         guard let answer = try await megaCall(["a": "g", "g": 1, "ssl": MegaAPI.useTLS, "n": node.handle]) as? [String: Any],
-              let address = answer["g"] as? String, let base = CloudAPI.secureURL(address) else {
+              let address = answer["g"] as? String, let base = CloudSession.secureURL(address) else {
             throw CloudError.message(L("Mega no devolvió la dirección de descarga."))
         }
         return (base, (answer["s"] as? Double).map { Int64($0) } ?? node.size ?? 0)
@@ -304,7 +315,7 @@ extension CloudAPI {
         let target = try megaHandle(parent, in: state)
         let total = cursor.total
         guard let answer = try await megaCall(["a": "u", "s": total, "ssl": MegaAPI.useTLS]) as? [String: Any],
-              let address = (answer["p"] as? String).flatMap(CloudAPI.secureURL) else {
+              let address = (answer["p"] as? String).flatMap(CloudSession.secureURL) else {
             throw CloudError.message(L("Mega no aceptó la subida."))
         }
         // Mega has no resumable upload for third parties, so a restart begins again from zero.
@@ -392,4 +403,61 @@ extension CloudAPI {
         return UploadReceipt(remoteID: cursor.remoteID, verification: .unavailable)
     }
 
+}
+
+extension MegaProvider {
+    func list(parent: String, onPage: (([CloudFile]) -> Void)? = nil) async throws -> [CloudFile] {
+        return try await megaList(parent: parent)
+    }
+
+    func createFolder(name: String, parent: String) async throws -> String {
+        return try await megaCreateFolder(name: name, parent: parent)
+    }
+
+    func contentRequest(for file: CloudFile, exportMime: String?) async throws -> URLRequest {
+        // None of them fetches with a plain request; `download` branches before reaching here.
+                    throw CloudError.message(L("Este proveedor no usa peticiones HTTP."))
+    }
+
+    func rename(file: CloudFile, name: String) async throws {
+        try await megaRename(file: file, name: name)
+    }
+
+    func move(file: CloudFile, to destination: String) async throws {
+        try await megaMove(file: file, to: destination); return
+    }
+
+    func copy(file: CloudFile, to destination: String, accepted: ((URL) throws -> Void)? = nil) async throws {
+        try await megaCopy(file: file, to: destination); return
+    }
+
+    func trash(file: CloudFile) async throws {
+        try await megaTrash(file: file); return
+    }
+
+    func publicLink(for file: CloudFile) async throws -> URL {
+        return try await megaPublicLink(for: file)
+    }
+
+    func searchPage(term: String, cursor: String? = nil, filters: SearchFilters = SearchFilters(), referenceDate: Date = Date()) async throws -> SearchPage {
+        return try await megaSearch(term: term)
+    }
+
+    func folderTrail(id: String) async throws -> [CloudFile] {
+        return try await megaTrail(id: id)
+    }
+
+    func storageQuota() async throws -> StorageQuota {
+        return try await megaQuota()
+    }
+    func uploadFile(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
+        return try await megaUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+    }
+    func download(file: CloudFile, to destination: URL, exportMime: String?, maxBytes: Int64?, progress: @escaping (Int64, Int64) -> Void) async throws {
+        try await megaDownload(file: file, to: destination, maxBytes: maxBytes, progress: progress)
+    }
+    func resumeCommittedUpload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt? {
+        guard var committed = checkpoint, committed.remoteID != nil, !committed.complete else { return nil }
+        return try await megaUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &committed, save: save, progress: progress)
+    }
 }

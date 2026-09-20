@@ -8,7 +8,18 @@ import Darwin
 ///
 /// This is the only provider with a genuinely reversible trash, real free space and instant search, because all three
 /// come from the file system rather than from a remote API.
-extension CloudAPI {
+@MainActor
+final class VolumeProvider: CloudSession, CloudProvider {
+    var volumeRootCache: URL?
+    var volumeScopeOpen = false
+    override func invalidate() {
+        super.invalidate()
+        if volumeScopeOpen, let volumeRootCache { volumeRootCache.stopAccessingSecurityScopedResource() }
+        volumeScopeOpen = false; volumeRootCache = nil
+    }
+}
+
+extension VolumeProvider {
     /// Root of the account, with its security scope open for as long as this client lives.
     func volumeRoot() throws -> URL {
         if let volumeRootCache { return volumeRootCache }
@@ -257,5 +268,67 @@ extension CloudAPI {
             if suppliedOutput == nil { try? FileManager.default.removeItem(at: destination) }
             throw error
         }
+    }
+}
+
+extension VolumeProvider {
+    func list(parent: String, onPage: (([CloudFile]) -> Void)? = nil) async throws -> [CloudFile] {
+        return try await volumeList(parent: parent)
+    }
+
+    func createFolder(name: String, parent: String) async throws -> String {
+        return try await volumeCreateFolder(name: name, parent: parent)
+    }
+
+    func contentRequest(for file: CloudFile, exportMime: String?) async throws -> URLRequest {
+        // None of them fetches with a plain request; `download` branches before reaching here.
+                    throw CloudError.message(L("Este proveedor no usa peticiones HTTP."))
+    }
+
+    func rename(file: CloudFile, name: String) async throws {
+        try await volumeRename(file: file, name: name)
+    }
+
+    func move(file: CloudFile, to destination: String) async throws {
+        try await volumeMove(file: file, to: destination); return
+    }
+
+    func copy(file: CloudFile, to destination: String, accepted: ((URL) throws -> Void)? = nil) async throws {
+        try await volumeCopy(file: file, to: destination); return
+    }
+
+    func trash(file: CloudFile) async throws {
+        try await volumeTrash(file: file); return
+    }
+
+    func publicLink(for file: CloudFile) async throws -> URL {
+        throw CloudError.message(L("Un volumen no tiene enlaces públicos. Compártelo desde el Finder."))
+    }
+
+    func searchPage(term: String, cursor: String? = nil, filters: SearchFilters = SearchFilters(), referenceDate: Date = Date()) async throws -> SearchPage {
+        return try await volumeSearch(term: term)
+    }
+
+    func folderTrail(id: String) async throws -> [CloudFile] {
+        return try volumeTrail(id: id)
+    }
+
+    func storageQuota() async throws -> StorageQuota {
+        return try await volumeQuota()
+    }
+    func uploadFile(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
+        return try await volumeUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+    }
+    func download(file: CloudFile, to destination: URL, exportMime: String?, maxBytes: Int64?, progress: @escaping (Int64, Int64) -> Void) async throws {
+        try await volumeDownload(file: file, to: destination, maxBytes: maxBytes, progress: progress)
+    }
+}
+
+extension VolumeProvider {
+    func identityChange(file: CloudFile, name: String, destination: String?) throws -> RemoteIdentityChange {
+        let newID: String
+
+                newID = try (destination.map(volumeURL) ?? volumeURL(file.id).deletingLastPathComponent()).appendingPathComponent(name).standardizedFileURL.path
+        return RemoteIdentityChange(oldID: file.id, newID: newID, name: name, descendants: file.isFolder)
     }
 }

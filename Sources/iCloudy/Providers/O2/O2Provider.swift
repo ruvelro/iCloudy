@@ -65,7 +65,7 @@ enum O2MediaKind: String {
     static func of(_ values: [String: Any], name: String = "") -> O2MediaKind {
         if let named = (values["mediatype"] as? String).flatMap(O2MediaKind.init(rawValue:)) { return named }
         var type = (values["contenttype"] as? String ?? "").lowercased()
-        if type.isEmpty, !name.isEmpty { type = CloudAPI.mime(forName: name).lowercased() }
+        if type.isEmpty, !name.isEmpty { type = CloudSession.mime(forName: name).lowercased() }
         if type.hasPrefix("image/") { return .picture }
         if type.hasPrefix("video/") { return .video }
         if type.hasPrefix("audio/") { return .audio }
@@ -73,7 +73,14 @@ enum O2MediaKind: String {
     }
 }
 
-extension CloudAPI {
+@MainActor
+final class O2Provider: CloudSession, CloudProvider {
+    var o2SessionCache: O2Session?
+    override func dropCaches() { o2SessionCache?.rootFolder = nil }
+    override func invalidate() { super.invalidate(); o2SessionCache = nil }
+}
+
+extension O2Provider {
     // MARK: - Identifiers
 
     /// Folders and files are numbered separately, so the kind travels inside the identifier.
@@ -350,7 +357,7 @@ extension CloudAPI {
             // Its own clients are served over TLS, so an address that arrives without it is upgraded rather than
             // attempted in the clear, which macOS would refuse anyway.
             guard let entry = (answer["media"] as? [[String: Any]])?.first,
-                  let address = entry["url"] as? String, let url = CloudAPI.secureURL(address) else {
+                  let address = entry["url"] as? String, let url = CloudSession.secureURL(address) else {
                 throw CloudError.message(L("O2 Cloud no devolvió la dirección de descarga."))
             }
             var request = URLRequest(url: url)
@@ -462,5 +469,58 @@ final class O2UploadReporter: RedirectGuard, @unchecked Sendable {
         let sent = min(totalBytesSent, total)
         let report = progress
         Task { @MainActor in report(sent, max(self.total, sent)) }
+    }
+}
+
+extension O2Provider {
+    func list(parent: String, onPage: (([CloudFile]) -> Void)? = nil) async throws -> [CloudFile] {
+        return try await o2List(parent: parent)
+    }
+
+    func createFolder(name: String, parent: String) async throws -> String {
+        return try await o2CreateFolder(name: name, parent: parent)
+    }
+
+    func contentRequest(for file: CloudFile, exportMime: String?) async throws -> URLRequest {
+        // None of them fetches with a plain request; `download` branches before reaching here.
+                    throw CloudError.message(L("Este proveedor no usa peticiones HTTP."))
+    }
+
+    func rename(file: CloudFile, name: String) async throws {
+        try await o2Rename(file: file, name: name)
+    }
+
+    func move(file: CloudFile, to destination: String) async throws {
+        try await o2Move(file: file, to: destination); return
+    }
+
+    func copy(file: CloudFile, to destination: String, accepted: ((URL) throws -> Void)? = nil) async throws {
+        throw CloudError.message(L("O2 Cloud no copia archivos en el servidor. Descárgalo y vuelve a subirlo."))
+    }
+
+    func trash(file: CloudFile) async throws {
+        try await o2Trash(file: file); return
+    }
+
+    func publicLink(for file: CloudFile) async throws -> URL {
+        return try await o2PublicLink(for: file)
+    }
+
+    func searchPage(term: String, cursor: String? = nil, filters: SearchFilters = SearchFilters(), referenceDate: Date = Date()) async throws -> SearchPage {
+        throw CloudError.message(L("O2 Cloud no tiene búsqueda para otras aplicaciones."))
+    }
+
+    func folderTrail(id: String) async throws -> [CloudFile] {
+        return try await o2Trail(id: id)
+    }
+
+    func storageQuota() async throws -> StorageQuota {
+        return try await o2Quota()
+    }
+    func uploadFile(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
+        return try await o2Upload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+    }
+    func download(file: CloudFile, to destination: URL, exportMime: String?, maxBytes: Int64?, progress: @escaping (Int64, Int64) -> Void) async throws {
+        try await o2Download(file: file, to: destination, maxBytes: maxBytes, progress: progress)
     }
 }

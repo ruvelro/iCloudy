@@ -535,13 +535,13 @@ final class MegaProviderTests: XCTestCase {
 
     func testTransferAddressesAreAlwaysRaisedToTLS() {
         // Mega hands out transfer addresses in the clear unless asked otherwise, and macOS refuses to load those.
-        XCTAssertEqual(CloudAPI.secureURL("http://gfs1.ejemplo.com/dl/abc")?.absoluteString, "https://gfs1.ejemplo.com/dl/abc")
-        XCTAssertEqual(CloudAPI.secureURL("HTTP://gfs1.ejemplo.com/dl")?.scheme, "https", "El esquema puede venir en mayúsculas")
-        XCTAssertEqual(CloudAPI.secureURL("https://ya.ejemplo.com/dl")?.absoluteString, "https://ya.ejemplo.com/dl")
-        XCTAssertEqual(CloudAPI.secureURL("http://ejemplo.com:8080/dl?x=1")?.absoluteString, "https://ejemplo.com:8080/dl?x=1",
+        XCTAssertEqual(CloudSession.secureURL("http://gfs1.ejemplo.com/dl/abc")?.absoluteString, "https://gfs1.ejemplo.com/dl/abc")
+        XCTAssertEqual(CloudSession.secureURL("HTTP://gfs1.ejemplo.com/dl")?.scheme, "https", "El esquema puede venir en mayúsculas")
+        XCTAssertEqual(CloudSession.secureURL("https://ya.ejemplo.com/dl")?.absoluteString, "https://ya.ejemplo.com/dl")
+        XCTAssertEqual(CloudSession.secureURL("http://ejemplo.com:8080/dl?x=1")?.absoluteString, "https://ejemplo.com:8080/dl?x=1",
                        "El puerto y los parámetros se conservan")
-        XCTAssertNil(CloudAPI.secureURL(""))
-        XCTAssertNil(CloudAPI.secureURL("/solo/una/ruta"), "Sin servidor no hay nada que descargar")
+        XCTAssertNil(CloudSession.secureURL(""))
+        XCTAssertNil(CloudSession.secureURL("/solo/una/ruta"), "Sin servidor no hay nada que descargar")
     }
 
     func testAChangeIsAppliedToTheTreeInsteadOfReloadingTheWholeAccount() async throws {
@@ -620,10 +620,10 @@ final class MegaProviderTests: XCTestCase {
         api.dropCaches()
         _ = try await api.list(parent: "root")
         XCTAssertEqual(trees, 2, "Actualizar sí")
-        api.megaStateCache?.loadedAt = Date().addingTimeInterval(-CloudAPI.megaTreeMaxAge - 1)
+        (api.provider as! MegaProvider).megaStateCache?.loadedAt = Date().addingTimeInterval(-MegaProvider.megaTreeMaxAge - 1)
         _ = try await api.list(parent: "root")
         XCTAssertEqual(trees, 3, "Y un árbol viejo se renueva solo")
-        XCTAssertEqual(api.megaStateCache?.sid, session, "Sin volver a iniciar sesión")
+        XCTAssertEqual((api.provider as! MegaProvider).megaStateCache?.sid, session, "Sin volver a iniciar sesión")
     }
 
     func testACreatedFolderAppearsWithoutAskingForTheAccountAgain() async throws {

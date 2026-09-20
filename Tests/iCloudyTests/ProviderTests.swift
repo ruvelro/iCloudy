@@ -56,8 +56,8 @@ final class ProviderTests: XCTestCase {
         XCTAssertTrue(bodies["/2/files/move_v2"]!.contains("\"to_path\":\"\\/destino\\/Foto.jpg\""))
         try await api.trash(file: file)
         XCTAssertTrue(bodies["/2/files/delete_v2"]!.contains("\"path\":\"\\/origen\\/foto.jpg\""))
-        XCTAssertEqual(api.dropboxTrail(id: "/uno/dos/tres").map(\.name), ["uno", "dos", "tres"], "Breadcrumbs need no request")
-        XCTAssertEqual(api.dropboxTrail(id: "/uno/dos/tres").map(\.id), ["/uno", "/uno/dos", "/uno/dos/tres"])
+        XCTAssertEqual((api.provider as! DropboxProvider).dropboxTrail(id: "/uno/dos/tres").map(\.name), ["uno", "dos", "tres"], "Breadcrumbs need no request")
+        XCTAssertEqual((api.provider as! DropboxProvider).dropboxTrail(id: "/uno/dos/tres").map(\.id), ["/uno", "/uno/dos", "/uno/dos/tres"])
     }
 
     func testDropboxUploadUsesSessionsAndVerifiesTheContentHash() async throws {
@@ -165,7 +165,7 @@ final class ProviderTests: XCTestCase {
         let api = client(.box)
         let early = try await api.searchPage(term: "a", cursor: "0")
         XCTAssertEqual(early.next, "100", "Al principio sí hay más")
-        let atTheCap = try await api.searchPage(term: "a", cursor: String(CloudAPI.boxSearchCap - 100))
+        let atTheCap = try await api.searchPage(term: "a", cursor: String(BoxProvider.boxSearchCap - 100))
         XCTAssertNil(atTheCap.next, "Y en el tope se para, aunque el total diga que hay más")
         XCTAssertEqual(atTheCap.hits.count, 100, "Sin perder la última página")
     }
@@ -173,7 +173,7 @@ final class ProviderTests: XCTestCase {
     func testBoxWaitsWhileItIsStillAssemblingTheUpload() async throws {
         // Box answers 202 while it puts the parts together. Taking that for a finished upload returned a transfer
         // with no file behind it, and the id came back empty.
-        let size = Int(CloudAPI.boxSessionThreshold) + 512
+        let size = Int(BoxProvider.boxSessionThreshold) + 512
         let large = try temporaryFile(Data(repeating: 9, count: size))
         defer { try? FileManager.default.removeItem(at: large) }
         let sha1 = UploadHasher.hex(Insecure.SHA1.hash(data: Data(repeating: 9, count: size)))
@@ -283,7 +283,7 @@ final class ProviderTests: XCTestCase {
         XCTAssertEqual(digest, sha1, "The single-shot endpoint takes the SHA-1 in content-md5, in hex")
         XCTAssertEqual(receipt.remoteID, "99")
         XCTAssertEqual(receipt.verification, .verified)
-        XCTAssertGreaterThan(CloudAPI.boxSessionThreshold, 0)
+        XCTAssertGreaterThan(BoxProvider.boxSessionThreshold, 0)
     }
 
     func testBoxOnlyCountsAnUploadAsVerifiedWhenItsHashMatches() async throws {
@@ -304,7 +304,7 @@ final class ProviderTests: XCTestCase {
     func testBoxSessionCommitsCarryTheWholeFileDigestEvenWhenResumed() async throws {
         // Box refuses a commit without the digest of the whole file. A resumed session did not see the earlier
         // parts leave, so it hashes them again from the local file, which also lets the upload be verified.
-        let size = Int(CloudAPI.boxSessionThreshold) + 1024
+        let size = Int(BoxProvider.boxSessionThreshold) + 1024
         var payload = Data(count: size)
         for index in stride(from: 0, to: size, by: 4099) { payload[index] = UInt8(index % 251) }
         let sha1 = UploadHasher.hex(Insecure.SHA1.hash(data: payload))
@@ -417,7 +417,7 @@ final class ProviderTests: XCTestCase {
         XCTAssertEqual(seen.last?.1, "https://dav.example.com/remote.php/dav/files/ana/Fotos/gato.jpg", "Renaming keeps the parent")
         try await api.trash(file: file)
         XCTAssertEqual(seen.last?.0, "DELETE")
-        XCTAssertEqual(api.webdavTrail(id: "/uno/dos").map(\.id), ["/uno", "/uno/dos"])
+        XCTAssertEqual((api.provider as! WebDAVProvider).webdavTrail(id: "/uno/dos").map(\.id), ["/uno", "/uno/dos"])
     }
 
     func testWebDAVRejectsSearchAndPublicLinksInsteadOfPretending() async throws {
@@ -448,8 +448,8 @@ final class ProviderTests: XCTestCase {
     func testMovingUsesTheNameOnTheServerNotTheOneItLikesToDisplay() async throws {
         // `displayname` is what the server would like shown, and some report it with different capitalisation or a
         // title of their own. Building the destination from it renamed the item as a side effect of moving it.
-        XCTAssertEqual(CloudAPI.webdavName("/Fotos/niño.JPG"), "niño.JPG")
-        XCTAssertEqual(CloudAPI.webdavName("/"), "/")
+        XCTAssertEqual(WebDAVProvider.webdavName("/Fotos/niño.JPG"), "niño.JPG")
+        XCTAssertEqual(WebDAVProvider.webdavName("/"), "/")
         var destinations: [String?] = []
         StubProtocol.handler = { request in
             destinations.append(request.value(forHTTPHeaderField: "Destination"))

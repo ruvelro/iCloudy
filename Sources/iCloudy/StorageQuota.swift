@@ -67,31 +67,6 @@ enum StorageQuotaState {
     case unavailable(String)
 }
 
-extension CloudAPI {
-    func storageQuota() async throws -> StorageQuota {
-        if let demo { return try demo.storageQuota() }
-        let endpoint: String
-        switch account.cloud {
-        case .google:
-            // `about` describes the person's own storage. A shared drive draws on the organisation's pool and reports
-            // nothing of its own, so showing the personal figure under its name would be a plain lie.
-            guard account.driveID == nil else {
-                throw CloudError.message(L("Una unidad compartida de Google no informa de su propio espacio."))
-            }
-            endpoint = "https://www.googleapis.com/drive/v3/about?fields=storageQuota"
-        case .microsoft: endpoint = "\(graphDrive)?$select=quota"
-        case .dropbox: return try await dropboxQuota()
-        case .box: return try await boxQuota()
-        case .webdav: return try await webdavQuota()
-        case .ftp: throw CloudError.message(L("FTP no informa del espacio disponible."))
-        case .volume: return try await volumeQuota()
-        case .mega: return try await megaQuota()
-        case .o2: return try await o2Quota()
-        }
-        return try StorageQuota.parse(await json(URL(string: endpoint)!), cloud: account.cloud)
-    }
-}
-
 private struct UsageSlice: Shape {
     let start: Double
     let end: Double

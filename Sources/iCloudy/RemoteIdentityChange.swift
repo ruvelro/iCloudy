@@ -30,22 +30,7 @@ struct RemoteIdentityChange {
 
 extension CloudAPI {
     func identityChange(file: CloudFile, name: String, destination: String? = nil) throws -> RemoteIdentityChange {
-        var newID = file.id
-        if demo == nil {
-            switch account.cloud {
-            case .dropbox:
-                newID = Self.dropboxJoin(destination.map(dropboxPath) ?? Self.dropboxParent(file.id), name).lowercased()
-            case .ftp:
-                newID = FTPListing.join(try destination.map(ftpPath) ?? (file.id as NSString).deletingLastPathComponent, name)
-            case .volume:
-                newID = try (destination.map(volumeURL) ?? volumeURL(file.id).deletingLastPathComponent()).appendingPathComponent(name).standardizedFileURL.path
-            case .webdav:
-                let parent = destination.map { Self.webdavNormalize($0 == "root" ? "/" : $0) } ?? Self.dropboxParent(Self.webdavNormalize(file.id))
-                let leaf = destination == nil ? name : Self.webdavName(file.id)
-                newID = Self.webdavNormalize(parent + "/" + leaf)
-            default: break
-            }
-        }
-        return RemoteIdentityChange(oldID: file.id, newID: newID, name: name, descendants: file.isFolder)
+        if demo != nil { return RemoteIdentityChange(oldID: file.id, newID: file.id, name: name, descendants: file.isFolder) }
+        return try provider.identityChange(file: file, name: name, destination: destination)
     }
 }

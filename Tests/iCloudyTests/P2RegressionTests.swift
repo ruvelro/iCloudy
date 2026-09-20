@@ -30,23 +30,23 @@ final class P2RegressionTests: XCTestCase {
         let real = CloudAPI(account: account, credentials: store)
         let state = O2Session(host: "cloud.o2online.es", validationKey: "new"); state.renewed = true
         var reported = false; real.credentialSaveDidFail = { _ in reported = true }
-        store.refuseSaves = true; real.o2Persist(state)
+        store.refuseSaves = true; (real.provider as! O2Provider).o2Persist(state)
         XCTAssertTrue(state.renewed); XCTAssertTrue(reported)
-        store.refuseSaves = false; real.o2Persist(state)
+        store.refuseSaves = false; (real.provider as! O2Provider).o2Persist(state)
         XCTAssertFalse(state.renewed)
         XCTAssertEqual(O2API.restoreSSO(try XCTUnwrap(store.stored[account.id]).secret).first?.value, "keep")
         XCTAssertEqual(O2API.restore(try XCTUnwrap(store.stored[account.id]).secret)?.validationKey, "new")
     }
     func testFTPPortBoundariesAreValidatedWithoutTrapping() throws {
-        for port in [0, 65536, 999999] { XCTAssertThrowsError(try CloudAPI.ftpEndpoint("ftp://example.com:\(port)")) }
-        XCTAssertEqual(try CloudAPI.ftpEndpoint("ftp://example.com:65535").port, 65535)
-        XCTAssertEqual(try CloudAPI.ftpEndpoint("ftps://example.com").port, 990)
+        for port in [0, 65536, 999999] { XCTAssertThrowsError(try FTPProvider.ftpEndpoint("ftp://example.com:\(port)")) }
+        XCTAssertEqual(try FTPProvider.ftpEndpoint("ftp://example.com:65535").port, 65535)
+        XCTAssertEqual(try FTPProvider.ftpEndpoint("ftps://example.com").port, 990)
     }
     func testVolumeBudgetRefusesBeforeCreatingDestination() async throws {
         let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
         let source = root.appendingPathComponent("source"), destination = root.appendingPathComponent("destination")
         try Data(repeating: 1, count: 100).write(to: source)
-        do { try await CloudAPI.volumeCopyContents(from: source, to: destination, maxBytes: 10) { _, _ in }; XCTFail("Expected limit") } catch {}
+        do { try await VolumeProvider.volumeCopyContents(from: source, to: destination, maxBytes: 10) { _, _ in }; XCTFail("Expected limit") } catch {}
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
     func testFTPBudgetStopsAndRemovesPartialFile() async throws {
@@ -62,7 +62,7 @@ final class P2RegressionTests: XCTestCase {
     func testO2UnknownSizeStillHonorsDownloadBudget() async throws {
         let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
         let client = api(.o2)
-        client.o2SessionCache = O2Session(host: "cloud.o2online.es", validationKey: "key")
+        (client.provider as! O2Provider).o2SessionCache = O2Session(host: "cloud.o2online.es", validationKey: "key")
         StubProtocol.handler = { request in
             if request.url?.path == "/sapi/media" { return (200, [:], Data(#"{"data":{"media":[{"url":"https://cloud.o2online.es/file"}]}}"#.utf8)) }
             return (200, [:], Data(repeating: 1, count: 100))
@@ -170,8 +170,8 @@ final class P2RegressionTests: XCTestCase {
         StubProtocol.handler = { _ in (200, [:], Data(#"{"status":"failed","error":{"code":"nameAlreadyExists"}}"#.utf8)) }
         let status = try await client.remoteCopyStatus(URL(string: "https://graph.microsoft.com/monitor/1")!)
         XCTAssertEqual(status, .failed)
-        XCTAssertFalse(CloudAPI.validCopyMonitor(URL(string: "https://graph.microsoft.com.evil.example/monitor")!))
-        XCTAssertFalse(CloudAPI.validCopyMonitor(URL(string: "http://graph.microsoft.com/monitor")!))
+        XCTAssertFalse(OneDriveProvider.validCopyMonitor(URL(string: "https://graph.microsoft.com.evil.example/monitor")!))
+        XCTAssertFalse(OneDriveProvider.validCopyMonitor(URL(string: "http://graph.microsoft.com/monitor")!))
     }
     func testCrossCloudCompletedCheckpointDoesNotDownloadOrUploadAgain() async throws {
         let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
@@ -221,7 +221,7 @@ final class P2RegressionTests: XCTestCase {
         let mega = api(.mega), state = MegaState(sid: "sid", masterKey: Data(repeating: 1, count: 16))
         state.loaded = true; state.loadedAt = Date()
         for n in 0..<501 { state.nodes["n\(n)"] = MegaNode(handle: "n\(n)", parent: "root", kind: 0, name: "match \(n)", size: 1, modified: nil, key: Data()) }
-        mega.megaStateCache = state
+        (mega.provider as! MegaProvider).megaStateCache = state
         let page = try await mega.searchPage(term: "match")
         XCTAssertEqual(page.hits.count, 500); XCTAssertTrue(page.incomplete)
         StubProtocol.handler = { _ in (200, [:], Data(#"{"total_count":10001,"entries":[{"id":"f","name":"match","type":"file"}]}"#.utf8)) }
@@ -232,7 +232,7 @@ final class P2RegressionTests: XCTestCase {
         let mega = api(.mega), state = MegaState(sid: "sid", masterKey: Data(repeating: 1, count: 16))
         state.loaded = true; state.loadedAt = Date()
         state.nodes["f"] = MegaNode(handle: "f", parent: "root", kind: 0, name: "a", size: 1000, modified: nil, key: Data(repeating: 1, count: 32))
-        mega.megaStateCache = state
+        (mega.provider as! MegaProvider).megaStateCache = state
         var requests = 0
         StubProtocol.handler = { request in
             requests += 1; XCTAssertEqual(request.url?.host, "g.api.mega.co.nz")
@@ -249,7 +249,7 @@ final class P2RegressionTests: XCTestCase {
         state.trash = "trash"
         state.nodes["trash"] = MegaNode(handle: "trash", parent: "", kind: 4, name: "Trash", size: nil, modified: nil, key: Data())
         state.nodes["old"] = MegaNode(handle: "old", parent: "root", kind: 0, name: "a", size: 1, modified: nil, key: Data())
-        mega.megaStateCache = state
+        (mega.provider as! MegaProvider).megaStateCache = state
         let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
         let local = root.appendingPathComponent("a"); try Data([1]).write(to: local)
         var cursor = UploadCheckpoint(total: 1, remoteID: "new", pendingRetirementID: "old")
@@ -260,7 +260,7 @@ final class P2RegressionTests: XCTestCase {
             XCTAssertEqual(command["a"] as? String, "m", "No upload or node creation may be repeated")
             return (200, [:], Data(calls == 1 ? "[-11]".utf8 : "[0]".utf8))
         }
-        do { _ = try await mega.megaUpload(local: local, parent: "root", name: "a", replacing: "old", cursor: &cursor, save: { _ in }, progress: { _, _ in }); XCTFail("Expected retirement error") } catch {}
+        do { _ = try await (mega.provider as! MegaProvider).megaUpload(local: local, parent: "root", name: "a", replacing: "old", cursor: &cursor, save: { _ in }, progress: { _, _ in }); XCTFail("Expected retirement error") } catch {}
         XCTAssertEqual(cursor.remoteID, "new"); XCTAssertFalse(cursor.complete)
         XCTAssertEqual(state.nodes["old"]?.parent, "root")
         try FileManager.default.removeItem(at: local)
