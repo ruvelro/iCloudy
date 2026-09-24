@@ -38,7 +38,7 @@ extension GoogleDriveProvider {
 
     func googleList(parent: String, onPage: (([CloudFile]) -> Void)?) async throws -> [CloudFile] {
         var files: [CloudFile] = []
-        let fields = "nextPageToken,files(id,name,mimeType,size,modifiedTime,webViewLink)"
+        let fields = "nextPageToken,files(id,name,mimeType,size,modifiedTime,webViewLink" + (parent == Collection.trash.rootID ? ",explicitlyTrashed)" : ")")
 
         var page: String?
         repeat {
@@ -55,6 +55,13 @@ extension GoogleDriveProvider {
                     URLQueryItem(name: "q", value: "sharedWithMe = true and trashed = false"), URLQueryItem(name: "pageSize", value: "1000"), URLQueryItem(name: "fields", value: fields),
                     URLQueryItem(name: "pageToken", value: page),
                 ]
+            case Collection.trash.rootID:
+                // Drive marks every descendant of a binned folder as trashed too. Only what was binned by itself is
+                // listed, the way Drive's own bin does; the rest comes and goes with its folder.
+                url.queryItems = [
+                    URLQueryItem(name: "q", value: "trashed = true"), URLQueryItem(name: "pageSize", value: "1000"), URLQueryItem(name: "fields", value: fields),
+                    URLQueryItem(name: "pageToken", value: page),
+                ]
             default:
                 let escaped = googleParent(parent).replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
                 url.queryItems = [
@@ -64,7 +71,8 @@ extension GoogleDriveProvider {
             }
             url.queryItems = (url.queryItems ?? []) + googleDriveScope
             let result = try await json(url.url!)
-            files += (result["files"] as? [[String: Any]] ?? []).compactMap(Self.googleFile)
+            let entries = (result["files"] as? [[String: Any]] ?? [])
+            files += (parent == Collection.trash.rootID ? entries.filter { $0["explicitlyTrashed"] as? Bool != false } : entries).compactMap(Self.googleFile)
             page = parent == Collection.recent.rootID ? nil : result["nextPageToken"] as? String
             if page != nil { onPage?(Self.sorted(files)) }
         } while page != nil
@@ -117,6 +125,26 @@ extension GoogleDriveProvider {
 
     func trash(file: CloudFile) async throws {
         _ = try await json(googleURL("https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))"), method: "PATCH", body: ["trashed": true])
+    }
+
+    /// Drive remembers where a binned item came from, so clearing the flag is the whole restoration.
+    func restore(file: CloudFile) async throws {
+        _ = try await json(googleURL("https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))"), method: "PATCH", body: ["trashed": false])
+    }
+
+    /// A DELETE skips the bin whether or not the item is in it. Drive answers 204 with no body.
+    func deletePermanently(file: CloudFile) async throws {
+        var request = try await request(googleURL("https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))"), method: "DELETE")
+        let (data, response) = try await send(&request)
+        try HTTP.validate(response, data: data)
+    }
+
+    /// One request empties the whole bin; a shared drive's bin is addressed by its drive id.
+    func emptyTrash() async throws {
+        let scope = account.driveID.map { "?driveId=" + Self.segment($0) } ?? ""
+        var request = try await request(googleURL("https://www.googleapis.com/drive/v3/files/trash" + scope), method: "DELETE")
+        let (data, response) = try await send(&request)
+        try HTTP.validate(response, data: data)
     }
 
     func publicLink(for file: CloudFile) async throws -> URL {

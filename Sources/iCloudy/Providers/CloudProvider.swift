@@ -10,6 +10,12 @@ protocol CloudProvider: CloudSession {
     func move(file: CloudFile, to destination: String) async throws
     func copy(file: CloudFile, to destination: String, accepted: ((URL) throws -> Void)?) async throws
     func trash(file: CloudFile) async throws
+    /// Puts an item listed under `Collection.trash` back where it was, or at the root when the provider forgot.
+    func restore(file: CloudFile) async throws
+    /// Removes an item for good, whether it sits in the trash or still in the tree. Nothing brings it back.
+    func deletePermanently(file: CloudFile) async throws
+    /// Purges everything in the provider's trash.
+    func emptyTrash() async throws
     func publicLink(for file: CloudFile) async throws -> URL
     func searchPage(term: String, cursor: String?, filters: SearchFilters, referenceDate: Date) async throws -> SearchPage
     func folderTrail(id: String) async throws -> [CloudFile]
@@ -31,6 +37,9 @@ extension CloudProvider {
         RemoteIdentityChange(oldID: file.id, newID: file.id, name: name, descendants: file.isFolder)
     }
     var requiresVerifiedLegacyCheckpoint: Bool { false }
+    func restore(file: CloudFile) async throws { throw CloudError.message(L("\(account.cloud.title) no permite restaurar desde iCloudy.")) }
+    func deletePermanently(file: CloudFile) async throws { throw CloudError.message(L("\(account.cloud.title) no permite el borrado definitivo desde iCloudy.")) }
+    func emptyTrash() async throws { throw CloudError.message(L("\(account.cloud.title) no permite vaciar la papelera desde iCloudy.")) }
     func canResumeWithoutSource(_ checkpoint: UploadCheckpoint?) -> Bool { false }
     func rootID() async throws -> String { account.cloud.rootAlias }
     func availableDrives() async throws -> [RemoteDrive] { throw CloudError.message(L("\(account.cloud.title) no tiene unidades compartidas.")) }

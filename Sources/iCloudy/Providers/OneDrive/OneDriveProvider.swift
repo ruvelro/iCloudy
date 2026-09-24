@@ -102,6 +102,16 @@ extension OneDriveProvider {
         try HTTP.validate(response, data: data)
     }
 
+    /// Graph's `permanentDelete` skips the recycle bin. Some personal accounts refuse it; the answer says so.
+    func deletePermanently(file: CloudFile) async throws {
+        var request = try await request(URL(string: "\(graphDrive)/items/\(Self.segment(file.id))/permanentDelete")!, method: "POST")
+        let (data, response) = try await send(&request)
+        do { try HTTP.validate(response, data: data) }
+        catch let error as ServiceError where [400, 403, 404, 405, 501].contains(error.status) {
+            throw CloudError.message(L("OneDrive no admite el borrado definitivo en esta cuenta: ") + (error.detail ?? "HTTP \(error.status)") + L(" El elemento sigue donde estaba; envíalo a la papelera y vacíala desde la web de OneDrive."))
+        }
+    }
+
     func publicLink(for file: CloudFile) async throws -> URL {
         let result = try await json(URL(string: "\(graphDrive)/items/\(Self.segment(file.id))/createLink")!, method: "POST", body: ["type": "view", "scope": "anonymous"])
         guard let link = ((result["link"] as? [String: Any])?["webUrl"] as? String).flatMap(URL.init(string:)) else {

@@ -348,6 +348,48 @@ final class MegaProviderTests: XCTestCase {
         XCTAssertEqual(moved?["t"] as? String, "PAPELERA", "Se mueve a la papelera, no se borra")
     }
 
+    func testTheBinIsListedRestoredAndPurgedLikeAnyOtherFolder() async throws {
+        var commands: [(String, [String: Any])] = []
+        extraAttributes["BORRADO"] = ["rr": "CARPETA"]
+        serve { action, command in commands.append((action, command)); return nil }
+        let api = client()
+        let binned = try await api.list(parent: Collection.trash.rootID)
+        XCTAssertEqual(binned.map(\.id), ["BORRADO"], "La papelera es el nodo de tipo 4 del árbol")
+
+        // Mega's own clients leave `rr` behind when binning; restoring honours it while that folder still exists.
+        try await api.restore(file: try XCTUnwrap(binned.first))
+        let restore = try XCTUnwrap(commands.last { $0.0 == "m" })
+        XCTAssertEqual(restore.1["n"] as? String, "BORRADO")
+        XCTAssertEqual(restore.1["t"] as? String, "CARPETA", "Vuelve a la carpeta de la que salió")
+        let folder = try await api.list(parent: "CARPETA")
+        XCTAssertTrue(folder.contains { $0.id == "BORRADO" }, "El árbol en memoria se actualiza sin volver a pedirlo")
+
+        // Binning a root child writes no `rr`; binning something deeper does, and the move still follows.
+        commands.removeAll()
+        let deep = try XCTUnwrap(folder.first { $0.id == "BORRADO" })
+        try await api.trash(file: deep)
+        XCTAssertEqual(commands.map(\.0), ["a", "m"])
+        commands.removeAll()
+        let rootFiles = try await api.list(parent: "root")
+        try await api.trash(file: try XCTUnwrap(rootFiles.first { $0.id == "ARCHIVO" }))
+        XCTAssertEqual(commands.map(\.0), ["m"], "Un hijo de la raíz no necesita anotar de dónde viene")
+
+        commands.removeAll()
+        let binnedNow = try await api.list(parent: Collection.trash.rootID)
+        try await api.deletePermanently(file: try XCTUnwrap(binnedNow.first { $0.id == "ARCHIVO" }))
+        XCTAssertEqual(commands.map(\.0), ["d"], "`d` borra para siempre")
+        XCTAssertEqual(commands[0].1["n"] as? String, "ARCHIVO")
+        let afterPurge = try await api.list(parent: Collection.trash.rootID)
+        XCTAssertFalse(afterPurge.contains { $0.id == "ARCHIVO" })
+
+        commands.removeAll()
+        try await api.emptyTrash()
+        XCTAssertEqual(commands.map { $0.1["n"] as? String }, ["BORRADO"], "Vaciar es un `d` por cada hijo directo de la papelera")
+        let afterEmptying = try await api.list(parent: Collection.trash.rootID)
+        XCTAssertTrue(afterEmptying.isEmpty)
+        XCTAssertTrue(commands.allSatisfy { $0.0 == "d" })
+    }
+
     func testMegaFailuresBecomeSomethingTheUserCanActOn() async throws {
         var attempts = 0
         serve { action, _ in

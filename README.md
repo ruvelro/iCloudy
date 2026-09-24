@@ -41,14 +41,14 @@ terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga 
 
 | Nube | Acceso | Buscar | Enlaces | Papelera | Verificación | Estado |
 |---|---|:-:|:-:|:-:|:-:|---|
-| **Google Drive** | OAuth + PKCE | ✅ | ✅ | ✅ | MD5 | Estable |
+| **Google Drive** | OAuth + PKCE | ✅ | ✅ | ✅⁵ | MD5 | Estable |
 | **OneDrive** | OAuth + PKCE | ✅ | ✅ | ✅ | SHA-256 / SHA-1 | Estable |
-| **Dropbox** | OAuth + PKCE | ✅ | ✅ | ✅ | `content_hash` | Estable |
-| **Box** | OAuth + PKCE | ✅ | ✅ | ✅ | SHA-1 | Estable |
+| **Dropbox** | OAuth + PKCE | ✅ | ✅ | ✅⁵ | `content_hash` | Estable |
+| **Box** | OAuth + PKCE | ✅ | ✅ | ✅⁵ | SHA-1 | Estable |
 | **WebDAV** | Usuario y contraseña | — | ✅¹ | — | — | Estable |
 | **Volúmenes y carpetas** | Carpeta del Mac | ✅ | — | ✅² | — | Estable |
 | **FTP / FTPS** | Usuario y contraseña | — | — | — | — | Estable |
-| **Mega** | Correo y contraseña | ✅ | ✅⁴ | ✅ | MAC propio³ | 🧪 Experimental |
+| **Mega** | Correo y contraseña | ✅ | ✅⁴ | ✅⁵ | MAC propio³ | 🧪 Experimental |
 | **O2 Cloud** | Sesión de Mi O2 | — | — | ✅ | — | 🧪 Experimental |
 
 <sub>
@@ -56,6 +56,7 @@ terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga 
 ² Papelera real y reversible del sistema, vía <code>trashItem</code>.
 ³ Cifrado de extremo a extremo: cada descarga se verifica contra el resumen que lleva dentro la clave del archivo.
 <br>⁴ En Mega, enlaces de archivo. Una carpeta se comparte con una clave aparte que iCloudy todavía no sabe crear, y lo dice.
+<br>⁵ Papelera navegable (restaurar, eliminar definitivamente, vaciar) en Drive, Box y Mega; en Dropbox se listan y restauran archivos, y el vaciado depende de la cuenta. OneDrive, O2 y los volúmenes borran definitivamente sin listar su papelera.
 </sub>
 
 **WebDAV** cubre Nextcloud, ownCloud, Synology y casi cualquier NAS. **Volúmenes** cubre SMB, AFP, NFS, discos
@@ -147,9 +148,10 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
   del operador y las cookies de ese acceso viven en el contenedor de WebKit, como en un navegador. Ahí es donde se
   renueva la sesión sin preguntar nada, y desconectar la cuenta las borra.
 - **OAuth con PKCE** y navegador externo. iCloudy nunca ve tu contraseña de Google, Microsoft, Dropbox ni Box.
-- **Nada se borra de verdad en las nubes con papelera.** La única eliminación es «Enviar a la papelera», reversible
-  desde la web del proveedor. No hay vaciado de papelera ni borrado definitivo. WebDAV y FTP no tienen papelera: ahí
-  borrar es definitivo, y el diálogo de confirmación lo dice antes de hacerlo.
+- **Borrar es reversible por defecto.** Suprimir envía a la papelera del proveedor, y en Drive, Box, Mega y Dropbox
+  la pestaña **Papelera** deja restaurar lo enviado. El borrado definitivo y «Vaciar papelera» existen, pero son
+  acciones aparte, con su propia confirmación que dice que nadie podrá deshacerlo. WebDAV y FTP no tienen papelera:
+  ahí borrar es definitivo, y el diálogo de confirmación lo dice antes de hacerlo.
 - **No se indexan contenidos.** Spotlight recibe nombres y ubicaciones, nunca lo que hay dentro de los archivos.
 - **Sin telemetría.** Ninguna.
 
@@ -168,6 +170,7 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 - [x] Modo sin conexión y caché de listados
 - [x] Integración con Spotlight, Atajos, Automatizador, Servicios y Dock
 - [x] Castellano e inglés
+- [x] Papelera navegable con restaurar, borrado definitivo y vaciado, donde el proveedor lo permite
 
 **En camino**
 
@@ -175,7 +178,6 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 - [ ] **Integración con el Finder** mediante extensión File Provider *(necesita identificador de equipo de Apple)*
 - [ ] **Sincronización bidireccional** — hoy los reflejos van solo del Mac a la nube
 - [ ] **SFTP y FTPS explícito** — [por qué no están todavía](docs/FTP.md)
-- [ ] **Vaciar papelera y borrado definitivo**, con las confirmaciones que eso merece
 - [ ] **Compartir con permisos por persona**, más allá del enlace público de solo lectura
 - [ ] **Mega**: probar el segundo factor y las cuentas anteriores a 2018 contra cuentas reales
 - [ ] **Más idiomas**

@@ -26,9 +26,14 @@ extension ExplorerView {
         }
         // A Table insets its own cells; this brings their text onto the margin shared by the title and the footer.
         .padding(.horizontal, Layout.tableCorrection)
-        .onDeleteCommand { model.requestTrash(model.selection(selected)) }
+        .onDeleteCommand { model.requestDelete(model.selection(selected)) }
         .contextMenu(forSelectionType: CloudFile.ID.self) { ids in
-            if ids.count > 1 {
+            if ids.count > 1, model.inTrash {
+                Button("Restaurar \(ids.count) elementos") { Task { await model.restore(model.selection(ids)) } }
+                Divider()
+                Button("Eliminar \(ids.count) elementos definitivamente…", role: .destructive) { model.requestPermanentDelete(model.selection(ids)) }
+                    .disabled(model.account?.capabilities.permanentDelete != true)
+            } else if ids.count > 1 {
                 Button("Descargar \(ids.count) elementos…") { Task { await model.saveMany(model.selection(ids)) } }
                 Button("Mover \(ids.count) elementos a…") { model.requestRelocation(model.selection(ids), copy: false) }
                 Button("Copiar \(ids.count) elementos a…") { model.requestRelocation(model.selection(ids), copy: true) }
@@ -36,6 +41,9 @@ extension ExplorerView {
                 if model.accounts.count > 1 { Button("Enviar \(ids.count) elementos a otra nube…") { model.requestCrossCloud(model.selection(ids)) } }
                 Divider()
                 Button("Enviar \(ids.count) elementos a la papelera…", role: .destructive) { model.requestTrash(model.selection(ids)) }
+                if model.account?.capabilities.permanentDelete == true {
+                    Button("Eliminar \(ids.count) elementos definitivamente…", role: .destructive) { model.requestPermanentDelete(model.selection(ids)) }
+                }
             } else if let file = model.selection(ids).first { fileActions(file) }
         } primaryAction: { ids in
             guard let file = model.selection(ids).first else { return }
@@ -90,7 +98,7 @@ extension ExplorerView {
                 }.focusable().focusEffectDisabled().focused($gridFocused)
                     // The grid had no keyboard at all: no Delete, and no way to take a run of files without
                     // clicking each one with Command held down.
-                    .onDeleteCommand { model.requestTrash(model.selection(selected)) }
+                    .onDeleteCommand { model.requestDelete(model.selection(selected)) }
             } else { fileList }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -14,6 +14,10 @@ extension ExplorerView {
                 .disabled(model.account == nil || model.loading)
             Button { Task { await model.pickUpload() } } label: { Label("Subir", systemImage: "square.and.arrow.up") }.disabled(!model.canWrite)
             Button { model.promptName() } label: { Label("Nueva carpeta", systemImage: "folder.badge.plus") }.disabled(!model.canWrite)
+            if model.inTrash, model.account?.capabilities.emptyTrash == true {
+                Button { model.requestEmptyTrash() } label: { Label("Vaciar papelera", systemImage: "trash.slash") }
+                    .help("Eliminar definitivamente todo lo que hay en la papelera").disabled(model.loading || model.files.isEmpty)
+            }
             Button { Task { await model.saveMany(model.selection(selected)) } } label: { Label("Descargar selección", systemImage: "square.and.arrow.down") }.disabled(selected.isEmpty)
             Button { previewSelection() } label: { Image(systemName: "eye") }.help("Vista previa (Espacio)")
                 .accessibilityLabel("Vista previa").disabled(selected.count != 1)
@@ -54,12 +58,18 @@ extension ExplorerView {
         return files.count == 1 ? L("¿Enviar «\(files[0].name)» a la papelera?") : L("¿Enviar \(files.count) elementos a la papelera?")
     }
 
+    var purgeTitle: String {
+        guard let files = model.pendingPurge else { return "" }
+        return files.count == 1 ? L("¿Eliminar «\(files[0].name)» definitivamente?") : L("¿Eliminar \(files.count) elementos definitivamente?")
+    }
+
     var emptyTitle: String {
         if !model.search.isEmpty { return L("Sin resultados") }
         if model.path.isEmpty {
             switch model.collection {
             case .recent: return L("Todavía no hay elementos recientes")
             case .shared: return L("Nadie ha compartido nada contigo")
+            case .trash: return L("La papelera está vacía")
             case .files: break
             }
         }
@@ -67,7 +77,8 @@ extension ExplorerView {
     }
 
     var emptyDescription: String {
-        model.canWrite ? L("Arrastra archivos o carpetas para subirlos aquí.") : L("Esta lista la calcula el proveedor y no admite subidas.")
+        if model.inTrash { return L("Lo que envíes a la papelera aparece aquí hasta que lo restaures o lo elimines definitivamente.") }
+        return model.canWrite ? L("Arrastra archivos o carpetas para subirlos aquí.") : L("Esta lista la calcula el proveedor y no admite subidas.")
     }
 
     func previewSelection() {
@@ -75,7 +86,24 @@ extension ExplorerView {
         model.showPreview(file)
     }
 
+    /// What can be done with something in the bin: bring it back, or let it go for good. Nothing in between, because
+    /// renaming, moving or sharing a binned item would only mean deciding first whether it is coming back.
+    @ViewBuilder func trashedFileActions(_ file: CloudFile) -> some View {
+        Button("Restaurar") { Task { await model.restore([file]) } }
+        if !file.isFolder {
+            Button("Vista previa") { model.showPreview(file) }
+            Button("Descargar…") { Task { await model.save(file) } }
+        }
+        Divider()
+        Button("Eliminar definitivamente…", role: .destructive) { model.requestPermanentDelete([file]) }
+            .disabled(model.account?.capabilities.permanentDelete != true)
+    }
+
     @ViewBuilder func fileActions(_ file: CloudFile) -> some View {
+        if model.inTrash { trashedFileActions(file) } else { liveFileActions(file) }
+    }
+
+    @ViewBuilder func liveFileActions(_ file: CloudFile) -> some View {
         Button("Vista previa") { model.showPreview(file) }
         Divider()
         Button(model.isFavorite(file) ? L("Quitar de favoritos") : L("Añadir a favoritos")) { model.toggleFavorite(file) }
@@ -110,5 +138,8 @@ extension ExplorerView {
         }
         Divider()
         Button(model.account?.capabilities.reversibleTrash == false ? "Eliminar del servidor…" : "Enviar a la papelera…", role: .destructive) { model.requestTrash([file]) }
+        if model.account?.capabilities.permanentDelete == true {
+            Button("Eliminar definitivamente…", role: .destructive) { model.requestPermanentDelete([file]) }
+        }
     }
 }

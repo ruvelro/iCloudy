@@ -77,6 +77,27 @@ final class CloudAPI {
         }
         return try await provider.trash(file: file)
     }
+    func restore(file: CloudFile) async throws {
+        if let demo {
+            try demo.restore(file.id)
+            return
+        }
+        return try await provider.restore(file: file)
+    }
+    func deletePermanently(file: CloudFile) async throws {
+        if let demo {
+            try demo.deletePermanently(file.id)
+            return
+        }
+        return try await provider.deletePermanently(file: file)
+    }
+    func emptyTrash() async throws {
+        if let demo {
+            try demo.emptyTrash()
+            return
+        }
+        return try await provider.emptyTrash()
+    }
     func publicLink(for file: CloudFile) async throws -> URL {
         if let demo { return try demo.publicLink(file.id) }
         return try await provider.publicLink(for: file)

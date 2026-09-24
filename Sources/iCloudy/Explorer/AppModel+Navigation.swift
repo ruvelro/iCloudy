@@ -12,6 +12,7 @@ extension AppModel {
             case .files: return true
             case .recent: return capabilities.recents
             case .shared: return capabilities.sharedWithMe
+            case .trash: return capabilities.trashListing
             }
         }
     }
@@ -71,7 +72,9 @@ extension AppModel {
     }
 
     func navigate(_ file: CloudFile) {
-        guard file.isFolder, let account else { return }
+        // A binned folder is restored or purged whole; what hangs below it is not browsed, the way the providers'
+        // own bins work, so the list never shows a place nothing can be uploaded to or moved within.
+        guard file.isFolder, let account, !inTrash else { return }
         noteForSpotlight(file, account: account)
         preview.close(); path.append(file); search = ""; files = []; reload()
     }

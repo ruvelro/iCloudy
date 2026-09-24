@@ -182,6 +182,7 @@ extension ExplorerView {
                     }
                     Spacer()
                     if model.canWrite { Text("Arrastra aquí para subir una copia") }
+                    else if model.inTrash { Text("Papelera · restaura o elimina definitivamente") }
                     else if model.account != nil { Text("Lista de solo lectura · abre una carpeta para subir") }
                 }.font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     .padding(.horizontal, Layout.margin).frame(height: Layout.footerHeight)

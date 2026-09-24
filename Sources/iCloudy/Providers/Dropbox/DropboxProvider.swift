@@ -52,6 +52,7 @@ extension DropboxProvider {
     }
 
     func dropboxList(parent: String, onPage: (([CloudFile]) -> Void)?) async throws -> [CloudFile] {
+        if parent == Collection.trash.rootID { return try await dropboxListDeleted(onPage: onPage) }
         var files: [CloudFile] = []
         var result = try await dropboxRPC("files/list_folder", ["path": dropboxPath(parent), "limit": 1000], repeatable: true)
         while true {
@@ -61,6 +62,45 @@ extension DropboxProvider {
             result = try await dropboxRPC("files/list_folder/continue", ["cursor": cursor], repeatable: true)
         }
         return Self.sorted(files)
+    }
+
+    /// A deleted entry as Dropbox describes it: a name and a path, nothing else. Whether it was a file or a folder is
+    /// not said, so it is shown as a file and the restoration finds out.
+    static func dropboxDeleted(_ value: [String: Any]) -> CloudFile? {
+        guard (value[".tag"] as? String) == "deleted", let name = value["name"] as? String, let path = value["path_lower"] as? String else { return nil }
+        return CloudFile(id: path, name: name, mime: mime(forName: name), size: nil, modified: nil, webURL: nil, isFolder: false)
+    }
+    /// Dropbox has no bin of its own to list: deleted entries are handed out among the live ones when asked for, and
+    /// only for the whole account at once. Pages are shown as they arrive because a big account has many of them.
+    func dropboxListDeleted(onPage: (([CloudFile]) -> Void)?) async throws -> [CloudFile] {
+        var files: [CloudFile] = []
+        var result = try await dropboxRPC("files/list_folder", ["path": "", "recursive": true, "include_deleted": true, "limit": 2000], repeatable: true)
+        while true {
+            files += (result["entries"] as? [[String: Any]] ?? []).compactMap(Self.dropboxDeleted)
+            guard result["has_more"] as? Bool == true, let cursor = result["cursor"] as? String else { break }
+            onPage?(Self.sorted(files))
+            result = try await dropboxRPC("files/list_folder/continue", ["cursor": cursor], repeatable: true)
+        }
+        return Self.sorted(files)
+    }
+    /// A file comes back by restoring its last revision. Folders have no revisions and no restoration in the API.
+    func dropboxRestore(file: CloudFile) async throws {
+        let revisions: [String: Any]
+        do { revisions = try await dropboxRPC("files/list_revisions", ["path": file.id, "mode": "path", "limit": 1], repeatable: true) }
+        catch let error as ServiceError where error.status == 409 {
+            throw CloudError.message(L("Dropbox solo restaura archivos desde otras aplicaciones. Una carpeta borrada se recupera desde dropbox.com, con todo su contenido."))
+        }
+        guard let rev = (revisions["entries"] as? [[String: Any]])?.first?["rev"] as? String else {
+            throw CloudError.message(L("Dropbox no conserva ninguna versión de ese archivo."))
+        }
+        _ = try await dropboxRPC("files/restore", ["path": file.id, "rev": rev])
+    }
+    /// Purging is a Business feature; a personal account gets a refusal, which is passed on with the reason.
+    func dropboxDeletePermanently(file: CloudFile) async throws {
+        do { _ = try await dropboxRPC("files/permanently_delete", ["path": file.id]) }
+        catch let error as ServiceError where [403, 409].contains(error.status) {
+            throw CloudError.message(L("Dropbox solo permite el borrado definitivo en cuentas Business. En esta cuenta los archivos borrados caducan solos al cabo de 30 días, o se eliminan desde dropbox.com."))
+        }
     }
 
     func dropboxCreateFolder(name: String, parent: String) async throws -> String {
@@ -271,6 +311,8 @@ extension DropboxProvider {
     func trash(file: CloudFile) async throws {
         try await dropboxTrash(file: file); return
     }
+    func restore(file: CloudFile) async throws { try await dropboxRestore(file: file) }
+    func deletePermanently(file: CloudFile) async throws { try await dropboxDeletePermanently(file: file) }
 
     func publicLink(for file: CloudFile) async throws -> URL {
         return try await dropboxPublicLink(for: file)

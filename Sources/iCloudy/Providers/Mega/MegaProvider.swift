@@ -98,7 +98,10 @@ extension MegaProvider {
 
     func megaList(parent: String) async throws -> [CloudFile] {
         let state = try await megaTree()
-        let handle = try megaHandle(parent, in: state)
+        if parent == Collection.trash.rootID {
+            guard !state.trash.isEmpty else { throw CloudError.message(L("Esta cuenta de Mega no tiene papelera.")) }
+        }
+        let handle = parent == Collection.trash.rootID ? state.trash : try megaHandle(parent, in: state)
         let files = (state.children[handle] ?? []).compactMap { state.nodes[$0] }
             .filter { $0.kind <= 1 }.map(Self.megaFile)
         return Self.sorted(files)
@@ -194,16 +197,62 @@ extension MegaProvider {
         let answer = try await megaCall(["a": "p", "t": try megaHandle(destination, in: state), "n": [entry]])
         state.insert((answer as? [String: Any])?["f"] as? [[String: Any]] ?? [])
     }
-    /// Deleting means moving to Mega's own bin, which the user can undo from mega.nz.
+    /// Deleting means moving to Mega's own bin, which the user can undo from mega.nz or from iCloudy's Papelera.
     func megaTrash(file: CloudFile) async throws {
         let state = try await megaTree()
         let node = try megaNode(file.id, in: state)
         guard !state.trash.isEmpty else { throw CloudError.message(L("Esta cuenta de Mega no tiene papelera.")) }
         guard node.parent != state.trash else {
-            throw CloudError.message(L("Ese elemento ya está en la papelera. Vacíala desde mega.nz."))
+            throw CloudError.message(L("Ese elemento ya está en la papelera. Restáuralo o elimínalo definitivamente desde ahí."))
+        }
+        // Mega's own clients note where the node came from before binning it, so it can go back to the same place.
+        // It is a courtesy, not the deletion: a failure here must not stop the move.
+        if node.isReadable, node.parent != state.root {
+            var attributes = node.attributes(named: node.name)
+            attributes["rr"] = node.parent
+            if let encoded = try? MegaCrypto.encodeAttributes(attributes, key: node.contentKey),
+               let data = try? JSONSerialization.data(withJSONObject: attributes) {
+                if (try? await megaCall(["a": "a", "n": node.handle, "attr": MegaCrypto.encode(encoded), "i": "iCloudy"])) != nil {
+                    state.annotate(node.handle, attributeJSON: data)
+                }
+            }
         }
         _ = try await megaCall(["a": "m", "n": node.handle, "t": state.trash])
         state.reparent(node.handle, to: state.trash)
+    }
+    /// Back to the folder it was binned from when that folder is still in the tree, else to the root.
+    func megaRestore(file: CloudFile) async throws {
+        let state = try await megaTree()
+        let node = try megaNode(file.id, in: state)
+        guard node.parent == state.trash else { throw CloudError.message(L("Ese elemento no está en la papelera de Mega.")) }
+        var destination = state.root
+        if let origin = node.restoreTo, let folder = state.nodes[origin], folder.isFolder, !megaInTrash(origin, in: state) { destination = origin }
+        _ = try await megaCall(["a": "m", "n": node.handle, "t": destination])
+        state.reparent(node.handle, to: destination)
+    }
+    private func megaInTrash(_ handle: String, in state: MegaState) -> Bool {
+        var current = handle, hops = 0
+        while let node = state.nodes[current], hops < 64 {
+            if node.kind == 4 || current == state.trash { return true }
+            current = node.parent; hops += 1
+        }
+        return false
+    }
+    /// `d` removes a node and its subtree for good, wherever it is.
+    func megaDeletePermanently(file: CloudFile) async throws {
+        let state = try await megaTree()
+        let node = try megaNode(file.id, in: state)
+        _ = try await megaCall(["a": "d", "n": node.handle])
+        state.remove(node.handle)
+    }
+    func megaEmptyTrash() async throws {
+        let state = try await megaTree()
+        guard !state.trash.isEmpty else { throw CloudError.message(L("Esta cuenta de Mega no tiene papelera.")) }
+        for handle in state.children[state.trash] ?? [] {
+            try Task.checkCancellation()
+            _ = try await megaCall(["a": "d", "n": handle])
+            state.remove(handle)
+        }
     }
     func megaPublicLink(for file: CloudFile) async throws -> URL {
         let state = try await megaTree()
@@ -434,6 +483,9 @@ extension MegaProvider {
     func trash(file: CloudFile) async throws {
         try await megaTrash(file: file); return
     }
+    func restore(file: CloudFile) async throws { try await megaRestore(file: file) }
+    func deletePermanently(file: CloudFile) async throws { try await megaDeletePermanently(file: file) }
+    func emptyTrash() async throws { try await megaEmptyTrash() }
 
     func publicLink(for file: CloudFile) async throws -> URL {
         return try await megaPublicLink(for: file)

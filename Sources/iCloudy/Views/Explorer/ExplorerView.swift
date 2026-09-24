@@ -77,7 +77,26 @@ struct ExplorerView: View {
             Text(model.account?.capabilities.reversibleTrash == false
                  ? L("Este servidor no tiene papelera: lo que elimines se borra de forma definitiva, con todo el contenido de las carpetas. iCloudy no puede deshacerlo.")
                  : model.account?.cloud == .volume ? L("Los elementos van a la papelera del Mac y se pueden restaurar desde el Finder.")
-                 : L("Los elementos van a la papelera de \(model.account?.cloud.title ?? "la nube") y se pueden restaurar desde su web. Las carpetas se envían con todo su contenido. iCloudy no borra nada de forma definitiva."))
+                 : model.account?.capabilities.trashListing == true ? L("Los elementos van a la papelera de \(model.account?.cloud.title ?? "la nube"), con todo el contenido de las carpetas. Desde la pestaña Papelera se pueden restaurar o eliminar definitivamente.")
+                 : L("Los elementos van a la papelera de \(model.account?.cloud.title ?? "la nube") y se pueden restaurar desde su web. Las carpetas se envían con todo su contenido."))
+        }
+        .confirmationDialog(purgeTitle, isPresented: Binding(get: { model.pendingPurge != nil }, set: { if !$0 { model.pendingPurge = nil } }), titleVisibility: .visible) {
+            Button("Eliminar definitivamente", role: .destructive) {
+                if let files = model.pendingPurge { Task { await model.deletePermanently(files) } }
+                model.pendingPurge = nil
+            }
+            Button("Cancelar", role: .cancel) { model.pendingPurge = nil }
+        } message: {
+            Text("Se borra de \(model.account?.cloud.title ?? "la nube") sin pasar por la papelera, con todo el contenido de las carpetas. Ni iCloudy ni el proveedor pueden deshacerlo.")
+        }
+        .confirmationDialog("¿Vaciar la papelera?", isPresented: $model.pendingEmptyTrash, titleVisibility: .visible) {
+            Button("Vaciar papelera", role: .destructive) {
+                model.pendingEmptyTrash = false
+                Task { await model.emptyTrash() }
+            }
+            Button("Cancelar", role: .cancel) { model.pendingEmptyTrash = false }
+        } message: {
+            Text("Todo lo que hay en la papelera de \(model.account?.cloud.title ?? "la nube") se elimina de forma definitiva, también lo que otras aplicaciones hayan enviado ahí. No se puede deshacer.")
         }
         .confirmationDialog("¿Desconectar esta cuenta?", isPresented: $confirmDisconnect, titleVisibility: .visible, presenting: disconnectTarget) { account in
             Button("Desconectar", role: .destructive) { model.disconnect(account) }

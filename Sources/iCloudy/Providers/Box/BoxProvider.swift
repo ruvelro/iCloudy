@@ -34,8 +34,10 @@ extension BoxProvider {
     func boxList(parent: String, onPage: (([CloudFile]) -> Void)?) async throws -> [CloudFile] {
         var files: [CloudFile] = []
         var marker: String?
+        // The trash is addressed as a folder of its own, listed flat: Box shows what was binned, not what hung below it.
+        let route = parent == Collection.trash.rootID ? "folders/trash/items" : "folders/\(Self.segment(boxID(parent)))/items"
         while true {
-            var url = URLComponents(string: "https://api.box.com/2.0/folders/\(Self.segment(boxID(parent)))/items")!
+            var url = URLComponents(string: "https://api.box.com/2.0/" + route)!
             url.queryItems = [URLQueryItem(name: "fields", value: Self.boxListFields), URLQueryItem(name: "limit", value: "1000"),
                               URLQueryItem(name: "usemarker", value: "true")]
                 + (marker.map { [URLQueryItem(name: "marker", value: $0)] } ?? [])
@@ -63,6 +65,26 @@ extension BoxProvider {
         var request = try await request(URL(string: "https://api.box.com/2.0/\(Self.boxRoute(file))/\(Self.segment(file.id))" + suffix)!, method: "DELETE")
         let (data, response) = try await send(&request)
         try HTTP.validate(response, data: data)
+    }
+    /// Box restores to the original parent when it still exists, and refuses otherwise; the refusal is shown as is.
+    func boxRestore(file: CloudFile) async throws {
+        _ = try await json(URL(string: "https://api.box.com/2.0/\(Self.boxRoute(file))/\(Self.segment(file.id))")!, method: "POST", body: [:])
+    }
+    /// Only what is already in the trash can be purged, so an item still in the tree is binned first. Both steps
+    /// answer 204 without a body; a 404 on the purge means Box had already removed it.
+    func boxDeletePermanently(file: CloudFile, inTrash: Bool) async throws {
+        if !inTrash { try await boxTrash(file: file) }
+        var request = try await request(URL(string: "https://api.box.com/2.0/\(Self.boxRoute(file))/\(Self.segment(file.id))/trash")!, method: "DELETE")
+        let (data, response) = try await send(&request)
+        do { try HTTP.validate(response, data: data) }
+        catch let error as ServiceError where error.status == 404 && inTrash {}
+    }
+    /// Box has no single call for this: the trash is listed and purged entry by entry, stopping at the first refusal.
+    func boxEmptyTrash() async throws {
+        for file in try await boxList(parent: Collection.trash.rootID, onPage: nil) {
+            try Task.checkCancellation()
+            try await boxDeletePermanently(file: file, inTrash: true)
+        }
     }
     func boxPublicLink(for file: CloudFile) async throws -> URL {
         let result = try await boxUpdate(file, body: ["shared_link": ["access": "open", "permissions": ["can_download": true]]])
@@ -275,6 +297,17 @@ extension BoxProvider {
     func trash(file: CloudFile) async throws {
         try await boxTrash(file: file); return
     }
+    func restore(file: CloudFile) async throws { try await boxRestore(file: file) }
+    /// Whether the item is in the trash cannot be read from its id, so it is asked; a 404 there means it was binned.
+    func deletePermanently(file: CloudFile) async throws {
+        let binned: Bool
+        do {
+            let info = try await json(URL(string: "https://api.box.com/2.0/\(Self.boxRoute(file))/\(Self.segment(file.id))?fields=item_status")!)
+            binned = (info["item_status"] as? String) == "trashed"
+        } catch let error as ServiceError where error.status == 404 { binned = true }
+        try await boxDeletePermanently(file: file, inTrash: binned)
+    }
+    func emptyTrash() async throws { try await boxEmptyTrash() }
 
     func publicLink(for file: CloudFile) async throws -> URL {
         return try await boxPublicLink(for: file)

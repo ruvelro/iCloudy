@@ -155,7 +155,8 @@ final class AdvancedTests: XCTestCase {
         XCTAssertTrue(parent.capabilities.sharedWithMe)
         XCTAssertFalse(drive.capabilities.recents)
         XCTAssertFalse(drive.capabilities.sharedWithMe)
-        XCTAssertEqual(AppModel.collections(for: drive), [.files], "La cabecera no ofrece lo que no existe")
+        // A shared drive has no personal lists, but it does have a bin of its own.
+        XCTAssertEqual(AppModel.collections(for: drive), [.files, .trash], "La cabecera no ofrece lo que no existe")
         let library = Account.scoped(to: "b!lib", named: "Documentos", from: account(.microsoft))
         XCTAssertFalse(library.capabilities.recents)
 

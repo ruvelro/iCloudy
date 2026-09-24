@@ -22,7 +22,7 @@ struct Account: Codable, Identifiable, Hashable {
     var flavor: String? { options["flavor"] }
     var isDemo: Bool { id.hasPrefix("demo:") }
     var capabilities: CloudCapabilities {
-        guard !isDemo else { return CloudCapabilities(oauth: false, publicLinks: true) }
+        guard !isDemo else { return CloudCapabilities(oauth: false, publicLinks: true, trashListing: true, permanentDelete: true, emptyTrash: true) }
         var base = cloud.capabilities
         // Plain WebDAV cannot share, but Nextcloud and ownCloud add their own API for it on top.
         if cloud == .webdav, flavor == "nextcloud" { base.publicLinks = true }

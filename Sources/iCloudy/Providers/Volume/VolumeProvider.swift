@@ -142,6 +142,27 @@ extension VolumeProvider {
             if let failure { throw failure }
         }
     }
+    /// Skips the Trash altogether. The same coordination as the reversible path, so the Finder is not caught mid-move.
+    func volumeDeletePermanently(file: CloudFile) async throws {
+        let target = try volumeURL(file.id)
+        let root = try volumeRoot()
+        guard target.standardizedFileURL.path != root.standardizedFileURL.path else {
+            throw CloudError.message(L("La carpeta conectada no se puede eliminar desde iCloudy."))
+        }
+        try await blockingIO {
+            let coordinator = NSFileCoordinator()
+            var coordinationError: NSError?
+            var failure: Error?
+            coordinator.coordinate(writingItemAt: target, options: .forDeleting, error: &coordinationError) { coordinated in
+                do {
+                    _ = try VolumePath(root: root, url: coordinated)
+                    try FileManager.default.removeItem(at: coordinated)
+                } catch { failure = error }
+            }
+            if let coordinationError { throw coordinationError }
+            if let failure { throw failure }
+        }
+    }
     func volumeQuota() async throws -> StorageQuota {
         try volumeCheckMounted()
         let root = try volumeRoot()
@@ -300,6 +321,7 @@ extension VolumeProvider {
     func trash(file: CloudFile) async throws {
         try await volumeTrash(file: file); return
     }
+    func deletePermanently(file: CloudFile) async throws { try await volumeDeletePermanently(file: file) }
 
     func publicLink(for file: CloudFile) async throws -> URL {
         throw CloudError.message(L("Un volumen no tiene enlaces públicos. Compártelo desde el Finder."))

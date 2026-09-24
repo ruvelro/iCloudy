@@ -286,7 +286,7 @@ final class CoreTests: XCTestCase {
         try await makeClient(.microsoft).trash(file: file)
     }
 
-    @MainActor func testDemoTrashRemovesFoldersRecursively() throws {
+    @MainActor func testDemoTrashKeepsFoldersUntilPurgedAndThenRemovesThemRecursively() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let demo = try DemoStore(directory: root)
@@ -294,6 +294,9 @@ final class CoreTests: XCTestCase {
         let nested = try demo.add(name: "dentro.txt", parent: folder, content: Data("x".utf8))
         try demo.trash(folder)
         XCTAssertFalse(try demo.list("root").contains { $0.id == folder })
+        // The demo has a bin now, like the clouds it stands in for: the contents wait there until purged.
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent(nested).path))
+        try demo.deletePermanently(folder)
         XCTAssertThrowsError(try demo.rename(nested, name: "y"))
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(nested).path))
     }

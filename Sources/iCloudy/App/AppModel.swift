@@ -23,6 +23,10 @@ final class AppModel: ObservableObject {
     @Published var pendingShare: (file: CloudFile, account: Account)?
     /// Items awaiting confirmation before being sent to the provider's trash.
     @Published var pendingTrash: [CloudFile]?
+    /// Items awaiting confirmation before being deleted for good, from the trash or straight from the tree.
+    @Published var pendingPurge: [CloudFile]?
+    /// True while the confirmation to empty the whole trash is showing.
+    @Published var pendingEmptyTrash = false
     /// Move or copy in progress of being targeted; drives the folder picker sheet.
     @Published var relocation: Relocation?
     /// Cross-cloud transfer waiting for its destination account.
@@ -108,6 +112,8 @@ final class AppModel: ObservableObject {
     var folderID: String { path.last?.id ?? collection.rootID }
     /// Recents and shared lists are not folders: nothing can be uploaded or created in them until a real folder is opened.
     var canWrite: Bool { account != nil && (collection == .files || !path.isEmpty) }
+    /// The trash shows what was binned; the only things to do with it are restoring it and deleting it for good.
+    var inTrash: Bool { collection == .trash }
     var transfers: [Transfer] { queue.items }
     var hasActiveTransfers: Bool { queue.hasActive }
     var location: String { ([account?.email ?? ""] + (collection == .files ? [] : [collection.title]) + path.map(\.name)).joined(separator: " / ") }

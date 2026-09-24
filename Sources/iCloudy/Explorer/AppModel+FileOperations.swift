@@ -105,9 +105,80 @@ extension AppModel {
         reload(fresh: true)
     }
 
+    /// What the Delete key does: bin from the tree, purge from the bin.
+    func requestDelete(_ files: [CloudFile]) {
+        if inTrash { requestPermanentDelete(files) } else { requestTrash(files) }
+    }
+
     func requestTrash(_ files: [CloudFile]) {
         guard account != nil, !files.isEmpty else { return }
         pendingTrash = files
+    }
+
+    func requestPermanentDelete(_ files: [CloudFile]) {
+        guard let account, !files.isEmpty else { return }
+        guard account.capabilities.permanentDelete else { error = L("\(account.cloud.title) no permite el borrado definitivo desde iCloudy."); return }
+        pendingPurge = files
+    }
+
+    func requestEmptyTrash() {
+        guard let account, account.capabilities.emptyTrash else { return }
+        pendingEmptyTrash = true
+    }
+
+    /// Deletes for good, one by one, stopping at the first failure so what remains is exactly what the list shows.
+    func deletePermanently(_ files: [CloudFile]) async {
+        guard let account else { return }
+        var removed = 0
+        do {
+            let api = try client(account)
+            for file in files {
+                try await api.deletePermanently(file: file)
+                removed += 1
+                forgetLocally(file, account: account)
+            }
+            try LocalStore.save(favorites, to: favoritesURL)
+            info = removed == 1 ? L("«\(files[0].name)» se ha eliminado definitivamente de \(account.cloud.title).") : L("\(removed) elementos eliminados definitivamente de \(account.cloud.title).")
+        } catch {
+            self.error = (removed > 0 ? L("Se eliminaron \(removed) de \(files.count) elementos. ") : L("")) + error.localizedDescription
+        }
+        reload(fresh: true)
+    }
+
+    /// Puts binned items back. Where they land is the provider's memory, not iCloudy's, and the message says so.
+    func restore(_ files: [CloudFile]) async {
+        guard let account else { return }
+        var restored = 0
+        do {
+            let api = try client(account)
+            for file in files {
+                try await api.restore(file: file)
+                restored += 1
+            }
+            info = restored == 1 ? L("«\(files[0].name)» ha vuelto a su carpeta en \(account.cloud.title).") : L("\(restored) elementos restaurados en \(account.cloud.title).")
+        } catch {
+            self.error = (restored > 0 ? L("Se restauraron \(restored) de \(files.count) elementos. ") : L("")) + error.localizedDescription
+        }
+        listings.removeAll(accountID: account.id)
+        reload(fresh: true)
+    }
+
+    func emptyTrash() async {
+        guard let account else { return }
+        do {
+            try await client(account).emptyTrash()
+            for file in files { forgetLocally(file, account: account) }
+            try LocalStore.save(favorites, to: favoritesURL)
+            info = L("La papelera de \(account.cloud.title) se ha vaciado.")
+        } catch { self.error = error.localizedDescription }
+        reload(fresh: true)
+        refreshStorage(account, force: true)
+    }
+
+    /// What the app itself knew about an item that no longer exists anywhere.
+    private func forgetLocally(_ file: CloudFile, account: Account) {
+        spotlight.forget(accountID: account.id, fileID: file.id)
+        favorites.removeAll { $0.accountID == account.id && ($0.file.id == file.id || $0.path.contains { $0.id == file.id }) }
     }
 
     /// Sends the items to the trash one by one and stops at the first failure so the user sees exactly what remains.
@@ -127,6 +198,8 @@ extension AppModel {
                 info = L("\(moved) elementos eliminados del servidor de forma permanente.")
             } else if account.cloud == .volume {
                 info = L("\(moved) elementos enviados a la papelera. Puedes restaurarlos desde el Finder.")
+            } else if account.capabilities.trashListing {
+                info = moved == 1 ? L("«\(files[0].name)» está en la papelera de \(account.cloud.title). Puedes restaurarlo desde la pestaña Papelera.") : L("\(moved) elementos enviados a la papelera de \(account.cloud.title). Puedes restaurarlos desde la pestaña Papelera.")
             } else {
             info = moved == 1 ? L("«\(files[0].name)» está en la papelera de \(account.cloud.title). Puedes restaurarlo desde su web.") : L("\(moved) elementos enviados a la papelera de \(account.cloud.title).")
             }

@@ -327,6 +327,16 @@ extension O2Provider {
                              body: ["data": [media.kind.rawValue + "s": [media.value]]])
         }
     }
+    /// The same delete without the soft-delete flag removes a file for good. Folders only have the soft variant
+    /// among the calls seen in use, so a folder is refused rather than guessed at.
+    func o2DeletePermanently(file: CloudFile) async throws {
+        guard !file.isFolder else {
+            throw CloudError.message(L("O2 Cloud solo elimina archivos de forma definitiva desde otras aplicaciones. Envía la carpeta a la papelera y vacíala desde su web."))
+        }
+        let media = try o2Media(file)
+        try await o2Call("media/" + media.kind.rawValue, action: "delete",
+                         body: ["data": [media.kind.rawValue + "s": [media.value]]])
+    }
     /// O2 shares folders through a link of its own. Single files go through its web interface, which builds a
     /// shared set first, so iCloudy says so instead of guessing at a two-step flow it cannot verify.
     func o2PublicLink(for file: CloudFile) async throws -> URL {
@@ -501,6 +511,7 @@ extension O2Provider {
     func trash(file: CloudFile) async throws {
         try await o2Trash(file: file); return
     }
+    func deletePermanently(file: CloudFile) async throws { try await o2DeletePermanently(file: file) }
 
     func publicLink(for file: CloudFile) async throws -> URL {
         return try await o2PublicLink(for: file)

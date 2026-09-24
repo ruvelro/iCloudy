@@ -2,7 +2,11 @@ import Foundation
 
 @MainActor
 final class DemoStore {
-    struct Entry: Codable { var file: CloudFile; var parent: String }
+    struct Entry: Codable {
+        var file: CloudFile; var parent: String
+        /// Set while the entry sits in the demo's bin: the parent it can be restored to. Older indexes lack the key.
+        var trashedFrom: String?
+    }
     let directory: URL
     var offline = false
     var failNext = false
@@ -32,19 +36,30 @@ final class DemoStore {
         try check()
         switch parent {
         case Collection.recent.rootID:
-            return entries.values.map(\.file).filter { !$0.isFolder }.sorted { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }
+            return entries.values.filter { !isTrashed($0.file.id) }.map(\.file).filter { !$0.isFolder }.sorted { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }
         case Collection.shared.rootID:
             return [] // the demo has a single local user; nothing is shared with it
+        case Collection.trash.rootID:
+            return entries.values.filter { $0.trashedFrom != nil }.map(\.file).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         default:
-            return entries.values.filter { $0.parent == parent }.map(\.file).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            return entries.values.filter { $0.parent == parent && $0.trashedFrom == nil }.map(\.file).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         }
+    }
+    /// True for an entry in the bin and for everything below one, which stays attached to its folder while it waits.
+    func isTrashed(_ id: String) -> Bool {
+        var current = id, seen: Set<String> = []
+        while let entry = entries[current], seen.insert(current).inserted {
+            if entry.trashedFrom != nil { return true }
+            current = entry.parent
+        }
+        return false
     }
     func searchPage(term: String, cursor: String?, accountID: String) throws -> SearchPage {
         try check()
         let offset = cursor.flatMap(Int.init) ?? 0
         guard offset >= 0 else { throw CloudError.message(L("Página no válida.")) }
         let words = term.split(whereSeparator: \.isWhitespace).map(String.init)
-        let matches = entries.values.filter { entry in words.allSatisfy { entry.file.name.localizedCaseInsensitiveContains($0) } }.sorted { $0.file.id < $1.file.id }
+        let matches = entries.values.filter { entry in !isTrashed(entry.file.id) && words.allSatisfy { entry.file.name.localizedCaseInsensitiveContains($0) } }.sorted { $0.file.id < $1.file.id }
         let page = matches.dropFirst(offset).prefix(100).map { SearchHit(accountID: accountID, file: $0.file, parentID: $0.parent) }
         return SearchPage(hits: page, next: offset + page.count < matches.count ? String(offset + page.count) : nil)
     }
@@ -93,8 +108,25 @@ final class DemoStore {
         try persist()
         return copyID
     }
-    /// Removes the entry and its descendants; the demo has no recycle bin to restore from.
+    /// Moves the entry to the demo's own bin, from where it can be restored or purged like in a real cloud.
     func trash(_ id: String) throws {
+        try check()
+        guard var entry = entries[id] else { throw CloudError.message(L("El archivo demo ya no existe.")) }
+        guard entry.trashedFrom == nil else { throw CloudError.message(L("Ese elemento ya está en la papelera.")) }
+        entry.trashedFrom = entry.parent; entries[id] = entry
+        try persist()
+    }
+    /// Puts a binned entry back where it was, or at the root when that folder is gone too.
+    func restore(_ id: String) throws {
+        try check()
+        guard var entry = entries[id] else { throw CloudError.message(L("El archivo demo ya no existe.")) }
+        guard let origin = entry.trashedFrom else { throw CloudError.message(L("Ese elemento no está en la papelera.")) }
+        let parentAlive = origin == "root" || (entries[origin].map { !isTrashed($0.file.id) } ?? false)
+        entry.parent = parentAlive ? origin : "root"; entry.trashedFrom = nil; entries[id] = entry
+        try persist()
+    }
+    /// Removes the entry and its descendants for good, from the bin or straight from the tree.
+    func deletePermanently(_ id: String) throws {
         try check()
         guard entries[id] != nil else { throw CloudError.message(L("El archivo demo ya no existe.")) }
         var pending = [id]
@@ -104,6 +136,10 @@ final class DemoStore {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(current))
         }
         try persist()
+    }
+    func emptyTrash() throws {
+        try check()
+        for id in entries.values.filter({ $0.trashedFrom != nil }).map(\.file.id) { try deletePermanently(id) }
     }
     func publicLink(_ id: String) throws -> URL {
         try check()

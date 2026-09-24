@@ -59,18 +59,29 @@ struct CloudCapabilities {
     var reversibleTrash = true
     /// The provider reports a checksum iCloudy can verify after uploading.
     var checksum = true
+    /// The provider lets iCloudy list its trash, so items can be restored or purged from the app.
+    var trashListing = false
+    /// The provider can delete an item for good from the app, either straight from the tree or out of its trash.
+    /// False where deleting is already final (WebDAV, FTP): there is nothing more definitive to offer.
+    var permanentDelete = false
+    /// The whole trash can be emptied from the app, in one request or in one pass over its contents.
+    var emptyTrash = false
 
     static func of(_ cloud: Cloud) -> CloudCapabilities {
         switch cloud {
         case .google:
-            return CloudCapabilities(exportsDocuments: true)
+            return CloudCapabilities(exportsDocuments: true, trashListing: true, permanentDelete: true, emptyTrash: true)
         case .microsoft:
-            return CloudCapabilities()
+            // Graph deletes for good with `permanentDelete`, but exposes no listing of the recycle bin to third parties.
+            return CloudCapabilities(permanentDelete: true)
         case .dropbox:
             // No "recent" or "shared with me" listing in this version; both need APIs beyond plain file browsing.
-            return CloudCapabilities(recents: false, sharedWithMe: false)
+            // Deleted entries are listed alongside the live ones and files come back through their revisions.
+            // Purging exists only on Business accounts; the provider explains the refusal on the others.
+            return CloudCapabilities(recents: false, sharedWithMe: false, trashListing: true, permanentDelete: true)
         case .box:
-            return CloudCapabilities(recents: false, sharedWithMe: false)
+            // Box has no single "empty trash" call; iCloudy walks the trash and purges item by item.
+            return CloudCapabilities(recents: false, sharedWithMe: false, trashListing: true, permanentDelete: true, emptyTrash: true)
         case .webdav:
             // Plain WebDAV has no search, no sharing links and no recycle bin.
             return CloudCapabilities(oauth: false, search: false, recents: false, sharedWithMe: false,
@@ -82,18 +93,22 @@ struct CloudCapabilities {
                                      reversibleTrash: false, checksum: false)
         case .volume:
             // The file system gives search, free space and a real Trash; only sharing links are missing.
+            // The user's Trash is the Finder's, and under the sandbox iCloudy cannot read it back; it can only skip
+            // it and remove an item outright.
             return CloudCapabilities(oauth: false, recents: false, sharedWithMe: false,
-                                     publicLinks: false, checksum: false)
+                                     publicLinks: false, checksum: false, permanentDelete: true)
         case .mega:
             // The whole tree arrives decrypted in one response, so search and breadcrumbs cost nothing. There is no
             // "recent" or "shared with me" listing, and no checksum to compare after uploading, because the only MAC
-            // Mega stores is the one iCloudy computed itself.
-            return CloudCapabilities(oauth: false, recents: false, sharedWithMe: false, checksum: false)
+            // Mega stores is the one iCloudy computed itself. The rubbish bin is one more folder of that tree.
+            return CloudCapabilities(oauth: false, recents: false, sharedWithMe: false, checksum: false,
+                                     trashListing: true, permanentDelete: true, emptyTrash: true)
         case .o2:
             // Funambol has no media search and no server-side copy for third parties, and reports no checksum.
-            // Deleting is a soft delete, so the item stays recoverable from O2's own bin.
+            // Deleting is a soft delete, so the item stays recoverable from O2's own bin. The same call without the
+            // soft-delete flag removes a file for good; its bin has no listing iCloudy has seen in use.
             return CloudCapabilities(oauth: false, search: false, recents: false, sharedWithMe: false,
-                                     copy: false, checksum: false)
+                                     copy: false, checksum: false, permanentDelete: true)
         }
     }
 }

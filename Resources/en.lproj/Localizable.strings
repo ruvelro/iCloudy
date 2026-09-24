@@ -260,7 +260,6 @@
 "Ese elemento de Mega ya no existe." = "That Mega item no longer exists.";
 "Ese elemento de O2 Cloud no es un archivo." = "That O2 Cloud item is not a file.";
 "Ese elemento está fuera de la carpeta conectada." = "That item is outside the connected folder.";
-"Ese elemento ya está en la papelera. Vacíala desde mega.nz." = "That item is already in the bin. Empty it at mega.nz.";
 "Ese elemento ya no está en Mega." = "That item is no longer in Mega.";
 "Ese elemento ya no está en O2 Cloud." = "That item is no longer in O2 Cloud.";
 "Ese resultado ya no está disponible en iCloudy. Vuelve a conectar la cuenta o búscalo de nuevo." = "That result is no longer available in iCloudy. Reconnect the account or search for it again.";
@@ -374,7 +373,6 @@
 "Lo que falle o canceles se queda aquí, con su botón de reintentar." = "Whatever fails, or you cancel, stays here with a button to try again.";
 "Los archivos de la carpeta elegida se subirán a «%@» y se mantendrán al día. Solo en un sentido: iCloudy nunca borra ni modifica lo local, y no elimina en la nube lo que borres aquí." = "The files in the chosen folder will be uploaded to “%@” and kept up to date. One way only: iCloudy never deletes or modifies local files, and does not remove from the cloud what you delete here.";
 "Los documentos de Google dentro de carpetas se guardan como enlaces. Si hay nombres repetidos, podrás decidir qué hacer." = "Google documents inside folders are saved as links. If names repeat, you will be able to decide what to do.";
-"Los elementos van a la papelera de %@ y se pueden restaurar desde su web. Las carpetas se envían con todo su contenido. iCloudy no borra nada de forma definitiva." = "Items go to the %@ trash and can be restored from its website. Folders are sent with all their contents. iCloudy never deletes anything permanently.";
 "Los filtros se aplican a los resultados recibidos. Si quedan páginas, carga más; si hubo errores, reintenta la cuenta." = "Filters apply to the results received. If pages remain, load more; if there were errors, retry the account.";
 "Marca una carpeta o un archivo con la estrella y aparecerá aquí, sea de la nube que sea." = "Star a folder or a file and it shows up here, whichever cloud it lives in.";
 "Mayor tamaño" = "Largest";
@@ -734,3 +732,45 @@
 "Este proveedor no usa copias asíncronas." = "This provider does not use asynchronous copies.";
 
 "Este proveedor no usa OAuth." = "This provider does not use OAuth.";
+
+/* Papelera: listar, restaurar, eliminar definitivamente y vaciar. */
+"La papelera está vacía" = "The trash is empty";
+"Lo que envíes a la papelera aparece aquí hasta que lo restaures o lo elimines definitivamente." = "Whatever you send to the trash shows up here until you restore it or delete it for good.";
+"Ese elemento ya está en la papelera." = "That item is already in the trash.";
+"Ese elemento no está en la papelera." = "That item is not in the trash.";
+"Ese elemento ya está en la papelera. Restáuralo o elimínalo definitivamente desde ahí." = "That item is already in the trash. Restore it or delete it for good from there.";
+"Ese elemento no está en la papelera de Mega." = "That item is not in Mega's rubbish bin.";
+"OneDrive no admite el borrado definitivo en esta cuenta: " = "OneDrive does not allow permanent deletion on this account: ";
+" El elemento sigue donde estaba; envíalo a la papelera y vacíala desde la web de OneDrive." = " The item is still where it was; send it to the recycle bin and empty it from OneDrive's website.";
+"O2 Cloud solo elimina archivos de forma definitiva desde otras aplicaciones. Envía la carpeta a la papelera y vacíala desde su web." = "O2 Cloud only deletes files for good from other apps. Send the folder to the trash and empty it from its website.";
+"Dropbox solo restaura archivos desde otras aplicaciones. Una carpeta borrada se recupera desde dropbox.com, con todo su contenido." = "Dropbox only restores files from other apps. A deleted folder is recovered from dropbox.com, with everything in it.";
+"Dropbox no conserva ninguna versión de ese archivo." = "Dropbox keeps no version of that file.";
+"Dropbox solo permite el borrado definitivo en cuentas Business. En esta cuenta los archivos borrados caducan solos al cabo de 30 días, o se eliminan desde dropbox.com." = "Dropbox only allows permanent deletion on Business accounts. On this account deleted files expire by themselves after 30 days, or are removed from dropbox.com.";
+"La carpeta conectada no se puede eliminar desde iCloudy." = "The connected folder cannot be deleted from iCloudy.";
+"%@ no permite restaurar desde iCloudy." = "%@ does not allow restoring from iCloudy.";
+"%@ no permite el borrado definitivo desde iCloudy." = "%@ does not allow permanent deletion from iCloudy.";
+"%@ no permite vaciar la papelera desde iCloudy." = "%@ does not allow emptying the trash from iCloudy.";
+"«%@» se ha eliminado definitivamente de %@." = "“%@” has been permanently deleted from %@.";
+"%lld elementos eliminados definitivamente de %@." = "%lld items permanently deleted from %@.";
+"Se eliminaron %lld de %lld elementos. " = "%lld of %lld items were deleted. ";
+"«%@» ha vuelto a su carpeta en %@." = "“%@” is back in its folder in %@.";
+"%lld elementos restaurados en %@." = "%lld items restored in %@.";
+"Se restauraron %lld de %lld elementos. " = "%lld of %lld items were restored. ";
+"La papelera de %@ se ha vaciado." = "The %@ trash has been emptied.";
+"«%@» está en la papelera de %@. Puedes restaurarlo desde la pestaña Papelera." = "“%@” is in the %@ trash. You can restore it from the Trash tab.";
+"%lld elementos enviados a la papelera de %@. Puedes restaurarlos desde la pestaña Papelera." = "%lld items moved to the %@ trash. You can restore them from the Trash tab.";
+"¿Eliminar «%@» definitivamente?" = "Delete “%@” for good?";
+"¿Eliminar %lld elementos definitivamente?" = "Delete %lld items for good?";
+"Los elementos van a la papelera de %@, con todo el contenido de las carpetas. Desde la pestaña Papelera se pueden restaurar o eliminar definitivamente." = "The items go to the %@ trash, folders with everything in them. From the Trash tab they can be restored or deleted for good.";
+"Los elementos van a la papelera de %@ y se pueden restaurar desde su web. Las carpetas se envían con todo su contenido." = "The items go to the %@ trash and can be restored from its website. Folders are sent with everything in them.";
+"Vaciar papelera" = "Empty trash";
+"Eliminar definitivamente todo lo que hay en la papelera" = "Permanently delete everything in the trash";
+"Restaurar" = "Restore";
+"Eliminar definitivamente…" = "Delete for good…";
+"Eliminar definitivamente" = "Delete for good";
+"Restaurar %lld elementos" = "Restore %lld items";
+"Eliminar %lld elementos definitivamente…" = "Delete %lld items for good…";
+"¿Vaciar la papelera?" = "Empty the trash?";
+"Se borra de %@ sin pasar por la papelera, con todo el contenido de las carpetas. Ni iCloudy ni el proveedor pueden deshacerlo." = "It is removed from %@ without passing through the trash, folders with everything in them. Neither iCloudy nor the provider can undo it.";
+"Todo lo que hay en la papelera de %@ se elimina de forma definitiva, también lo que otras aplicaciones hayan enviado ahí. No se puede deshacer." = "Everything in the %@ trash is deleted for good, including what other apps sent there. It cannot be undone.";
+"Papelera · restaura o elimina definitivamente" = "Trash · restore or delete for good";

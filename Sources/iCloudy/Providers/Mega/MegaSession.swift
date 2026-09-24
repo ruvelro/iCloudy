@@ -27,6 +27,11 @@ struct MegaNode: Hashable {
         values["n"] = name
         return values
     }
+    /// Where the node lived before it went to the bin. Mega's own clients write it as `rr` when binning, so a
+    /// restoration can put the node back rather than dump it at the root.
+    var restoreTo: String? {
+        ((try? JSONSerialization.jsonObject(with: attributeJSON)) as? [String: Any])?["rr"] as? String
+    }
 }
 
 /// A signed-in Mega session: the identifier the server accepts, the master key that unwraps every node key, and the
@@ -388,12 +393,29 @@ extension MegaState {
         node.attributeJSON = (try? JSONSerialization.data(withJSONObject: node.attributes(named: name), options: [.sortedKeys])) ?? node.attributeJSON
         nodes[handle] = node
     }
+    /// Keeps the attribute set current after an `a` command the server accepted.
+    func annotate(_ handle: String, attributeJSON: Data) {
+        guard var node = nodes[handle] else { return }
+        node.attributeJSON = attributeJSON
+        nodes[handle] = node
+    }
     func reparent(_ handle: String, to parent: String) {
         guard var node = nodes[handle], nodes[parent] != nil else { loaded = false; return }
         children[node.parent]?.removeAll { $0 == handle }
         node.parent = parent
         nodes[handle] = node
         place(node)
+    }
+    /// Forgets a node and everything below it, after a `d` the server accepted.
+    func remove(_ handle: String) {
+        guard let node = nodes[handle] else { loaded = false; return }
+        children[node.parent]?.removeAll { $0 == handle }
+        var pending = [handle]
+        while let current = pending.popLast() {
+            pending += children[current] ?? []
+            children[current] = nil
+            nodes[current] = nil
+        }
     }
     /// Adds what a `p` response created. Anything that cannot be read forces a reload rather than a hole in the tree.
     func insert(_ entries: [[String: Any]]) {
