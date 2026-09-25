@@ -22,10 +22,10 @@ struct Account: Codable, Identifiable, Hashable {
     var flavor: String? { options["flavor"] }
     var isDemo: Bool { id.hasPrefix("demo:") }
     var capabilities: CloudCapabilities {
-        guard !isDemo else { return CloudCapabilities(oauth: false, publicLinks: true, trashListing: true, permanentDelete: true, emptyTrash: true) }
+        guard !isDemo else { return CloudCapabilities(oauth: false, publicLinks: true, trashListing: true, permanentDelete: true, emptyTrash: true, memberSharing: true) }
         var base = cloud.capabilities
         // Plain WebDAV cannot share, but Nextcloud and ownCloud add their own API for it on top.
-        if cloud == .webdav, flavor == "nextcloud" { base.publicLinks = true }
+        if cloud == .webdav, flavor == "nextcloud" { base.publicLinks = true; base.memberSharing = true }
         // "Recientes" and "Compartido conmigo" list the person's own activity, not a drive's. A shared drive or a
         // document library has neither, and asking for them inside one returns nothing or a refusal.
         if driveID != nil { base.recents = false; base.sharedWithMe = false }

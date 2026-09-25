@@ -23,6 +23,8 @@ final class AppModel: ObservableObject {
     @Published var pendingShare: (file: CloudFile, account: Account)?
     /// Items awaiting confirmation before being sent to the provider's trash.
     @Published var pendingTrash: [CloudFile]?
+    /// The item whose sharing sheet is open.
+    @Published var sharing: SharingRequest?
     /// Items awaiting confirmation before being deleted for good, from the trash or straight from the tree.
     @Published var pendingPurge: [CloudFile]?
     /// True while the confirmation to empty the whole trash is showing.

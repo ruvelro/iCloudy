@@ -17,6 +17,11 @@ protocol CloudProvider: CloudSession {
     /// Purges everything in the provider's trash.
     func emptyTrash() async throws
     func publicLink(for file: CloudFile) async throws -> URL
+    /// Who has access to the item today, the owner and public links included.
+    func permissions(for file: CloudFile) async throws -> [SharePermission]
+    /// Gives `recipient` (an e-mail address, or a user name where the server has them) access at `role`.
+    func share(file: CloudFile, with recipient: String, role: ShareRole) async throws
+    func revoke(_ permission: SharePermission, from file: CloudFile) async throws
     func searchPage(term: String, cursor: String?, filters: SearchFilters, referenceDate: Date) async throws -> SearchPage
     func folderTrail(id: String) async throws -> [CloudFile]
     func storageQuota() async throws -> StorageQuota
@@ -40,6 +45,9 @@ extension CloudProvider {
     func restore(file: CloudFile) async throws { throw CloudError.message(L("\(account.cloud.title) no permite restaurar desde iCloudy.")) }
     func deletePermanently(file: CloudFile) async throws { throw CloudError.message(L("\(account.cloud.title) no permite el borrado definitivo desde iCloudy.")) }
     func emptyTrash() async throws { throw CloudError.message(L("\(account.cloud.title) no permite vaciar la papelera desde iCloudy.")) }
+    func permissions(for file: CloudFile) async throws -> [SharePermission] { throw CloudError.message(L("\(account.cloud.title) no permite compartir con personas desde iCloudy.")) }
+    func share(file: CloudFile, with recipient: String, role: ShareRole) async throws { throw CloudError.message(L("\(account.cloud.title) no permite compartir con personas desde iCloudy.")) }
+    func revoke(_ permission: SharePermission, from file: CloudFile) async throws { throw CloudError.message(L("\(account.cloud.title) no permite compartir con personas desde iCloudy.")) }
     func canResumeWithoutSource(_ checkpoint: UploadCheckpoint?) -> Bool { false }
     func rootID() async throws -> String { account.cloud.rootAlias }
     func availableDrives() async throws -> [RemoteDrive] { throw CloudError.message(L("\(account.cloud.title) no tiene unidades compartidas.")) }

@@ -141,6 +141,23 @@ final class DemoStore {
         try check()
         for id in entries.values.filter({ $0.trashedFrom != nil }).map(\.file.id) { try deletePermanently(id) }
     }
+    /// Grants live for the run only: the demo has one local user and nobody to notify.
+    private var shares: [String: [SharePermission]] = [:]
+    func permissions(_ id: String) throws -> [SharePermission] {
+        try check()
+        guard entries[id] != nil else { throw CloudError.message(L("El archivo demo ya no existe.")) }
+        return [SharePermission(id: "owner", name: L("Tú"), email: "demo@icloudy.invalid", role: nil, isOwner: true)] + (shares[id] ?? [])
+    }
+    func share(_ id: String, with recipient: String, role: ShareRole) throws {
+        try check()
+        guard entries[id] != nil else { throw CloudError.message(L("El archivo demo ya no existe.")) }
+        shares[id, default: []].removeAll { $0.email == recipient }
+        shares[id, default: []].append(SharePermission(id: recipient, name: recipient, email: recipient, role: role))
+    }
+    func revoke(_ permissionID: String, from id: String) throws {
+        try check()
+        shares[id]?.removeAll { $0.id == permissionID }
+    }
     func publicLink(_ id: String) throws -> URL {
         try check()
         guard entries[id] != nil else { throw CloudError.message(L("El archivo demo ya no existe.")) }

@@ -39,21 +39,21 @@ terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga 
 
 ## ☁️ Nubes compatibles
 
-| Nube | Acceso | Buscar | Enlaces | Papelera | Verificación | Estado |
-|---|---|:-:|:-:|:-:|:-:|---|
-| **Google Drive** | OAuth + PKCE | ✅ | ✅ | ✅⁵ | MD5 | Estable |
-| **OneDrive** | OAuth + PKCE | ✅ | ✅ | ✅ | SHA-256 / SHA-1 | Estable |
-| **Dropbox** | OAuth + PKCE | ✅ | ✅ | ✅⁵ | `content_hash` | Estable |
-| **Box** | OAuth + PKCE | ✅ | ✅ | ✅⁵ | SHA-1 | Estable |
-| **WebDAV** | Usuario y contraseña | — | ✅¹ | — | — | Estable |
-| **Volúmenes y carpetas** | Carpeta del Mac | ✅ | — | ✅² | — | Estable |
-| **SFTP** | Usuario y contraseña | — | — | — | — | Estable |
-| **FTP / FTPS** | Usuario y contraseña | — | — | — | — | Estable |
-| **Mega** | Correo y contraseña | ✅ | ✅⁴ | ✅⁵ | MAC propio³ | 🧪 Experimental |
-| **O2 Cloud** | Sesión de Mi O2 | — | — | ✅ | — | 🧪 Experimental |
+| Nube | Acceso | Buscar | Enlaces | Personas | Papelera | Verificación | Estado |
+|---|---|:-:|:-:|:-:|:-:|:-:|---|
+| **Google Drive** | OAuth + PKCE | ✅ | ✅ | ✅ | ✅⁵ | MD5 | Estable |
+| **OneDrive** | OAuth + PKCE | ✅ | ✅ | ✅ | ✅ | SHA-256 / SHA-1 | Estable |
+| **Dropbox** | OAuth + PKCE | ✅ | ✅ | ✅ | ✅⁵ | `content_hash` | Estable |
+| **Box** | OAuth + PKCE | ✅ | ✅ | ✅ | ✅⁵ | SHA-1 | Estable |
+| **WebDAV** | Usuario y contraseña | — | ✅¹ | ✅¹ | — | — | Estable |
+| **Volúmenes y carpetas** | Carpeta del Mac | ✅ | — | — | ✅² | — | Estable |
+| **SFTP** | Usuario y contraseña | — | — | — | — | — | Estable |
+| **FTP / FTPS** | Usuario y contraseña | — | — | — | — | — | Estable |
+| **Mega** | Correo y contraseña | ✅ | ✅⁴ | — | ✅⁵ | MAC propio³ | 🧪 Experimental |
+| **O2 Cloud** | Sesión de Mi O2 | — | — | — | ✅ | — | 🧪 Experimental |
 
 <sub>
-¹ Enlaces públicos en Nextcloud y ownCloud, activando la API OCS al conectar.
+¹ Enlaces públicos y compartir con personas en Nextcloud y ownCloud, activando la API OCS al conectar.
 ² Papelera real y reversible del sistema, vía <code>trashItem</code>.
 ³ Cifrado de extremo a extremo: cada descarga se verifica contra el resumen que lleva dentro la clave del archivo.
 <br>⁴ En Mega, enlaces de archivo. Una carpeta se comparte con una clave aparte que iCloudy todavía no sabe crear, y lo dice.
@@ -173,13 +173,13 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 - [x] Castellano e inglés
 - [x] Papelera navegable con restaurar, borrado definitivo y vaciado, donde el proveedor lo permite
 - [x] SFTP con SSH propio sobre CryptoKit, y FTPS explícito (`AUTH TLS`) — [cómo funciona](docs/FTP.md)
+- [x] Compartir con personas, con permiso de ver o editar, y revocar accesos: Drive, OneDrive, Dropbox, Box y Nextcloud
 
 **En camino**
 
 - [ ] **Binario firmado y notarizado**, con actualizaciones automáticas
 - [ ] **Integración con el Finder** mediante extensión File Provider *(necesita identificador de equipo de Apple)*
 - [ ] **Sincronización bidireccional** — hoy los reflejos van solo del Mac a la nube
-- [ ] **Compartir con permisos por persona**, más allá del enlace público de solo lectura
 - [ ] **Mega**: probar el segundo factor y las cuentas anteriores a 2018 contra cuentas reales
 - [ ] **Más idiomas**
 

@@ -67,22 +67,25 @@ struct CloudCapabilities {
     var permanentDelete = false
     /// The whole trash can be emptied from the app, in one request or in one pass over its contents.
     var emptyTrash = false
+    /// Items can be shared with named people, at a chosen level, and those grants listed and revoked. Public links
+    /// are `publicLinks`; this is the other kind of sharing.
+    var memberSharing = false
 
     static func of(_ cloud: Cloud) -> CloudCapabilities {
         switch cloud {
         case .google:
-            return CloudCapabilities(exportsDocuments: true, trashListing: true, permanentDelete: true, emptyTrash: true)
+            return CloudCapabilities(exportsDocuments: true, trashListing: true, permanentDelete: true, emptyTrash: true, memberSharing: true)
         case .microsoft:
             // Graph deletes for good with `permanentDelete`, but exposes no listing of the recycle bin to third parties.
-            return CloudCapabilities(permanentDelete: true)
+            return CloudCapabilities(permanentDelete: true, memberSharing: true)
         case .dropbox:
             // No "recent" or "shared with me" listing in this version; both need APIs beyond plain file browsing.
             // Deleted entries are listed alongside the live ones and files come back through their revisions.
             // Purging exists only on Business accounts; the provider explains the refusal on the others.
-            return CloudCapabilities(recents: false, sharedWithMe: false, trashListing: true, permanentDelete: true)
+            return CloudCapabilities(recents: false, sharedWithMe: false, trashListing: true, permanentDelete: true, memberSharing: true)
         case .box:
             // Box has no single "empty trash" call; iCloudy walks the trash and purges item by item.
-            return CloudCapabilities(recents: false, sharedWithMe: false, trashListing: true, permanentDelete: true, emptyTrash: true)
+            return CloudCapabilities(recents: false, sharedWithMe: false, trashListing: true, permanentDelete: true, emptyTrash: true, memberSharing: true)
         case .webdav:
             // Plain WebDAV has no search, no sharing links and no recycle bin.
             return CloudCapabilities(oauth: false, search: false, recents: false, sharedWithMe: false,

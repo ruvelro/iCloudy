@@ -102,6 +102,18 @@ final class CloudAPI {
         if let demo { return try demo.publicLink(file.id) }
         return try await provider.publicLink(for: file)
     }
+    func permissions(for file: CloudFile) async throws -> [SharePermission] {
+        if let demo { return try demo.permissions(file.id) }
+        return try await provider.permissions(for: file)
+    }
+    func share(file: CloudFile, with recipient: String, role: ShareRole) async throws {
+        if let demo { try demo.share(file.id, with: recipient, role: role); return }
+        try await provider.share(file: file, with: recipient, role: role)
+    }
+    func revoke(_ permission: SharePermission, from file: CloudFile) async throws {
+        if let demo { try demo.revoke(permission.id, from: file.id); return }
+        try await provider.revoke(permission, from: file)
+    }
     func searchPage(term: String, cursor: String? = nil, filters: SearchFilters = SearchFilters(), referenceDate: Date = Date()) async throws -> SearchPage {
         if let demo { return try demo.searchPage(term: term, cursor: cursor, accountID: account.id) }
         return try await provider.searchPage(term: term, cursor: cursor, filters: filters, referenceDate: referenceDate)

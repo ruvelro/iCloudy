@@ -133,6 +133,9 @@ extension ExplorerView {
         }
         Divider()
         if file.webURL != nil { Button("Copiar enlace") { model.copyLink(file) } }
+        if let account = model.account, account.capabilities.memberSharing {
+            Button("Compartir con personas…") { model.requestSharing(file) }
+        }
         if let account = model.account, account.capabilities.publicLinks {
             Button("Crear enlace público de solo lectura…") { model.pendingShare = (file, account) }
         }
