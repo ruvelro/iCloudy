@@ -865,3 +865,23 @@
 "Nadie más tiene acceso." = "Nobody else has access.";
 "Quitar el acceso" = "Remove access";
 "Permiso" = "Permission";
+
+/* Sincronización en ambos sentidos. */
+"sin cambios" = "no changes";
+"la carpeta del Mac" = "the Mac's folder";
+"la nube" = "the cloud";
+"Sincronizando en ambos sentidos…" = "Syncing both ways…";
+"Vuelve a conectar la cuenta de este reflejo." = "Connect this mirror's account again.";
+"Sincronización cancelada" = "Sync cancelled";
+"%lld subidos" = "%lld uploaded";
+"%lld bajados" = "%lld downloaded";
+"%lld borrados en la nube" = "%lld deleted in the cloud";
+"%lld enviados a la papelera del Mac" = "%lld sent to the Mac's Trash";
+"%lld conflictos" = "%lld conflicts";
+"La sincronización borraría %lld elementos de %@, la mayor parte de lo que hay. No se ha tocado nada. Si es lo que quieres, elige «Sincronizar aplicando los borrados» en el menú del reflejo." = "The sync would delete %lld items from %@, most of what is there. Nothing has been touched. If that is what you want, choose “Sync applying the deletions” in the mirror's menu.";
+"Falta la carpeta remota «%@»; vuelve a sincronizar." = "The remote folder “%@” is missing; sync again.";
+"La carpeta elegida y «%@» se mantendrán iguales en los dos sentidos: lo que cambie en una se aplica en la otra. Lo borrado en un lado va a la papelera del otro, si la tiene; si un archivo cambia en los dos a la vez se conservan las dos versiones. Un borrado de la mayor parte de un lado se detiene y pregunta." = "The chosen folder and “%@” will be kept the same both ways: whatever changes in one is applied to the other. What is deleted on one side goes to the other side's trash, where there is one; if a file changes on both at once, both versions are kept. Deleting most of one side stops and asks.";
+"«%@» y «%@» se sincronizan en ambos sentidos. La primera pasada está en marcha." = "“%@” and “%@” are syncing both ways. The first pass is under way.";
+"Sincronizar en ambos sentidos con una carpeta local…" = "Sync both ways with a local folder…";
+"Sincronizar aplicando los borrados" = "Sync applying the deletions";
+"Solo hace falta cuando la sincronización se detuvo por borrar la mayor parte de un lado" = "Only needed when the sync stopped because it would delete most of one side";

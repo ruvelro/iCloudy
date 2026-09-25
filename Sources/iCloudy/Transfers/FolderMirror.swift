@@ -8,10 +8,17 @@ struct FileStamp: Codable, Equatable {
     let modified: Date
 }
 
-/// A local folder whose contents are pushed, one way, into a remote folder. Deletions and renames are not mirrored:
-/// a removed local file stays in the cloud, a renamed one is uploaded under its new name.
+/// A local folder tied to a remote one. In its original, one-way form the contents are pushed into the cloud and
+/// deletions and renames are not mirrored: a removed local file stays in the cloud, a renamed one is uploaded under
+/// its new name. In two-way form (`TwoWaySync`) changes travel both ways, against a baseline that records what both
+/// sides looked like when they last agreed.
 struct FolderMirror: Identifiable, Codable {
+    enum Mode: String, Codable { case upload, twoWay }
     var id = UUID()
+    var mode: Mode = .upload
+    /// Two-way only: what both sides looked like after the last sync, per relative path.
+    var baseline: [String: SyncEntry] = [:]
+    var lastReport: SyncReport?
     let accountID: String
     var remoteFolderID: String
     /// Human-readable remote location, e.g. "user@example.com / Proyectos / Fotos".
@@ -28,10 +35,13 @@ struct FolderMirror: Identifiable, Codable {
 }
 
 extension FolderMirror {
-    enum CodingKeys: String, CodingKey { case id, accountID, remoteFolderID, remoteName, localURL, bookmark, stamps, pendingStamps, lastSync, activeTransferID, lastError, remoteEntries }
+    enum CodingKeys: String, CodingKey { case id, mode, baseline, lastReport, accountID, remoteFolderID, remoteName, localURL, bookmark, stamps, pendingStamps, lastSync, activeTransferID, lastError, remoteEntries }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        mode = try values.decodeIfPresent(Mode.self, forKey: .mode) ?? .upload
+        baseline = try values.decodeIfPresent([String: SyncEntry].self, forKey: .baseline) ?? [:]
+        lastReport = try values.decodeIfPresent(SyncReport.self, forKey: .lastReport)
         accountID = try values.decode(String.self, forKey: .accountID)
         remoteFolderID = try values.decode(String.self, forKey: .remoteFolderID)
         remoteName = try values.decodeIfPresent(String.self, forKey: .remoteName) ?? ""
@@ -136,6 +146,13 @@ final class MirrorManager: ObservableObject {
     var debounce: Duration = .seconds(3)
     /// Tests turn this off: FSEvents on a temporary folder would race the assertions.
     var watching = true
+    /// How often a two-way mirror asks the cloud for changes nobody made from this Mac.
+    var remotePollInterval: Duration = .seconds(300)
+    /// Two-way syncs in progress, and the ones that must run once more because something changed meanwhile.
+    private(set) var running: Set<UUID> = []
+    private var pollers: [UUID: Task<Void, Never>] = [:]
+    /// Set by "Sincronizar aplicando los borrados" for the next run only.
+    private var massDeletionAllowed: Set<UUID> = []
     private var watchers: [UUID: FolderWatcher] = [:]
     private var scopedURLs: [UUID: URL] = [:]
     private var scheduled: [UUID: Task<Void, Never>] = [:]
@@ -152,7 +169,7 @@ final class MirrorManager: ObservableObject {
         subscription = queue?.stateChanges.sink { [weak self] _ in self?.noteFailures() }
         for mirror in mirrors { watch(mirror); scheduleSync(mirror.id, immediate: true, resumeInterrupted: true) }
     }
-    func add(local: URL, account: Account, folder: CloudFile, path: [CloudFile]) throws {
+    func add(local: URL, account: Account, folder: CloudFile, path: [CloudFile], mode: FolderMirror.Mode = .upload) throws {
         let standardized = local.standardizedFileURL
         guard !mirrors.contains(where: { $0.localURL.standardizedFileURL == standardized && $0.remoteFolderID == folder.id }) else {
             throw CloudError.message(L("Esa carpeta ya se refleja en ese destino."))
@@ -160,7 +177,8 @@ final class MirrorManager: ObservableObject {
         guard !mirrors.contains(where: { $0.localURL.standardizedFileURL == standardized }) else {
             throw CloudError.message(L("Esa carpeta ya se refleja en otro destino. Deja de reflejarla antes de elegir uno nuevo."))
         }
-        let mirror = FolderMirror(accountID: account.id, remoteFolderID: folder.id, remoteName: ([account.email] + path.map(\.name) + [folder.name]).joined(separator: " / "), localURL: standardized, bookmark: try? TransferQueue.bookmark(local))
+        var mirror = FolderMirror(accountID: account.id, remoteFolderID: folder.id, remoteName: ([account.email] + path.map(\.name) + [folder.name]).joined(separator: " / "), localURL: standardized, bookmark: try? TransferQueue.bookmark(local))
+        mirror.mode = mode
         mirrors.append(mirror)
         try persist()
         watch(mirror)
@@ -171,6 +189,7 @@ final class MirrorManager: ObservableObject {
         watchers.removeValue(forKey: id)?.stop()
         if let url = scopedURLs.removeValue(forKey: id) { url.stopAccessingSecurityScopedResource() }
         scheduled.removeValue(forKey: id)?.cancel(); dirty.remove(id); pending.remove(id)
+        pollers.removeValue(forKey: id)?.cancel(); running.remove(id); massDeletionAllowed.remove(id)
         mirrors.removeAll { $0.id == id }
         if let transfer { queue?.cancel(transfer) }
         do { try persist() } catch { persistenceError = error.localizedDescription }
@@ -183,10 +202,14 @@ final class MirrorManager: ObservableObject {
         try persist()
     }
     func removeAll(accountID: String) { for mirror in mirrors where mirror.accountID == accountID { remove(mirror.id) } }
-    func syncNow(_ id: UUID) { scheduleSync(id, immediate: true) }
+    func syncNow(_ id: UUID, applyingMassDeletion: Bool = false) {
+        if applyingMassDeletion { massDeletionAllowed.insert(id) }
+        scheduleSync(id, immediate: true)
+    }
 
     /// What the sidebar shows next to a mirror.
     func status(of mirror: FolderMirror) -> String {
+        if running.contains(mirror.id) { return L("Sincronizando en ambos sentidos…") }
         if let active = mirror.activeTransferID, let item = queue?.items.first(where: { $0.id == active }), [.queued, .running].contains(item.state) {
             return item.state == .running ? L("Sincronizando…") : L("En cola")
         }
@@ -194,7 +217,9 @@ final class MirrorManager: ObservableObject {
         if let error = mirror.lastError { return L("Error: ") + error }
         guard let last = mirror.lastSync else { return L("Pendiente de la primera sincronización") }
         let formatter = RelativeDateTimeFormatter(); formatter.locale = Locale(identifier: "es_ES"); formatter.unitsStyle = .short
-        return L("Sincronizado ") + formatter.localizedString(for: last, relativeTo: Date())
+        let when = L("Sincronizado ") + formatter.localizedString(for: last, relativeTo: Date())
+        if mirror.mode == .twoWay, let report = mirror.lastReport, !report.isEmpty { return when + " · " + report.summary }
+        return when
     }
 
     private func persist() throws {
@@ -223,6 +248,17 @@ final class MirrorManager: ObservableObject {
         let url = resolvedURL(mirror)
         let id = mirror.id
         watchers[id] = FolderWatcher(url: url) { [weak self] in Task { @MainActor in self?.scheduleSync(id, immediate: false) } }
+        // The cloud sends no events: a two-way mirror asks it now and then for what changed elsewhere.
+        if mirror.mode == .twoWay, pollers[id] == nil {
+            let interval = remotePollInterval
+            pollers[id] = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: interval)
+                    guard !Task.isCancelled else { return }
+                    await MainActor.run { self?.scheduleSync(id, immediate: true) }
+                }
+            }
+        }
     }
     private func scheduleSync(_ id: UUID, immediate: Bool, resumeInterrupted: Bool = false) {
         guard mirrors.contains(where: { $0.id == id }) else { return }
@@ -238,6 +274,7 @@ final class MirrorManager: ObservableObject {
     }
     private func sync(_ id: UUID, resumeInterrupted: Bool = false) async {
         guard let index = mirrors.firstIndex(where: { $0.id == id }), let queue else { return }
+        if mirrors[index].mode == .twoWay { await syncTwoWay(id); return }
         if let active = mirrors[index].activeTransferID, let item = queue.items.first(where: { $0.id == active }) {
             if [.queued, .running].contains(item.state) {
                 // Let the running sync finish; its completion re-plans with whatever changed meanwhile.
@@ -278,6 +315,40 @@ final class MirrorManager: ObservableObject {
         } catch {
             if let position = mirrors.firstIndex(where: { $0.id == id }) { mirrors[position].lastError = error.localizedDescription; try? persist() }
         }
+    }
+    /// A two-way run: plan against the baseline, carry it out, write the baseline down after every step. One run
+    /// per mirror at a time; a change that arrives meanwhile queues one more run.
+    private func syncTwoWay(_ id: UUID) async {
+        guard !running.contains(id) else { dirty.insert(id); return }
+        guard let index = mirrors.firstIndex(where: { $0.id == id }), let account = accountLookup?(mirrors[index].accountID) else { return }
+        pending.remove(id); running.insert(id)
+        defer { running.remove(id) }
+        let mirror = mirrors[index]
+        let url = resolvedURL(mirror)
+        do {
+            guard FileManager.default.fileExists(atPath: url.path) else { throw CloudError.message(L("La carpeta local ya no existe en \(url.path).")) }
+            guard let api = try queue?.client?(account.id) else { throw CloudError.message(L("Vuelve a conectar la cuenta de este reflejo.")) }
+            let engine = TwoWaySyncEngine(api: api, localRoot: url, remoteRoot: mirror.remoteFolderID, baseline: mirror.baseline)
+            engine.allowMassDeletion = massDeletionAllowed.remove(id) != nil
+            engine.persist = { [weak self] baseline in
+                guard let self, let position = self.mirrors.firstIndex(where: { $0.id == id }) else { return }
+                self.mirrors[position].baseline = baseline
+                try self.persist()
+            }
+            let report = try await engine.run()
+            guard let position = mirrors.firstIndex(where: { $0.id == id }) else { return }
+            mirrors[position].baseline = engine.baseline
+            mirrors[position].lastReport = report
+            mirrors[position].lastSync = Date()
+            mirrors[position].lastError = nil
+            try persist()
+        } catch {
+            if let position = mirrors.firstIndex(where: { $0.id == id }) {
+                mirrors[position].lastError = (error as? CancellationError) == nil ? error.localizedDescription : L("Sincronización cancelada")
+                try? persist()
+            }
+        }
+        if dirty.remove(id) != nil { scheduleSync(id, immediate: true) }
     }
     /// Hooked to the queue's `didFinish`: promotes the planned stamps and re-syncs if the folder changed meanwhile.
     func handleFinished(_ transfer: Transfer) {

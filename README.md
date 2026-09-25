@@ -107,7 +107,7 @@ cancelable y limpieza al cerrar.
 |  |  |
 |---|---|
 | **Nube o Mac, de un vistazo** | Cada archivo dice si solo está en la nube, si tienes copia en el Mac o si esa copia se ha quedado atrás. |
-| **Reflejos de carpeta** | Eliges una carpeta del Mac y se mantiene subida y al día. Unidireccional y sin borrados: lo que borres en el Mac no desaparece de la nube. |
+| **Reflejos y sincronización** | Eliges una carpeta del Mac y se mantiene subida y al día, en un sentido y sin borrados; o en ambos sentidos, con línea base por archivo, papelera a cada lado para lo borrado, dos versiones cuando ambas cambian y un freno que pregunta antes de borrar la mayor parte de un lado. |
 | **Modo sin conexión** | Se detecta la caída, se pausan las transferencias con el motivo a la vista y se sigue mostrando el último listado conocido. |
 | **Personalización por cuenta** | Alias, ocho colores e iconos propios, para distinguir la cuenta del trabajo de la de casa de un golpe de vista. |
 | **Iconos por tipo de archivo** | Un PDF es rojo, una hoja de cálculo verde, un vídeo índigo. El ojo encuentra el archivo antes de que el cerebro lea el nombre. |
@@ -174,12 +174,12 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 - [x] Papelera navegable con restaurar, borrado definitivo y vaciado, donde el proveedor lo permite
 - [x] SFTP con SSH propio sobre CryptoKit, y FTPS explícito (`AUTH TLS`) — [cómo funciona](docs/FTP.md)
 - [x] Compartir con personas, con permiso de ver o editar, y revocar accesos: Drive, OneDrive, Dropbox, Box y Nextcloud
+- [x] Sincronización en ambos sentidos entre una carpeta del Mac y una de la nube, con línea base, conflictos que conservan las dos versiones y freno ante borrados masivos
 
 **En camino**
 
 - [ ] **Binario firmado y notarizado**, con actualizaciones automáticas
 - [ ] **Integración con el Finder** mediante extensión File Provider *(necesita identificador de equipo de Apple)*
-- [ ] **Sincronización bidireccional** — hoy los reflejos van solo del Mac a la nube
 - [ ] **Mega**: probar el segundo factor y las cuentas anteriores a 2018 contra cuentas reales
 - [ ] **Más idiomas**
 
