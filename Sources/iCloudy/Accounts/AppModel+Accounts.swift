@@ -206,6 +206,7 @@ extension AppModel {
             switch cloud {
             case .webdav: result = try await WebDAVAuthentication().signInWebDAV(server: server, username: username, password: password)
             case .ftp: result = try await FTPAuthentication().signInFTP(server: server, username: username, password: password)
+            case .sftp: result = try await SFTPAuthentication().signInSFTP(server: server, username: username, password: password)
             case .mega: result = try await MegaAuthentication().signInMega(email: username, password: password)
             default: throw CloudError.message(L("\(cloud.title) no se conecta con usuario y contraseña."))
             }
@@ -267,6 +268,7 @@ extension AppModel {
         case .box: return .teal
         case .webdav: return .gray
         case .ftp: return .orange
+        case .sftp: return .teal
         case .volume: return .gray
         case .mega: return .red
         case .o2: return .pink

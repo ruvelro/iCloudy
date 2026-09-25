@@ -12,27 +12,30 @@ Al autenticarse se pide `OPTS UTF8 ON`. Los servidores de Windows más antiguos 
 
 Listados: se usa `MLSD` cuando `FEAT` lo anuncia, que es el formato con tipos, tamaños y fechas fiables. Si no está, se analiza `LIST` en su variante Unix (`ls -l`) y en la variante DOS de algunos servidores Windows. Un enlace simbólico se muestra con su nombre, nunca como carpeta: iCloudy no puede comprobar a dónde apunta.
 
-**FTPS implícito**, es decir, TLS desde el primer byte, normalmente en el puerto 990. Tras autenticarse se envían `PBSZ 0` y `PROT P` para que el canal de datos también viaje cifrado.
+**FTPS implícito**, es decir, TLS desde el primer byte, normalmente en el puerto 990. Tras autenticarse se envían `PBSZ 0` y `PROT P` para que el canal de datos también viaje cifrado. Se guarda como `ftps://`.
 
-Dos límites de esa variante, que conviene saber antes de configurarla. El primero: cada conexión de datos negocia su propio TLS, sin reutilizar la sesión del canal de control. Los servidores que exigen esa reutilización, como vsftpd con `require_ssl_reuse` o FileZilla Server con sus ajustes por omisión, autentican bien y luego rechazan el primer listado. `Network.framework` no expone la sesión TLS para reutilizarla, así que arreglarlo pasa por la misma pila externa que haría falta para el FTPS explícito. El segundo: el certificado lo valida macOS con su política normal, y no hay forma de aceptar uno autofirmado desde la app. Si el servidor usa uno propio, hay que instalarlo en el Llavero y marcarlo como de confianza; el mensaje de error lo dice en lugar de limitarse a un código de TLS.
+**FTPS explícito** (`AUTH TLS` sobre el puerto 21), la variante más extendida. Se guarda como `ftpes://`, la grafía de FileZilla y curl. `Network.framework` fija el cifrado al crear la conexión y no deja elevarla más tarde, pero sí permite que un *framer* inserte un protocolo por debajo de sí mismo mientras la conexión todavía se está estableciendo. `StartTLSFramer` aprovecha justo eso: hace él mismo el diálogo en claro (lee el saludo `220`, envía `AUTH TLS`, espera el `234`), coloca TLS debajo y solo entonces declara la conexión lista. La sesión FTP ve una conexión ya cifrada, sin saludo que leer, y continúa con `PBSZ`, `PROT P` y la contraseña, que nunca viaja en claro. Si el servidor contesta otra cosa a `AUTH TLS`, la conexión falla antes de enviar ninguna credencial y el mensaje dice que ese servidor no admite FTPS explícito. Las conexiones de datos son TLS desde su primer byte, como en la variante implícita.
 
-## Lo que no hay, y por qué
+Dos detalles de ambas variantes de FTPS. El primero: cada conexión de datos negocia su propio TLS, sin reutilizar la sesión del canal de control. Los servidores que exigen esa reutilización, como vsftpd con `require_ssl_reuse` o FileZilla Server con sus ajustes por omisión, autentican bien y luego rechazan el primer listado; `Network.framework` no expone la sesión TLS para reutilizarla. El segundo: el certificado lo valida macOS con su política normal, y no hay forma de aceptar uno autofirmado desde la app. Si el servidor usa uno propio, hay que instalarlo en el Llavero y marcarlo como de confianza; el mensaje de error lo dice en lugar de limitarse a un código de TLS. Al terminar una subida cifrada, la conexión de datos se cierra con un *close_notify* de TLS y no con un simple FIN: un servidor con `PROT P` espera ese cierre para dar la transferencia por completa.
 
-**FTPS explícito** (`AUTH TLS` sobre el puerto 21) no está. Es la variante más extendida, pero requiere empezar la conexión en claro y negociar TLS después. `Network.framework`, que es la capa de red de este proyecto, fija el cifrado al crear la conexión y no permite elevarla más tarde. Añadirlo exige otra pila de TLS.
+**SFTP**, que no es FTP sobre TLS sino un subsistema de SSH. El SDK de Apple no trae ninguna implementación de SSH y el proyecto no tiene dependencias externas, así que iCloudy lleva la suya, escrita sobre las primitivas que sí trae el sistema: CryptoKit para el acuerdo de claves, las firmas, AES-GCM y HMAC; CommonCrypto para AES en modo contador; Security para las claves RSA. Nada de lo criptográfico es propio; lo propio es la fontanería que RFC 4253 pide alrededor, y cada pieza de esa fontanería tiene su prueba.
 
-**SFTP** no está. No es FTP sobre TLS sino un subsistema de SSH, y el SDK de Apple no incluye ninguna implementación de SSH. Hacerla a mano significa escribir el intercambio de claves, los cifrados y la verificación de la clave del servidor, que es justo el tipo de código criptográfico que no debe improvisarse. La vía razonable es añadir dependencias: `swift-nio-ssh` para el transporte y una capa propia para el subsistema SFTP, o `Citadel`, que ya trae ambas cosas.
-
-Esa misma pila resolvería el FTPS explícito, porque `swift-nio-ssl` sí admite elevar una conexión en claro. Sería la primera dependencia externa del proyecto, que hasta ahora no tiene ninguna.
+- **Transporte** (`SSHTransport`): intercambio de versiones, `KEXINIT`, `curve25519-sha256` (también con el sufijo `@libssh.org`) y `ecdh-sha2-nistp256`; claves de servidor `ssh-ed25519`, `ecdsa-sha2-nistp256`, `ecdsa-sha2-nistp384`, `rsa-sha2-512` y `rsa-sha2-256` (nunca `ssh-rsa` a secas, que es SHA-1); cifrados `aes256-gcm@openssh.com`, `aes128-gcm@openssh.com`, `aes256-ctr` y `aes128-ctr`; integridad `hmac-sha2-256-etm@openssh.com` y `hmac-sha2-256`. Sin compresión. Si el servidor pide renovar claves a mitad de una transferencia larga, como hace OpenSSH cada hora o cada pocos gigabytes, se renuevan sin cortar nada. Un solo canal de sesión con el subsistema `sftp`, con control de ventana en los dos sentidos.
+- **Inicio de sesión**: contraseña, y `keyboard-interactive` como alternativa para los servidores que solo aceptan la contraseña a través de PAM. Con claves todavía no.
+- **Clave del servidor**: al conectar la cuenta se guarda la clave que presentó el servidor y su huella en formato `SHA256:` de OpenSSH. Cada sesión posterior tiene que presentar la misma; si cambia, la conexión se rechaza antes de enviar la contraseña, y el mensaje enseña las dos huellas y explica que puede ser un servidor reinstalado o alguien en medio. No se lee `~/.ssh/known_hosts`: el sandbox no lo permite.
+- **SFTP versión 3** (`SFTPClient`): listados, `stat`, crear y borrar carpetas, borrar archivos, renombrar y mover (con `posix-rename@openssh.com` cuando el servidor lo anuncia), descargas y subidas con dieciséis peticiones en vuelo, para que una transferencia vaya a la velocidad del enlace y no a la de la latencia. Espacio libre con `statvfs@openssh.com`, que OpenSSH y la mayoría de NAS ofrecen.
+- **Lo que no tiene**, como FTP: búsqueda, enlaces públicos, papelera, copia en el servidor ni sumas de verificación. Borrar es definitivo y el diálogo lo advierte.
 
 ## Límites del protocolo, reflejados en la interfaz
 
-FTP no tiene búsqueda, enlaces públicos, papelera, cuota ni sumas de verificación. La tabla de capacidades lo declara y la interfaz oculta o explica cada una de esas acciones en lugar de fallar al intentarlas.
+FTP y SFTP no tienen búsqueda, enlaces públicos, papelera ni sumas de verificación. La tabla de capacidades lo declara y la interfaz oculta o explica cada una de esas acciones en lugar de fallar al intentarlas.
 
-- Eliminar es definitivo. El diálogo de confirmación lo dice, y las carpetas se vacían de dentro hacia fuera porque `RMD` exige que estén vacías. Cancelar detiene el borrado, que en una carpeta profunda son muchas órdenes seguidas.
-- No hay copia en el servidor: `COPY` no existe en FTP. Para duplicar un archivo hay que descargarlo y volver a subirlo.
-- Las subidas son un `STOR` completo. El protocolo tiene `REST` para reanudar, pero no hay una sesión que sobreviva a una caída como en Drive o Graph, así que un reintento empieza de cero.
+- Eliminar es definitivo. El diálogo de confirmación lo dice, y las carpetas se vacían de dentro hacia fuera porque `RMD` y `RMDIR` exigen que estén vacías. Cancelar detiene el borrado, que en una carpeta profunda son muchas órdenes seguidas.
+- No hay copia en el servidor. Para duplicar un archivo hay que descargarlo y volver a subirlo.
+- Las subidas son completas: FTP tiene `REST` y SFTP escribe por desplazamientos, pero ninguno de los dos tiene una sesión que sobreviva a una caída como en Drive o Graph, así que un reintento empieza de cero.
 - Ninguna subida queda verificada: el servidor no informa de ninguna suma.
-- Mover y renombrar sí funcionan, con `RNFR` y `RNTO`.
+- Mover y renombrar sí funcionan, con `RNFR`/`RNTO` en FTP y `rename` en SFTP. Antes de renombrar se comprueba que el destino no exista: ni uno ni otro se piden que sobrescriban.
+- FTP no informa del espacio; SFTP sí, cuando el servidor implementa `statvfs@openssh.com`.
 
 ## Seguridad
 
@@ -40,6 +43,22 @@ Sin FTPS, **la contraseña y los archivos viajan sin cifrar**. El formulario de 
 
 Toda lectura tiene límite de tiempo, así que un servidor que deja de responder a mitad de una transferencia falla con un mensaje en lugar de dejar la operación colgada. Cancelar una subida detiene el envío en el siguiente bloque.
 
-Una orden FTP termina en el salto de línea. Un nombre de archivo con un retorno de carro dentro, cosa que APFS permite, colaría una segunda orden al servidor (`informe\rDELE /web/index.html`). Los nombres con saltos de línea se rechazan antes de empezar la transferencia, y la sesión se niega a enviar cualquier línea que los contenga.
+Una orden FTP termina en el salto de línea. Un nombre de archivo con un retorno de carro dentro, cosa que APFS permite, colaría una segunda orden al servidor (`informe\rDELE /web/index.html`). Los nombres con saltos de línea se rechazan antes de empezar la transferencia, y la sesión se niega a enviar cualquier línea que los contenga. SFTP es binario y no tiene ese problema.
 
 Si la dirección se escribe con las credenciales dentro (`ftp://ana:secreta@nas`), se extraen antes de guardarla: la dirección va a `accounts.json`, la contraseña solo al Llavero.
+
+## Cómo se prueba
+
+Las piezas puras tienen pruebas unitarias: la codificación de cable de SSH, el formato de paquete bajo cada cifrado (ida y vuelta, alineación y detección de alteraciones), la verificación de claves Ed25519, ECDSA y RSA, la derivación de claves y la negociación de algoritmos. El camino de rechazo del FTPS explícito corre contra el servidor FTP falso de las pruebas.
+
+La pila completa se prueba contra servidores reales cuando se indican con una variable de entorno; sin ella, esas pruebas se saltan:
+
+```bash
+ICLOUDY_SFTP_URL="sftp://ana:secreta@127.0.0.1:2222/" swift test --filter SFTPTests
+```
+
+```bash
+ICLOUDY_FTPS_URL="ftpes://ana:secreta@127.0.0.1:2121/" swift test --filter FTPSTests
+```
+
+Como servidores de pruebas sirven `asyncssh` (SFTP, con clave de servidor Ed25519, RSA o ECDSA y la lista de cifrados que se quiera) y `pyftpdlib` con `TLS_FTPHandler` (FTPS explícito con un certificado autofirmado). La prueba de FTPS activa un gancho que solo existe para eso, `StartTLSFramer.trustAnyCertificateForTesting`, porque un certificado autofirmado no lo acepta macOS de otra forma; la app nunca lo activa. El SFTP se ha validado contra las tres claves de servidor y contra AES-GCM, AES-CTR con `hmac-sha2-256-etm@openssh.com` y AES-CTR con `hmac-sha2-256`.

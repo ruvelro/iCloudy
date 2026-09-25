@@ -4,7 +4,7 @@
 
 ### Todas tus nubes, en una sola ventana del Mac
 
-**Google Drive · OneDrive · Dropbox · Box · Mega · Nextcloud · Synology · FTP · SMB**
+**Google Drive · OneDrive · Dropbox · Box · Mega · Nextcloud · Synology · SFTP · FTP · SMB**
 
 [![versión](https://img.shields.io/badge/versión-0.5.0-6f9dff?style=flat-square)](https://github.com/ruvelro/iCloudy/releases)
 [![macOS](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white)](https://www.apple.com/macos/)
@@ -47,6 +47,7 @@ terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga 
 | **Box** | OAuth + PKCE | ✅ | ✅ | ✅⁵ | SHA-1 | Estable |
 | **WebDAV** | Usuario y contraseña | — | ✅¹ | — | — | Estable |
 | **Volúmenes y carpetas** | Carpeta del Mac | ✅ | — | ✅² | — | Estable |
+| **SFTP** | Usuario y contraseña | — | — | — | — | Estable |
 | **FTP / FTPS** | Usuario y contraseña | — | — | — | — | Estable |
 | **Mega** | Correo y contraseña | ✅ | ✅⁴ | ✅⁵ | MAC propio³ | 🧪 Experimental |
 | **O2 Cloud** | Sesión de Mi O2 | — | — | ✅ | — | 🧪 Experimental |
@@ -59,7 +60,7 @@ terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga 
 <br>⁵ Papelera navegable (restaurar, eliminar definitivamente, vaciar) en Drive, Box y Mega; en Dropbox se listan y restauran archivos, y el vaciado depende de la cuenta. OneDrive, O2 y los volúmenes borran definitivamente sin listar su papelera.
 </sub>
 
-**WebDAV** cubre Nextcloud, ownCloud, Synology y casi cualquier NAS. **Volúmenes** cubre SMB, AFP, NFS, discos
+**SFTP** cubre cualquier servidor SSH y la mayoría de NAS, cifrado y con la clave del servidor comprobada en cada sesión. **WebDAV** cubre Nextcloud, ownCloud, Synology y casi cualquier NAS. **Volúmenes** cubre SMB, AFP, NFS, discos
 externos y cualquier carpeta del Mac: iCloudy no implementa SMB, lo monta macOS y tú eliges la carpeta una vez.
 
 <br>
@@ -171,13 +172,13 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 - [x] Integración con Spotlight, Atajos, Automatizador, Servicios y Dock
 - [x] Castellano e inglés
 - [x] Papelera navegable con restaurar, borrado definitivo y vaciado, donde el proveedor lo permite
+- [x] SFTP con SSH propio sobre CryptoKit, y FTPS explícito (`AUTH TLS`) — [cómo funciona](docs/FTP.md)
 
 **En camino**
 
 - [ ] **Binario firmado y notarizado**, con actualizaciones automáticas
 - [ ] **Integración con el Finder** mediante extensión File Provider *(necesita identificador de equipo de Apple)*
 - [ ] **Sincronización bidireccional** — hoy los reflejos van solo del Mac a la nube
-- [ ] **SFTP y FTPS explícito** — [por qué no están todavía](docs/FTP.md)
 - [ ] **Compartir con permisos por persona**, más allá del enlace público de solo lectura
 - [ ] **Mega**: probar el segundo factor y las cuentas anteriores a 2018 contra cuentas reales
 - [ ] **Más idiomas**

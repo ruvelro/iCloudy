@@ -25,13 +25,22 @@ extension FTPProvider {
         guard let components = URLComponents(string: server), let host = components.host, !host.isEmpty else {
             throw CloudError.message(L("Esta cuenta FTP no tiene una dirección de servidor válida. Vuelve a conectarla."))
         }
-        let secure = (components.scheme ?? "ftp").lowercased() == "ftps"
-        guard let port = UInt16(exactly: components.port ?? (secure ? 990 : 21)), port > 0 else {
+        let security = Self.ftpSecurity(scheme: components.scheme)
+        guard let port = UInt16(exactly: components.port ?? (security == .implicitTLS ? 990 : 21)), port > 0 else {
             throw CloudError.message(L("El puerto FTP debe estar entre 1 y 65535."))
         }
         var base = components.path
         if base.hasSuffix("/"), base.count > 1 { base = String(base.dropLast()) }
-        return FTPEndpoint(host: host, port: port, base: base.isEmpty ? "/" : base, security: secure ? .implicitTLS : .none)
+        return FTPEndpoint(host: host, port: port, base: base.isEmpty ? "/" : base, security: security)
+    }
+    /// `ftp://` in the clear, `ftps://` implicit TLS on 990, `ftpes://` explicit TLS on 21: the spellings FileZilla
+    /// and curl use, so an address copied from either of them means the same thing here.
+    static func ftpSecurity(scheme: String?) -> FTPSession.Security {
+        switch (scheme ?? "ftp").lowercased() {
+        case "ftps": return .implicitTLS
+        case "ftpes": return .explicitTLS
+        default: return .none
+        }
     }
 
     /// The live control connection for this account, created on first use and reused afterwards.

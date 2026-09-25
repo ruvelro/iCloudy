@@ -14,8 +14,12 @@ actor FTPSession {
     }
     enum Security {
         case none
-        /// TLS from the first byte, the FTPS variant that a connection-oriented API can offer. See `docs/FTP.md`.
+        /// TLS from the first byte, usually on port 990.
         case implicitTLS
+        /// The common variant: the control connection starts in the clear on port 21 and is raised to TLS with
+        /// `AUTH TLS` before anything private is sent. Data connections are TLS from their first byte.
+        case explicitTLS
+        var encrypted: Bool { self != .none }
     }
 
     let host: String
@@ -38,17 +42,34 @@ actor FTPSession {
 
     // MARK: - Connection
 
-    private func parameters() -> NWParameters {
-        let parameters: NWParameters = security == .implicitTLS ? .tls : .tcp
+    /// How a connection is opened: the control channel of an explicit session starts in the clear with the framer
+    /// that will raise it; every other encrypted connection is TLS from its first byte.
+    private func parameters(control: Bool) -> NWParameters {
+        let parameters: NWParameters
+        switch security {
+        case .none: parameters = .tcp
+        case .implicitTLS: parameters = .tls
+        case .explicitTLS:
+            if control {
+                // The framer does the clear-text prologue and raises TLS before this connection reports ready, so
+                // the handshake below starts on an encrypted channel, exactly as with implicit TLS.
+                parameters = .tcp
+                parameters.defaultProtocolStack.applicationProtocols.insert(NWProtocolFramer.Options(definition: StartTLSFramer.definition), at: 0)
+                StartTLSFramer.serverName(for: parameters, host: host)
+            } else { parameters = .tls }
+        }
+        if StartTLSFramer.trustAnyCertificateForTesting, let tls = parameters.defaultProtocolStack.applicationProtocols.compactMap({ $0 as? NWProtocolTLS.Options }).first {
+            sec_protocol_options_set_verify_block(tls.securityProtocolOptions, { _, _, complete in complete(true) }, .global())
+        }
         parameters.allowLocalEndpointReuse = true
         return parameters
     }
     /// How long a connection may sit in `waiting` before it is given up on. Long enough for a Wi-Fi that is coming
     /// back after a sleep, short enough that a server that is simply not there fails quickly.
     static let pathGrace: TimeInterval = 3
-    private func open(port: UInt16) async throws -> NWConnection {
+    private func open(port: UInt16, control: Bool = false) async throws -> NWConnection {
         guard let endpointPort = NWEndpoint.Port(rawValue: port) else { throw CloudError.message(L("Puerto de servidor no válido.")) }
-        let connection = NWConnection(host: NWEndpoint.Host(host), port: endpointPort, using: parameters())
+        let connection = NWConnection(host: NWEndpoint.Host(host), port: endpointPort, using: parameters(control: control))
         defer { connection.stateUpdateHandler = nil }
         try await socketWait(connection, timeout: timeout) { (finish: @escaping @Sendable (Result<Void, Error>) -> Void) in
             connection.stateUpdateHandler = { state in
@@ -70,22 +91,29 @@ actor FTPSession {
     /// Network.framework reports a refused certificate as a bare TLS status, which surfaced as "the operation could
     /// not be completed". A NAS with a certificate of its own is the usual cause, and that is worth saying.
     nonisolated static func describe(_ error: NWError) -> Error {
+        if case .posix(.EPROTONOSUPPORT) = error {
+            return CloudError.message(L("El servidor no admite FTPS explícito (AUTH TLS). Prueba FTPS implícito en el puerto 990, o FTP sin cifrar solo dentro de tu red."))
+        }
         guard case .tls(let status) = error else { return error }
         return CloudError.message(L("El servidor rechazó la conexión cifrada (TLS \(status)). Si es un NAS con un certificado propio, macOS no lo acepta: instala ese certificado en el Llavero y márcalo como de confianza, o usa FTP sin cifrar solo dentro de tu red."))
     }
     /// Opens the control connection, greets, authenticates and switches to binary mode.
     func connect() async throws {
         guard control == nil else { return }
-        let connection = try await open(port: port)
+        let connection = try await open(port: port, control: true)
         control = connection
         pending = Data()
         do { try await handshake() }
         catch { close(); throw error }
     }
     private func handshake() async throws {
-        let greeting = try await reply()
-        guard greeting.code == 220 else { throw failure(greeting, L("El servidor FTP no aceptó la conexión.")) }
-        if security == .implicitTLS {
+        // On an explicit-TLS connection the framer has already read the greeting and negotiated `AUTH TLS`; the
+        // first thing this side hears is the answer to its first encrypted command.
+        if security != .explicitTLS {
+            let greeting = try await reply()
+            guard greeting.code == 220 else { throw failure(greeting, L("El servidor FTP no aceptó la conexión.")) }
+        }
+        if security.encrypted {
             // Protect the data channel as well; without this the listings and files travel in the clear.
             _ = try? await send("PBSZ 0")
             let protection = try await send("PROT P")
@@ -231,7 +259,11 @@ actor FTPSession {
         guard Self.isSafeLine(line) else { throw CloudError.message(L("El nombre contiene un salto de línea, que FTP no admite.")) }
         guard let connection = control else { throw ConnectionLost() }
         do { try await rawSend(connection, Data((line + "\r\n").utf8)) }
-        catch let error as NWError { close(); throw error }
+        catch let error as NWError {
+            close()
+            if case .tls = error { throw Self.describe(error) }
+            throw error
+        }
         let answer = try await reply()
         // 421 is the server saying goodbye, usually for idleness; the socket is about to close under us.
         if answer.code == 421 { close(); throw ConnectionLost() }
@@ -348,9 +380,12 @@ actor FTPSession {
             sent += Int64(chunk.count)
             progress(sent)
         }
-        // A clean end of file is what tells the server the upload is complete.
+        // A clean end of file is what tells the server the upload is complete. On an encrypted data channel that end
+        // has to be a TLS shutdown, not a bare FIN: a server that requires `PROT P` waits for the close_notify and
+        // never sends its 226 otherwise. Cancelling the connection is what sends it, after the final message.
         try sourceStamp.validate(source)
         try await finish(data)
+        data.cancel()
         try Task.checkCancellation()
         let finished = try await reply()
         guard finished.isPositive else { throw failure(finished, L("El servidor no confirmó la subida.")) }
@@ -373,43 +408,6 @@ actor FTPSession {
         }
         let text = try await receiveText(command: "LIST " + quoted)
         return FTPListing.parseLIST(text, parent: quoted)
-    }
-}
-
-/// Handles cancellation before registration, timeout, and late callbacks with exactly one resume.
-private final class SocketWait<T: Sendable>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<T, Error>?
-    private var result: Result<T, Error>?
-    private var timer: DispatchWorkItem?
-    func install(_ continuation: CheckedContinuation<T, Error>) -> Bool {
-        lock.lock()
-        if let result { lock.unlock(); continuation.resume(with: result); return false }
-        self.continuation = continuation
-        lock.unlock()
-        return true
-    }
-    @discardableResult
-    func resolve(_ value: Result<T, Error>) -> Bool {
-        lock.lock()
-        guard result == nil else { lock.unlock(); return false }
-        result = value
-        let continuation = self.continuation; self.continuation = nil
-        let timer = self.timer; self.timer = nil
-        lock.unlock()
-        timer?.cancel()
-        continuation?.resume(with: value)
-        return true
-    }
-    func arm(timeout: TimeInterval, cancel: @escaping @Sendable () -> Void) {
-        let timer = DispatchWorkItem { [weak self] in
-            if self?.resolve(.failure(CloudError.message(L("El servidor FTP no respondió a tiempo.")))) == true { cancel() }
-        }
-        lock.lock()
-        guard result == nil else { lock.unlock(); return }
-        self.timer = timer
-        lock.unlock()
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
     }
 }
 

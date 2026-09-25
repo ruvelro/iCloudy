@@ -12,7 +12,17 @@ struct ServerLoginView: View {
     @State private var server = ""
     @State private var username = ""
     @State private var password = ""
-    @State private var secureFTP = false
+    @State private var ftpSecurity = FTPSecurityChoice.plain
+    /// The three ways an FTP server can be reached, and the scheme each one is stored under.
+    enum FTPSecurityChoice: Hashable {
+        case plain, explicitTLS, implicitTLS
+        var scheme: String {
+            switch self { case .plain: return "ftp://"; case .explicitTLS: return "ftpes://"; case .implicitTLS: return "ftps://" }
+        }
+        init(scheme stored: String) {
+            self = stored.hasPrefix("ftpes://") ? .explicitTLS : stored.hasPrefix("ftps://") ? .implicitTLS : .plain
+        }
+    }
     @State private var nextcloud = false
     @State private var showAdvanced = false
 
@@ -22,6 +32,7 @@ struct ServerLoginView: View {
         switch cloud {
         case .webdav: return "server.rack"
         case .mega: return "lock.icloud"
+        case .sftp: return "lock.rectangle.stack"
         default: return "arrow.up.arrow.down.square"
         }
     }
@@ -32,14 +43,16 @@ struct ServerLoginView: View {
         switch cloud {
         case .webdav: return L("Para Nextcloud, ownCloud, Synology, otros NAS y cualquier servidor WebDAV. La dirección es la ruta WebDAV completa.")
         case .mega: return L("Tu contraseña no sale de este Mac: se usa para derivar las claves con las que Mega cifra los nombres y el contenido.")
+        case .sftp: return L("Para servidores SSH y NAS con SFTP, en el puerto 22 salvo que indiques otro. Todo va cifrado. La clave del servidor se guarda al conectar y se comprueba en cada sesión; si cambia, iCloudy lo dirá antes de enviar nada.")
         default: return L("Para servidores FTP propios y NAS. iCloudy usa siempre modo pasivo. Sin FTPS, la contraseña y los archivos viajan sin cifrar.")
         }
     }
     private var address: String {
-        guard cloud == .ftp else { return server }
         let clean = server.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cloud == .sftp { return "sftp://" + clean.replacingOccurrences(of: "sftp://", with: "") }
+        guard cloud == .ftp else { return server }
+        return ftpSecurity.scheme + clean.replacingOccurrences(of: "ftpes://", with: "")
             .replacingOccurrences(of: "ftps://", with: "").replacingOccurrences(of: "ftp://", with: "")
-        return (secureFTP ? "ftps://" : "ftp://") + clean
     }
 
     /// Reconnecting is about a session, not about an address: the server and the user are already known, and asking
@@ -48,9 +61,13 @@ struct ServerLoginView: View {
         guard server.isEmpty, username.isEmpty, let account = model.reconnecting, account.cloud == cloud else { return }
         username = Self.storedUser(of: account)
         guard needsServer, let stored = account.serverURL else { return }
-        secureFTP = stored.hasPrefix("ftps://")
+        ftpSecurity = FTPSecurityChoice(scheme: stored)
         nextcloud = account.flavor == "nextcloud"
-        server = cloud == .ftp ? stored.replacingOccurrences(of: "ftps://", with: "").replacingOccurrences(of: "ftp://", with: "") : stored
+        switch cloud {
+        case .ftp: server = stored.replacingOccurrences(of: "ftpes://", with: "").replacingOccurrences(of: "ftps://", with: "").replacingOccurrences(of: "ftp://", with: "")
+        case .sftp: server = stored.replacingOccurrences(of: "sftp://", with: "")
+        default: server = stored
+        }
     }
     /// The user name an account was connected with. Mega keeps it as the e-mail; the self-hosted ones put it after
     /// the "#" of their identifier and before the "@" of the label.
@@ -76,13 +93,17 @@ struct ServerLoginView: View {
                     .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
             }
             if cloud == .ftp {
-                Picker("Seguridad", selection: $secureFTP) {
-                    Text("FTP sin cifrar").tag(false)
-                    Text("FTPS implícito (puerto 990)").tag(true)
+                Picker("Seguridad", selection: $ftpSecurity) {
+                    Text("Sin cifrar").tag(FTPSecurityChoice.plain)
+                    Text("FTPS explícito (puerto 21)").tag(FTPSecurityChoice.explicitTLS)
+                    Text("FTPS implícito (puerto 990)").tag(FTPSecurityChoice.implicitTLS)
                 }.pickerStyle(.segmented).labelsHidden()
-                if !secureFTP {
+                if ftpSecurity == .plain {
                     Label("Sin cifrar: usa esta opción solo en tu red local.", systemImage: "exclamationmark.triangle")
                         .font(.caption).foregroundStyle(.orange)
+                } else if ftpSecurity == .explicitTLS {
+                    Text("La variante más común: la conexión empieza en claro y se cifra con AUTH TLS antes de enviar la contraseña.")
+                        .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
             if needsServer { TextField(placeholder, text: $server).textFieldStyle(.roundedBorder) }

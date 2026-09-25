@@ -10,6 +10,7 @@ enum CloudProviderFactory {
         case .box: return BoxProvider(account: account, session: session, tokenProvider: tokenProvider, credentials: credentials)
         case .webdav: return WebDAVProvider(account: account, session: session, tokenProvider: tokenProvider, credentials: credentials)
         case .ftp: return FTPProvider(account: account, session: session, tokenProvider: tokenProvider, credentials: credentials)
+        case .sftp: return SFTPProvider(account: account, session: session, tokenProvider: tokenProvider, credentials: credentials)
         case .volume: return VolumeProvider(account: account, session: session, tokenProvider: tokenProvider, credentials: credentials)
         case .mega: return MegaProvider(account: account, session: session, tokenProvider: tokenProvider, credentials: credentials)
         case .o2: return O2Provider(account: account, session: session, tokenProvider: tokenProvider, credentials: credentials)

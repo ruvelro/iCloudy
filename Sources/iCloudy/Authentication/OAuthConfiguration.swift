@@ -45,7 +45,7 @@ struct OAuthConfiguration: Codable {
         case .microsoft: raw = microsoftClientID; secret = ""
         case .dropbox: raw = dropboxAppKey; secret = ""
         case .box: raw = boxClientID; secret = boxClientSecret
-        case .webdav, .ftp, .volume, .mega, .o2: raw = ""; secret = ""
+        case .webdav, .ftp, .sftp, .volume, .mega, .o2: raw = ""; secret = ""
         }
         let id = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let valid: Bool
@@ -55,7 +55,7 @@ struct OAuthConfiguration: Codable {
         // Dropbox app keys and Box client ids are opaque alphanumeric strings.
         case .dropbox: valid = id.count >= 10 && id.allSatisfy { $0.isLetter || $0.isNumber }
         case .box: valid = id.count >= 20 && id.allSatisfy { $0.isLetter || $0.isNumber }
-        case .webdav, .ftp, .volume, .mega, .o2: valid = false
+        case .webdav, .ftp, .sftp, .volume, .mega, .o2: valid = false
         }
         guard valid else {
             throw CloudError.message(L("La conexión con \(cloud.title) todavía no está habilitada en esta versión de iCloudy. No necesitas configurar nada en tu cuenta."))

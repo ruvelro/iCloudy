@@ -1,7 +1,7 @@
 import Foundation
 
 enum Cloud: String, Codable, CaseIterable, Identifiable {
-    case google, microsoft, dropbox, box, webdav, ftp, volume, mega, o2
+    case google, microsoft, dropbox, box, webdav, ftp, sftp, volume, mega, o2
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -11,6 +11,7 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
         case .box: return L("Box")
         case .webdav: return L("WebDAV")
         case .ftp: return L("FTP")
+        case .sftp: return L("SFTP")
         case .volume: return L("Volumen")
         case .mega: return L("Mega")
         case .o2: return L("O2 Cloud")
@@ -18,11 +19,11 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
     }
     var tokenURL: String { OAuthProviderSettings.settings(for: self)?.tokenEndpoint ?? "" }
     /// HTTP authorization scheme for the value stored in `Credential.accessToken`.
-    var authorizationScheme: String { [.webdav, .ftp].contains(self) ? "Basic" : "Bearer" }
+    var authorizationScheme: String { [.webdav, .ftp, .sftp].contains(self) ? "Basic" : "Bearer" }
     /// True when the user brings their own server and credentials instead of signing in at a provider.
-    var isSelfHosted: Bool { [.webdav, .ftp, .volume].contains(self) }
+    var isSelfHosted: Bool { [.webdav, .ftp, .sftp, .volume].contains(self) }
     /// True when connecting means typing a server address and credentials, rather than picking a folder or a browser sign-in.
-    var usesPasswordLogin: Bool { [.webdav, .ftp, .mega].contains(self) }
+    var usesPasswordLogin: Bool { [.webdav, .ftp, .sftp, .mega].contains(self) }
     /// True when signing in happens on the provider's own pages, inside a window, because it cannot be reproduced
     /// from a form: O2 sends the person to Telefónica's sign-in, with a national identity number or a text message.
     var usesWebLogin: Bool { self == .o2 }
@@ -37,7 +38,7 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
     /// Identifier the provider gives to the top of the tree, behind iCloudy's own "root" alias.
     var rootAlias: String {
         switch self {
-        case .google, .microsoft, .webdav, .ftp, .volume, .mega, .o2: return "root"
+        case .google, .microsoft, .webdav, .ftp, .sftp, .volume, .mega, .o2: return "root"
         case .dropbox: return "" // Dropbox addresses the root as an empty path
         case .box: return "0"
         }
@@ -91,6 +92,11 @@ struct CloudCapabilities {
             return CloudCapabilities(oauth: false, search: false, recents: false, sharedWithMe: false,
                                      publicLinks: false, copy: false, quota: false,
                                      reversibleTrash: false, checksum: false)
+        case .sftp:
+            // SSH gives the channel its privacy and the server its identity, but the file protocol is as bare as
+            // FTP's: no search, no links, no bin, no copy, no checksum. OpenSSH does report free space.
+            return CloudCapabilities(oauth: false, search: false, recents: false, sharedWithMe: false,
+                                     publicLinks: false, copy: false, reversibleTrash: false, checksum: false)
         case .volume:
             // The file system gives search, free space and a real Trash; only sharing links are missing.
             // The user's Trash is the Finder's, and under the sandbox iCloudy cannot read it back; it can only skip

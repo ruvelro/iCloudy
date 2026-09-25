@@ -194,7 +194,7 @@ extension AppModel {
                 favorites.removeAll { $0.accountID == account.id && ($0.file.id == file.id || $0.path.contains { $0.id == file.id }) }
             }
             try LocalStore.save(favorites, to: favoritesURL)
-            if [.ftp, .webdav].contains(account.cloud), !account.isDemo {
+            if [.ftp, .sftp, .webdav].contains(account.cloud), !account.isDemo {
                 info = L("\(moved) elementos eliminados del servidor de forma permanente.")
             } else if account.cloud == .volume {
                 info = L("\(moved) elementos enviados a la papelera. Puedes restaurarlos desde el Finder.")

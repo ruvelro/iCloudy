@@ -24,7 +24,8 @@ struct ConnectView: View {
                 Text("TU PROPIO SERVIDOR").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 VStack(spacing: 10) {
                     providerButton(.webdav, title: "Conectar WebDAV", subtitle: "Nextcloud, ownCloud, Synology y otros NAS", icon: "server.rack")
-                    providerButton(.ftp, title: "Conectar FTP", subtitle: "FTP y FTPS implícito, con usuario y contraseña", icon: "arrow.up.arrow.down.square")
+                    providerButton(.sftp, title: "Conectar SFTP", subtitle: "Servidores SSH y NAS, cifrado y con la clave del servidor comprobada", icon: "lock.rectangle.stack")
+                    providerButton(.ftp, title: "Conectar FTP", subtitle: "FTP, FTPS explícito e implícito, con usuario y contraseña", icon: "arrow.up.arrow.down.square")
                     providerButton(.volume, title: "Conectar un volumen o carpeta", subtitle: "SMB, AFP, NFS, discos externos y carpetas del Mac", icon: "externaldrive.connected.to.line.below")
                 }.disabled(model.connecting)
                 Button("Conectar a un servidor en el Finder…") { model.openFinderConnect() }
@@ -105,6 +106,7 @@ struct ConnectView: View {
         case .box: return .cyan
         case .webdav: return .gray
         case .ftp: return .orange
+        case .sftp: return .teal
         case .volume: return .brown
         case .mega: return .red
         case .o2: return .mint

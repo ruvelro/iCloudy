@@ -76,6 +76,8 @@ final class StorageTests: XCTestCase {
                 catch { XCTAssertTrue(error.localizedDescription.contains("espacio disponible"), error.localizedDescription) }
                 continue
             }
+            // SFTP asks over SSH, not HTTP; SFTPTests covers it against a real server.
+            if cloud == .sftp { continue }
             let config = URLSessionConfiguration.ephemeral
             config.protocolClasses = [StubProtocol.self]
             let session = URLSession(configuration: config)
@@ -140,7 +142,7 @@ final class StorageTests: XCTestCase {
                     XCTAssertEqual(query?.first { $0.name == "action" }?.value, "get-storage-space")
                     XCTAssertEqual(query?.first { $0.name == "validationkey" }?.value, "clave")
                     return (200, [:], Data(#"{"data":{"used":40,"quota":100,"nolimit":false}}"#.utf8))
-                case .ftp, .volume:
+                case .ftp, .sftp, .volume:
                     XCTFail("\(cloud) no llega hasta aquí"); return (500, [:], Data())
                 case .webdav:
                     XCTAssertEqual(request.httpMethod, "PROPFIND")
