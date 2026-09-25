@@ -885,3 +885,9 @@
 "Sincronizar en ambos sentidos con una carpeta local…" = "Sync both ways with a local folder…";
 "Sincronizar aplicando los borrados" = "Sync applying the deletions";
 "Solo hace falta cuando la sincronización se detuvo por borrar la mayor parte de un lado" = "Only needed when the sync stopped because it would delete most of one side";
+
+/* Extensión del Finder. */
+"El proveedor no devolvió el identificador del archivo subido." = "The provider did not return the uploaded file's identifier.";
+"Mostrar las nubes en el Finder (experimental)" = "Show the clouds in the Finder (experimental)";
+"Cada cuenta aparece como una ubicación en la barra lateral del Finder, con sus archivos bajo demanda. Requiere la extensión de archivos, que solo lleva la versión firmada con un identificador de equipo." = "Each account appears as a location in the Finder's sidebar, with its files on demand. It needs the file extension, which only the build signed with a Team ID carries.";
+"Esta versión no lleva la extensión del Finder: necesita una firma con identificador de equipo de Apple. Los archivos siguen disponibles desde la ventana de iCloudy." = "This build does not carry the Finder extension: it needs a signature with an Apple Team ID. The files remain available from iCloudy's window.";

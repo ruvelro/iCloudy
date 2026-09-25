@@ -62,7 +62,7 @@ lldb dist/debug/iCloudy.app/Contents/MacOS/iCloudy
 # run
 ```
 
-También se puede abrir `Package.swift` en Xcode y usar el esquema iCloudy. Los binarios y bundles quedan en `.build/` y `dist/`, excluidos de Git.
+También se puede abrir `Package.swift` en Xcode y usar el esquema iCloudyMain. Desde la extensión del Finder el paquete tiene tres targets: la librería `iCloudy` (toda la app, con el módulo del mismo nombre que siempre tuvo), el lanzador `iCloudyMain`, que es el binario del `.app`, y `iCloudyFileProvider`, la extensión, que enlaza la misma librería. Los binarios y bundles quedan en `.build/` y `dist/`, excluidos de Git.
 
 ## Puntos de entrada para la depuración
 

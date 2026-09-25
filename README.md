@@ -10,7 +10,7 @@
 [![macOS](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-5.9-F05138?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![SwiftUI](https://img.shields.io/badge/SwiftUI-nativo-0071e3?style=flat-square)](https://developer.apple.com/xcode/swiftui/)
-[![tests](https://img.shields.io/badge/tests-360%20✓-43c463?style=flat-square)](Tests)
+[![tests](https://img.shields.io/badge/tests-404%20✓-43c463?style=flat-square)](Tests)
 [![licencia](https://img.shields.io/badge/licencia-GPL--3.0-8a7ee0?style=flat-square)](LICENSE)
 
 </div>
@@ -175,11 +175,12 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 - [x] SFTP con SSH propio sobre CryptoKit, y FTPS explícito (`AUTH TLS`) — [cómo funciona](docs/FTP.md)
 - [x] Compartir con personas, con permiso de ver o editar, y revocar accesos: Drive, OneDrive, Dropbox, Box y Nextcloud
 - [x] Sincronización en ambos sentidos entre una carpeta del Mac y una de la nube, con línea base, conflictos que conservan las dos versiones y freno ante borrados masivos
+- [x] Extensión File Provider (`NSFileProviderReplicatedExtension`) sobre los mismos proveedores, con la app dividida en librería y lanzador para compartir el código
 
 **En camino**
 
 - [ ] **Binario firmado y notarizado**, con actualizaciones automáticas
-- [ ] **Integración con el Finder** mediante extensión File Provider *(necesita identificador de equipo de Apple)*
+- [ ] **Extensión del Finder firmada y verificada**: el código está ([File Provider](docs/FILEPROVIDER.md)) y se empaqueta al indicar un App Group, pero cargarla en el Finder exige un identificador de equipo de Apple que todavía no hay
 - [ ] **Mega**: probar el segundo factor y las cuentas anteriores a 2018 contra cuentas reales
 - [ ] **Más idiomas**
 

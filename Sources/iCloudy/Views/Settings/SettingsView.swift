@@ -19,6 +19,7 @@ private struct GeneralSettings: View {
     @AppStorage(Prefs.previewConsentMB) private var previewConsent = 100
     @AppStorage(Prefs.listingCache) private var listingCache = true
     @AppStorage(Prefs.storageStyle) private var storageStyle = StorageStyle.pie.rawValue
+    @AppStorage(Prefs.finderIntegration) private var finderIntegration = false
 
     var body: some View {
         Form {
@@ -26,6 +27,15 @@ private struct GeneralSettings: View {
                 Toggle("Mostrar iCloudy en la barra de menús", isOn: $menuBar)
                 Toggle("Seguir la selección con la vista previa abierta", isOn: $previewFollows)
                 Text("Con esto activado, recorrer la lista con la vista previa abierta descarga cada archivo por el que pasas, tras una pausa corta.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Section {
+                Toggle("Mostrar las nubes en el Finder (experimental)", isOn: $finderIntegration)
+                    .disabled(!model.finderIntegrationAvailable)
+                    .onChange(of: finderIntegration) { model.syncFinderDomains() }
+                Text(model.finderIntegrationAvailable
+                     ? "Cada cuenta aparece como una ubicación en la barra lateral del Finder, con sus archivos bajo demanda. Requiere la extensión de archivos, que solo lleva la versión firmada con un identificador de equipo."
+                     : "Esta versión no lleva la extensión del Finder: necesita una firma con identificador de equipo de Apple. Los archivos siguen disponibles desde la ventana de iCloudy.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Section {

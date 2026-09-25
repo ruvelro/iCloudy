@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key><string>iCloudyFileProvider</string>
+    <!-- Filled in by the build script from the app's identifier: <app id>.FileProvider -->
+    <key>CFBundleIdentifier</key><string>dev.icloudy.desktop.FileProvider</string>
+    <key>CFBundleName</key><string>iCloudy</string>
+    <key>CFBundleDisplayName</key><string>iCloudy</string>
+    <key>CFBundlePackageType</key><string>XPC!</string>
+    <key>CFBundleShortVersionString</key><string>0.5.0</string>
+    <key>CFBundleVersion</key><string>2</string>
+    <key>CFBundleDevelopmentRegion</key><string>es</string>
+    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>NSExtension</key>
+    <dict>
+        <key>NSExtensionPointIdentifier</key><string>com.apple.fileprovider-nonui</string>
+        <key>NSExtensionPrincipalClass</key><string>iCloudyFileProvider.FileProviderExtension</string>
+        <key>NSExtensionFileProviderSupportsEnumeration</key><true/>
+    </dict>
+</dict>
+</plist>

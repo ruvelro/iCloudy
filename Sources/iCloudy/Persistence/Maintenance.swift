@@ -8,6 +8,7 @@ enum Prefs {
     static let listingCache = "listingCacheEnabled"
     static let historyLimit = "historyLimit"
     static let storageStyle = "storageStyle"
+    static let finderIntegration = "finderIntegrationEnabled"
 
     static func bool(_ key: String, default value: Bool) -> Bool {
         UserDefaults.standard.object(forKey: key) as? Bool ?? value

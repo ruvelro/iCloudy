@@ -13,7 +13,12 @@ import AppKit
 import CoreSpotlight
 import UniformTypeIdentifiers
 
-@main
+/// What the `iCloudyMain` binary calls. The app itself is a library, so the Finder extension can link the same
+/// providers; a library cannot carry `@main`, so the entry point is spelled out here instead.
+public enum AppLauncher {
+    public static func run() { iCloudyApp.main() }
+}
+
 struct iCloudyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var model = AppModel()

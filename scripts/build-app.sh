@@ -42,7 +42,8 @@ if [[ "$build_configuration" == "debug" ]]; then
     app_dir="$PWD/dist/debug/iCloudy.app"
 fi
 mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
-cp "$binary_dir/iCloudy" "$app_dir/Contents/MacOS/iCloudy"
+# The binary is the small `iCloudyMain` launcher; the app itself is the `iCloudy` library linked into it.
+cp "$binary_dir/iCloudyMain" "$app_dir/Contents/MacOS/iCloudy"
 cp Resources/Info.plist "$app_dir/Contents/Info.plist"
 if [[ -n "${ICLOUDY_BUNDLE_ID:-}" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${ICLOUDY_BUNDLE_ID}" "$app_dir/Contents/Info.plist"
@@ -66,10 +67,14 @@ if [[ -n "$processor" ]]; then
     # Xcode's SwiftPM build system puts target intermediates beside Products, not inside the binary directory.
     # Select this configuration and the executable target only; test targets carry duplicate intent declarations.
     if [[ "$build_configuration" == "release" ]]; then configuration_title="Release"; else configuration_title="Debug"; fi
-    xcode_intermediates="$PWD/.build/out/Intermediates.noindex/iCloudy.build/$configuration_title/iCloudy-p.build"
-    if [[ -d "$xcode_intermediates" ]]; then
-        find "$xcode_intermediates" -name '*.swiftconstvalues' >> "$const_list"
-    fi
+    # The intents live in the `iCloudy` library target, which the Xcode build system files under `-t.build`;
+    # `-p.build` is where they were when that target was the executable product.
+    for suffix in iCloudy-t.build iCloudy-p.build; do
+        xcode_intermediates="$PWD/.build/out/Intermediates.noindex/iCloudy.build/$configuration_title/$suffix"
+        if [[ -d "$xcode_intermediates" ]]; then
+            find "$xcode_intermediates" -name '*.swiftconstvalues' >> "$const_list"
+        fi
+    done
     sort -u -o "$const_list" "$const_list"
     find "$PWD/Sources/iCloudy" -name '*.swift' > "$source_list"
     if [[ -s "$const_list" ]]; then
@@ -90,12 +95,38 @@ fi
 if [[ "$metadata_ok" != true ]]; then
     echo "Aviso: no se generó Metadata.appintents; las acciones de iCloudy no aparecerán en Atajos ni en Automator." >&2
 fi
+# The Finder extension. It shares accounts with the app through an App Group and credentials through a keychain
+# access group, and both need a Team ID, so it is built and embedded only when ICLOUDY_APP_GROUP names the group
+# (for example group.com.example.icloudy). Without it the app is exactly what it was.
+app_entitlements_source="Resources/iCloudy.entitlements"
+# A bundle left by an earlier run must not keep an extension this run did not build.
+rm -rf "$app_dir/Contents/PlugIns"
+if [[ -n "${ICLOUDY_APP_GROUP:-}" ]]; then
+    app_id="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$app_dir/Contents/Info.plist")"
+    appex_dir="$app_dir/Contents/PlugIns/iCloudyFileProvider.appex"
+    mkdir -p "$appex_dir/Contents/MacOS"
+    cp "$binary_dir/iCloudyFileProvider" "$appex_dir/Contents/MacOS/iCloudyFileProvider"
+    cp Resources/FileProvider-Info.plist "$appex_dir/Contents/Info.plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${app_id}.FileProvider" "$appex_dir/Contents/Info.plist"
+    /usr/libexec/PlistBuddy -c "Add :iCloudyAppGroup string ${ICLOUDY_APP_GROUP}" "$appex_dir/Contents/Info.plist"
+    /usr/libexec/PlistBuddy -c "Add :iCloudyAppGroup string ${ICLOUDY_APP_GROUP}" "$app_dir/Contents/Info.plist"
+    appex_entitlements="$(mktemp)"
+    cp Resources/iCloudyFileProvider.entitlements "$appex_entitlements"
+    /usr/libexec/PlistBuddy -c "Add :com.apple.security.application-groups array" -c "Add :com.apple.security.application-groups:0 string ${ICLOUDY_APP_GROUP}" "$appex_entitlements"
+    /usr/libexec/PlistBuddy -c "Add :keychain-access-groups array" -c "Add :keychain-access-groups:0 string ${ICLOUDY_APP_GROUP}" "$appex_entitlements"
+    codesign --force --options runtime --timestamp=none --entitlements "$appex_entitlements" --sign "$identity" "$appex_dir"
+    rm -f "$appex_entitlements"
+    app_entitlements_source="$(mktemp)"
+    cp Resources/iCloudy.entitlements "$app_entitlements_source"
+    /usr/libexec/PlistBuddy -c "Add :com.apple.security.application-groups array" -c "Add :com.apple.security.application-groups:0 string ${ICLOUDY_APP_GROUP}" "$app_entitlements_source"
+    /usr/libexec/PlistBuddy -c "Add :keychain-access-groups array" -c "Add :keychain-access-groups:0 string ${ICLOUDY_APP_GROUP}" "$app_entitlements_source"
+fi
 # Self-signed certificates cannot be timestamped by Apple; Developer ID builds get a timestamp automatically.
-entitlements="Resources/iCloudy.entitlements"
+entitlements="$app_entitlements_source"
 if [[ "$build_configuration" == "debug" ]]; then
     # Debugger attachment is allowed only in the local debug bundle, never in the release entitlement file.
     entitlements="$(mktemp)"
-    cp Resources/iCloudy.entitlements "$entitlements"
+    cp "$app_entitlements_source" "$entitlements"
     /usr/libexec/PlistBuddy -c "Add :com.apple.security.get-task-allow bool true" "$entitlements"
     trap 'rm -f "$entitlements"' EXIT
 fi
