@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+      - uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
+      - name: Build
+        run: swift build -Xswiftc -warnings-as-errors
+      - name: Test
+        # The SFTP and FTPS integration tests skip unless a real server is configured as a repository secret.
+        env:
+          ICLOUDY_SFTP_URL: ${{ secrets.ICLOUDY_SFTP_URL }}
+          ICLOUDY_FTPS_URL: ${{ secrets.ICLOUDY_FTPS_URL }}
+        run: swift test
+      - name: Strict concurrency
+        run: swift build -c release -Xswiftc -strict-concurrency=complete
+      - name: Bundle
+        # Builds the .app with the example OAuth configuration and an ad hoc signature, and checks it is well formed.
+        run: |
+          ICLOUDY_BUILD_CONFIGURATION=debug bash scripts/build-app.sh
+          plutil -lint dist/debug/iCloudy.app/Contents/Info.plist
+          codesign --verify --deep --strict dist/debug/iCloudy.app
