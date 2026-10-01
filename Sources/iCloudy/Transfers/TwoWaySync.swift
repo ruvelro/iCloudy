@@ -62,11 +62,28 @@ struct MassDeletionRefused: LocalizedError {
     }
 }
 
+/// Thrown between two steps of a run whose mirror was paused. The baseline already records every finished step.
+struct SyncPaused: Error {}
+
 /// Pure planning. Given both trees and the baseline, decides what has to happen to make them agree again.
 enum TwoWayPlanner {
     static let massDeletionMinimum = 10
 
-    static func plan(local: [String: FileStamp], remote: [String: CloudFile], baseline: [String: SyncEntry], allowMassDeletion: Bool = false) throws -> [SyncAction] {
+    /// Excluded paths are taken out of all three inputs before anything is decided, so they are never transferred,
+    /// deleted or reported as conflicts. Their baseline entries are not forgotten either: a rule added after a file
+    /// was synced leaves that file alone on both sides, and removing the rule picks it up again from where it was.
+    static func plan(local fullLocal: [String: FileStamp], remote fullRemote: [String: CloudFile], baseline fullBaseline: [String: SyncEntry],
+                     allowMassDeletion: Bool = false, exclusions: SyncExclusionMatcher = .none) throws -> [SyncAction] {
+        let excludedLocal = fullLocal.filter { exclusions.excludes($0.key, isFolder: $0.value.size == -1) }
+        let excludedRemote = fullRemote.filter { exclusions.excludes($0.key, isFolder: $0.value.isFolder) }
+        let local = fullLocal.filter { excludedLocal[$0.key] == nil }
+        let remote = fullRemote.filter { excludedRemote[$0.key] == nil }
+        let baseline = fullBaseline.filter { !exclusions.excludes($0.key, isFolder: $0.value.isFolder) }
+        // A folder holding something excluded is not removed as a whole, which would take the excluded item along;
+        // its synced contents go one by one and the folder stays. Folder metadata such as .DS_Store does not count.
+        func keeps(_ folder: String, _ excluded: [String]) -> Bool {
+            excluded.contains { $0.hasPrefix(folder + "/") && !exclusions.isFolderMetadata($0) }
+        }
         var creates: [SyncAction] = [], transfers: [SyncAction] = [], deletes: [SyncAction] = []
         let paths = Set(local.keys).union(remote.keys).union(baseline.keys)
         // Folders whose deletion on one side is carried to the other take everything below them along.
@@ -80,9 +97,11 @@ enum TwoWayPlanner {
             case (false, true, false): creates.append(.createLocalFolder(path))
             case (true, false, true):
                 if changedBelow(path, local: local, baseline: baseline) { creates.append(.createRemoteFolder(path)) }
+                else if keeps(path, Array(excludedLocal.keys)) { continue }
                 else if !isUnder(path, any: localFolderDeletes) { localFolderDeletes.insert(path); deletes.append(.deleteLocal(path)) }
             case (false, true, true):
                 if remoteChangedBelow(path, remote: remote, baseline: baseline), let folder = remote[path] { _ = folder; creates.append(.createLocalFolder(path)) }
+                else if keeps(path, Array(excludedRemote.keys)) { continue }
                 else if !isUnder(path, any: remoteFolderDeletes), let folder = remote[path] { remoteFolderDeletes.insert(path); deletes.append(.deleteRemote(path, folder)) }
             case (false, false, true): deletes.append(.forget(path))
             case (false, false, false): continue
@@ -161,6 +180,12 @@ final class TwoWaySyncEngine {
     /// Called after every change to the baseline, so it can be written down at once.
     var persist: (([String: SyncEntry]) throws -> Void)?
     var allowMassDeletion = false
+    /// What this sync leaves alone on both sides; see `TwoWayPlanner.plan`.
+    var exclusions: SyncExclusionMatcher = .none
+    /// Asked before every step; true stops the run there with `SyncPaused`.
+    var shouldStop: (() -> Bool)?
+    /// The plan of the last `run()`, as the planner returned it.
+    private(set) var lastPlan: [SyncAction] = []
     /// Tests bypass the Finder Trash, which a temporary folder on some volumes does not have.
     var trashLocally: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }
 
@@ -179,21 +204,47 @@ final class TwoWaySyncEngine {
             for item in try await api.list(parent: id) {
                 let path = prefix.isEmpty ? item.name : prefix + "/" + item.name
                 files[path] = item
-                if item.isFolder { folders[path] = item.id; queue.append((item.id, path)) }
+                // An excluded folder is listed so the planner knows it is there, but nobody needs what is inside.
+                if item.isFolder, !exclusions.excludes(path, isFolder: true) { folders[path] = item.id; queue.append((item.id, path)) }
             }
         }
         return (files, folders)
     }
 
+    /// Both trees as the planner sees them. `run()` and `preview()` both start here, so a dry run is the real plan.
+    private func snapshot() async throws -> (local: [String: FileStamp], remote: [String: CloudFile], folders: [String: String]) {
+        let root = localRoot, exclusions = exclusions
+        let local = try await blockingIO { try MirrorPlanner.scan(root, exclusions: exclusions).all }
+        let (remote, folders) = try await remoteSnapshot()
+        return (local, remote, folders)
+    }
+
+    /// What the next `run()` would do, without doing any of it. A run that would refuse a mass deletion still
+    /// shows what it would delete, together with the reason it would stop.
+    func preview() async throws -> MirrorPreview {
+        let (local, remote, _) = try await snapshot()
+        var refused: String?
+        let actions: [SyncAction]
+        do { actions = try TwoWayPlanner.plan(local: local, remote: remote, baseline: baseline, allowMassDeletion: allowMassDeletion, exclusions: exclusions) }
+        catch let error as MassDeletionRefused {
+            refused = error.localizedDescription
+            actions = try TwoWayPlanner.plan(local: local, remote: remote, baseline: baseline, allowMassDeletion: true, exclusions: exclusions)
+        }
+        return .twoWay(actions: actions, local: local, excluded: TwoWayPlanner.excludedItems(local: local, remote: remote, exclusions: exclusions), massDeletion: refused)
+    }
+
     func run() async throws -> SyncReport {
         report = SyncReport()
-        let root = localRoot
-        let local = try await blockingIO { try MirrorPlanner.stamps(of: root) }
-        var (remote, folders) = try await remoteSnapshot()
-        let plan = try TwoWayPlanner.plan(local: local, remote: remote, baseline: baseline, allowMassDeletion: allowMassDeletion)
+        var (local, remote, folders) = try await snapshot()
+        let plan = try TwoWayPlanner.plan(local: local, remote: remote, baseline: baseline, allowMassDeletion: allowMassDeletion, exclusions: exclusions)
+        lastPlan = plan
         var touchedRemote: Set<String> = []
+        var stopped = false
         for action in plan {
             try Task.checkCancellation()
+            // Paused: stop here, but still fill in the dates of what was uploaded, or the next run would take
+            // those files for remote edits and download them again.
+            if shouldStop?() == true { stopped = true; break }
             switch action {
             case .createRemoteFolder(let path):
                 let parent = try remoteParent(of: path, folders: folders)
@@ -248,6 +299,7 @@ final class TwoWaySyncEngine {
             }
             try persist?(baseline)
         }
+        if stopped { throw SyncPaused() }
         return report
     }
 

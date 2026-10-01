@@ -8,6 +8,8 @@ struct Configuration: Codable {
     var dropboxAppKey = ""
     var boxClientID = ""
     var boxClientSecret = ""
+    var pcloudClientID = ""
+    var pcloudClientSecret = ""
 
     /// A plist written by an older version has none of the newer keys; treat those providers as simply not configured.
     init() {}
@@ -19,6 +21,8 @@ struct Configuration: Codable {
         dropboxAppKey = try values.decodeIfPresent(String.self, forKey: .dropboxAppKey) ?? ""
         boxClientID = try values.decodeIfPresent(String.self, forKey: .boxClientID) ?? ""
         boxClientSecret = try values.decodeIfPresent(String.self, forKey: .boxClientSecret) ?? ""
+        pcloudClientID = try values.decodeIfPresent(String.self, forKey: .pcloudClientID) ?? ""
+        pcloudClientSecret = try values.decodeIfPresent(String.self, forKey: .pcloudClientSecret) ?? ""
     }
 }
 
@@ -37,17 +41,19 @@ do {
         let microsoftValid = UUID(uuidString: config.microsoftClientID) != nil
         let dropboxValid = config.dropboxAppKey.count >= 10 && config.dropboxAppKey.allSatisfy { $0.isLetter || $0.isNumber }
         let boxValid = config.boxClientID.count >= 20 && config.boxClientID.allSatisfy { $0.isLetter || $0.isNumber }
+        let pcloudValid = config.pcloudClientID.count >= 8 && config.pcloudClientID.allSatisfy { $0.isLetter || $0.isNumber }
+            && !config.pcloudClientSecret.isEmpty
         // WebDAV needs no registration: the user brings their own server.
         if args.contains("--require-oauth") && !(googleValid && microsoftValid) {
             fail("No se puede preparar una distribución: faltan clientes OAuth válidos de Google y Microsoft. Consulta docs/OAUTH.md.")
         }
         let state = { (ok: Bool) in ok ? "configurado" : "pendiente" }
-        print("OAuth Google: \(state(googleValid)) · Microsoft: \(state(microsoftValid)) · Dropbox: \(state(dropboxValid)) · Box: \(state(boxValid)) · WebDAV: no necesita registro")
+        print("OAuth Google: \(state(googleValid)) · Microsoft: \(state(microsoftValid)) · Dropbox: \(state(dropboxValid)) · Box: \(state(boxValid)) · pCloud: \(state(pcloudValid)) · WebDAV: no necesita registro")
         exit(0)
     }
     guard !args.isEmpty, args.count.isMultiple(of: 2) else {
         fail("""
-        Uso: swift scripts/configure-oauth.swift [--google /ruta/cliente-desktop.json] [--microsoft APPLICATION_CLIENT_ID] [--dropbox APP_KEY] [--box CLIENT_ID:CLIENT_SECRET]
+        Uso: swift scripts/configure-oauth.swift [--google /ruta/cliente-desktop.json] [--microsoft APPLICATION_CLIENT_ID] [--dropbox APP_KEY] [--box CLIENT_ID:CLIENT_SECRET] [--pcloud CLIENT_ID:CLIENT_SECRET]
         Puedes configurar un proveedor cada vez. WebDAV no necesita registro. No se imprimen los valores.
         """)
     }
@@ -77,6 +83,13 @@ do {
                 fail("Box requiere CLIENT_ID:CLIENT_SECRET de una aplicación OAuth 2.0 personalizada.")
             }
             config.boxClientID = parts[0]; config.boxClientSecret = parts[1]
+        case "--pcloud":
+            // pCloud has no PKCE, so the secret is needed to exchange the code; it goes in the same colon pair as Box's.
+            let parts = args[index + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, parts[0].count >= 8, parts[0].allSatisfy({ $0.isLetter || $0.isNumber }), !parts[1].isEmpty else {
+                fail("pCloud requiere CLIENT_ID:CLIENT_SECRET de una aplicación registrada en https://docs.pcloud.com.")
+            }
+            config.pcloudClientID = parts[0]; config.pcloudClientSecret = parts[1]
         default: fail("Opción no reconocida: \(args[index])")
         }
     }

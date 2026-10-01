@@ -4,13 +4,13 @@
 
 ### Todas tus nubes, en una sola ventana del Mac
 
-**Google Drive · OneDrive · Dropbox · Box · Mega · Nextcloud · Synology · SFTP · FTP · SMB**
+**Google Drive · OneDrive · Dropbox · Box · pCloud · S3 · Mega · Nextcloud · Synology · SFTP · FTP · SMB**
 
-[![versión](https://img.shields.io/badge/versión-0.5.0-6f9dff?style=flat-square)](https://github.com/ruvelro/iCloudy/releases)
+[![versión](https://img.shields.io/badge/versión-0.6.0-6f9dff?style=flat-square)](https://github.com/ruvelro/iCloudy/releases)
 [![macOS](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-5.9-F05138?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![SwiftUI](https://img.shields.io/badge/SwiftUI-nativo-0071e3?style=flat-square)](https://developer.apple.com/xcode/swiftui/)
-[![tests](https://img.shields.io/badge/tests-404%20✓-43c463?style=flat-square)](Tests)
+[![tests](https://img.shields.io/badge/tests-789%20✓-43c463?style=flat-square)](Tests)
 [![licencia](https://img.shields.io/badge/licencia-GPL--3.0-8a7ee0?style=flat-square)](LICENSE)
 
 </div>
@@ -31,8 +31,8 @@ No hay servidor intermedio. Tu Mac habla directamente con cada proveedor, y **na
 terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga lo que tú eliges.
 
 > [!NOTE]
-> **Versión 0.1** — La base es sólida y está probada, pero es un primer lanzamiento público. Los proveedores marcados
-> como experimentales pueden romperse sin aviso. Léete [estado y hoja de ruta](#-estado-y-hoja-de-ruta) antes de
+> **Versión 0.6** — La base es sólida y está probada, pero todavía no hay binario firmado. Los proveedores marcados
+> como experimentales, y los nuevos de esta versión, no se han probado aún contra cuentas reales y pueden romperse sin aviso. Léete [estado y hoja de ruta](#-estado-y-hoja-de-ruta) antes de
 > confiarle nada importante.
 
 <br>
@@ -51,13 +51,17 @@ terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga 
 | **FTP / FTPS** | Usuario y contraseña | — | — | — | — | — | Estable |
 | **Mega** | Correo y contraseña | ✅ | ✅⁴ | — | ✅⁵ | MAC propio³ | 🧪 Experimental |
 | **O2 Cloud** | Sesión de Mi O2 | — | — | — | ✅ | — | 🧪 Experimental |
+| **pCloud** | OAuth | — | ✅ | — | ✅ | SHA-256 / SHA-1 | 🆕 Nuevo |
+| **S3 y compatibles**⁶ | Clave de acceso | Prefijo | Temporales⁷ | — | — | MD5 (ETag) | 🆕 Nuevo |
 
 <sub>
 ¹ Enlaces públicos y compartir con personas en Nextcloud y ownCloud, activando la API OCS al conectar.
 ² Papelera real y reversible del sistema, vía <code>trashItem</code>.
 ³ Cifrado de extremo a extremo: cada descarga se verifica contra el resumen que lleva dentro la clave del archivo.
 <br>⁴ En Mega, enlaces de archivo. Una carpeta se comparte con una clave aparte que iCloudy todavía no sabe crear, y lo dice.
-<br>⁵ Papelera navegable (restaurar, eliminar definitivamente, vaciar) en Drive, Box y Mega; en Dropbox se listan y restauran archivos, y el vaciado depende de la cuenta. OneDrive, O2 y los volúmenes borran definitivamente sin listar su papelera.
+<br>⁵ Papelera navegable (restaurar, eliminar definitivamente, vaciar) en Drive, Box y Mega; en Dropbox se listan y restauran archivos, y el vaciado depende de la cuenta. OneDrive, O2 y los volúmenes borran definitivamente sin listar su papelera. pCloud lista, restaura y vacía la suya.
+<br>⁶ Amazon S3, Backblaze B2, Wasabi, Cloudflare R2, MinIO, Scaleway y DigitalOcean Spaces, con firma SigV4 propia y subidas multiparte reanudables — [guía](docs/S3.md).
+<br>⁷ URL prefirmadas de una hora, un día o siete días, solo de archivos.
 </sub>
 
 **SFTP** cubre cualquier servidor SSH y la mayoría de NAS, cifrado y con la clave del servidor comprobada en cada sesión. **WebDAV** cubre Nextcloud, ownCloud, Synology y casi cualquier NAS. **Volúmenes** cubre SMB, AFP, NFS, discos
@@ -116,6 +120,22 @@ cancelable y limpieza al cerrar.
 | **Unidades compartidas** | Unidades compartidas de Google y bibliotecas de SharePoint, sin volver a iniciar sesión. |
 | **En dos idiomas** | Castellano e inglés, y añadir otro es soltar un `.lproj`. |
 
+### 🆕 Nuevo en la 0.6
+
+|  |  |
+|---|---|
+| **Pestañas y doble panel** | Varias ubicaciones abiertas en la misma ventana (⌘T, ⌘W, ⌘1…⌘9) y dos paneles lado a lado (⇧⌘D): F5 copia al otro panel y F6 mueve, también entre nubes distintas, quitando el original solo después de una copia verificada. |
+| **Cola en paralelo** | Varias transferencias a la vez, con límite global y por cuenta, límite de ancho de banda de subida y de bajada, prioridad, horario permitido y pausa en redes caras o limitadas. |
+| **Plan e informe** | Antes de una transferencia grande, cuántos archivos y bytes son, el espacio que hace falta y los conflictos que ya existen. Al acabar, un informe archivo por archivo, exportable a CSV o JSON, con «Reintentar solo lo pendiente» y «Verificar lo copiado». |
+| **Descargas verificadas** | Cada descarga se comprueba contra el tamaño y la suma del proveedor (MD5, QuickXorHash, `content_hash`, SHA-1) antes de dejarla en su sitio. Si el archivo cambió mientras bajaba, se vuelve a pedir; si llegó dañado, no queda nada. |
+| **Disponible sin conexión** | Archivos y carpetas marcados se guardan en el Mac y se mantienen al día, dentro del espacio que elijas. |
+| **Versiones** | Historial de versiones en Drive, OneDrive, Dropbox, Box y Nextcloud: ver, descargar, restaurar y borrar. |
+| **Enlaces públicos** | Ver, crear con caducidad o contraseña y revocar enlaces, por elemento o para toda la cuenta. |
+| **Comparar y duplicados** | Compara dos carpetas de cualquier nube o del Mac por nombre, tamaño y suma, y busca archivos repetidos entre cuentas para liberar espacio. Nunca borra solo. |
+| **Bóvedas cifradas** | Cifrado en el Mac compatible con Cryptomator (formato 8): nombres y contenidos cifrados en cualquier nube — [cómo funciona](docs/CIFRADO.md). |
+| **Exclusiones en reflejos** | Patrones al estilo de gitignore, ocultos, paquetes y basura del sistema fuera de los reflejos y la sincronización; pausa y vista previa de los cambios pendientes. |
+| **Diagnóstico** | Registro estructurado de todos los proveedores, sin secretos, con vista previa de lo que se exporta — [detalles](docs/DIAGNOSTICO.md). |
+
 <br>
 
 ## 🚀 Instalación
@@ -132,11 +152,11 @@ bash scripts/build-app.sh
 open dist/iCloudy.app
 ```
 
-Para conectar cuentas de Google, Microsoft, Dropbox o Box necesitas registrar tus propios identificadores OAuth —
+Para conectar cuentas de Google, Microsoft, Dropbox, Box o pCloud necesitas registrar tus propios identificadores OAuth —
 el repositorio no incluye ninguno. Ten en cuenta que esos identificadores quedan dentro del `.app` que compilas, en
 claro: es lo normal en un cliente de escritorio, porque la app tiene que presentarlos al proveedor, pero significa
 que un paquete compilado no se comparte con nadie a quien no le darías también esas credenciales. La [guía de OAuth](docs/OAUTH.md) explica cómo, proveedor por proveedor.
-**WebDAV, FTP, volúmenes, Mega y O2 no necesitan registro**: funcionan nada más compilar.
+**WebDAV, SFTP, FTP, S3, volúmenes, Mega y O2 no necesitan registro**: funcionan nada más compilar.
 
 <br>
 
@@ -162,7 +182,7 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 
 **Ya funciona**
 
-- [x] Nueve proveedores, con las capacidades de cada uno declaradas y la interfaz adaptada
+- [x] Doce proveedores, con las capacidades de cada uno declaradas y la interfaz adaptada
 - [x] Subidas reanudables por bloques con verificación de integridad
 - [x] Búsqueda global entre cuentas con filtros
 - [x] Transferencia directa de nube a nube
@@ -176,12 +196,19 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 - [x] Compartir con personas, con permiso de ver o editar, y revocar accesos: Drive, OneDrive, Dropbox, Box y Nextcloud
 - [x] Sincronización en ambos sentidos entre una carpeta del Mac y una de la nube, con línea base, conflictos que conservan las dos versiones y freno ante borrados masivos
 - [x] Extensión File Provider (`NSFileProviderReplicatedExtension`) sobre los mismos proveedores, con la app dividida en librería y lanzador para compartir el código
+- [x] pCloud y S3 con sus compatibles
+- [x] Pestañas, doble panel, cola en paralelo con límite de ancho de banda, plan e informe de transferencias
+- [x] Descargas verificadas, copias sin conexión, versiones, gestión de enlaces, comparador y buscador de duplicados
+- [x] Bóvedas cifradas compatibles con Cryptomator, exclusiones en reflejos y diagnóstico exportable
+- [x] Integración continua en GitHub Actions
 
 **En camino**
 
 - [ ] **Binario firmado y notarizado**, con actualizaciones automáticas
 - [ ] **Extensión del Finder firmada y verificada**: el código está ([File Provider](docs/FILEPROVIDER.md)) y se empaqueta al indicar un App Group, pero cargarla en el Finder exige un identificador de equipo de Apple que todavía no hay
 - [ ] **Mega**: probar el segundo factor y las cuentas anteriores a 2018 contra cuentas reales
+- [ ] **pCloud, S3 y bóvedas**: probarlos contra cuentas reales y contra una bóveda creada por Cryptomator
+- [ ] **Proton Drive**: necesita OpenPGP propio, y no se añadirá sin poder verificarlo contra cuentas reales
 - [ ] **Más idiomas**
 
 <br>
@@ -191,18 +218,22 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 | | |
 |---|---|
 | [Detalles técnicos](docs/DETALLES.md) | La referencia larga: cada función, cada límite, cada decisión |
-| [OAuth](docs/OAUTH.md) | Registrar los clientes de Google, Microsoft, Dropbox y Box |
+| [OAuth](docs/OAUTH.md) | Registrar los clientes de Google, Microsoft, Dropbox, Box y pCloud |
 | [Mega](docs/MEGA.md) | El protocolo, la criptografía y por qué es experimental |
 | [O2 Cloud](docs/O2.md) | Funambol OneMediaHub bajo la marca de O2 |
 | [FTP](docs/FTP.md) | Qué hay, qué falta y lo que costaría añadirlo |
 | [Vista previa](docs/PREVIEW.md) | Formatos, límites y consentimiento |
+| [S3](docs/S3.md) | Puntos de acceso, firma, subidas multiparte y verificación |
+| [pCloud](docs/PCLOUD.md) | API, regiones y registro del cliente |
+| [Cifrado](docs/CIFRADO.md) | Bóvedas compatibles con Cryptomator: qué protege y qué no |
+| [Diagnóstico](docs/DIAGNOSTICO.md) | Niveles, qué se oculta y qué se exporta |
 
 <br>
 
 ## 🛠️ Desarrollo
 
 ```bash
-swift test                       # 360 pruebas; HTTP simulado y servidores FTP locales
+swift test                       # 789 pruebas; HTTP simulado y servidores FTP locales
 swift run iCloudy                # iterar sobre la interfaz
 python3 scripts/mockups/generar.py  # rehacer las maquetas del README
 swift scripts/render-mockups.swift  # y convertirlas en PNG

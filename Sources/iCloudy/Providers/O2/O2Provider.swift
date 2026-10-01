@@ -375,7 +375,7 @@ extension O2Provider {
             // The address O2 hands out may well be a different fleet of servers. The session belongs to O2's own
             // host and nowhere else: sending it wherever the answer points would hand the account's cookies to
             // whoever that turns out to be.
-            if let answering = url.host?.lowercased(), answering == o2Host.lowercased() || answering.hasSuffix("." + o2Host.lowercased()) {
+            if let answering = url.host, O2WebSession.domain(o2Host, covers: answering) {
                 state.apply(to: &request)
             }
             let sent = state.validationKey
@@ -473,9 +473,11 @@ extension O2Provider {
 final class O2UploadReporter: RedirectGuard, @unchecked Sendable {
     private let total: Int64
     private let progress: (Int64, Int64) -> Void
+    private let throttle = TaskThrottle(TransferThrottle.active?.upload)
     init(total: Int64, progress: @escaping (Int64, Int64) -> Void) { self.total = total; self.progress = progress }
     func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64,
                     totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        throttle?.pass(bytesSent, of: task)
         let sent = min(totalBytesSent, total)
         let report = progress
         Task { @MainActor in report(sent, max(self.total, sent)) }

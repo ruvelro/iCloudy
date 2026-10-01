@@ -25,6 +25,11 @@ final class CloudAPI {
         self.demo = demo
         provider = CloudProviderFactory.make(account: account, session: session, tokenProvider: tokenProvider, credentials: credentials)
     }
+    /// A client over a provider built elsewhere: the encryption layer wraps another account's provider in its own.
+    init(provider: any CloudProvider) {
+        self.demo = nil
+        self.provider = provider
+    }
     func canResumeWithoutSource(_ checkpoint: UploadCheckpoint?) -> Bool { demo == nil && provider.canResumeWithoutSource(checkpoint) }
     func dropCaches() { provider.dropCaches() }
     func invalidate() { provider.invalidate() }
@@ -126,15 +131,28 @@ final class CloudAPI {
         if let demo { return try demo.storageQuota() }
         return try await provider.storageQuota()
     }
-    func download(file: CloudFile, to destination: URL, exportMime: String? = nil, maxBytes: Int64? = nil, progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws {
+    /// Every download ends checked against the listed size and, when `checksum` allows it and the provider listed
+    /// one, its checksum. A copy that fails the check is deleted before the error reaches the caller.
+    @discardableResult
+    func download(file: CloudFile, to destination: URL, exportMime: String? = nil, maxBytes: Int64? = nil, checksum: Bool = true,
+                  progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws -> DownloadVerification {
+        // An earlier version, handed over by the versions sheet to the same preview and queue as any other file.
+        if demo == nil, let reference = VersionedFile.reference(file) {
+            return try await downloadVersion(file, reference: reference, to: destination, exportMime: exportMime, maxBytes: maxBytes, checksum: checksum, progress: progress)
+        }
+        // A provider that lists no checksum may still answer one per file; it is asked before the bytes travel.
+        var file = file
+        if demo == nil, checksum, exportMime == nil, file.checksum == nil, !file.isFolder,
+           let asked = try await provider.downloadChecksum(of: file) { file.checksum = asked }
         if let demo {
             try await demo.download(file, to: destination, maxBytes: maxBytes, progress: progress)
-            return
+        } else {
+            try await provider.download(file: file, to: destination, exportMime: exportMime, maxBytes: maxBytes, progress: progress)
+            if let maxBytes, Int64((try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > maxBytes {
+                try? FileManager.default.removeItem(at: destination)
+                throw CloudError.message(L("La vista previa supera el límite de descarga autorizado."))
+            }
         }
-        try await provider.download(file: file, to: destination, exportMime: exportMime, maxBytes: maxBytes, progress: progress)
-        if let maxBytes, Int64((try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > maxBytes {
-            try? FileManager.default.removeItem(at: destination)
-            throw CloudError.message(L("La vista previa supera el límite de descarga autorizado."))
-        }
+        return try await verifyDownload(file, at: destination, exported: exportMime != nil, checksum: checksum)
     }
 }

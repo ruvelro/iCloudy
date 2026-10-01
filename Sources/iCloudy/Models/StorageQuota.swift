@@ -33,9 +33,9 @@ struct StorageQuota: Equatable {
     /// One line per known component, for the tooltip.
     var breakdown: String {
         var lines: [String] = []
-        if let files { lines.append(L("Archivos: ") + ByteCountFormatter.string(fromByteCount: max(0, files - (trash ?? 0)), countStyle: .decimal)) }
-        if let trash { lines.append(L("Papelera: ") + ByteCountFormatter.string(fromByteCount: trash, countStyle: .decimal)) }
-        if let files, used > files { lines.append(L("Otros servicios: ") + ByteCountFormatter.string(fromByteCount: used - files, countStyle: .decimal)) }
+        if let files { lines.append(L("Archivos: \(ByteCountFormatter.string(fromByteCount: max(0, files - (trash ?? 0)), countStyle: .decimal))")) }
+        if let trash { lines.append(L("Papelera: \(ByteCountFormatter.string(fromByteCount: trash, countStyle: .decimal))")) }
+        if let files, used > files { lines.append(L("Otros servicios: \(ByteCountFormatter.string(fromByteCount: used - files, countStyle: .decimal))")) }
         return lines.joined(separator: " · ")
     }
 

@@ -18,23 +18,36 @@ extension AppModel {
             let link = try await client(account).publicLink(for: file)
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(link.absoluteString, forType: .string)
-            info = L("Enlace público copiado. Cualquiera que lo tenga podrá ver «\(file.name)». Para revocarlo, usa la web del proveedor.")
+            info = account.capabilities.links.manage
+                ? L("Enlace público copiado. Cualquiera que lo tenga podrá ver «\(file.name)». Para revocarlo, abre «Enlaces públicos…» en su menú.")
+                : L("Enlace público copiado. Cualquiera que lo tenga podrá ver «\(file.name)». Para revocarlo, usa la web del proveedor.")
         } catch { self.error = error.localizedDescription }
     }
 
-    /// Whether "copy to…" can do anything with this selection. Drive cannot copy a folder, and offering the action
-    /// only to answer with a refusal afterwards is a worse way of saying so.
+    /// Whether "copy to…" can do anything with this selection. Drive and Mega cannot copy a folder, and offering the
+    /// action only to answer with a refusal afterwards is a worse way of saying so.
     func canCopy(_ files: [CloudFile]) -> Bool {
-        guard let account, account.capabilities.copy, !files.isEmpty else { return false }
-        return account.cloud != .google || !files.contains(where: \.isFolder)
+        guard let account, !files.isEmpty else { return false }
+        return account.capabilities.allows(.copy, on: files)
+    }
+
+    /// Why `action` is not available for these items in the current account; shown as the disabled action's help.
+    func limitation(_ action: ItemAction, for files: [CloudFile], account target: Account? = nil) -> String? {
+        guard let account = target ?? account else { return nil }
+        return account.limitation(action, for: files)
+    }
+
+    /// Asks for confirmation before a public link, unless the provider cannot make one for this kind of item.
+    func requestPublicLink(_ file: CloudFile, account target: Account? = nil) {
+        guard let account = target ?? account else { return }
+        if let reason = account.limitation(.publicLink, for: [file]) { error = reason; return }
+        if account.cloud == .s3, !account.isDemo { pendingTemporaryLink = (file, account); return }
+        pendingShare = (file, account)
     }
 
     func requestRelocation(_ files: [CloudFile], copy: Bool) {
         guard let account, !files.isEmpty else { return }
-        if copy, account.cloud == .google, files.contains(where: \.isFolder) {
-            error = L("Google Drive no permite copiar carpetas. Copia los archivos que contiene."); return
-        }
-        if copy, !account.capabilities.copy { error = L("\(account.cloud.title) no permite copiar desde iCloudy."); return }
+        if copy, let reason = account.limitation(.copy, for: files) { error = reason; return }
         relocation = Relocation(files: files, kind: copy ? .copy : .move, account: account, origin: path.isEmpty && collection != .files ? nil : folderID)
     }
 
@@ -45,17 +58,26 @@ extension AppModel {
     }
 
     /// Queues one job per item; the queue stages each file locally and uploads it with checkpoints and verification.
+    /// A large selection goes through the transfer plan first.
     func enqueueCrossCloud(_ files: [CloudFile], from source: Account, to target: Account, parent: String, destinationPath: [CloudFile]) {
+        planCrossCloud(files, from: source, to: target, parent: parent) { [weak self] seeds in
+            self?.enqueueCrossCloud(files, from: source, to: target, parent: parent, destinationPath: destinationPath, seeds: seeds)
+        }
+    }
+    /// Returns the jobs queued, none if the queue refused them.
+    @discardableResult func enqueueCrossCloud(_ files: [CloudFile], from source: Account, to target: Account, parent: String, destinationPath: [CloudFile], seeds: [[String: FileRecord]]?) -> [Transfer] {
         let label = ([target.email] + destinationPath.map(\.name)).joined(separator: " / ")
         let batch = UUID()
-        let jobs = files.map { file -> Transfer in
+        let jobs = files.enumerated().map { index, file -> Transfer in
             var job = Transfer(batchID: batch, name: file.name, destination: label, accountID: source.id, direction: .transfer, localURL: URL(fileURLWithPath: "/"), parent: parent, file: file)
             job.localURL = queue.scratchDirectory(for: job.id)
             job.targetAccountID = target.id
+            job.seed(seeds?.indices.contains(index) == true ? seeds?[index] : nil)
             return job
         }
         do { try queue.add(jobs); info = L("\(jobs.count == 1 ? L("«\(files[0].name)»") : L("\(jobs.count) elementos")) en cola hacia \(accountTitle(target)). Sigue el progreso en Transferencias.") }
-        catch { self.error = error.localizedDescription }
+        catch { self.error = error.localizedDescription; return [] }
+        return jobs
     }
 
     /// Checks cycles and name clashes first, then processes item by item and stops at the first failure.
@@ -73,7 +95,8 @@ extension AppModel {
             let siblings = try await api.list(parent: destination)
             let clashes = request.files.filter { file in siblings.contains { $0.id != file.id && $0.name.localizedCaseInsensitiveCompare(file.name) == .orderedSame } }
             guard clashes.isEmpty else {
-                throw CloudError.message(L("En la carpeta de destino ya existe ") + clashes.map { "«\($0.name)»" }.joined(separator: ", ") + ". Renombra antes de mover o copiar.")
+                let names = clashes.map { "«\($0.name)»" }.joined(separator: ", ")
+                throw CloudError.message(L("En la carpeta de destino ya existe \(names). Renombra antes de mover o copiar."))
             }
             if request.isMove, queue.hasActive(accountID: request.account.id) { throw CloudError.message(L("Pausa las transferencias de esta cuenta antes de mover sus archivos.")) }
             for file in request.files {
@@ -91,18 +114,22 @@ extension AppModel {
                 }
             }
             if request.isMove { try LocalStore.save(favorites, to: favoritesURL) }
-            let target = destinationPath.last?.name ?? "Mis archivos"
+            let target = destinationPath.last?.name ?? L("Mis archivos")
             if !request.isMove, request.account.cloud == .microsoft, !request.account.isDemo {
                 info = L("Copia enviada a OneDrive. Su estado se muestra en Transferencias hasta que el servidor confirme el resultado.")
-                reload(fresh: true)
+                reloadAfterWrite(to: request.account)
                 return
             }
-            let verb = request.isMove ? (done == 1 ? "movido" : "movidos") : (done == 1 ? "copiado" : "copiados")
-            info = L("\(done == 1 ? L("«\(request.files[0].name)»") : L("\(done) elementos")) \(verb) a «\(target)».") + (!request.isMove && request.account.cloud == .microsoft ? L(" OneDrive puede tardar unos segundos en mostrar la copia.") : L(""))
+            // Whole sentences, so the participle agrees in each language instead of being spliced in Spanish.
+            let name = request.files[0].name
+            let summary = request.isMove
+                ? (done == 1 ? L("«\(name)» movido a «\(target)».") : L("\(done) elementos movidos a «\(target)»."))
+                : (done == 1 ? L("«\(name)» copiado a «\(target)».") : L("\(done) elementos copiados a «\(target)»."))
+            info = summary + (!request.isMove && request.account.cloud == .microsoft ? L(" OneDrive puede tardar unos segundos en mostrar la copia.") : "")
         } catch {
             self.error = (done > 0 ? L("Se completaron \(done) de \(request.files.count). ") : L("")) + error.localizedDescription
         }
-        reload(fresh: true)
+        reloadAfterWrite(to: request.account)
     }
 
     /// What the Delete key does: bin from the tree, purge from the bin.
@@ -117,7 +144,7 @@ extension AppModel {
 
     func requestPermanentDelete(_ files: [CloudFile]) {
         guard let account, !files.isEmpty else { return }
-        guard account.capabilities.permanentDelete else { error = L("\(account.cloud.title) no permite el borrado definitivo desde iCloudy."); return }
+        if let reason = account.limitation(.permanentDelete, for: files) { error = reason; return }
         pendingPurge = files
     }
 
@@ -142,7 +169,7 @@ extension AppModel {
         } catch {
             self.error = (removed > 0 ? L("Se eliminaron \(removed) de \(files.count) elementos. ") : L("")) + error.localizedDescription
         }
-        reload(fresh: true)
+        reloadAfterWrite(to: account)
     }
 
     /// Puts binned items back. Where they land is the provider's memory, not iCloudy's, and the message says so.
@@ -160,18 +187,21 @@ extension AppModel {
             self.error = (restored > 0 ? L("Se restauraron \(restored) de \(files.count) elementos. ") : L("")) + error.localizedDescription
         }
         listings.removeAll(accountID: account.id)
-        reload(fresh: true)
+        reloadAfterWrite(to: account)
     }
 
     func emptyTrash() async {
         guard let account else { return }
+        // What the bin listed when it was emptied. Read after the wait, `files` is whatever the focused tab shows
+        // by then, which with two panes can be the other pane's folder.
+        let binned = files
         do {
             try await client(account).emptyTrash()
-            for file in files { forgetLocally(file, account: account) }
+            for file in binned { forgetLocally(file, account: account) }
             try LocalStore.save(favorites, to: favoritesURL)
             info = L("La papelera de \(account.cloud.title) se ha vaciado.")
         } catch { self.error = error.localizedDescription }
-        reload(fresh: true)
+        reloadAfterWrite(to: account)
         refreshStorage(account, force: true)
     }
 
@@ -179,6 +209,7 @@ extension AppModel {
     private func forgetLocally(_ file: CloudFile, account: Account) {
         spotlight.forget(accountID: account.id, fileID: file.id)
         favorites.removeAll { $0.accountID == account.id && ($0.file.id == file.id || $0.path.contains { $0.id == file.id }) }
+        offline.itemDeleted(file, accountID: account.id)
     }
 
     /// Sends the items to the trash one by one and stops at the first failure so the user sees exactly what remains.
@@ -191,10 +222,11 @@ extension AppModel {
                 try await api.trash(file: file)
                 moved += 1
                 spotlight.forget(accountID: account.id, fileID: file.id)
+                offline.itemDeleted(file, accountID: account.id)
                 favorites.removeAll { $0.accountID == account.id && ($0.file.id == file.id || $0.path.contains { $0.id == file.id }) }
             }
             try LocalStore.save(favorites, to: favoritesURL)
-            if [.ftp, .sftp, .webdav].contains(account.cloud), !account.isDemo {
+            if !account.capabilities.reversibleTrash, !account.isDemo {
                 info = L("\(moved) elementos eliminados del servidor de forma permanente.")
             } else if account.cloud == .volume {
                 info = L("\(moved) elementos enviados a la papelera. Puedes restaurarlos desde el Finder.")
@@ -206,7 +238,7 @@ extension AppModel {
         } catch {
             self.error = (moved > 0 ? L("Se enviaron \(moved) de \(files.count) elementos. ") : L("")) + error.localizedDescription
         }
-        reload(fresh: true)
+        reloadAfterWrite(to: account)
     }
 
     func promptName(_ file: CloudFile? = nil) {
@@ -228,9 +260,11 @@ extension AppModel {
             }
         }
         try LocalStore.save(favorites, to: favoritesURL)
-        if selectedAccountID == account.id { path = path.map(change.file); files = files.map(change.file) }
+        // Every tab showing the item, or with it in its history, follows it; not only the one with the focus.
+        workspace.updateAll { $0.remap(change, accountID: account.id) }
         listings.removeAll(accountID: account.id)
         localCopies.remap(change, accountID: account.id)
+        offlineFollow(change, account: account, destinationPath: destinationPath)
         spotlight.remap(change, accountID: account.id, accountLabel: accountTitle(account), oldParent: previousParent, newParent: destinationPath?.map(\.name))
         try mirrors.remap(change, accountID: account.id)
         try queue.remap(change, accountID: account.id)
@@ -249,7 +283,7 @@ extension AppModel {
                 try await api.rename(file: file, name: name)
                 try applyIdentityChange(api.identityChange(file: file, name: name), account: account)
             } else { _ = try await api.createFolder(name: name, parent: parent) }
-            showNameDialog = false; reload(fresh: true)
+            showNameDialog = false; reloadAfterWrite(to: account)
         } catch { self.error = error.localizedDescription }
     }
 }

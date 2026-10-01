@@ -35,7 +35,9 @@ struct MegaNode: Hashable {
 }
 
 /// A signed-in Mega session: the identifier the server accepts, the master key that unwraps every node key, and the
-/// tree itself once it has been fetched.
+/// tree itself once it has been fetched. It belongs to the provider, on the main actor, which is also what lets a
+/// running tree fetch hand it to every caller waiting on it.
+@MainActor
 final class MegaState {
     let sid: String
     let masterKey: Data
@@ -47,6 +49,8 @@ final class MegaState {
     /// that way is wrapped with one of these and not with the master key, so without them every shared item showed
     /// up as "Elemento sin acceso".
     var shareKeys: [String: Data] = [:]
+    /// The account's public links, by the handle of the node they export. They arrive with the tree, in `ph`.
+    var exports: [String: MegaExport] = [:]
     /// When the tree was last fetched. Mega does not push changes made elsewhere, so a tree older than
     /// `MegaProvider.megaTreeMaxAge` is fetched again on the next listing; until then changes are applied in place.
     var loadedAt: Date?
@@ -122,6 +126,8 @@ enum MegaAPI {
             do { (data, response) = try await session.data(for: request, delegate: RedirectGuard.shared) }
             catch let error as URLError {
                 guard error.code != .cancelled else { throw CancellationError() }
+                Diagnostics.mega(command, severity: Self.worthRepeating(error.code) && drops < Self.maxDrops ? .retry : .error,
+                                 attempt: drops + 1, error: error, note: "petición sin respuesta")
                 guard Self.worthRepeating(error.code), drops < Self.maxDrops else { throw unreachable(error) }
                 try await pause(Self.waitDelay(drops), unreachable(error))
                 drops += 1
@@ -135,6 +141,7 @@ enum MegaAPI {
                     throw CloudError.message(L("Mega sigue pidiendo una prueba de trabajo después de resolverla. Vuelve a intentarlo dentro de un momento."))
                 }
                 proofs += 1
+                Diagnostics.mega(command, severity: .retry, attempt: proofs, status: 402, note: "prueba de trabajo")
                 request.setValue(try await solve(challenge), forHTTPHeaderField: "X-Hashcash")
                 continue
             }
@@ -142,6 +149,8 @@ enum MegaAPI {
             // same way a dropped request is rather than handed to the user on the first try.
             if (500..<600).contains(http.statusCode) || http.statusCode == 429 {
                 let unavailable = CloudError.message(L("Mega no está disponible en este momento."))
+                Diagnostics.mega(command, severity: drops < Self.maxDrops ? .retry : .error, attempt: drops + 1,
+                                 status: http.statusCode, note: "servidor no disponible")
                 guard drops < Self.maxDrops else { throw unavailable }
                 try await pause(Self.waitDelay(drops), unavailable)
                 drops += 1
@@ -157,6 +166,8 @@ enum MegaAPI {
             var result: Any? = body
             if let list = body as? [Any] { result = list.first }
             if let code = result as? Int, code < 0 {
+                Diagnostics.mega(command, severity: code == -3 && waits < Self.maxWaits ? .retry : .error, code: code,
+                                 attempt: waits + 1, note: code == -3 ? "ocupado, se espera" : "error de Mega")
                 guard code == -3, waits < Self.maxWaits else { throw failure(code, command: command) }
                 // Mega's own clients back off and keep asking. Half a second five times was not nearly enough: a
                 // delete would surface "-3" to the user and work fine the moment they tried it again by hand.

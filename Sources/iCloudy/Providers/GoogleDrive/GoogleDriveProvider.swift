@@ -11,8 +11,11 @@ extension GoogleDriveProvider {
         let mime = value["mimeType"] as? String ?? "application/octet-stream"
         return CloudFile(
             id: id, name: name, mime: mime, size: (value["size"] as? String).flatMap(Int64.init), modified: date(value["modifiedTime"] as? String),
-            webURL: (value["webViewLink"] as? String).flatMap(URL.init(string:)), isFolder: mime == "application/vnd.google-apps.folder")
+            webURL: (value["webViewLink"] as? String).flatMap(URL.init(string:)), isFolder: mime == "application/vnd.google-apps.folder",
+            checksum: (value["md5Checksum"] as? String).map { ContentHash(algorithm: .md5, value: $0) })
     }
+    /// The fields every listing asks for. `md5Checksum` only exists for binary content, never for Google documents.
+    static let googleFileFields = "id,name,mimeType,size,modifiedTime,webViewLink,md5Checksum"
 
     var googleAllDrives: [URLQueryItem] {
         account.driveID == nil ? [] : [URLQueryItem(name: "supportsAllDrives", value: "true")]
@@ -38,7 +41,7 @@ extension GoogleDriveProvider {
 
     func googleList(parent: String, onPage: (([CloudFile]) -> Void)?) async throws -> [CloudFile] {
         var files: [CloudFile] = []
-        let fields = "nextPageToken,files(id,name,mimeType,size,modifiedTime,webViewLink" + (parent == Collection.trash.rootID ? ",explicitlyTrashed)" : ")")
+        let fields = "nextPageToken,files(\(Self.googleFileFields)" + (parent == Collection.trash.rootID ? ",explicitlyTrashed)" : ")")
 
         var page: String?
         repeat {
@@ -97,6 +100,10 @@ extension GoogleDriveProvider {
         var parts = URLComponents(string: "https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))" + (exportMime == nil ? "" : "/export"))!
         parts.queryItems = [URLQueryItem(name: exportMime == nil ? "alt" : "mimeType", value: exportMime ?? "media")] + googleAllDrives
         return try await request(parts.url!)
+    }
+
+    func currentMetadata(of file: CloudFile) async throws -> CloudFile? {
+        Self.googleFile(try await json(googleURL("https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))?fields=\(Self.googleFileFields)")))
     }
 
     func rename(file: CloudFile, name: String) async throws {
@@ -168,7 +175,7 @@ extension GoogleDriveProvider {
                         separator: " and ")),
                 URLQueryItem(name: "spaces", value: "drive"),
                 URLQueryItem(name: "pageSize", value: "100"), URLQueryItem(name: "pageToken", value: cursor),
-                URLQueryItem(name: "fields", value: "nextPageToken,incompleteSearch,files(id,name,mimeType,size,modifiedTime,webViewLink,parents,driveId)"),
+                URLQueryItem(name: "fields", value: "nextPageToken,incompleteSearch,files(\(Self.googleFileFields),parents,driveId)"),
                 // A shared-drive account searches that drive; anything else searches the person's own corpus. Sending
                 // both values of `corpora` at once, as this once did, is a contradiction Drive answers with 400.
             ] + (account.driveID == nil ? [URLQueryItem(name: "corpora", value: "user")] : googleDriveScope)

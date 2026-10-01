@@ -36,8 +36,12 @@ actor FTPSession {
     private(set) var timeout: TimeInterval = 45
     func setTimeout(_ seconds: TimeInterval) { timeout = seconds }
 
-    init(host: String, port: UInt16, user: String, password: String, security: Security) {
+    /// The account this session belongs to, for the diagnostic log.
+    private let diagnosticsAccount: String?
+
+    init(host: String, port: UInt16, user: String, password: String, security: Security, account: String? = nil) {
         self.host = host; self.port = port; self.user = user; self.password = password; self.security = security
+        self.diagnosticsAccount = account
     }
 
     // MARK: - Connection
@@ -143,17 +147,60 @@ actor FTPSession {
     struct ConnectionLost: LocalizedError {
         var errorDescription: String? { L("El servidor FTP cerró la conexión.") }
     }
+    /// The connection went away after a command that changes the server had been sent and before its reply arrived.
+    /// The server may or may not have carried it out, so it is not repeated: a second DELE or RNTO would fail on the
+    /// result of the first and report an error for something that worked, and a second MKD or STOR would do it twice.
+    struct OutcomeUncertain: LocalizedError {
+        let verb: String
+        var errorDescription: String? {
+            verb == "STOR"
+                ? L("Se cortó la conexión con el servidor FTP antes de que confirmara la subida, así que no se sabe si el archivo quedó guardado entero. No se ha repetido: compruébalo en la carpeta antes de volver a subirlo.")
+                : L("Se cortó la conexión con el servidor FTP después de enviar la orden y antes de su respuesta, así que no se sabe si llegó a aplicarse. No se ha repetido: actualiza la carpeta para comprobarlo antes de volver a intentarlo.")
+        }
+    }
+    /// Verbs whose effect outlives the command. RNFR is not one of them: the server keeps its name only until the
+    /// connection ends, so losing it leaves nothing behind.
+    static let mutatingVerbs: Set<String> = ["STOR", "STOU", "APPE", "DELE", "RMD", "XRMD", "MKD", "XMKD", "RNTO", "SITE", "MFMT"]
+    static func mutates(_ line: String) -> Bool {
+        mutatingVerbs.contains(line.prefix { $0 != " " }.uppercased())
+    }
+    /// Set once a mutating command of the current operation has been handed to the socket. From then on a lost
+    /// connection means an unknown outcome, never a reason to run the operation again.
+    private var mutationSent = false
+    /// When the last complete reply arrived, to tell a connection in use from one the server may have dropped.
+    private var lastReply = Date.distantPast
+    /// Seconds without a reply after which a connection is checked with NOOP before a mutation is sent down it.
+    private(set) var idleProbe: TimeInterval = 5
+    func setIdleProbe(_ seconds: TimeInterval) { idleProbe = seconds }
     /// Reconnects once when the server has dropped an idle connection, which FTP servers do aggressively: vsftpd
     /// closes after five minutes, and the next command then fails on a dead socket or reads a 421.
-    private func withConnection<T>(_ work: () async throws -> T) async throws -> T {
+    ///
+    /// Reads are simply repeated on the new connection. A mutation is repeated only if it never left: a dead socket
+    /// usually swallows the command and fails on the reply, which is too late to know. So when the first thing an
+    /// operation sends is a mutation (`startsWithMutation`) and the connection has been quiet for a while, a NOOP finds
+    /// out whether it is still alive, and the reconnection happens there, where repeating costs nothing. An upload
+    /// needs no NOOP: its EPSV goes first and plays that part.
+    private func withConnection<T>(startsWithMutation: Bool = false, _ work: () async throws -> T) async throws -> T {
+        let reused = control != nil
         try await connect()
+        if startsWithMutation, reused, Date().timeIntervalSince(lastReply) >= idleProbe { try await probe() }
+        mutationSent = false
         do { return try await work() }
+        catch let error where (error is NWError || error is ConnectionLost) && !mutationSent {
+            try Task.checkCancellation()
+            close()
+            try await connect()
+            mutationSent = false
+            do { return try await work() }
+            catch { close(); throw error }
+        } catch { close(); throw error }
+    }
+    private func probe() async throws {
+        do { _ = try await send("NOOP") }
         catch let error where error is NWError || error is ConnectionLost {
             try Task.checkCancellation()
             close()
             try await connect()
-            do { return try await work() }
-            catch { close(); throw error }
         } catch { close(); throw error }
     }
     /// One operation at a time on the control channel. The actor is reentrant at every `await`, so without this a
@@ -161,7 +208,7 @@ actor FTPSession {
     /// reply as its own, and the upload would read the listing's. Each public operation runs to completion before the
     /// next one starts, in the order they arrived.
     private var lastOperation: Task<Void, Never>?
-    private func exclusive<T>(_ work: @escaping () async throws -> T) async throws -> T {
+    private func exclusive<T: Sendable>(_ work: @escaping @Sendable () async throws -> T) async throws -> T {
         let previous = lastOperation
         let operation = Task<T, Error> {
             await previous?.value
@@ -242,6 +289,7 @@ actor FTPSession {
                 // A reply ends with "NNN "; "NNN-" introduces more lines.
                 if line.count >= 4, line.prefix(3).allSatisfy(\.isNumber), line[line.index(line.startIndex, offsetBy: 3)] == " " {
                     let code = Int(line.prefix(3)) ?? 0
+                    lastReply = Date()
                     return Reply(code: code, text: lines.joined(separator: " ").trimmingCharacters(in: .whitespaces))
                 }
             }
@@ -256,6 +304,17 @@ actor FTPSession {
     static func isSafeLine(_ line: String) -> Bool { !line.unicodeScalars.contains { $0 == "\r" || $0 == "\n" || $0 == "\0" } }
     /// Writes one command and reads its reply. Callers hold the lock and have a live connection.
     private func send(_ line: String) async throws -> Reply {
+        let began = Date()
+        do {
+            let answer = try await transmit(line)
+            Diagnostics.ftp(line, host: host, account: diagnosticsAccount, code: answer.code, duration: Date().timeIntervalSince(began))
+            return answer
+        } catch {
+            Diagnostics.ftp(line, host: host, account: diagnosticsAccount, code: nil, duration: Date().timeIntervalSince(began), error: error)
+            throw error
+        }
+    }
+    private func transmit(_ line: String) async throws -> Reply {
         guard Self.isSafeLine(line) else { throw CloudError.message(L("El nombre contiene un salto de línea, que FTP no admite.")) }
         guard let connection = control else { throw ConnectionLost() }
         do { try await rawSend(connection, Data((line + "\r\n").utf8)) }
@@ -264,14 +323,24 @@ actor FTPSession {
             if case .tls = error { throw Self.describe(error) }
             throw error
         }
-        let answer = try await reply()
-        // 421 is the server saying goodbye, usually for idleness; the socket is about to close under us.
-        if answer.code == 421 { close(); throw ConnectionLost() }
+        let mutating = Self.mutates(line)
+        if mutating { mutationSent = true }
+        let answer: Reply
+        do { answer = try await reply() }
+        catch where mutating {
+            // A reply that may still arrive would be read as the answer to the next command.
+            close()
+            if error is CancellationError { throw error }
+            throw OutcomeUncertain(verb: String(line.prefix { $0 != " " }).uppercased())
+        }
+        // 421 is the server saying goodbye, usually for idleness; the socket is about to close under us. It is also a
+        // refusal: the command was not carried out, so even a mutation may be sent again on a new connection.
+        if answer.code == 421 { mutationSent = false; close(); throw ConnectionLost() }
         return answer
     }
     @discardableResult
     func command(_ line: String) async throws -> Reply {
-        try await exclusive { try await self.withConnection { try await self.send(line) } }
+        try await exclusive { try await self.withConnection(startsWithMutation: Self.mutates(line)) { try await self.send(line) } }
     }
     /// Same as `command`, but fails when the server answers with an error code.
     @discardableResult
@@ -279,6 +348,42 @@ actor FTPSession {
         let reply = try await command(line)
         guard reply.isPositive else { throw failure(reply, description) }
         return reply
+    }
+    /// One command of a `sequence`, with the replies that let the sequence go on and what to say otherwise.
+    struct Step: Sendable {
+        let line: String
+        let accepts: @Sendable (Reply) -> Bool
+        let description: String
+    }
+    /// Runs several commands back to back under a single hold of the control channel, so that no other operation
+    /// can send anything between them. Stops at the first reply a step does not accept and reports it.
+    @discardableResult
+    func sequence(_ steps: [Step]) async throws -> [Reply] {
+        let startsWithMutation = steps.first.map { Self.mutates($0.line) } ?? false
+        let replies = try await exclusive {
+            try await self.withConnection(startsWithMutation: startsWithMutation) { () -> [Reply] in
+                var replies: [Reply] = []
+                for step in steps {
+                    let reply = try await self.send(step.line)
+                    replies.append(reply)
+                    guard step.accepts(reply) else { break }
+                }
+                return replies
+            }
+        }
+        for (step, reply) in zip(steps, replies) where !step.accepts(reply) { throw failure(reply, step.description) }
+        return replies
+    }
+    /// RNFR names the item and RNTO moves it, and the server forgets the RNFR as soon as any other command arrives.
+    /// Sent as two separate operations, a listing from the explorer could land in between and the RNTO was refused,
+    /// or on a lenient server applied to whatever that command left behind.
+    func rename(from source: String, to destination: String) async throws {
+        try await sequence([
+            Step(line: "RNFR " + source, accepts: { $0.code == 350 },
+                 description: L("El servidor no encontró el elemento que se quiere mover.")),
+            Step(line: "RNTO " + destination, accepts: { $0.isPositive },
+                 description: L("El servidor rechazó el nuevo nombre o destino."))
+        ])
     }
 
     // MARK: - Data channel
@@ -309,7 +414,8 @@ actor FTPSession {
     }
 
     /// Runs a command whose payload arrives on a separate connection, e.g. LIST, MLSD or RETR.
-    private func receiveData(command line: String, into sink: (Data) throws -> Void) async throws {
+    /// `throttle` is the job's download lane for file contents; listings are never held back.
+    private func receiveData(command line: String, throttle: BandwidthLimiter.Lane? = nil, into sink: (Data) throws -> Void) async throws {
         let port = try await passivePort()
         let data = try await open(port: port)
         defer { receiveEOF.remove(ObjectIdentifier(data)); data.cancel() }
@@ -324,7 +430,10 @@ actor FTPSession {
             do { chunk = try await rawReceive(data) }
             catch NWError.posix(.ECONNRESET) { break }
             guard let chunk else { break }
-            if !chunk.isEmpty { try sink(chunk) }
+            if !chunk.isEmpty {
+                if let throttle, throttle.isLimited { try await throttle.acquire(chunk.count) }
+                try sink(chunk)
+            }
         }
         data.cancel()
         try Task.checkCancellation()
@@ -346,7 +455,7 @@ actor FTPSession {
         var written: Int64 = 0
         var complete = false
         defer { if !complete { try? FileManager.default.removeItem(at: destination) } }
-        try await receiveData(command: "RETR " + path) { chunk in
+        try await receiveData(command: "RETR " + path, throttle: TransferThrottle.active?.download) { chunk in
             try DownloadBudget.check(written + Int64(chunk.count), maximum: maxBytes)
             try handle.write(contentsOf: chunk)
             written += Int64(chunk.count)
@@ -376,6 +485,7 @@ actor FTPSession {
             let chunk = try handle.read(upToCount: 256 * 1024) ?? Data()
             try sourceStamp.validate(source)
             if chunk.isEmpty { break }
+            try await TransferThrottle.upload(chunk.count)
             try await rawSend(data, chunk)
             sent += Int64(chunk.count)
             progress(sent)
@@ -387,7 +497,15 @@ actor FTPSession {
         try await finish(data)
         data.cancel()
         try Task.checkCancellation()
-        let finished = try await reply()
+        // Every byte is out. A failure up to here left a file known to be incomplete; losing this reply leaves one
+        // that may be complete or not, and only the person can look.
+        let finished: Reply
+        do { finished = try await reply() }
+        catch {
+            close()
+            if error is CancellationError { throw error }
+            throw OutcomeUncertain(verb: "STOR")
+        }
         guard finished.isPositive else { throw failure(finished, L("El servidor no confirmó la subida.")) }
     }
 

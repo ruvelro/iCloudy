@@ -25,5 +25,11 @@ class RedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
         }
         return stripped
     }
+    // Every request of the app passes one of these delegates, which makes it the one place the diagnostic log can see
+    // them all. The first call runs inside the caller's task, the only moment its context can be read.
+    func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) { Diagnostics.taskCreated(task) }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+        Diagnostics.taskFinished(task, metrics: metrics)
+    }
 }
 

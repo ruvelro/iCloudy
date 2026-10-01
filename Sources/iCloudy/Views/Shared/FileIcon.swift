@@ -155,13 +155,13 @@ struct Crumb: View {
 /// and the row looked misaligned. The box is drawn here instead: the corner radius of a breadcrumb, a ring while it
 /// holds the keyboard, and the cross that every other search field on this Mac has.
 struct ChromeField: View {
-    let placeholder: String
+    let placeholder: LocalizedStringKey
     let symbol: String
     @Binding var text: String
     var onSubmit: () -> Void = {}
     @FocusState private var focused: Bool
 
-    init(_ placeholder: String, symbol: String = "magnifyingglass", text: Binding<String>, onSubmit: @escaping () -> Void = {}) {
+    init(_ placeholder: LocalizedStringKey, symbol: String = "magnifyingglass", text: Binding<String>, onSubmit: @escaping () -> Void = {}) {
         self.placeholder = placeholder; self.symbol = symbol; self._text = text; self.onSubmit = onSubmit
     }
     var body: some View {

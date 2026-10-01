@@ -31,7 +31,7 @@ extension DropboxProvider {
         for attempt in 0..<4 {
             try Task.checkCancellation()
             let (data, response) = try await send(&request)
-            if attempt < 3, let delay = CloudSession.retryDelay(response, method: "POST", attempt: attempt, repeatable: repeatable) {
+            if attempt < 3, let delay = CloudSession.retryDelay(response, method: "POST", attempt: attempt, repeatable: repeatable) ?? Self.dropboxBusyDelay(response, data, attempt: attempt) {
                 try await Task.sleep(for: .seconds(delay))
                 continue
             }
@@ -41,6 +41,16 @@ extension DropboxProvider {
         throw CloudError.message(L("El servicio no responde."))
     }
 
+    /// How long to wait before sending a write again that Dropbox turned away for lock contention, or nil when that
+    /// was not the reason. Unlike an ordinary 429 this one is documented as not applied, so even a move or a create
+    /// can be repeated safely.
+    static func dropboxBusyDelay(_ response: URLResponse, _ data: Data, attempt: Int) -> Double? {
+        guard let http = response as? HTTPURLResponse, [409, 429].contains(http.statusCode),
+              let summary = (try? HTTP.json(data))?["error_summary"] as? String, DropboxErrors.isBusy(summary) else { return nil }
+        let announced = Double(http.value(forHTTPHeaderField: "Retry-After") ?? "")
+        return min(max(1, announced ?? pow(2, Double(attempt))), 30)
+    }
+
     static func dropboxFile(_ value: [String: Any]) -> CloudFile? {
         guard let name = value["name"] as? String, let path = value["path_lower"] as? String else { return nil }
         let folder = (value[".tag"] as? String) == "folder"
@@ -48,7 +58,8 @@ extension DropboxProvider {
                          mime: folder ? "application/vnd.google-apps.folder" : mime(forName: name),
                          size: (value["size"] as? NSNumber)?.int64Value,
                          modified: date(value["server_modified"] as? String),
-                         webURL: nil, isFolder: folder)
+                         webURL: nil, isFolder: folder,
+                         checksum: (value["content_hash"] as? String).map { ContentHash(algorithm: .dropbox, value: $0) })
     }
 
     func dropboxList(parent: String, onPage: (([CloudFile]) -> Void)?) async throws -> [CloudFile] {
@@ -213,6 +224,7 @@ extension DropboxProvider {
             try cursor.sourceStamp?.validate(local)
             try Task.checkCancellation()
             let chunk = try await blockingIO { try handle.read(upToCount: Int(Self.dropboxChunk)) ?? Data() }
+            try await TransferThrottle.upload(chunk.count)
             try cursor.sourceStamp?.validate(local)
             guard !chunk.isEmpty else { throw CloudError.message(L("El tamaño del origen ha cambiado.")) }
             hasher?.update(chunk)
@@ -294,6 +306,10 @@ extension DropboxProvider {
         var request = try await request(URL(string: "https://content.dropboxapi.com/2/files/download")!, method: "POST")
                     request.setValue(Self.asciiJSON(["path": dropboxPath(file.id)]), forHTTPHeaderField: "Dropbox-API-Arg")
                     return request
+    }
+
+    func currentMetadata(of file: CloudFile) async throws -> CloudFile? {
+        Self.dropboxFile(try await dropboxRPC("files/get_metadata", ["path": dropboxPath(file.id)], repeatable: true))
     }
 
     func rename(file: CloudFile, name: String) async throws {

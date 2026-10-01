@@ -11,8 +11,8 @@ enum AccountTint: String, Codable, CaseIterable, Identifiable {
         case .purple: return .purple; case .pink: return .pink; case .red: return .red; case .teal: return .teal; case .gray: return .gray }
     }
     var title: String {
-        switch self { case .blue: return "Azul"; case .green: return "Verde"; case .orange: return "Naranja"
-        case .purple: return "Morado"; case .pink: return "Rosa"; case .red: return "Rojo"; case .teal: return "Turquesa"; case .gray: return "Gris" }
+        switch self { case .blue: return L("Azul"); case .green: return L("Verde"); case .orange: return L("Naranja")
+        case .purple: return L("Morado"); case .pink: return L("Rosa"); case .red: return L("Rojo"); case .teal: return L("Turquesa"); case .gray: return L("Gris") }
     }
 }
 
@@ -29,7 +29,7 @@ struct AccountAppearance: Codable, Equatable {
     ]
     func title(for account: Account) -> String {
         let name = alias.trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.isEmpty ? (account.isDemo ? "Demo local" : account.cloud.title) : name
+        return name.isEmpty ? (account.isDemo ? L("Demo local") : account.isCryptomatorVault ? account.name : account.cloud.title) : name
     }
     func validated() throws -> Self {
         var value = self
@@ -90,6 +90,8 @@ struct AccountIcon: View {
         case .volume: return "externaldrive.connected.to.line.below.fill"
         case .mega: return "lock.icloud.fill"
         case .o2: return "antenna.radiowaves.left.and.right.circle.fill"
+        case .pcloud: return "cloud.circle.fill"
+        case .s3: return "cylinder.split.1x2.fill"
         }
     }
     var body: some View {
@@ -163,7 +165,7 @@ struct AccountAppearanceEditor: View {
                             Text(LocalizedStringKey(preset.title)).font(.caption2)
                         }.frame(maxWidth: .infinity).padding(8)
                             .background(draft.icon == preset.id ? draft.tint.color.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
-                    }.buttonStyle(.plain).accessibilityLabel(preset.title)
+                    }.buttonStyle(.plain).accessibilityLabel(LocalizedStringKey(preset.title))
                 }
             }
             HStack {

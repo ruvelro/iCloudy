@@ -8,15 +8,24 @@ struct MenuBarContent: View {
     @ObservedObject var queue: TransferQueue
     @Environment(\.openWindow) private var openWindow
 
-    private var active: Transfer? { queue.items.first { $0.state == .running } }
+    private var running: [Transfer] { queue.items.filter { $0.state == .running } }
     private var waiting: Int { queue.items.filter { $0.state == .queued }.count }
     private var paused: Int { queue.items.filter { $0.state == .paused }.count }
     private var failed: Int { queue.items.filter { $0.state == .failed }.count }
 
     var body: some View {
-        if let active {
+        if running.count == 1, let active = running.first {
             Text(active.name)
             Text(active.metrics)
+            if waiting > 0 { Text("\(waiting) en espera") }
+        } else if running.count > 1 {
+            // Several at once: the whole queue first, then each job, so the line under the icon still adds up.
+            let activity = TransferActivity(queue.items)
+            Text("\(running.count) transferencias en curso")
+            Text(verbatim: ([activity.progress.formatted(.percent.precision(.fractionLength(0)))] + (activity.speed.map { [$0] } ?? [])).joined(separator: " · "))
+            ForEach(running.prefix(5)) { transfer in
+                Text(verbatim: transfer.name + " · " + transfer.progress.formatted(.percent.precision(.fractionLength(0))))
+            }
             if waiting > 0 { Text("\(waiting) en espera") }
         } else if waiting > 0 {
             Text("\(waiting) transferencias en espera")
@@ -25,6 +34,7 @@ struct MenuBarContent: View {
         } else {
             Text("Sin transferencias activas")
         }
+        if let hold = queue.hold, hold != .offline { Text(verbatim: hold.detail(window: queue.policy.window)) }
         if paused > 0 { Text("\(paused) en pausa") }
         if failed > 0 { Text("\(failed) con error") }
         Divider()
@@ -34,7 +44,7 @@ struct MenuBarContent: View {
         Button("Buscar en todas las nubes") { activate(); model.preview.close(); model.showGlobalSearch = true }
         Divider()
         if queue.hasActive { Button("Pausar todas") { queue.pauseAll() } }
-        if paused + failed > 0 { Button("Reanudar todas") { _ = queue.resumeAll() } }
+        if queue.resumableCount > 0 { Button("Reanudar todas") { _ = queue.resumeAll() } }
         if !model.mirrors.mirrors.isEmpty {
             Button("Sincronizar reflejos") { _ = model.syncAllMirrors() }
         }
@@ -61,9 +71,8 @@ struct MenuBarContent: View {
 
 /// Receives files and text sent from any app through the Services menu. It runs inside iCloudy, so it needs neither an
 /// app extension nor an App Group; the pasteboard carries the sandbox extensions that grant read access to the files.
+/// Picking the service can launch the app, so the request waits for the accounts instead of finding no model.
 final class ServicesProvider: NSObject {
-    weak var model: AppModel?
-
     @objc func uploadToICloudy(_ pasteboard: NSPasteboard, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString>) {
         let urls = (pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL] ?? []).filter(\.isFileURL)
         let text = pasteboard.string(forType: .string)
@@ -71,11 +80,13 @@ final class ServicesProvider: NSObject {
             error.pointee = L("No hay archivos ni texto que subir.") as NSString
             return
         }
-        Task { @MainActor [weak self] in
-            guard let model = self?.model else { return }
-            NSApp.activate(ignoringOtherApps: true)
-            if !urls.isEmpty { _ = model.enqueueUploads(urls) }
-            else if let text { model.uploadText(text) }
+        // The pasteboard is read above, while the system still holds it; only the upload waits.
+        Task { @MainActor in
+            ColdStart.deliver { model in
+                NSApp.activate(ignoringOtherApps: true)
+                if !urls.isEmpty { _ = model.enqueueUploads(urls) }
+                else if let text { model.uploadText(text) }
+            }
         }
     }
 }

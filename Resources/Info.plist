@@ -8,8 +8,8 @@
     <key>CFBundleName</key><string>iCloudy</string>
     <key>CFBundleDisplayName</key><string>iCloudy</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.5.0</string>
-    <key>CFBundleVersion</key><string>2</string>
+    <key>CFBundleShortVersionString</key><string>0.6.0</string>
+    <key>CFBundleVersion</key><string>3</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleDevelopmentRegion</key><string>es</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
@@ -28,6 +28,16 @@
                 <string>public.item</string>
                 <string>public.folder</string>
             </array>
+        </dict>
+    </array>
+    <!-- What a row carries when it is dragged from one pane to the other. Offered only inside the app. -->
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key><string>dev.icloudy.pane-items</string>
+            <key>UTTypeDescription</key><string>Elementos de un panel de iCloudy</string>
+            <key>UTTypeConformsTo</key>
+            <array><string>public.data</string></array>
         </dict>
     </array>
     <!-- A NAS on the local network often serves WebDAV over plain HTTP with a name macOS cannot verify. This allows

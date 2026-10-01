@@ -64,6 +64,16 @@ final class LocalizationTests: XCTestCase {
         }
     }
 
+    func testKeysBuiltAtRunTimeHaveAnEnglishTranslation() throws {
+        // A key the compiler never sees as a literal is missing from its key list, so nothing noticed these: the
+        // search filters, the icon names and the colour of an account all showed in Spanish in English.
+        let parsed = try table()
+        let dynamic = SearchFileType.allCases.map(\.rawValue) + SearchSize.allCases.map(\.rawValue)
+            + AccountAppearance.presets.map(\.title)
+        let missing = dynamic.filter { parsed[$0] == nil }
+        XCTAssertTrue(missing.isEmpty, "Sin traducir: \(missing)")
+    }
+
     /// Index of the quote that closes a key at the start of a line, skipping escaped ones.
     private static func closingQuote(of line: String) -> String.Index? {
         var index = line.index(after: line.startIndex)

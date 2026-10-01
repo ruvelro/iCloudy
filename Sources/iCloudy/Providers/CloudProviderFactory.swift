@@ -14,6 +14,8 @@ enum CloudProviderFactory {
         case .volume: return VolumeProvider(account: account, session: session, tokenProvider: tokenProvider, credentials: credentials)
         case .mega: return MegaProvider(account: account, session: session, tokenProvider: tokenProvider, credentials: credentials)
         case .o2: return O2Provider(account: account, session: session, tokenProvider: tokenProvider, credentials: credentials)
+        case .pcloud: return PCloudProvider(account: account, session: session, tokenProvider: tokenProvider, credentials: credentials)
+        case .s3: return S3Provider(account: account, session: session, tokenProvider: tokenProvider, credentials: credentials)
         }
     }
 }

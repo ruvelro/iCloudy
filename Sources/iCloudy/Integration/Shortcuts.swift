@@ -1,18 +1,8 @@
 import AppIntents
 import Foundation
 
-/// Reaches the running app from an intent. Intents declared by an app run inside it, and the system launches it first
-/// when it is not open, so this is set by then.
-enum IntentBridge {
-    @MainActor static func model() async throws -> AppModel {
-        guard let model = AppModel.shared else { throw AppModelUnavailable() }
-        try await model.waitUntilReady()
-        return model
-    }
-}
-struct AppModelUnavailable: LocalizedError {
-    var errorDescription: String? { L("iCloudy no está listo todavía. Abre la app e inténtalo de nuevo.") }
-}
+// Intents declared by an app run inside it, and the system launches it first when it is not open. That launch is a
+// cold start like any other, so every intent reaches the model through `ColdStart`, which waits for the accounts.
 
 struct PauseTransfersIntent: AppIntent {
     static let title: LocalizedStringResource = "Pausar transferencias de iCloudy"
@@ -20,7 +10,7 @@ struct PauseTransfersIntent: AppIntent {
     static let openAppWhenRun = false
 
     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
-        let model = try await IntentBridge.model()
+        let model = try await ColdStart.model()
         let affected = model.queue.items.filter { [.running, .queued].contains($0.state) }.count
         model.queue.pauseAll()
         return .result(dialog: IntentDialog(stringLiteral: affected == 0 ? L("No había transferencias activas.") : L("\(affected) transferencias en pausa.")))
@@ -33,7 +23,7 @@ struct ResumeTransfersIntent: AppIntent {
     static let openAppWhenRun = false
 
     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
-        let model = try await IntentBridge.model()
+        let model = try await ColdStart.model()
         let resumed = model.queue.resumeAll()
         return .result(dialog: IntentDialog(stringLiteral: resumed == 0 ? L("No había transferencias en pausa.") : L("\(resumed) transferencias reanudadas.")))
     }
@@ -45,9 +35,18 @@ struct SyncMirrorsIntent: AppIntent {
     static let openAppWhenRun = false
 
     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
-        let model = try await IntentBridge.model()
+        let model = try await ColdStart.model()
+        let paused = model.mirrors.mirrors.filter(\.paused).count
         let count = model.syncAllMirrors()
-        return .result(dialog: IntentDialog(stringLiteral: count == 0 ? L("No hay carpetas reflejadas.") : L("Comprobando \(count) carpetas reflejadas.")))
+        return .result(dialog: IntentDialog(stringLiteral: Self.summary(started: count, paused: paused)))
+    }
+    static func summary(started: Int, paused: Int) -> String {
+        switch (started, paused) {
+        case (0, 0): return L("No hay carpetas reflejadas.")
+        case (0, _): return L("Todas las carpetas reflejadas están en pausa; no se ha comprobado ninguna.")
+        case (_, 0): return L("Comprobando \(started) carpetas reflejadas.")
+        default: return L("Comprobando \(started) carpetas reflejadas; \(paused) en pausa se quedan como están.")
+        }
     }
 }
 
@@ -57,7 +56,7 @@ struct StorageReportIntent: AppIntent {
     static let openAppWhenRun = false
 
     @MainActor func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
-        let model = try await IntentBridge.model()
+        let model = try await ColdStart.model()
         let report = model.storageSummary()
         return .result(value: report, dialog: IntentDialog(stringLiteral: report))
     }
@@ -72,7 +71,7 @@ struct SearchCloudsIntent: AppIntent {
     var query: String
 
     @MainActor func perform() async throws -> some IntentResult {
-        let model = try await IntentBridge.model()
+        let model = try await ColdStart.model()
         model.startGlobalSearch(query)
         return .result()
     }
@@ -87,9 +86,9 @@ struct UploadFilesIntent: AppIntent {
     var files: [IntentFile]
 
     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
-        let model = try await IntentBridge.model()
+        let model = try await ColdStart.model()
         let urls = files.compactMap(\.fileURL)
-        guard !urls.isEmpty else { throw AppModelUnavailable() }
+        guard !urls.isEmpty else { throw CloudError.message(L("No se ha recibido ningún archivo que subir.")) }
         let accepted = model.enqueueUploads(urls)
         return .result(dialog: IntentDialog(stringLiteral: accepted ? L("\(urls.count) archivos en cola hacia \(model.location).") : L("Abre una carpeta de «Mis archivos» en iCloudy antes de subir.")))
     }

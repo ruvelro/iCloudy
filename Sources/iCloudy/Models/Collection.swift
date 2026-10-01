@@ -6,7 +6,7 @@ enum Collection: String, Codable, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .files: return L("Mis archivos")
-        case .recent: return "Recientes"
+        case .recent: return L("Recientes")
         case .shared: return L("Compartido conmigo")
         case .trash: return L("Papelera")
         }

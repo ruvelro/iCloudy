@@ -1,33 +1,53 @@
-import FileProvider
+// The framework's completion handlers and observers predate Swift concurrency and carry no Sendable annotations,
+// although the File Provider documentation allows calling them from any queue.
+@preconcurrency import FileProvider
 import UniformTypeIdentifiers
 import iCloudy
+
+/// A completion handler or observer handed to the main actor. File Provider callbacks may be invoked from any thread,
+/// once, which is the invariant that makes carrying one across isolation domains safe; the SDK simply does not say so
+/// in its signatures yet.
+struct FinderCallback<Value>: @unchecked Sendable {
+    let value: Value
+    init(_ value: Value) { self.value = value }
+}
+
+/// The backend is created lazily, on the main actor, the only place it is ever touched. Keeping it in a main-actor
+/// box leaves the extension itself with immutable, Sendable state, so the tasks it starts can capture it.
+@MainActor
+private final class BackendSlot {
+    var backend: FileProviderBackend?
+    /// The system creates the extension on a queue of its own choosing; nothing isolated is touched here.
+    nonisolated init() {}
+}
 
 /// One connected account, shown by the Finder as a location. Each domain the app registers maps to one account;
 /// the extension answers the Finder's questions by asking the same providers the app uses, through
 /// `FileProviderBackend`, and keeps an index of what it has listed so an item can be named by identifier alone.
-final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
+final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, Sendable {
     let domain: NSFileProviderDomain
     let index: FileProviderIndex
-    private var backendStorage: FileProviderBackend?
+    private let slot: BackendSlot
 
     required init(domain: NSFileProviderDomain) {
         self.domain = domain
         let manager = NSFileProviderManager(for: domain)
         let base = (try? manager?.temporaryDirectoryURL()) ?? FileManager.default.temporaryDirectory
         index = FileProviderIndex(url: base.deletingLastPathComponent().appendingPathComponent("iCloudy-index-\(domain.identifier.rawValue.hashValue).json"))
+        slot = BackendSlot()
         super.init()
     }
     func invalidate() {}
 
     @MainActor private func backend() throws -> FileProviderBackend {
-        if let backendStorage { return backendStorage }
+        if let backend = slot.backend { return backend }
         guard let created = FileProviderBackend(accountID: domain.identifier.rawValue) else {
             throw NSFileProviderError(.notAuthenticated)
         }
-        backendStorage = created
+        slot.backend = created
         return created
     }
-    private func run(_ work: @escaping @MainActor () async throws -> Void) -> Progress {
+    private func run(_ work: @escaping @MainActor @Sendable () async throws -> Void) -> Progress {
         let progress = Progress(totalUnitCount: 1)
         let task = Task { @MainActor in
             do { try await work() } catch { }
@@ -63,11 +83,12 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         }
         let base = (try? NSFileProviderManager(for: domain)?.temporaryDirectoryURL()) ?? FileManager.default.temporaryDirectory
         let destination = base.appendingPathComponent(UUID().uuidString)
+        let reply = FinderCallback(completionHandler)
         return run { [self] in
             do {
                 try await backend().download(item, to: destination)
-                completionHandler(destination, FileProviderItem(item), nil)
-            } catch { completionHandler(nil, nil, Self.translate(error)) }
+                reply.value(destination, FileProviderItem(item), nil)
+            } catch { reply.value(nil, nil, Self.translate(error)) }
         }
     }
 
@@ -76,6 +97,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         let parent = Self.identifier(itemTemplate.parentItemIdentifier)
         let name = itemTemplate.filename
         let folder = itemTemplate.contentType == .folder
+        let reply = FinderCallback(completionHandler)
         return run { [self] in
             do {
                 let created: FPItem
@@ -85,19 +107,22 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                     created = try await backend().upload(url, named: name, in: parent, replacing: nil)
                 }
                 index.remember([created])
-                completionHandler(FileProviderItem(created), [], false, nil)
-            } catch { completionHandler(nil, [], false, Self.translate(error)) }
+                reply.value(FileProviderItem(created), [], false, nil)
+            } catch { reply.value(nil, [], false, Self.translate(error)) }
         }
     }
 
     func modifyItem(_ item: NSFileProviderItem, baseVersion version: NSFileProviderItemVersion, changedFields: NSFileProviderItemFields, contents newContents: URL?,
                     options: NSFileProviderModifyItemOptions = [], request: NSFileProviderRequest,
                     completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, Error?) -> Void) -> Progress {
-        guard var current = index.item(item.itemIdentifier.rawValue) else {
+        let identifier = item.itemIdentifier.rawValue
+        guard let original = index.item(identifier) else {
             completionHandler(nil, [], false, NSFileProviderError(.noSuchItem)); return Progress()
         }
         let newName = item.filename, newParent = Self.identifier(item.parentItemIdentifier)
+        let reply = FinderCallback(completionHandler)
         return run { [self] in
+            var current = original
             do {
                 let backend = try backend()
                 if changedFields.contains(.filename), newName != current.name { current = try await backend.rename(current, to: newName) }
@@ -105,22 +130,23 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                 if changedFields.contains(.contents), let newContents, !current.isFolder {
                     current = try await backend.upload(newContents, named: current.name, in: current.parentID, replacing: current.id)
                 }
-                index.forget(item.itemIdentifier.rawValue)
+                index.forget(identifier)
                 index.remember([current])
-                completionHandler(FileProviderItem(current), [], false, nil)
-            } catch { completionHandler(nil, [], false, Self.translate(error)) }
+                reply.value(FileProviderItem(current), [], false, nil)
+            } catch { reply.value(nil, [], false, Self.translate(error)) }
         }
     }
 
     func deleteItem(identifier: NSFileProviderItemIdentifier, baseVersion version: NSFileProviderItemVersion, options: NSFileProviderDeleteItemOptions = [],
                     request: NSFileProviderRequest, completionHandler: @escaping (Error?) -> Void) -> Progress {
         guard let item = index.item(identifier.rawValue) else { completionHandler(NSFileProviderError(.noSuchItem)); return Progress() }
+        let key = identifier.rawValue, reply = FinderCallback(completionHandler)
         return run { [self] in
             do {
                 try await backend().delete(item)
-                index.forget(identifier.rawValue)
-                completionHandler(nil)
-            } catch { completionHandler(Self.translate(error)) }
+                index.forget(key)
+                reply.value(nil)
+            } catch { reply.value(Self.translate(error)) }
         }
     }
 
@@ -148,13 +174,14 @@ final class FolderEnumerator: NSObject, NSFileProviderEnumerator {
     func invalidate() { task?.cancel() }
     func enumerateItems(for observer: NSFileProviderEnumerationObserver, startingAt page: NSFileProviderPage) {
         guard let owner else { observer.finishEnumeratingWithError(NSFileProviderError(.cannotSynchronize)); return }
+        let folder = folder, reply = FinderCallback(observer)
         task = Task { @MainActor in
             do {
                 let items = try await owner.backendForEnumeration().list(folder: folder)
                 owner.index.replaceChildren(of: folder, with: items)
-                observer.didEnumerate(items.map(FileProviderItem.init))
-                observer.finishEnumerating(upTo: nil)
-            } catch { observer.finishEnumeratingWithError(FileProviderExtension.translate(error)) }
+                reply.value.didEnumerate(items.map(FileProviderItem.init))
+                reply.value.finishEnumerating(upTo: nil)
+            } catch { reply.value.finishEnumeratingWithError(FileProviderExtension.translate(error)) }
         }
     }
     func enumerateChanges(for observer: NSFileProviderChangeObserver, from anchor: NSFileProviderSyncAnchor) {

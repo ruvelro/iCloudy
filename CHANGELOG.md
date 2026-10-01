@@ -3,6 +3,56 @@
 Las versiones siguen [SemVer](https://semver.org/lang/es/). Mientras el número mayor sea `0`, la app se considera
 en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y así se dirá aquí.
 
+## 0.6.0 — 1 de octubre de 2026
+
+Doce funciones nuevas, dos nubes más y la deuda que quedaba de la auditoría. 789 pruebas, todas en verde salvo las
+tres que necesitan un servidor real (SFTP, FTPS y MinIO), y ningún aviso al compilar, tampoco con la comprobación
+estricta de concurrencia. Lo nuevo se ha probado con respuestas simuladas, no contra cuentas reales.
+
+### Nubes nuevas
+
+- **pCloud**, por OAuth, con la región de la cuenta, subidas por bloques reanudables, papelera, enlaces públicos y
+  verificación con `checksumfile` — [PCLOUD.md](docs/PCLOUD.md).
+- **S3 y compatibles** (AWS, Backblaze B2, Wasabi, Cloudflare R2, MinIO, Scaleway, DigitalOcean Spaces), con firma
+  SigV4 propia, subidas multiparte reanudables, ETag verificado y enlaces prefirmados temporales — [S3.md](docs/S3.md).
+
+### Funciones
+
+- Pestañas y doble panel, con copiar y mover al otro panel, también entre nubes: el original solo se quita después de
+  una copia completa y verificada.
+- Cola en paralelo con límites globales y por cuenta, límite de ancho de banda, prioridad, horario permitido y pausa en
+  redes caras o limitadas.
+- Plan antes de las transferencias grandes, informe archivo por archivo exportable a CSV y JSON, «Reintentar solo lo
+  pendiente», «Verificar lo copiado» y «Empezar de cero».
+- Descargas verificadas contra el tamaño y la suma del proveedor; QuickXorHash implementado, también para verificar
+  las subidas de OneDrive empresarial.
+- Copias «Disponible sin conexión» que se mantienen al día dentro de un límite de espacio.
+- Historial de versiones en Drive, OneDrive, Dropbox, Box y Nextcloud.
+- Gestión de enlaces públicos: caducidad, contraseña, descarga y revocación, por elemento y para toda la cuenta.
+- Comparador de carpetas entre nubes o con el Mac, y buscador de duplicados.
+- Bóvedas cifradas compatibles con Cryptomator (formato 8) — [CIFRADO.md](docs/CIFRADO.md).
+- Exclusiones, pausa y vista previa de cambios en reflejos y sincronización.
+- Diagnóstico estructurado de todos los proveedores, sin secretos y exportable — [DIAGNOSTICO.md](docs/DIAGNOSTICO.md).
+- Integración continua en GitHub Actions.
+
+### Correcciones
+
+- Mega: la operación RSA del inicio de sesión pasa de unos 5 s a unos 45 ms, y una base más ancha que el módulo ya no
+  da un resultado erróneo.
+- WebDAV: dos servidores que solo se distinguen por puerto o esquema son dos cuentas, sin renombrar las existentes.
+- FTP: `RNFR` y `RNTO` van juntos, y un cambio cuya respuesta se pierde no se repite: se avisa de que el resultado es
+  incierto.
+- O2: dominios de cookies con frontera, renovación cancelable al desconectar y un almacén de WebKit por cuenta,
+  migrando las sesiones existentes.
+- Spotlight ordena sus peticiones y retira lo que expulsa; el Dock, Servicios y Atajos esperan a las cuentas en un
+  arranque en frío.
+- Interfaz en inglés sin restos en castellano, y acciones ofrecidas según el tipo de elemento.
+- Los errores de Dropbox dicen lo que pasa en lugar de «HTTP 409».
+- Arreglar los permisos de un archivo que no se pudo leer ya no deja su subida bloqueada.
+- Errores que se perdían en silencio (Llavero, índices, marcadores de volúmenes, borrados en bóvedas) ahora se dicen.
+- Las pruebas ya no leen las cuentas reales del Llavero de quien las ejecuta.
+- Detalle completo en [CORRECCIONES-P3-2026-10-01.md](docs/CORRECCIONES-P3-2026-10-01.md).
+
 ## 0.5.0 — 19 de septiembre de 2026
 
 La primera versión numerada. Recoge una auditoría completa de la app y la tanda de correcciones que salió de ella,

@@ -9,6 +9,7 @@ enum Prefs {
     static let historyLimit = "historyLimit"
     static let storageStyle = "storageStyle"
     static let finderIntegration = "finderIntegrationEnabled"
+    static let transferPlan = "transferPlanEnabled"
 
     static func bool(_ key: String, default value: Bool) -> Bool {
         UserDefaults.standard.object(forKey: key) as? Bool ?? value

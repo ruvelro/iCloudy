@@ -108,7 +108,31 @@ Box acepta explícitamente `http://` en loopback, y además tolera que cambie el
 swift scripts/configure-oauth.swift --box CLIENT_ID:CLIENT_SECRET
 ```
 
-## 5. Lo que no se registra en ninguna parte
+## 5. pCloud
+
+En [pCloud para desarrolladores](https://docs.pcloud.com), con la sesión de la cuenta que será dueña de la
+aplicación:
+
+1. Abre **My applications** (`https://docs.pcloud.com/my_apps/`) y crea una aplicación nueva con el nombre
+   **iCloudy**.
+2. En los permisos, concede acceso a **todo el almacenamiento** y no solo a una carpeta privada de la aplicación:
+   iCloudy navega por todo el árbol, sube a cualquier carpeta y gestiona la papelera y los enlaces públicos.
+3. En **Redirect URIs**, añade `http://127.0.0.1:53682/callback`. iCloudy trata a pCloud como a Microsoft y
+   Dropbox: no recurre a otro puerto si el 53682 está ocupado, porque no hay constancia de que pCloud lo tolere.
+4. Copia **Client ID** y **Client secret**. pCloud tampoco admite PKCE: canjea el código con el secreto, que viaja
+   dentro del binario igual que con Box. Es metadato de un cliente instalado, no una credencial de servidor.
+
+```sh
+swift scripts/configure-oauth.swift --pcloud CLIENT_ID:CLIENT_SECRET
+```
+
+Una misma aplicación sirve para las cuentas de Europa y de Estados Unidos. La autorización empieza siempre en
+`my.pcloud.com`, que al volver indica la región de la cuenta; iCloudy canjea el código en el servidor de esa región y
+lo guarda con la cuenta. El token que entrega pCloud no caduca ni trae token de refresco: si el usuario lo revoca
+desde su cuenta de pCloud, la cuenta aparece como caducada y basta con volver a conectarla. Los detalles, incluido
+por qué una vuelta sin `state` se acepta solo para pCloud, están en [pCloud](PCLOUD.md).
+
+## 6. Lo que no se registra en ninguna parte
 
 Cinco de los proveedores no necesitan que el desarrollador dé de alta nada. Si solo vas a usar estos, no hace falta
 tocar `Configuration/OAuth.local.plist`.
@@ -130,7 +154,7 @@ No hay nada que registrar. Cada usuario escribe en iCloudy la dirección de su s
 
 Limitaciones del protocolo, reflejadas en la interfaz: no hay búsqueda, ni enlaces públicos, ni papelera. Eliminar es definitivo y el diálogo de confirmación lo dice. Las subidas son un `PUT` completo, sin reanudación, y el servidor no informa de ninguna suma de verificación. Un servidor `http://` sin cifrar requiere además permitir esa conexión en las políticas de seguridad de transporte de macOS.
 
-## 6. Compilar una app sin configuración para el usuario
+## 7. Compilar una app sin configuración para el usuario
 
 Los comandos anteriores guardan `Configuration/OAuth.local.plist`, ignorado por Git. El script conserva el proveedor ya configurado al importar el otro.
 
@@ -140,7 +164,7 @@ bash scripts/build-app.sh --require-oauth
 open dist/iCloudy.app
 ```
 
-`--require-oauth` exige clientes válidos de Google y Microsoft; Dropbox y Box se informan como pendientes si faltan, y WebDAV nunca los necesita. No verifica que las aplicaciones existan ni que estén aprobadas: eso se comprueba mediante el login real en cada proveedor. Sin ese argumento se permite compilar para desarrollo de interfaz; los botones explican que el servicio aún no está habilitado, sin pedir acciones técnicas al usuario.
+`--require-oauth` exige clientes válidos de Google y Microsoft; Dropbox, Box y pCloud se informan como pendientes si faltan, y WebDAV nunca los necesita. No verifica que las aplicaciones existan ni que estén aprobadas: eso se comprueba mediante el login real en cada proveedor. Sin ese argumento se permite compilar para desarrollo de interfaz; los botones explican que el servicio aún no está habilitado, sin pedir acciones técnicas al usuario.
 
 El archivo se copia a `Contents/Resources/OAuth.plist` antes de firmar. Se puede suministrar una ruta alternativa a través de `ICLOUDY_OAUTH_CONFIG` para CI. No edites un paquete ya firmado: vuelve a compilar. El ejecutable suelto de `swift run` no lleva ese recurso; usa el paquete `.app` para probar OAuth.
 
@@ -206,7 +230,7 @@ Esta app conecta cuentas externas para acceder a sus contenidos y no crea una cu
 2. Pulsa Google: selector de cuenta → consentimiento → regreso a iCloudy → listado de Drive.
 3. Añade otra cuenta Google y verifica que se mantienen separadas.
 4. Repite con una cuenta Outlook/Hotmail y, si procede, Microsoft 365.
-5. Repite con Dropbox y con Box. En los dos, el fallo más probable no es el código sino la dirección de vuelta sin registrar, que se reconoce por un error de `redirect_uri` con el identificador de cliente correcto dentro.
+5. Repite con Dropbox, con Box y con pCloud (una cuenta europea y otra americana). En todos, el fallo más probable no es el código sino la dirección de vuelta sin registrar, que se reconoce por un error de `redirect_uri` con el identificador de cliente correcto dentro.
 5. Reinicia la app: las cuentas deben seguir presentes y los tokens renovarse cuando caduquen.
 6. Prueba cancelar el consentimiento y volver a conectar.
 7. Selecciona una carpeta local con el diálogo del sistema y prueba subida y descarga bajo el sandbox.

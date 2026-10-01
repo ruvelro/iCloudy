@@ -37,6 +37,11 @@ struct TransferPanel: View {
             // Every tab owns the row under it: what it is counting or filtering, and its own broom. Clearing one
             // list never touches another, which is the whole point of having taken them apart.
             sectionBar.frame(height: Self.sectionBarHeight)
+            if tab == .active, let hold = queue.hold {
+                // Why nothing moves, once for the whole list rather than only on each paused card.
+                Label(hold.detail(window: queue.policy.window), systemImage: hold.symbol)
+                    .font(.caption2).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            }
             content.frame(maxHeight: .infinity)
             if let message = queue.persistenceError ?? (tab == .history ? history.persistenceError : nil) {
                 HStack(alignment: .top) {
@@ -66,6 +71,8 @@ struct TransferPanel: View {
             switch tab {
             case .active:
                 Text(tally(active.count, L("1 en curso"), L("\(active.count) en curso"), L("Nada en curso")))
+                // Several jobs move at once, so the speed that matters is the sum of all of them.
+                if let speed = TransferActivity(queue.items).speed { Text(verbatim: "· " + speed).monospacedDigit() }
                 Spacer(minLength: 0)
                 Button { queue.pauseAll() } label: { Image(systemName: "pause.circle") }
                     .accessibilityLabel("Pausar todas las transferencias")
@@ -108,13 +115,13 @@ struct TransferPanel: View {
         case .active:
             queueList(active, reorderable: true).overlay {
                 if active.isEmpty {
-                    empty("No hay transferencias", "Aquí aparecen las copias y las subidas mientras se hacen.", symbol: "arrow.up.arrow.down.circle")
+                    empty(L("No hay transferencias"), L("Aquí aparecen las copias y las subidas mientras se hacen."), symbol: "arrow.up.arrow.down.circle")
                 }
             }
         case .done:
             queueList(completed, reorderable: false).overlay {
                 if completed.isEmpty {
-                    empty("Nada terminado todavía", "Lo que acabe bien se queda aquí hasta que lo quites.", symbol: "checkmark.circle")
+                    empty(L("Nada terminado todavía"), L("Lo que acabe bien se queda aquí hasta que lo quites."), symbol: "checkmark.circle")
                 }
             }
         case .error:
@@ -211,6 +218,9 @@ struct TransferPanel: View {
 private struct RemoteCopyRows: View {
     @ObservedObject var copies: RemoteCopies
     var body: some View {
+        if let problem = copies.persistenceError {
+            Text(problem).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+        }
         if !copies.items.isEmpty {
             DisclosureGroup("Copias en OneDrive (\(copies.items.count))") {
                 ScrollView {

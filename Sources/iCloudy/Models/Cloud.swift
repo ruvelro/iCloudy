@@ -2,6 +2,8 @@ import Foundation
 
 enum Cloud: String, Codable, CaseIterable, Identifiable {
     case google, microsoft, dropbox, box, webdav, ftp, sftp, volume, mega, o2
+    case pcloud
+    case s3
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -15,6 +17,8 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
         case .volume: return L("Volumen")
         case .mega: return L("Mega")
         case .o2: return L("O2 Cloud")
+        case .pcloud: return L("pCloud")
+        case .s3: return L("S3")
         }
     }
     var tokenURL: String { OAuthProviderSettings.settings(for: self)?.tokenEndpoint ?? "" }
@@ -23,7 +27,7 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
     /// True when the user brings their own server and credentials instead of signing in at a provider.
     var isSelfHosted: Bool { [.webdav, .ftp, .sftp, .volume].contains(self) }
     /// True when connecting means typing a server address and credentials, rather than picking a folder or a browser sign-in.
-    var usesPasswordLogin: Bool { [.webdav, .ftp, .sftp, .mega].contains(self) }
+    var usesPasswordLogin: Bool { [.webdav, .ftp, .sftp, .mega].contains(self) || self == .s3 }
     /// True when signing in happens on the provider's own pages, inside a window, because it cannot be reproduced
     /// from a form: O2 sends the person to Telefónica's sign-in, with a national identity number or a text message.
     var usesWebLogin: Bool { self == .o2 }
@@ -41,10 +45,19 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
         case .google, .microsoft, .webdav, .ftp, .sftp, .volume, .mega, .o2: return "root"
         case .dropbox: return "" // Dropbox addresses the root as an empty path
         case .box: return "0"
+        case .pcloud: return "d0" // folders are "d" plus their folderid, and the top one is folder 0
+        case .s3: return "root"
         }
     }
-    var capabilities: CloudCapabilities { CloudCapabilities.of(self) }
+    var capabilities: CloudCapabilities {
+        var capabilities = CloudCapabilities.of(self)
+        capabilities.links = LinkFeatures.of(self)
+        return capabilities
+    }
 }
+
+/// Actions whose support depends on the kind of item as well as on the provider.
+enum ItemAction { case copy, publicLink, permanentDelete }
 
 struct CloudCapabilities {
     var oauth = true
@@ -70,22 +83,54 @@ struct CloudCapabilities {
     /// Items can be shared with named people, at a chosen level, and those grants listed and revoked. Public links
     /// are `publicLinks`; this is the other kind of sharing.
     var memberSharing = false
+    /// Folders can be copied as well as files. Drive and Mega copy files only.
+    var copiesFolders = true
+    /// Which kinds of item a public link can be created for: O2 links folders only, Mega files only.
+    var linksFiles = true
+    var linksFolders = true
+    /// Folders can be deleted for good as well as files. O2 purges files only.
+    var purgesFolders = true
+    /// How far public links can be managed: listed, created with an expiry or a password, revoked. Set from
+    /// `LinkFeatures.of(_:)` at the end of this file rather than in the table above.
+    var links = LinkFeatures()
+    /// Earlier versions of a file can be listed, previewed, downloaded and restored from the app.
+    var versions = false
+    /// A single earlier version can also be deleted. Graph and Dropbox keep their history out of reach for that.
+    var deletesVersions = false
+
+    /// Whether the provider can apply `action` to every one of these items. The flags above say whether it has the
+    /// action at all; this adds what depends on the kind of item, so the interface stops offering an action that the
+    /// provider would only refuse after the request had gone out.
+    func allows(_ action: ItemAction, on files: [CloudFile]) -> Bool {
+        let folders = files.contains(where: \.isFolder), plain = files.contains { !$0.isFolder }
+        switch action {
+        case .copy: return copy && (copiesFolders || !folders)
+        case .publicLink: return publicLinks && (linksFolders || !folders) && (linksFiles || !plain)
+        case .permanentDelete: return permanentDelete && (purgesFolders || !folders)
+        }
+    }
 
     static func of(_ cloud: Cloud) -> CloudCapabilities {
         switch cloud {
         case .google:
-            return CloudCapabilities(exportsDocuments: true, trashListing: true, permanentDelete: true, emptyTrash: true, memberSharing: true)
+            // Drive has no server-side copy of a folder; its files have to be copied one by one.
+            return CloudCapabilities(exportsDocuments: true, trashListing: true, permanentDelete: true, emptyTrash: true, memberSharing: true,
+                                     copiesFolders: false, versions: true, deletesVersions: true)
         case .microsoft:
             // Graph deletes for good with `permanentDelete`, but exposes no listing of the recycle bin to third parties.
-            return CloudCapabilities(permanentDelete: true, memberSharing: true)
+            // Its versions can be listed, read and restored, but not deleted one by one.
+            return CloudCapabilities(permanentDelete: true, memberSharing: true, versions: true)
         case .dropbox:
             // No "recent" or "shared with me" listing in this version; both need APIs beyond plain file browsing.
             // Deleted entries are listed alongside the live ones and files come back through their revisions.
             // Purging exists only on Business accounts; the provider explains the refusal on the others.
-            return CloudCapabilities(recents: false, sharedWithMe: false, trashListing: true, permanentDelete: true, memberSharing: true)
+            // Revisions are listed, downloaded and restored by `rev`; there is no call to delete a single one.
+            return CloudCapabilities(recents: false, sharedWithMe: false, trashListing: true, permanentDelete: true, memberSharing: true, versions: true)
         case .box:
             // Box has no single "empty trash" call; iCloudy walks the trash and purges item by item.
-            return CloudCapabilities(recents: false, sharedWithMe: false, trashListing: true, permanentDelete: true, emptyTrash: true, memberSharing: true)
+            // Earlier versions can be promoted back to current and deleted; on free accounts Box keeps none.
+            return CloudCapabilities(recents: false, sharedWithMe: false, trashListing: true, permanentDelete: true, emptyTrash: true, memberSharing: true,
+                                     versions: true, deletesVersions: true)
         case .webdav:
             // Plain WebDAV has no search, no sharing links and no recycle bin.
             return CloudCapabilities(oauth: false, search: false, recents: false, sharedWithMe: false,
@@ -110,14 +155,62 @@ struct CloudCapabilities {
             // The whole tree arrives decrypted in one response, so search and breadcrumbs cost nothing. There is no
             // "recent" or "shared with me" listing, and no checksum to compare after uploading, because the only MAC
             // Mega stores is the one iCloudy computed itself. The rubbish bin is one more folder of that tree.
+            // A node copy duplicates one file's key; a folder would need every child re-keyed, and a folder link
+            // needs a share key of its own. Neither is done yet, so both are offered for files only.
             return CloudCapabilities(oauth: false, recents: false, sharedWithMe: false, checksum: false,
-                                     trashListing: true, permanentDelete: true, emptyTrash: true)
+                                     trashListing: true, permanentDelete: true, emptyTrash: true,
+                                     copiesFolders: false, linksFolders: false)
         case .o2:
             // Funambol has no media search and no server-side copy for third parties, and reports no checksum.
             // Deleting is a soft delete, so the item stays recoverable from O2's own bin. The same call without the
             // soft-delete flag removes a file for good; its bin has no listing iCloudy has seen in use.
+            // Links exist for folders only, and only files have a hard delete among the calls seen in use.
             return CloudCapabilities(oauth: false, search: false, recents: false, sharedWithMe: false,
-                                     copy: false, checksum: false, permanentDelete: true)
+                                     copy: false, checksum: false, permanentDelete: true,
+                                     linksFiles: false, purgesFolders: false)
+        case .pcloud:
+            // pCloud documents no search method for third parties, and has no "recent" or "shared with me" listing.
+            // Deleting goes to its trash, which is listed, restored from and cleared item by item or as a whole.
+            // Files list no content hash, but `checksumfile` answers one per file for uploads and downloads.
+            return CloudCapabilities(search: false, recents: false, sharedWithMe: false,
+                                     trashListing: true, permanentDelete: true, emptyTrash: true)
+        case .s3:
+            // S3 has no bin, no quota and no activity feeds. Search is by key prefix only. Uploads are checked against
+            // the ETag, and a link is a presigned URL: temporary by nature, and only for an object, not a prefix.
+            return CloudCapabilities(oauth: false, recents: false, sharedWithMe: false, quota: false,
+                                     reversibleTrash: false, linksFolders: false)
         }
     }
+}
+
+extension LinkFeatures {
+    /// Public link management, provider by provider. What a plan or an administrator can still refuse (Dropbox's
+    /// expiry on a free account, Drive's expiry on a personal one) is declared here and explained when it happens.
+    static func of(_ cloud: Cloud) -> LinkFeatures {
+        switch cloud {
+        case .google:
+            // An "anyone" permission can be a reader or a writer. Drive takes an expiry only where the account type
+            // allows it on that kind of permission, and says so with a 400 when it does not.
+            return LinkFeatures(manage: true, expiration: true, edit: true, editFolders: true, inventory: true)
+        case .microsoft:
+            // Graph's createLink takes an expiry and a password, both subject to the account type; there is no call
+            // that lists every link of a drive.
+            return LinkFeatures(manage: true, expiration: true, password: true, edit: true, editFolders: true)
+        case .dropbox:
+            // Editor links exist for files only; expiry, password and blocking downloads need a paid plan.
+            return LinkFeatures(manage: true, expiration: true, password: true, edit: true, downloadToggle: true, inventory: true)
+        case .box:
+            // One shared link per item. `can_edit` is accepted on files only, and Box has no listing of all of them.
+            return LinkFeatures(manage: true, expiration: true, password: true, edit: true, downloadToggle: true)
+        case .mega:
+            // Links are listed from the tree and revoked by removing the export. Expiry and password-protected links
+            // are Pro features with their own cryptography, and neither is attempted.
+            return LinkFeatures(manage: true, inventory: true)
+        default:
+            // Plain WebDAV, FTP, SFTP, volumes and O2. Nextcloud is a WebDAV flavour and gets `nextcloud` from its account.
+            return LinkFeatures()
+        }
+    }
+    /// Nextcloud's and ownCloud's OCS share API, enabled per account when connecting.
+    static let nextcloud = LinkFeatures(manage: true, expiration: true, password: true, edit: true, editFolders: true, inventory: true)
 }

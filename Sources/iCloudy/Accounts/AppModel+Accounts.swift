@@ -4,7 +4,12 @@ import Combine
 
 extension AppModel {
     func loadAccounts() {
+        // A model built by a test must not adopt the accounts stored on this Mac: the task below outlives the test
+        // that created it, and once the next asynchronous test gave it a turn it listed real accounts, started the
+        // real mirrors and renewed real sessions from inside the test run. The tab store opts out the same way. The
+        // model stays "loading", so nothing that waits for the accounts (the offline refresh) starts either.
         loadingAccounts = true
+        guard !Diagnostics.underTest else { return }
         Task { [favoritesKey = "accounts"] in
             let stored: [Account]
             do { stored = try await Task.detached { try Vault.read([Account].self, key: favoritesKey) ?? [] }.value }
@@ -21,16 +26,19 @@ extension AppModel {
             remoteCopies.client = queue.client
             remoteCopies.didComplete = queue.didComplete
             remoteCopies.resume()
-            if selectedAccountID == nil { selectedAccountID = accounts.first?.id }
+            // Tabs restored from the last session may name accounts that are gone; they fall back to the first one.
+            workspace.reconcile(with: accounts)
             refreshSpotlightFavorites()
             if let waiting = pendingSpotlightItem { pendingSpotlightItem = nil; openSpotlightItem(identifier: waiting) }
-            if account != nil { reload() }
+            reloadVisible()
             for account in accounts where account.id != selectedAccountID { refreshStorage(account) }
+            o2StoreMigration = Task { await self.moveO2AccountsToOwnStores() }
             startKeepAlive()
         }
     }
 
     func client(_ account: Account) throws -> CloudAPI {
+        if account.isCryptomatorVault { guard let vault = cryptomator.client(for: account.id) else { throw CryptomatorError.locked }; return vault }
         if let client = sessions.cached(for: account.id) { return client }
         if account.isDemo && demo == nil { demo = try DemoStore() }
         let client = CloudAPI(account: account, demo: account.isDemo ? demo : nil)
@@ -50,7 +58,9 @@ extension AppModel {
     func storeRenewedBookmark(_ bookmark: Data, for account: Account) {
         guard let index = accounts.firstIndex(where: { $0.id == account.id }), accounts[index].bookmark != bookmark else { return }
         accounts[index].bookmark = bookmark
-        try? Vault.save(accounts.filter { !$0.isDemo }, key: "accounts")
+        // The renewed bookmark works for this run either way; unsaved, the account breaks again on the next launch.
+        do { try Vault.save(accounts.filter { !$0.isDemo }, key: "accounts") }
+        catch { self.error = L("No se pudo guardar el acceso renovado a «\(account.name)»: \(error.localizedDescription) Funciona ahora, pero puede que haya que volver a añadir la carpeta al abrir iCloudy de nuevo.") }
     }
 
     func isExpired(_ account: Account) -> Bool { expiredAccountIDs.contains(account.id) }
@@ -123,34 +133,49 @@ extension AppModel {
         } catch { self.error = error.localizedDescription }
     }
 
-    /// Stores the session O2 handed out on its own pages. iCloudy never saw the password or the code.
     /// Tries to get a new session without involving the person. Only worth attempting for a provider whose sign-in
     /// outlives its session, which is O2: its server gives up after an hour of silence, so a Mac that spent the
     /// night off always wakes to a dead one. Failing here is normal and simply leaves the account marked expired.
+    ///
+    /// The renewal belongs to the account: disconnecting it, or signing in to it by hand, cancels the renewal and
+    /// makes sure nothing it brings back is written.
     func renewSilently(_ account: Account) {
-        guard account.cloud.usesWebLogin, !renewingAccountIDs.contains(account.id) else { return }
-        renewingAccountIDs.insert(account.id)
-        let host = account.options["host"] ?? "cloud.o2online.es"
-        Task { [weak self] in
-            let stored = try? Vault.read(Credential.self, key: account.credentialKey)
+        // The account captured by a client may predate later changes to it; the list holds the current one.
+        guard account.cloud.usesWebLogin, let current = accounts.first(where: { $0.id == account.id }),
+              !o2Renewals.isRunning(current.id) else { return }
+        let host = current.options["host"] ?? "cloud.o2online.es"
+        let started = o2Renewals.start(current.id, attempt: { [weak self] () async -> O2SilentRenewal.Renewed? in
+            // The account may be moving to a store of its own right now; renewing waits and then uses that one.
+            await self?.o2StoreMigration?.value
+            guard let self, !Task.isCancelled else { return nil }
+            let store = accounts.first { $0.id == current.id }.flatMap(O2WebSession.storeID(of:))
+            let stored = try? Vault.read(Credential.self, key: current.credentialKey)
             let sso = stored.map { O2API.restoreSSO($0.secret) } ?? []
-            let renewed = await O2SilentRenewal(host: host).attempt(sso: sso)
-            guard let self else { return }
+            return await O2SilentRenewal(host: host, store: store).attempt(sso: sso)
+        }, adopt: { [weak self] renewed, isCurrent in
+            await self?.completeO2(host: host, validationKey: renewed.key, cookies: renewed.cookies,
+                                   userAgent: renewed.userAgent, sso: renewed.sso, replacing: current,
+                                   select: false, isCurrent: isCurrent)
+        }, finished: { [weak self] in
             // Released only once the new session has been proved and written. Clearing it before that showed the
             // "expired" notice, with its button, over an account that was about to fix itself.
-            defer { renewingAccountIDs.remove(account.id) }
-            guard let renewed else { return }
-            await completeO2(host: host, validationKey: renewed.key, cookies: renewed.cookies,
-                             userAgent: renewed.userAgent, sso: renewed.sso, replacing: account, select: false)
-        }
+            self?.renewingAccountIDs.remove(current.id)
+        })
+        if started { renewingAccountIDs.insert(current.id) }
     }
 
+    /// Stores the session O2 handed out on its own pages. iCloudy never saw the password or the code.
+    ///
+    /// `isCurrent` comes with a silent renewal and is asked right before anything is written: proving the session
+    /// takes a request, and the account may have been disconnected, or signed in to by hand, while it was out.
+    /// `webStore` is the WebKit store the sign-in window used, which becomes the account's own.
     func completeO2(host: String, validationKey: String, cookies: [HTTPCookie], userAgent: String?,
                     sso: [HTTPCookie] = [], replacing existing: Account? = nil,
-                    select shouldSelect: Bool = true) async {
-        connectionError = nil
-        connecting = shouldSelect
-        defer { connecting = false }
+                    select shouldSelect: Bool = true, isCurrent: (@MainActor () -> Bool)? = nil,
+                    webStore: UUID? = nil) async {
+        // A renewal runs in the background and must not touch the state of a connection sheet somebody may be using.
+        if shouldSelect { connectionError = nil; connecting = true }
+        defer { if shouldSelect { connecting = false } }
         do {
             guard !validationKey.isEmpty else {
                 throw CloudError.message(L("El acceso no terminó de completarse. Vuelve a intentarlo desde la página de O2."))
@@ -164,23 +189,37 @@ extension AppModel {
             // Renewing keeps the account it was renewing. The identifier is built from whatever `/profile` answers,
             // and that answer is not always the same field: a renewal that got the phone number where the first
             // sign-in got the e-mail would have created a second account and left the first one expired for good.
-            var options = existing?.options ?? ["host": host]
-            options["host"] = host
-            let account = Account(id: existing?.id ?? "o2:\(host):\(identity)", cloud: .o2, name: L("O2 Cloud"),
-                                  email: existing?.email ?? identity,
+            // Its options are read from the list as it is now, after the request: the copy the renewal started with
+            // may predate the account's move to a store of its own, and writing that back would undo the move.
+            let renewing = existing.map { old in accounts.first { $0.id == old.id } ?? old }
+            let account = Account(id: renewing?.id ?? "o2:\(host):\(identity)", cloud: .o2, name: L("O2 Cloud"),
+                                  email: renewing?.email ?? identity,
                                   clientID: "", clientSecret: nil, serverURL: "https://" + host, bookmark: nil,
-                                  options: options)
+                                  options: O2WebSession.options(keeping: renewing, host: host, store: webStore))
+            // Signing in again to an account that already had a store leaves that one behind.
+            let previousStore = accounts.first { $0.id == account.id }.flatMap(O2WebSession.storeID(of:))
             let credential = Credential(accessToken: "", refreshToken: "", expires: .distantFuture,
                                         secret: O2API.store(validationKey: validationKey, cookies: cookies,
                                                             userAgent: userAgent, sso: sso))
+            // Nothing between this check and the writes below awaits, so it cannot go stale in between.
+            if let isCurrent {
+                guard isCurrent(), let existing, accounts.contains(where: { $0.id == existing.id }) else {
+                    O2Log.record("renovación silenciosa · descartada: la cuenta se desconectó o se volvió a conectar")
+                    return
+                }
+            }
             try Vault.save(credential, key: account.id)
             var updated = accounts.filter { $0.id != account.id }; updated.append(account)
             try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
             accounts = updated; sessions.remove(account.id)
+            // Signing in by hand makes any renewal still out for this account stale: its result would overwrite the
+            // session just written with whichever of the two finished last.
+            if isCurrent == nil { o2Renewals.invalidate(account.id); renewingAccountIDs.remove(account.id) }
+            if let previousStore, previousStore != O2WebSession.storeID(of: account) { discardO2Store(previousStore) }
             expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
             lastKeepAlive[account.id] = Date()
             if shouldSelect { select(account.id); showConnect = false }
-            else if selectedAccountID == account.id { reload() }
+            else { reloadVisible(accountID: account.id) }
         } catch {
             // A silent renewal has nobody watching the connection sheet, so its failure goes to the diagnostic
             // instead of to a field on a form that is not on screen.
@@ -204,7 +243,8 @@ extension AppModel {
         do {
             let result: (Account, Credential)
             switch cloud {
-            case .webdav: result = try await WebDAVAuthentication().signInWebDAV(server: server, username: username, password: password)
+            case .webdav: result = try await WebDAVAuthentication().signInWebDAV(server: server, username: username, password: password,
+                                                                                    existing: accounts)
             case .ftp: result = try await FTPAuthentication().signInFTP(server: server, username: username, password: password)
             case .sftp: result = try await SFTPAuthentication().signInSFTP(server: server, username: username, password: password)
             case .mega: result = try await MegaAuthentication().signInMega(email: username, password: password)
@@ -239,7 +279,7 @@ extension AppModel {
             let host = account.options["host"] ?? "cloud.o2online.es"
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(120))
-                if cloud.usesWebLogin { self.o2Login = O2LoginRequest(id: host) } else { self.serverLogin = cloud }
+                if cloud.usesWebLogin { self.o2Login = O2LoginRequest(host: host) } else { self.serverLogin = cloud }
             }
         default:
             await connect(cloud: account.cloud)
@@ -272,6 +312,8 @@ extension AppModel {
         case .volume: return .gray
         case .mega: return .red
         case .o2: return .pink
+        case .pcloud: return .teal
+        case .s3: return .orange
         }
     }
 
@@ -309,9 +351,14 @@ extension AppModel {
         }
         // The sign-in at Telefónica outlives the session at O2 and lives in WebKit's own store, not in the Keychain.
         // Left behind, anybody opening "Conectar O2 Cloud" on this Mac walked straight in without typing anything.
+        // An account with a store of its own takes the whole store; one still in the shared store clears its part.
         if account.cloud.usesWebLogin {
-            let host = account.options["host"] ?? "cloud.o2online.es"
-            Task { await O2WebSession.forget(host: host) }
+            let current = accounts.first { $0.id == account.id } ?? account
+            if let store = O2WebSession.storeID(of: current) { discardO2Store(store) }
+            else {
+                let host = current.options["host"] ?? "cloud.o2online.es"
+                Task { await O2WebSession.forget(host: host) }
+            }
         }
         // A shared drive or a library borrows this account's credential: once that is gone they cannot work and
         // cannot be reconnected on their own, so they leave with it instead of lingering as "expired".
@@ -324,11 +371,65 @@ extension AppModel {
             for member in leaving { forget(member) }
             accounts = updated
             if let selected = selectedAccountID, leaving.contains(where: { $0.id == selected }) { select(accounts.first?.id) }
+            retargetTabs(leaving: Set(leaving.map(\.id)))
         } catch { self.error = error.localizedDescription }
+    }
+
+    // MARK: - O2's WebKit stores
+
+    /// True when some account owns this WebKit store.
+    func o2StoreInUse(_ store: UUID) -> Bool { accounts.contains { O2WebSession.storeID(of: $0) == store } }
+
+    /// Removes a store once nobody owns it. Checked again at every step, because removing waits for any web view
+    /// still holding the store, and an account may claim it in the meantime.
+    func discardO2Store(_ store: UUID) {
+        Task { [weak self] in
+            await O2WebSession.discard(store, while: { self?.o2StoreInUse(store) == false })
+        }
+    }
+
+    /// A sign-in window has closed. Its store stays only if an account came out of it.
+    func o2LoginEnded(store: UUID) {
+        guard !o2StoreInUse(store) else { return }
+        discardO2Store(store)
+    }
+
+    /// Accounts signed in before each one had a WebKit store of its own all shared the default store, so two of them
+    /// shared Telefónica's cookies. Each now gets its own, carrying over what it had, and the shared one is emptied
+    /// of O2 only after the accounts are saved pointing at their new stores. If saving fails, the new stores are
+    /// dropped and the accounts keep the shared store: renewing still works from there, and nobody is signed out.
+    func moveO2AccountsToOwnStores() async {
+        let waiting = accounts.filter { $0.cloud.usesWebLogin && O2WebSession.storeID(of: $0) == nil }
+        guard !waiting.isEmpty else { return }
+        let moved = await O2WebSession.moveToOwnStores(waiting.map { ($0.id, $0.options["host"] ?? "cloud.o2online.es") })
+        // The list may have changed while the cookies were copied: an account disconnected in the meantime does not
+        // come back, and its new store goes.
+        var updated = accounts
+        var claimed: Set<UUID> = []
+        for index in updated.indices {
+            guard let store = moved[updated[index].id], O2WebSession.storeID(of: updated[index]) == nil else { continue }
+            updated[index].options[O2WebSession.storeOption] = store.uuidString
+            claimed.insert(store)
+        }
+        do { try Vault.save(updated.filter { !$0.isDemo }, key: "accounts") }
+        catch {
+            O2Log.record("almacén web propio · no se pudo guardar, se sigue con el compartido: \(error.localizedDescription)")
+            for store in moved.values { discardO2Store(store) }
+            return
+        }
+        accounts = updated
+        for store in Set(moved.values).subtracting(claimed) { discardO2Store(store) }
+        // Nothing in the shared store belongs to anybody any more.
+        for host in Set(waiting.map { $0.options["host"] ?? "cloud.o2online.es" }) {
+            await O2WebSession.forget(host: host)
+        }
     }
 
     /// Drops everything kept locally about an account: its client, quota, listings, mirrors, index and search rows.
     func forget(_ account: Account) {
+        // A renewal still out would write the account straight back, credential and all.
+        o2Renewals.invalidate(account.id); renewingAccountIDs.remove(account.id)
+        cryptomator.lockAll(storedIn: account.id)
         remoteCopies.removeAccount(account.id)
         quotas.remove(account.id)
         sessions.remove(account.id)
@@ -337,6 +438,7 @@ extension AppModel {
         mirrors.removeAll(accountID: account.id)
         spotlight.removeAccount(account.id)
         localCopies.removeAccount(account.id)
+        forgetOffline(account.id)
         globalSearch.removeAccount(account.id)
     }
 

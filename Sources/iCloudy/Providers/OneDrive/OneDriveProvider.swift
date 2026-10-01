@@ -13,7 +13,22 @@ extension OneDriveProvider {
         return CloudFile(
             id: id, name: name, mime: remote ? "application/vnd.google-apps.shortcut" : ((value["file"] as? [String: Any])?["mimeType"] as? String ?? "application/octet-stream"),
             size: (value["size"] as? NSNumber)?.int64Value, modified: date(value["lastModifiedDateTime"] as? String), webURL: (value["webUrl"] as? String).flatMap(URL.init(string:)),
-            isFolder: !remote && value["folder"] != nil)
+            isFolder: !remote && value["folder"] != nil, checksum: microsoftChecksum(value))
+    }
+    /// QuickXorHash first: Microsoft computes it for every account type and is retiring SHA-1 on personal ones, so it is
+    /// the hash least likely to be stale. The SHA digests are the fallback where an older item lacks it.
+    static func microsoftChecksum(_ value: [String: Any]) -> ContentHash? {
+        let hashes = (value["file"] as? [String: Any])?["hashes"] as? [String: Any]
+        if let quick = hashes?["quickXorHash"] as? String, !quick.isEmpty { return ContentHash(algorithm: .quickXor, value: quick) }
+        if let sha = hashes?["sha256Hash"] as? String, !sha.isEmpty { return ContentHash(algorithm: .sha256, value: sha) }
+        if let sha = hashes?["sha1Hash"] as? String, !sha.isEmpty { return ContentHash(algorithm: .sha1, value: sha) }
+        return nil
+    }
+    /// SharePoint libraries rewrite Office documents after storing them, adding their own metadata, and keep listing
+    /// the size and hashes of the upload. Checking those would fail every such download, so they are left unverified.
+    static func sharePointRewrites(_ file: CloudFile, driveID: String?) -> Bool {
+        guard driveID != nil else { return false }
+        return ["doc", "docx", "docm", "xls", "xlsx", "xlsm", "ppt", "pptx", "pptm", "vsdx", "one"].contains((file.name as NSString).pathExtension.lowercased())
     }
 
     var graphDrive: String {
@@ -59,6 +74,11 @@ extension OneDriveProvider {
     func contentRequest(for file: CloudFile, exportMime: String?) async throws -> URLRequest {
         return try await request(URL(string: "\(graphDrive)/items/\(Self.segment(file.id))/content")!)
     }
+
+    func currentMetadata(of file: CloudFile) async throws -> CloudFile? {
+        Self.microsoftFile(try await json(URL(string: "\(graphDrive)/items/\(Self.segment(file.id))?$select=id,name,size,folder,file,remoteItem,webUrl,lastModifiedDateTime")!))
+    }
+    func canVerifyDownload(of file: CloudFile) -> Bool { !Self.sharePointRewrites(file, driveID: account.driveID) }
 
     func rename(file: CloudFile, name: String) async throws {
         _ = try await json(URL(string: "\(graphDrive)/items/" + Self.segment(file.id))!, method: "PATCH", body: ["name": name])

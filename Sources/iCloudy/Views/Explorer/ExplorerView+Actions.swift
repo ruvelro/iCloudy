@@ -38,6 +38,10 @@ extension ExplorerView {
                 } label: { Image(systemName: "arrow.up.arrow.down") }
                 .accessibilityLabel("Ordenar la lista")
                     .help("Ordenar la lista")
+                Button { model.toggleSplit() } label: {
+                    Image(systemName: "rectangle.split.2x1").symbolVariant(model.isSplit ? .fill : .none)
+                }.help(model.isSplit ? "Cerrar el segundo panel (⇧⌘D)" : "Dividir en dos paneles (⇧⌘D)")
+                    .accessibilityLabel("Doble panel")
             }
             ToolbarSeparator()
             // Personalizar and Desconectar used to hang off an ⋯ menu here. They belong to a cloud, not to the
@@ -63,10 +67,10 @@ extension ExplorerView {
         return files.count == 1 ? L("¿Eliminar «\(files[0].name)» definitivamente?") : L("¿Eliminar \(files.count) elementos definitivamente?")
     }
 
-    var emptyTitle: String {
-        if !model.search.isEmpty { return L("Sin resultados") }
-        if model.path.isEmpty {
-            switch model.collection {
+    func emptyTitle(_ tab: BrowserState) -> String {
+        if !tab.search.isEmpty { return L("Sin resultados") }
+        if tab.path.isEmpty {
+            switch tab.collection {
             case .recent: return L("Todavía no hay elementos recientes")
             case .shared: return L("Nadie ha compartido nada contigo")
             case .trash: return L("La papelera está vacía")
@@ -76,9 +80,9 @@ extension ExplorerView {
         return L("Esta carpeta está vacía")
     }
 
-    var emptyDescription: String {
-        if model.inTrash { return L("Lo que envíes a la papelera aparece aquí hasta que lo restaures o lo elimines definitivamente.") }
-        return model.canWrite ? L("Arrastra archivos o carpetas para subirlos aquí.") : L("Esta lista la calcula el proveedor y no admite subidas.")
+    func emptyDescription(_ tab: BrowserState) -> String {
+        if tab.collection == .trash { return L("Lo que envíes a la papelera aparece aquí hasta que lo restaures o lo elimines definitivamente.") }
+        return tab.isWritableLocation ? L("Arrastra archivos o carpetas para subirlos aquí.") : L("Esta lista la calcula el proveedor y no admite subidas.")
     }
 
     func previewSelection() {
@@ -96,7 +100,8 @@ extension ExplorerView {
         }
         Divider()
         Button("Eliminar definitivamente…", role: .destructive) { model.requestPermanentDelete([file]) }
-            .disabled(model.account?.capabilities.permanentDelete != true)
+            .disabled(model.limitation(.permanentDelete, for: [file]) != nil)
+            .help(model.limitation(.permanentDelete, for: [file]) ?? "")
     }
 
     @ViewBuilder func fileActions(_ file: CloudFile) -> some View {
@@ -106,24 +111,43 @@ extension ExplorerView {
     @ViewBuilder func liveFileActions(_ file: CloudFile) -> some View {
         Button("Vista previa") { model.showPreview(file) }
         Divider()
-        Button(model.isFavorite(file) ? L("Quitar de favoritos") : L("Añadir a favoritos")) { model.toggleFavorite(file) }
+        // A favourite or a mirror would keep a decrypted name on disk and point at a vault that locks.
+        if !model.inEncryptedVault {
+            Button(model.isFavorite(file) ? L("Quitar de favoritos") : L("Añadir a favoritos")) { model.toggleFavorite(file) }
+        }
         Button("Renombrar…") { model.promptName(file) }
         Button("Mover a…") { model.requestRelocation([file], copy: false) }
         Button("Copiar a…") { model.requestRelocation([file], copy: true) }
-            .disabled((file.isFolder && model.account?.cloud == .google) || model.account?.capabilities.copy == false)
+            .disabled(!model.canCopy([file]))
+            .help(model.limitation(.copy, for: [file]) ?? "")
         if model.accounts.count > 1 { Button("Enviar a otra nube…") { model.requestCrossCloud([file]) } }
+        otherPaneActions([file])
         Divider()
         if file.isFolder {
             Button("Abrir carpeta") { model.navigate(file) }
-            Button("Reflejar una carpeta local aquí…") { Task { await model.pickMirrorSource(for: file) } }
-            Button("Sincronizar en ambos sentidos con una carpeta local…") { Task { await model.pickMirrorSource(for: file, twoWay: true) } }
+            Button("Abrir en una pestaña nueva") { model.openInNewTab(file) }
+            if !model.inEncryptedVault {
+                Button("Reflejar una carpeta local aquí…") { Task { await model.pickMirrorSource(for: file) } }
+                Button("Sincronizar en ambos sentidos con una carpeta local…") { Task { await model.pickMirrorSource(for: file, twoWay: true) } }
+            }
             Button("Descargar carpeta…") { Task { await model.save(file) } }
+            Button("Comparar con…") { model.openComparator(with: file) }
+            Button("Buscar duplicados aquí…") { model.openDuplicateFinder(in: file) }
+            CryptomatorFolderActions(model: model, folder: file)
         } else if !file.isGoogleDocument {
             Button("Descargar…") { Task { await model.save(file) } }
         }
         if file.webURL != nil { Button("Abrir en navegador") { model.openBrowser(file) } }
         ForEach(file.exportOptions, id: \.ext) { option in
             Button("Exportar como \(option.title)…") { Task { await model.save(file, export: (option.mime, option.ext)) } }
+        }
+        Divider()
+        offlineActions(file)
+        // Offered for every file; where the provider keeps no history its help says why instead of hiding the action.
+        if !file.isFolder {
+            Button("Versiones…") { model.requestVersions(file) }
+                .disabled(model.versionsLimitation(file) != nil)
+                .help(model.versionsLimitation(file) ?? "")
         }
         if let copy = model.localStatus(file).copy {
             Divider()
@@ -137,13 +161,21 @@ extension ExplorerView {
         if let account = model.account, account.capabilities.memberSharing {
             Button("Compartir con personas…") { model.requestSharing(file) }
         }
+        // A provider without links hides the action; one that links only files or only folders explains the other.
         if let account = model.account, account.capabilities.publicLinks {
-            Button("Crear enlace público de solo lectura…") { model.pendingShare = (file, account) }
+            Button("Crear enlace público de solo lectura…") { model.requestPublicLink(file, account: account) }
+                .disabled(account.limitation(.publicLink, for: [file]) != nil)
+                .help(account.limitation(.publicLink, for: [file]) ?? "")
+            if account.capabilities.links.manage {
+                Button("Enlaces públicos…") { model.requestPublicLinks(file, account: account) }
+            }
         }
         Divider()
         Button(model.account?.capabilities.reversibleTrash == false ? "Eliminar del servidor…" : "Enviar a la papelera…", role: .destructive) { model.requestTrash([file]) }
         if model.account?.capabilities.permanentDelete == true {
             Button("Eliminar definitivamente…", role: .destructive) { model.requestPermanentDelete([file]) }
+                .disabled(model.limitation(.permanentDelete, for: [file]) != nil)
+                .help(model.limitation(.permanentDelete, for: [file]) ?? "")
         }
     }
 }

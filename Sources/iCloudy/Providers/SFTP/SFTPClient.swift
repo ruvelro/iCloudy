@@ -13,7 +13,11 @@ actor SFTPClient {
     /// Answers that arrived while another request was being waited for.
     private var parked: [UInt32: (type: UInt8, body: Data)] = [:]
 
-    init(transport: SSHTransport) { self.transport = transport }
+    /// The account this session belongs to, for the diagnostic log, and the last request sent, which names a failure.
+    private let diagnosticsAccount: String?
+    private var lastVerb = ""
+
+    init(transport: SSHTransport, account: String? = nil) { self.transport = transport; self.diagnosticsAccount = account }
     var hostKey: Data? { get async { await transport.hostKey } }
 
     enum Packet {
@@ -85,7 +89,7 @@ actor SFTPClient {
     /// One request at a time from the outside, in arrival order, the same rule `FTPSession` follows: the actor is
     /// reentrant at every `await`, and two listings sharing the channel would read each other's answers.
     private var lastOperation: Task<Void, Never>?
-    private func exclusive<T>(_ work: @escaping () async throws -> T) async throws -> T {
+    private func exclusive<T: Sendable>(_ work: @escaping @Sendable () async throws -> T) async throws -> T {
         let previous = lastOperation
         let operation = Task<T, Error> {
             await previous?.value
@@ -95,14 +99,20 @@ actor SFTPClient {
         lastOperation = Task { _ = try? await operation.value }
         return try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
     }
+    /// Whether the server announced an extension. The work handed to `exclusive` runs outside the actor and asks here.
+    private func supports(_ name: String) -> Bool { extensions[name] != nil }
     /// Reconnects once when the connection went away between operations; a failure inside an operation drops the
     /// session, because answers may still be in flight for requests nobody is waiting for any more.
     private func withSession<T>(_ work: () async throws -> T) async throws -> T {
         try await start()
         do { return try await work() }
-        catch let error as Refusal { throw error }
+        catch let error as Refusal {
+            Diagnostics.sftp(lastVerb, host: transport.host, account: diagnosticsAccount, status: Int(error.code), error: error)
+            throw error
+        }
         catch is CancellationError { await close(); throw CancellationError() }
         catch {
+            Diagnostics.sftp(lastVerb, host: transport.host, account: diagnosticsAccount, error: error)
             await close()
             throw error
         }
@@ -126,6 +136,11 @@ actor SFTPClient {
     private func request(_ type: UInt8, _ fill: (inout SSHWriter) -> Void) async throws -> UInt32 {
         nextID &+= 1
         let id = nextID
+        lastVerb = Diagnostics.sftpVerb(type)
+        // Blocks of a transfer are left out even at the detailed level: thousands of them would bury everything else.
+        if ![Packet.read, Packet.write, Packet.readdir].contains(type) {
+            Diagnostics.sftp(lastVerb, host: transport.host, account: diagnosticsAccount)
+        }
         var writer = SSHWriter()
         writer.byte(type); writer.uint32(id)
         fill(&writer)
@@ -227,7 +242,7 @@ actor SFTPClient {
     /// Both are refused for a target that exists on the servers that matter, which is what the callers check first.
     func rename(_ from: String, to: String) async throws {
         try await exclusive { try await self.withSession {
-            if self.extensions["posix-rename@openssh.com"] != nil {
+            if await self.supports("posix-rename@openssh.com") {
                 try await self.status(try await self.request(Packet.extended) { $0.string("posix-rename@openssh.com"); $0.string(from); $0.string(to) })
             } else {
                 try await self.status(try await self.request(Packet.rename) { $0.string(from); $0.string(to) })
@@ -237,7 +252,7 @@ actor SFTPClient {
     /// Free and total bytes of the file system under `path`, when the server implements OpenSSH's extension.
     func statvfs(_ path: String) async throws -> (total: Int64, free: Int64)? {
         try await exclusive { try await self.withSession {
-            guard self.extensions["statvfs@openssh.com"] != nil else { return nil }
+            guard await self.supports("statvfs@openssh.com") else { return nil }
             var answer = try await self.response(try await self.request(Packet.extended) { $0.string("statvfs@openssh.com"); $0.string(path) })
             guard answer.type == Packet.extendedReply else { return nil }
             _ = try answer.reader.uint64()                      // f_bsize
@@ -277,11 +292,7 @@ actor SFTPClient {
             var offset: UInt64 = 0
             var outstanding: [UInt32] = []
             var finished = false
-            func ask() async throws {
-                let id = try await self.request(Packet.read) { $0.string(handle); $0.uint64(offset); $0.uint32(UInt32(Self.blockSize)) }
-                outstanding.append(id); offset += UInt64(Self.blockSize)
-            }
-            for _ in 0..<Self.inFlight { try await ask() }
+            for _ in 0..<Self.inFlight { outstanding.append(try await askRead(handle, at: offset)); offset += UInt64(Self.blockSize) }
             while !outstanding.isEmpty {
                 try Task.checkCancellation()
                 var answer = try await self.response(outstanding.removeFirst())
@@ -295,6 +306,7 @@ actor SFTPClient {
                 let chunk = try answer.reader.string()
                 if chunk.isEmpty { finished = true; continue }
                 try DownloadBudget.check(written + Int64(chunk.count), maximum: maxBytes)
+                try await TransferThrottle.download(chunk.count)
                 try file.write(contentsOf: chunk)
                 written += Int64(chunk.count)
                 progress(written)
@@ -305,9 +317,13 @@ actor SFTPClient {
                     for id in outstanding { _ = try? await self.response(id) }
                     outstanding.removeAll()
                 }
-                if !finished { try await ask() }
+                if !finished { outstanding.append(try await askRead(handle, at: offset)); offset += UInt64(Self.blockSize) }
             }
             complete = true
+    }
+    /// Asks for the block at `offset`; the answer is collected later, by the id this returns.
+    private func askRead(_ handle: Data, at offset: UInt64) async throws -> UInt32 {
+        try await request(Packet.read) { $0.string(handle); $0.uint64(offset); $0.uint32(UInt32(Self.blockSize)) }
     }
     /// Uploads with `inFlight` writes outstanding. The file is created or truncated first; a retry starts over.
     func upload(_ source: URL, to path: String, progress: @Sendable @escaping (Int64) -> Void) async throws {
@@ -330,6 +346,7 @@ actor SFTPClient {
                 try stamp.validate(source)
                 let chunk = try file.read(upToCount: Self.blockSize) ?? Data()
                 if chunk.isEmpty { break }
+                try await TransferThrottle.upload(chunk.count)
                 let at = offset
                 outstanding.append(try await self.request(Packet.write) { $0.string(handle); $0.uint64(at); $0.string(chunk) })
                 offset += UInt64(chunk.count)

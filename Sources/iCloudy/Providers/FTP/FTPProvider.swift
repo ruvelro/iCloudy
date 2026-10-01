@@ -59,7 +59,7 @@ extension FTPProvider {
         let session = FTPSession(host: endpoint.host, port: endpoint.port,
                                  user: String(pair[pair.startIndex..<separator]),
                                  password: String(pair[pair.index(after: separator)...]),
-                                 security: endpoint.security)
+                                 security: endpoint.security, account: account.id)
         ftpSession = session
         return session
     }
@@ -88,10 +88,7 @@ extension FTPProvider {
         try await ftpMove(file: file, toPath: FTPListing.join(try ftpPath(destination), file.name))
     }
     private func ftpMove(file: CloudFile, toPath: String) async throws {
-        let session = try await ftp()
-        let from = try await session.command("RNFR " + file.id)
-        guard from.code == 350 else { throw CloudError.message(L("El servidor no encontró el elemento que se quiere mover.")) }
-        try await session.require("RNTO " + toPath, L("El servidor rechazó el nuevo nombre o destino."))
+        try await ftp().rename(from: file.id, to: toPath)
     }
     /// FTP deletes for good, and an empty directory is a precondition for RMD, so folders are emptied depth first.
     func ftpDelete(file: CloudFile) async throws {
@@ -107,8 +104,10 @@ extension FTPProvider {
     }
     func ftpDownload(file: CloudFile, to destination: URL, maxBytes: Int64? = nil, progress: @escaping (Int64, Int64) -> Void) async throws {
         let total = file.size ?? 0
+        // The session reports from its own actor; the callback only ever runs back here, on the main actor.
+        let relay: @MainActor @Sendable (Int64) -> Void = { sent in progress(sent, total) }
         try await ftp().retrieve(path: file.id, to: destination, maxBytes: maxBytes) { sent in
-            Task { @MainActor in progress(sent, total) }
+            Task { @MainActor in relay(sent) }
         }
     }
     /// A plain STOR from start to finish: FTP has no session that survives a broken connection, so a retry starts over.
@@ -117,8 +116,9 @@ extension FTPProvider {
         let total = cursor.total
         let path = try replacing ?? FTPListing.join(ftpPath(parent), name)
         cursor.offset = 0; try save(cursor)
+        let relay: @MainActor @Sendable (Int64) -> Void = { sent in progress(min(sent, total), total) }
         try await ftp().store(local, to: path) { sent in
-            Task { @MainActor in progress(min(sent, total), total) }
+            Task { @MainActor in relay(sent) }
         }
         cursor.offset = total; cursor.complete = true; try save(cursor); progress(total, total)
         // Nothing to compare against: the protocol reports no checksum for the stored file.

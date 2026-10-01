@@ -8,6 +8,8 @@ protocol SearchableIndexing {
     func index(_ items: [CSSearchableItem]) async throws
     func deleteItems(withDomainIdentifiers identifiers: [String]) async throws
     func deleteItems(withIdentifiers identifiers: [String]) async throws
+    /// Everything this app ever published, including entries a previous version left behind and no list remembers.
+    func deleteAllItems() async throws
 }
 
 struct SystemSearchableIndex: SearchableIndexing {
@@ -33,6 +35,13 @@ struct SystemSearchableIndex: SearchableIndexing {
             }
         }
     }
+    func deleteAllItems() async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            CSSearchableIndex.default().deleteAllSearchableItems { error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+            }
+        }
+    }
 }
 
 /// One remote item worth finding again from Spotlight: a favorite, or something the user previewed, transferred or opened.
@@ -49,11 +58,18 @@ struct IndexedItem: Codable, Equatable {
 @MainActor
 final class SpotlightIndex {
     static let separator = "\u{1F}"
-    /// Bounded so the index never grows without limit; the oldest entries fall off.
+    /// Bounded so the index never grows without limit; the oldest entries fall off, here and in the system's index.
     var limit = 500
     private let index: SearchableIndexing
     let storeURL: URL
     private(set) var items: [IndexedItem] = []
+    /// Identifiers of the favorites the last refresh published. The limit never evicts them: a favorite that fell off
+    /// would vanish from the system's search until the favorites list happened to change again.
+    private var pinned: Set<String> = []
+    /// Every request to the system index, chained in the order it was made. Each one used to run in a task of its
+    /// own, so a deletion could overtake the publication it was meant to undo, or «Vaciar» could run before a
+    /// publication that was asked for earlier, and in both cases the entry stayed in Spotlight.
+    private var tail: Task<Void, Never>?
 
     init(index: SearchableIndexing = SystemSearchableIndex(), storeURL: URL = LocalStore.directory.appendingPathComponent("spotlight.json")) {
         self.index = index; self.storeURL = storeURL
@@ -90,36 +106,42 @@ final class SpotlightIndex {
 
     /// Records an item the user acted on. Repeats refresh its position instead of duplicating it.
     func note(_ file: CloudFile, accountID: String, path: [CloudFile], accountLabel: String) {
+        // Spotlight would keep the decrypted names of a vault long after it is locked.
+        guard !CryptomatorVaults.isVaultAccount(accountID) else { return }
         let entry = IndexedItem(accountID: accountID, file: file, path: path.map(\.name), seen: Date())
         items.removeAll { $0.accountID == accountID && $0.file.id == file.id }
         items.insert(entry, at: 0)
-        while items.count > limit { items.removeLast() }
+        let evicted = trim()
         persist()
         publish([entry], label: accountLabel)
+        retire(evicted)
     }
     /// Re-publishes every favorite; called whenever the favorites list changes.
     func refreshFavorites(_ favorites: [Favorite], label: (String) -> String) {
+        pinned = Set(favorites.map { Self.identifier(accountID: $0.accountID, fileID: $0.file.id) })
         for favorite in favorites {
             let entry = IndexedItem(accountID: favorite.accountID, file: favorite.file, path: favorite.path.map(\.name), seen: Date())
             if let position = items.firstIndex(where: { $0.accountID == entry.accountID && $0.file.id == entry.file.id }) { items[position] = entry }
             else { items.insert(entry, at: 0) }
             publish([entry], label: label(favorite.accountID))
         }
+        let evicted = trim()
         persist()
+        retire(evicted)
     }
-    /// Retires everything iCloudy published, leaving the system search without any of its entries.
+    /// Retires everything iCloudy published, leaving the system search without any of its entries. The local list
+    /// only knows what it still holds: entries evicted by an older version, or published for an account whose items
+    /// were dropped before the list existed, would survive a deletion by identifier or by account.
     func clear() {
-        let domains = Set(items.map(\.accountID))
         items = []
         persist()
-        guard !domains.isEmpty else { return }
-        Task { [index] in try? await index.deleteItems(withDomainIdentifiers: Array(domains)) }
+        enqueue { try await $0.deleteAllItems() }
     }
     /// Disconnecting an account must leave nothing of it in Spotlight.
     func removeAccount(_ accountID: String) {
         items.removeAll { $0.accountID == accountID }
         persist()
-        Task { [index] in try? await index.deleteItems(withDomainIdentifiers: [accountID]) }
+        enqueue { try await $0.deleteItems(withDomainIdentifiers: [accountID]) }
     }
     /// Drops one item, which is what sending it to the bin means for Spotlight. A hit left behind opens on a file
     /// that is not there any more, and the app can only answer that the result is no longer available.
@@ -128,7 +150,7 @@ final class SpotlightIndex {
         items.removeAll { $0.accountID == accountID && $0.file.id == fileID }
         persist()
         let identifier = Self.identifier(accountID: accountID, fileID: fileID)
-        Task { [index] in try? await index.deleteItems(withIdentifiers: [identifier]) }
+        enqueue { try await $0.deleteItems(withIdentifiers: [identifier]) }
     }
     /// Keeps an indexed item's name current, because a rename left Spotlight offering the old one.
     func rename(_ file: CloudFile, accountID: String, accountLabel: String) {
@@ -149,14 +171,45 @@ final class SpotlightIndex {
         }
         items.removeAll { entry in old.contains { $0.accountID == entry.accountID && $0.file.id == entry.file.id } }
         items.append(contentsOf: updated); persist()
-        Task { [index] in
-            try? await index.deleteItems(withIdentifiers: old.map { Self.identifier(accountID: accountID, fileID: $0.file.id) })
-            try? await index.index(updated.map { Self.searchableItem(for: $0, accountLabel: accountLabel) })
-        }
+        guard !old.isEmpty else { return }
+        let stale = old.map { Self.identifier(accountID: accountID, fileID: $0.file.id) }
+        let searchable = updated.map { Self.searchableItem(for: $0, accountLabel: accountLabel) }
+        enqueue { try await $0.deleteItems(withIdentifiers: stale) }
+        enqueue { try await $0.index(searchable) }
     }
+    /// Waits until every request made so far has reached the system index, in order.
+    func settle() async { await tail?.value }
+
     private func publish(_ entries: [IndexedItem], label: String) {
         let searchable = entries.map { Self.searchableItem(for: $0, accountLabel: label) }
-        Task { [index] in try? await index.index(searchable) }
+        enqueue { try await $0.index(searchable) }
+    }
+    /// Drops the oldest entries over the limit, skipping pinned favorites, and returns what it dropped.
+    private func trim() -> [IndexedItem] {
+        var evicted: [IndexedItem] = []
+        var position = items.count - 1
+        while items.count > limit, position >= 0 {
+            if !pinned.contains(Self.identifier(accountID: items[position].accountID, fileID: items[position].file.id)) {
+                evicted.append(items.remove(at: position))
+            }
+            position -= 1
+        }
+        return evicted
+    }
+    /// Takes entries the local list no longer holds out of the system index, so the limit bounds both.
+    private func retire(_ entries: [IndexedItem]) {
+        guard !entries.isEmpty else { return }
+        let identifiers = entries.map { Self.identifier(accountID: $0.accountID, fileID: $0.file.id) }
+        enqueue { try await $0.deleteItems(withIdentifiers: identifiers) }
+    }
+    /// Runs one request after every request made before it. A failure is not retried: the system index is a
+    /// convenience, and the next publication or «Vaciar» is the recovery path.
+    private func enqueue(_ operation: @escaping @MainActor (SearchableIndexing) async throws -> Void) {
+        let previous = tail
+        tail = Task { [index] in
+            await previous?.value
+            try? await operation(index)
+        }
     }
     private func persist() { try? LocalStore.save(items, to: storeURL) }
 }

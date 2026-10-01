@@ -47,7 +47,11 @@ contraseña. Eso tiene dos consecuencias buenas y una mala.
    creciendo hasta 1 MiB.
 
 La aritmética de números grandes es propia, porque hacía falta una sola exponenciación modular y no merecía
-una dependencia. Usa multiplicación de Montgomery en vez de división, que es la parte fácil de equivocar.
+una dependencia. Usa multiplicación de Montgomery en vez de división, que es la parte fácil de equivocar, con
+palabras de 64 bits y una ventana deslizante sobre el exponente. Como corre en cada inicio de sesión, tiene que ser
+rápida incluso compilada en depuración: unos 50 ms para una clave de 2048 bits en Apple Silicon, frente a los cinco
+segundos de la primera versión. Las pruebas la comparan con vectores de OpenSSL y de Python y, para cientos de
+tamaños y casos límite, con una implementación de referencia lenta y evidente.
 
 ## La prueba de trabajo
 

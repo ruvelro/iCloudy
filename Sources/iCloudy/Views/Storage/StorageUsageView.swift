@@ -94,10 +94,10 @@ struct StorageUsageView: View {
                 }
                 .help(explanation + "\n" + quota.summary + (quota.breakdown.isEmpty ? "" : "\n" + quota.breakdown))
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Almacenamiento: " + quota.summary)
+                .accessibilityLabel("Almacenamiento: \(quota.summary)")
             case .unavailable(let message):
                 Label("Espacio no disponible", systemImage: "questionmark.circle")
-                    .help(message + "\nUsa «Actualizar espacio» en el menú de la cuenta para reintentar.")
+                    .help(message + "\n" + L("Usa «Actualizar espacio» en el menú de la cuenta para reintentar."))
             case .loading, nil:
                 Label("Consultando espacio…", systemImage: "chart.pie")
             }

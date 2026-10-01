@@ -38,7 +38,9 @@ extension MegaProvider {
         megaStateCache = state
         return state
     }
-    func megaCall(_ payload: [String: Any]) async throws -> Any {
+    /// The payload is handed over to the request and the parsed answer handed back: neither is shared with anything
+    /// else, which is what lets them cross to the network code and, for the tree, on to the decoder.
+    func megaCall(_ payload: sending [String: Any]) async throws -> sending Any {
         let state = try await megaSession()
         do { return try await MegaAPI.call(payload, sid: state.sid, sequence: state.next(), session: session) }
         catch {
@@ -65,17 +67,22 @@ extension MegaProvider {
         return try await task.value
     }
     private func megaFetchTree(_ state: MegaState) async throws -> MegaState {
-        guard let answer = try await megaCall(["a": "f", "c": 1, "r": 1]) as? [String: Any],
-              let files = answer["f"] as? [[String: Any]] else {
+        guard let answer = try await megaCall(["a": "f", "c": 1, "r": 1]) as? [String: Any], answer["f"] is [[String: Any]] else {
             throw CloudError.message(L("Mega no devolvió el contenido de la cuenta."))
         }
-        // `ok` carries the keys of the folders other accounts have shared in. Without them those items decrypt to
-        // nothing and every one of them reads as unavailable.
-        let shares = answer["ok"] as? [[String: Any]] ?? []
-        let masterKey = state.masterKey
-        state.adopt(try await blockingIO { MegaAPI.tree(files, masterKey: masterKey, shares: shares) })
+        let decoded = await Self.megaDecode(answer, masterKey: state.masterKey)
+        state.adopt(decoded.tree)
+        state.exports = decoded.exports
         guard !state.root.isEmpty else { throw CloudError.message(L("No se encontró la raíz de la cuenta de Mega.")) }
         return state
+    }
+    /// Decrypting a large tree takes a while, so it runs off the main actor. The JSON was parsed for this call alone
+    /// and is moved, not shared, to get there.
+    nonisolated private static func megaDecode(_ answer: sending [String: Any], masterKey: Data) async -> (tree: MegaState.Tree, exports: [String: MegaExport]) {
+        // `ok` carries the keys of the folders other accounts have shared in. Without them those items decrypt to
+        // nothing and every one of them reads as unavailable.
+        (MegaAPI.tree(answer["f"] as? [[String: Any]] ?? [], masterKey: masterKey, shares: answer["ok"] as? [[String: Any]] ?? []),
+         MegaAPI.exports(answer["ph"] as? [[String: Any]] ?? []))
     }
     func megaHandle(_ id: String, in state: MegaState) throws -> String {
         let handle = id == "root" ? state.root : id
@@ -268,6 +275,7 @@ extension MegaProvider {
         guard let handle = try await megaCall(["a": "l", "n": node.handle]) as? String else {
             throw CloudError.message(L("Mega no devolvió el enlace."))
         }
+        state.exports[node.handle] = MegaExport(publicHandle: handle)
         // The key goes in the fragment, which browsers never send to the server: without it the link is unreadable.
         guard let url = URL(string: "https://mega.nz/file/\(handle)#\(MegaCrypto.encode(node.key))") else {
             throw CloudError.message(L("Mega no devolvió el enlace."))
@@ -384,6 +392,7 @@ extension MegaProvider {
             try Task.checkCancellation()
             try cursor.sourceStamp?.validate(local)
             let plain = try await blockingIO { try input.read(upToCount: Int(chunk.length)) ?? Data() }
+            try await TransferThrottle.upload(plain.count)
             try cursor.sourceStamp?.validate(local)
             guard plain.count == Int(chunk.length) else { throw CloudError.message(L("El tamaño del origen ha cambiado.")) }
             let offset = chunk.offset

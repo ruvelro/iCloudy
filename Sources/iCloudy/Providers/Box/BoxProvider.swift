@@ -26,7 +26,8 @@ extension BoxProvider {
                          size: (value["size"] as? NSNumber)?.int64Value,
                          modified: date(value["modified_at"] as? String),
                          webURL: ((value["shared_link"] as? [String: Any])?["url"] as? String).flatMap(URL.init(string:)),
-                         isFolder: folder)
+                         isFolder: folder,
+                         checksum: (value["sha1"] as? String).flatMap { $0.isEmpty ? nil : ContentHash(algorithm: .sha1, value: $0) })
     }
 
     /// Paged with a marker rather than an offset: Box refuses an offset past 10 000, so a folder with more items than
@@ -186,6 +187,7 @@ extension BoxProvider {
                 throw CloudError.message(L("El archivo cambió durante la subida."))
             }
             let chunk = try await blockingIO { try handle.read(upToCount: Int(partSize)) ?? Data() }
+            try await TransferThrottle.upload(chunk.count)
             try cursor.sourceStamp?.validate(local)
             guard !chunk.isEmpty else { throw CloudError.message(L("El tamaño del origen ha cambiado.")) }
             whole.update(data: chunk)
@@ -240,6 +242,7 @@ extension BoxProvider {
     private func boxSimpleUpload(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint,
                                  save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
         let payload = try await blockingIO { try Data(contentsOf: local) }
+        try await TransferThrottle.upload(payload.count)
         try cursor.sourceStamp?.validate(local)
         let boundary = "icloudy-" + UUID().uuidString
         var attributes: [String: Any] = ["name": name]
@@ -280,6 +283,10 @@ extension BoxProvider {
 
     func contentRequest(for file: CloudFile, exportMime: String?) async throws -> URLRequest {
         return try await request(URL(string: "https://api.box.com/2.0/files/\(Self.segment(file.id))/content")!)
+    }
+
+    func currentMetadata(of file: CloudFile) async throws -> CloudFile? {
+        Self.boxFile(try await json(URL(string: "https://api.box.com/2.0/\(Self.boxRoute(file))/\(Self.segment(file.id))?fields=\(Self.boxListFields)")!))
     }
 
     func rename(file: CloudFile, name: String) async throws {
