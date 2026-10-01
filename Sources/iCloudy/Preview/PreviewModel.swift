@@ -107,6 +107,11 @@ final class PreviewModel: ObservableObject {
     @Published private(set) var textTruncated = false
     @Published var saveError: String?
     var willDiscard: (() -> Void)?
+    /// A managed offline copy to show instead of downloading the file, when there is one.
+    var localSource: ((CloudFile, Account) -> URL?)?
+    /// Reports a finished download, so it can be kept to be seen again without a network.
+    var didDownload: ((CloudFile, Account, URL) -> Void)?
+    private var localCopy: URL?
     var availableCapacity: (() throws -> Int64)?
     private let store: PreviewStore?
     private let initializationError: String?
@@ -131,14 +136,16 @@ final class PreviewModel: ObservableObject {
         self.file = file; self.account = account; self.client = client
         guard let kind = PreviewKind.forFile(file) else { phase = .unsupported; return }
         guard store != nil else { phase = .failed(initializationError ?? L("No se pudo preparar la vista previa.")); return }
+        // A copy already on this Mac costs no download, so there is nothing to ask about.
+        localCopy = kind == .exportedPDF ? nil : localSource?(file, account)
         // Exports have no size, but Drive caps them at 10 MB, well under the automatic limit.
-        if kind != .exportedPDF, file.size == nil || file.size! < 0 || file.size! > Self.automaticLimit { phase = .confirmation }
+        if localCopy == nil, kind != .exportedPDF, file.size == nil || file.size! < 0 || file.size! > Self.automaticLimit { phase = .confirmation }
         else { start() }
     }
     func start() {
         guard let file, let kind = PreviewKind.forFile(file), let client, let store, phase != .loading else { return }
         let request = UUID(); generation = request
-        let limit = authorizedLimit
+        let limit = authorizedLimit, local = localCopy
         do {
             let free = try availableCapacity?() ?? store.capacity()
             // Reserve enough for the allowed download plus some filesystem headroom.
@@ -157,9 +164,13 @@ final class PreviewModel: ObservableObject {
                     // The size is always checked. The checksum only within the automatic limit, where hashing again costs
                     // little next to the download; a confirmed multi-gigabyte preview is not worth another full read.
                     let cheap = (file.size ?? .max) <= Self.automaticLimit
-                    try await client.download(file: file, to: destination, exportMime: kind.exportMime, maxBytes: limit, checksum: cheap) { [weak self] bytes, expected in
-                        guard let self, self.generation == request, self.phase == .loading else { return }
-                        self.received = bytes; self.total = expected
+                    if let local {
+                        try await blockingIO { try FileManager.default.copyItem(at: local, to: destination) }
+                    } else {
+                        try await client.download(file: file, to: destination, exportMime: kind.exportMime, maxBytes: limit, checksum: cheap) { [weak self] bytes, expected in
+                            guard let self, self.generation == request, self.phase == .loading else { return }
+                            self.received = bytes; self.total = expected
+                        }
                     }
                     try Task.checkCancellation()
                     guard generation == request else { return }
@@ -191,6 +202,7 @@ final class PreviewModel: ObservableObject {
                         }
                     }
                     localURL = destination; phase = .ready; retained = true
+                    if local == nil, let account { didDownload?(file, account, destination) }
                 } catch {
                     guard generation == request, !Task.isCancelled else { return }
                     phase = .failed(error.localizedDescription)
@@ -210,6 +222,6 @@ final class PreviewModel: ObservableObject {
         if let directory {
             do { try store?.remove(directory) } catch { saveError = L("No se pudo limpiar el temporal; se reintentará al arrancar: \(error.localizedDescription)") }
         }
-        directory = nil; client = nil; file = nil; account = nil; phase = .idle
+        directory = nil; client = nil; file = nil; account = nil; localCopy = nil; phase = .idle
     }
 }

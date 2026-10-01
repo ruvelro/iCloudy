@@ -265,6 +265,36 @@ final class OfflineTests: XCTestCase {
         XCTAssertNotNil(store.localURL(for: newer, accountID: "a", acceptChanged: true), "Offline, it is better than nothing")
     }
 
+    func testThePreviewUsesTheOfflineCopyWithoutTheNetworkAndKeepsWhatItDownloads() async throws {
+        let (store, refresher, demo, api) = try fixture()
+        let id = try demo.add(name: "nota.txt", parent: "root", content: Data("sin red".utf8))
+        let file = try XCTUnwrap(demo.file(id))
+        _ = try pinned(store.pin(file, accountID: Account.demo.id, parentID: "root"))
+        refresher.refresh(); await refresher.wait()
+
+        let preview = PreviewModel(store: try PreviewStore(root: store.root.deletingLastPathComponent().appendingPathComponent("previews")))
+        preview.availableCapacity = { 2_000_000_000 }
+        preview.localSource = { file, account in store.localURL(for: file, accountID: account.id, acceptChanged: true) }
+        var downloaded: [String] = []
+        preview.didDownload = { file, _, _ in downloaded.append(file.id) }
+        demo.offline = true
+        preview.open(file: file, account: .demo, client: api)
+        for _ in 0..<300 where preview.phase == .loading { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(preview.phase, .ready, "The network is down, and the copy on this Mac is enough")
+        XCTAssertEqual(preview.text, "sin red")
+        XCTAssertTrue(downloaded.isEmpty, "A local copy is not reported as a new download")
+        preview.close()
+
+        // Without a copy, the preview downloads as always and hands the result over to be kept.
+        demo.offline = false
+        let other = try demo.add(name: "otra.txt", parent: "root", content: Data("con red".utf8))
+        preview.open(file: try XCTUnwrap(demo.file(other)), account: .demo, client: api)
+        for _ in 0..<300 where preview.phase == .loading { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(preview.phase, .ready)
+        XCTAssertEqual(downloaded, [other])
+        preview.close()
+    }
+
     // MARK: - Identity changes
 
     func testPinsFollowRenamesAndMovesOfPathAddressedItems() throws {
