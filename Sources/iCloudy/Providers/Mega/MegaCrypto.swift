@@ -192,7 +192,10 @@ enum MegaCrypto {
         var file = Data(count: 16)
         for mac in macs { file = try ecb(Data(zip(file, mac).map { $0 ^ $1 }), key: key, encrypt: true) }
         let bytes = [UInt8](file)
-        return Data((0..<4).map { bytes[$0] ^ bytes[$0 + 4] } + (0..<4).map { bytes[$0 + 8] ^ bytes[$0 + 12] })
+        // Two halves typed apart: as one expression, Swift 6.2 gives up type-checking it.
+        let low: [UInt8] = (0..<4).map { bytes[$0] ^ bytes[$0 + 4] }
+        let high: [UInt8] = (0..<4).map { bytes[$0 + 8] ^ bytes[$0 + 12] }
+        return Data(low + high)
     }
     // MARK: - Proof of work
 

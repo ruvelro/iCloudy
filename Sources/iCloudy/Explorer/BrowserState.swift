@@ -275,7 +275,12 @@ extension ExplorerWorkspace {
     /// sidebar would, and their history forgets what can no longer be listed.
     @MainActor mutating func reconcile(with accounts: [Account]) {
         let known = Dictionary(accounts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let mentioned = allTabs.flatMap { [$0.accountID] + $0.back.map(\.accountID) + $0.forward.map(\.accountID) }.compactMap { $0 }
+        var mentioned: [String] = []
+        for tab in allTabs {
+            mentioned += [tab.accountID].compactMap { $0 }
+            mentioned += tab.back.compactMap(\.accountID)
+            mentioned += tab.forward.compactMap(\.accountID)
+        }
         let gone = Set(mentioned).subtracting(known.keys)
         updateAll { tab in
             tab.forgetHistory(of: gone)
