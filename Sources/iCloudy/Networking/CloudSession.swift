@@ -51,6 +51,12 @@ class CloudSession {
             if force { expireSession(); throw CloudError.sessionExpired(nil) }
             return credential.accessToken
         }
+        // Nor does a token issued for good, such as pCloud's: there is nothing to trade it for, so a forced renewal
+        // means the provider refused it, and asking a token endpoint with an empty refresh token would only fail.
+        guard credential.isRenewable else {
+            if force { expireSession(); throw CloudError.sessionExpired(nil) }
+            return credential.accessToken
+        }
         let current = credential
         do {
             let renewed = try await TokenRefresher.refresh(key: account.credentialKey) { [self] in

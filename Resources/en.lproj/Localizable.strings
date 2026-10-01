@@ -1389,3 +1389,25 @@
 "%lld coinciden en tamaño; no hay suma con la que compararlos." = "%lld match in size; there is no checksum to compare them with.";
 "%lld no se pudieron comprobar." = "%lld could not be checked.";
 "%lld coinciden con la suma del proveedor." = "%lld match the provider's checksum.";
+/* pCloud */
+"pCloud" = "pCloud";
+"pCloud devolvió una respuesta sin resultado." = "pCloud returned an answer without a result.";
+"Una de las carpetas de la ruta ya no existe en pCloud." = "One of the folders in the path no longer exists in pCloud.";
+"La carpeta ya no existe en pCloud." = "The folder no longer exists in pCloud.";
+"El archivo ya no existe en pCloud." = "The file no longer exists in pCloud.";
+"pCloud no admite ese nombre." = "pCloud does not accept that name.";
+"pCloud no permite esta operación sobre este elemento." = "pCloud does not allow this operation on this item.";
+"Ya existe un archivo o una carpeta con ese nombre en pCloud." = "A file or folder with that name already exists in pCloud.";
+"No queda espacio en la cuenta de pCloud." = "There is no space left in the pCloud account.";
+"pCloud no aceptó el código de autorización. Vuelve a intentar la conexión." = "pCloud did not accept the authorization code. Try connecting again.";
+"pCloud ha bloqueado por un tiempo las peticiones desde esta red por exceso de intentos. Se volverá a intentar en un minuto." = "pCloud has temporarily blocked requests from this network after too many attempts. It will be tried again in a minute.";
+"pCloud ha tenido un error interno. Se volverá a intentar." = "pCloud had an internal error. It will be tried again.";
+"pCloud rechazó la operación (código %lld)." = "pCloud refused the operation (code %lld).";
+"pCloud rechazó la operación (código %lld): %@" = "pCloud refused the operation (code %lld): %@";
+"pCloud no devolvió el enlace de descarga." = "pCloud did not return the download link.";
+"pCloud no devolvió el enlace." = "pCloud did not return the link.";
+"pCloud no ofrece búsqueda a otras aplicaciones. Navega por las carpetas o usa el filtro de la carpeta actual." = "pCloud does not offer search to other apps. Browse the folders or use the current folder's filter.";
+"pCloud indicó un servidor desconocido al volver del inicio de sesión. Vuelve a intentarlo." = "pCloud named an unknown server when returning from sign-in. Try again.";
+"pCloud no devolvió el acceso. Repite el consentimiento." = "pCloud did not grant access. Go through the consent again.";
+"Continuar con pCloud" = "Continue with pCloud";
+"Cuentas de pCloud en Europa o en Estados Unidos" = "pCloud accounts in Europe or the United States";

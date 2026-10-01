@@ -2,6 +2,7 @@ import Foundation
 
 enum Cloud: String, Codable, CaseIterable, Identifiable {
     case google, microsoft, dropbox, box, webdav, ftp, sftp, volume, mega, o2
+    case pcloud
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -15,6 +16,7 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
         case .volume: return L("Volumen")
         case .mega: return L("Mega")
         case .o2: return L("O2 Cloud")
+        case .pcloud: return L("pCloud")
         }
     }
     var tokenURL: String { OAuthProviderSettings.settings(for: self)?.tokenEndpoint ?? "" }
@@ -41,6 +43,7 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
         case .google, .microsoft, .webdav, .ftp, .sftp, .volume, .mega, .o2: return "root"
         case .dropbox: return "" // Dropbox addresses the root as an empty path
         case .box: return "0"
+        case .pcloud: return "d0" // folders are "d" plus their folderid, and the top one is folder 0
         }
     }
     var capabilities: CloudCapabilities {
@@ -162,6 +165,12 @@ struct CloudCapabilities {
             return CloudCapabilities(oauth: false, search: false, recents: false, sharedWithMe: false,
                                      copy: false, checksum: false, permanentDelete: true,
                                      linksFiles: false, purgesFolders: false)
+        case .pcloud:
+            // pCloud documents no search method for third parties, and has no "recent" or "shared with me" listing.
+            // Deleting goes to its trash, which is listed, restored from and cleared item by item or as a whole.
+            // Files list no content hash, but `checksumfile` answers one per file for uploads and downloads.
+            return CloudCapabilities(search: false, recents: false, sharedWithMe: false,
+                                     trashListing: true, permanentDelete: true, emptyTrash: true)
         }
     }
 }

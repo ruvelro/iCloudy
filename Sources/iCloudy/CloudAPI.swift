@@ -135,6 +135,10 @@ final class CloudAPI {
         if demo == nil, let reference = VersionedFile.reference(file) {
             return try await downloadVersion(file, reference: reference, to: destination, exportMime: exportMime, maxBytes: maxBytes, checksum: checksum, progress: progress)
         }
+        // A provider that lists no checksum may still answer one per file; it is asked before the bytes travel.
+        var file = file
+        if demo == nil, checksum, exportMime == nil, file.checksum == nil, !file.isFolder,
+           let asked = try await provider.downloadChecksum(of: file) { file.checksum = asked }
         if let demo {
             try await demo.download(file, to: destination, maxBytes: maxBytes, progress: progress)
         } else {

@@ -54,6 +54,9 @@ protocol CloudProvider: CloudSession {
     /// Makes `version` the file's content again. Every provider keeps the history: what was current becomes a version.
     func restoreVersion(_ version: FileVersion, of file: CloudFile) async throws
     func deleteVersion(_ version: FileVersion, of file: CloudFile) async throws
+    /// The checksum to check a download against when the listing carried none, asked for right before the download
+    /// so that it describes the same version. nil where the provider has no such call.
+    func downloadChecksum(of file: CloudFile) async throws -> ContentHash?
     func uploadFile(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt
     func resumeCommittedUpload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt?
 }
@@ -83,6 +86,7 @@ extension CloudProvider {
     func resumeCommittedUpload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt? { nil }
     func currentMetadata(of file: CloudFile) async throws -> CloudFile? { nil }
     func canVerifyDownload(of file: CloudFile) -> Bool { true }
+    func downloadChecksum(of file: CloudFile) async throws -> ContentHash? { nil }
     func abandonUploadSessions(urls: [URL], boxSessions: [String]) async {
         for url in urls where url.scheme == "https" {
             var request = URLRequest(url: url)

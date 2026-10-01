@@ -7,4 +7,6 @@
     <key>dropboxAppKey</key><string></string>
     <key>boxClientID</key><string></string>
     <key>boxClientSecret</key><string></string>
+    <key>pcloudClientID</key><string></string>
+    <key>pcloudClientSecret</key><string></string>
 </dict></plist>
