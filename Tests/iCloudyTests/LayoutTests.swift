@@ -53,7 +53,11 @@ final class LayoutTests: XCTestCase {
     /// La banda que hay bajo el título mezcla controles de macOS con cajas dibujadas a mano, y macOS dibuja los
     /// suyos más bajos. Si no miden lo mismo la fila se ve escalonada, que es justo la diferencia que no se aprecia
     /// leyendo el código.
-    func testTheChromeUnderTheTitleIsAllOneHeight() {
+    func testTheChromeUnderTheTitleIsAllOneHeight() throws {
+        // `Layout.controlHeight` is the height of macOS 26's large controls. Earlier systems draw theirs 2 points
+        // taller (30 on macOS 15), so there the comparison measures the system, not this code.
+        try XCTSkipUnless(ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26,
+                          "Las alturas de los controles de macOS cambiaron en macOS 26")
         let collection = CollectionPicker(choices: [.files, .recent], selection: .files) { _ in }
         let crumb = Crumb(title: "Inicio", symbol: "folder", current: true) {}
         let field = ChromeField("Filtrar esta carpeta", symbol: "line.3.horizontal.decrease", text: .constant(""))

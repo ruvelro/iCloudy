@@ -61,8 +61,8 @@ enum PCloudError {
         case 5000, 5001: return ServiceError(status: 503, detail: L("pCloud ha tenido un error interno. Se volverá a intentar."), code: tag)
         default:
             let text = detail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return ServiceError(status: 400, detail: text.isEmpty ? L("pCloud rechazó la operación (código \(code)).")
-                                                                : L("pCloud rechazó la operación (código \(code)): \(text)"), code: tag)
+            return ServiceError(status: 400, detail: text.isEmpty ? L("pCloud rechazó la operación (código \(String(code))).")
+                                                                : L("pCloud rechazó la operación (código \(String(code))): \(text)"), code: tag)
         }
     }
 }

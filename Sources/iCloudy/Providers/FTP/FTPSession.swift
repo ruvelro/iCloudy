@@ -99,7 +99,7 @@ actor FTPSession {
             return CloudError.message(L("El servidor no admite FTPS explícito (AUTH TLS). Prueba FTPS implícito en el puerto 990, o FTP sin cifrar solo dentro de tu red."))
         }
         guard case .tls(let status) = error else { return error }
-        return CloudError.message(L("El servidor rechazó la conexión cifrada (TLS \(status)). Si es un NAS con un certificado propio, macOS no lo acepta: instala ese certificado en el Llavero y márcalo como de confianza, o usa FTP sin cifrar solo dentro de tu red."))
+        return CloudError.message(L("El servidor rechazó la conexión cifrada (TLS \(String(status))). Si es un NAS con un certificado propio, macOS no lo acepta: instala ese certificado en el Llavero y márcalo como de confianza, o usa FTP sin cifrar solo dentro de tu red."))
     }
     /// Opens the control connection, greets, authenticates and switches to binary mode.
     func connect() async throws {

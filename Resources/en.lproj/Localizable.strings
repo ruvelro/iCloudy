@@ -213,7 +213,7 @@
 "El servidor rechazó el nuevo nombre o destino." = "The server rejected the new name or destination.";
 "El servidor rechazó el usuario o la contraseña." = "The server rejected the user name or password.";
 "El servidor rechazó el usuario o la contraseña. Si tu servidor usa verificación en dos pasos, crea una contraseña de aplicación." = "The server rejected the user name or password. If your server uses two-step verification, create an app password.";
-"El servidor rechazó la conexión cifrada (TLS %d). Si es un NAS con un certificado propio, macOS no lo acepta: instala ese certificado en el Llavero y márcalo como de confianza, o usa FTP sin cifrar solo dentro de tu red." = "The server refused the encrypted connection (TLS %d). If it is a NAS with a certificate of its own, macOS does not accept it: install that certificate in the Keychain and mark it as trusted, or use plain FTP inside your own network only.";
+"El servidor rechazó la conexión cifrada (TLS %@). Si es un NAS con un certificado propio, macOS no lo acepta: instala ese certificado en el Llavero y márcalo como de confianza, o usa FTP sin cifrar solo dentro de tu red." = "The server refused the encrypted connection (TLS %@). If it is a NAS with a certificate of its own, macOS does not accept it: install that certificate in the Keychain and mark it as trusted, or use plain FTP inside your own network only.";
 "El servidor respondió algo que no es un listado de WebDAV. Comprueba la dirección de la cuenta y vuelve a conectarla." = "The server answered with something that is not a WebDAV listing. Check the account's address and connect it again.";
 "El servidor respondió, pero esa ruta no existe. Comprueba la dirección completa de WebDAV." = "The server answered, but that path does not exist. Check the full WebDAV address.";
 "El sistema no informa del espacio de este volumen." = "The system does not report this volume's storage.";
@@ -459,9 +459,9 @@
 "No se pudo crear la carpeta." = "The folder could not be created.";
 "No se pudo eliminar el archivo." = "The file could not be deleted.";
 "No se pudo eliminar la carpeta." = "The folder could not be deleted.";
-"No se pudo eliminar la credencial (%d)." = "The credential could not be deleted (%d).";
+"No se pudo eliminar la credencial (%@)." = "The credential could not be deleted (%@).";
 "No se pudo guardar el historial: %@" = "The history could not be saved: %@";
-"No se pudo guardar en el Llavero (%d). Puede que haya que volver a conectar esa cuenta." = "It could not be saved to the Keychain (%d). That account may have to be connected again.";
+"No se pudo guardar en el Llavero (%@). Puede que haya que volver a conectar esa cuenta." = "It could not be saved to the Keychain (%@). That account may have to be connected again.";
 "No se pudo guardar la cola: %@" = "The queue could not be saved: %@";
 "No se pudo guardar la copia. Si ya existe un archivo con ese nombre, elige otro. %@" = "The copy could not be saved. If a file with that name already exists, choose another. %@";
 "No se pudo guardar la sesión renovada de %@: %@ La cuenta funciona ahora, pero habrá que volver a conectarla al abrir iCloudy de nuevo." = "The renewed %@ session could not be saved: %@ The account works now, but it will have to be connected again the next time you open iCloudy.";
@@ -469,7 +469,7 @@
 "No se pudo identificar la cuenta." = "The account could not be identified.";
 "No se pudo iniciar la sesión de subida." = "The upload session could not be started.";
 "No se pudo leer el historial: %@" = "The history could not be read: %@";
-"No se pudo leer el Llavero (%d)." = "The Keychain could not be read (%d).";
+"No se pudo leer el Llavero (%@)." = "The Keychain could not be read (%@).";
 "No se pudo limpiar el temporal; se reintentará al arrancar: %@" = "The temporary file could not be cleaned up; it will be retried at launch: %@";
 "No se pudo preparar el icono." = "The icon could not be prepared.";
 "No se pudo preparar el inicio de sesión." = "The sign-in could not be prepared.";
@@ -1397,8 +1397,8 @@
 "pCloud no aceptó el código de autorización. Vuelve a intentar la conexión." = "pCloud did not accept the authorization code. Try connecting again.";
 "pCloud ha bloqueado por un tiempo las peticiones desde esta red por exceso de intentos. Se volverá a intentar en un minuto." = "pCloud has temporarily blocked requests from this network after too many attempts. It will be tried again in a minute.";
 "pCloud ha tenido un error interno. Se volverá a intentar." = "pCloud had an internal error. It will be tried again.";
-"pCloud rechazó la operación (código %lld)." = "pCloud refused the operation (code %lld).";
-"pCloud rechazó la operación (código %lld): %@" = "pCloud refused the operation (code %lld): %@";
+"pCloud rechazó la operación (código %@)." = "pCloud refused the operation (code %@).";
+"pCloud rechazó la operación (código %@): %@" = "pCloud refused the operation (code %@): %@";
 "pCloud no devolvió el enlace de descarga." = "pCloud did not return the download link.";
 "pCloud no devolvió el enlace." = "pCloud did not return the link.";
 "pCloud no ofrece búsqueda a otras aplicaciones. Navega por las carpetas o usa el filtro de la carpeta actual." = "pCloud does not offer search to other apps. Browse the folders or use the current folder's filter.";

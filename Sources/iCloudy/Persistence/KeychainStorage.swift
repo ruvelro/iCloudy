@@ -38,7 +38,7 @@ final class KeychainStorage: @unchecked Sendable {
             if status == errSecDuplicateItem { status = operations.update(query, attributes) }
         }
         guard status == errSecSuccess else {
-            throw CloudError.message(L("No se pudo guardar en el Llavero (\(status)). Puede que haya que volver a conectar esa cuenta."))
+            throw CloudError.message(L("No se pudo guardar en el Llavero (\(String(status))). Puede que haya que volver a conectar esa cuenta."))
         }
     }
     func read<T: Decodable>(_ type: T.Type, key: String) throws -> T? {
@@ -48,13 +48,13 @@ final class KeychainStorage: @unchecked Sendable {
         var result: CFTypeRef?
         let status = operations.copy(query as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = result as? Data else { throw CloudError.message(L("No se pudo leer el Llavero (\(status)).")) }
+        guard status == errSecSuccess, let data = result as? Data else { throw CloudError.message(L("No se pudo leer el Llavero (\(String(status))).")) }
         return try JSONDecoder().decode(type, from: data)
     }
     func delete(key: String) throws {
         lock.lock(); defer { lock.unlock() }
         let result = operations.delete(descriptor(key) as CFDictionary)
-        guard result == errSecSuccess || result == errSecItemNotFound else { throw CloudError.message(L("No se pudo eliminar la credencial (\(result)).")) }
+        guard result == errSecSuccess || result == errSecItemNotFound else { throw CloudError.message(L("No se pudo eliminar la credencial (\(String(result))).")) }
     }
 }
 
