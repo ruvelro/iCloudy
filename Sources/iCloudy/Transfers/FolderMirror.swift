@@ -32,10 +32,13 @@ struct FolderMirror: Identifiable, Codable {
     var activeTransferID: UUID?
     var lastError: String?
     var remoteEntries: [String: CloudFile] = [:]
+    /// What this mirror never uploads, downloads or deletes. Records written before exclusions existed get the
+    /// built-in defaults.
+    var exclusions = SyncExclusions()
 }
 
 extension FolderMirror {
-    enum CodingKeys: String, CodingKey { case id, mode, baseline, lastReport, accountID, remoteFolderID, remoteName, localURL, bookmark, stamps, pendingStamps, lastSync, activeTransferID, lastError, remoteEntries }
+    enum CodingKeys: String, CodingKey { case id, mode, baseline, lastReport, accountID, remoteFolderID, remoteName, localURL, bookmark, stamps, pendingStamps, lastSync, activeTransferID, lastError, remoteEntries, exclusions }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
@@ -53,14 +56,24 @@ extension FolderMirror {
         activeTransferID = try values.decodeIfPresent(UUID.self, forKey: .activeTransferID)
         lastError = try values.decodeIfPresent(String.self, forKey: .lastError)
         remoteEntries = try values.decodeIfPresent([String: CloudFile].self, forKey: .remoteEntries) ?? [:]
+        exclusions = try values.decodeIfPresent(SyncExclusions.self, forKey: .exclusions) ?? SyncExclusions()
     }
 }
 
 /// Pure planning: which upload-tree keys can be marked completed because nothing under them changed.
 enum MirrorPlanner {
+    /// A local tree split by the exclusion rules. `excluded` holds only the outermost excluded items: nothing below an
+    /// excluded folder is read at all, which also keeps unreadable system folders such as .Trashes from failing a scan.
+    struct LocalScan {
+        var stamps: [String: FileStamp] = [:]
+        var excluded: [String: FileStamp] = [:]
+        /// Both together, for the two-way planner, which partitions them again by the same rules.
+        var all: [String: FileStamp] { stamps.merging(excluded) { kept, _ in kept } }
+    }
     /// Relative path → stamp for every regular file under `root`. Symlinks are skipped, hidden files are included.
-    nonisolated static func stamps(of root: URL) throws -> [String: FileStamp] {
-        var result: [String: FileStamp] = [:]
+    nonisolated static func stamps(of root: URL) throws -> [String: FileStamp] { try scan(root, exclusions: .none).stamps }
+    nonisolated static func scan(_ root: URL, exclusions: SyncExclusionMatcher) throws -> LocalScan {
+        var result = LocalScan()
         let base = root.standardizedFileURL.path
         guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey], options: []) else { return result }
         for case let url as URL in enumerator {
@@ -70,7 +83,17 @@ enum MirrorPlanner {
             let modified = values.isDirectory == true ? Date(timeIntervalSince1970: 0) : (values.contentModificationDate ?? .distantPast)
             let path = url.standardizedFileURL.path
             guard path.hasPrefix(base + "/") else { continue }
-            result[String(path.dropFirst(base.count + 1))] = FileStamp(size: values.isDirectory == true ? -1 : Int64(values.fileSize ?? 0), modified: modified)
+            let relative = String(path.dropFirst(base.count + 1))
+            let stamp = FileStamp(size: values.isDirectory == true ? -1 : Int64(values.fileSize ?? 0), modified: modified)
+            // Parents come before their children, so checking the item alone is enough: an excluded parent was
+            // never descended into.
+            let name = relative.split(separator: "/").last ?? Substring(relative)
+            if exclusions.excludesItself(relative, name: name, isFolder: values.isDirectory == true) {
+                result.excluded[relative] = stamp
+                if values.isDirectory == true { enumerator.skipDescendants() }
+            } else {
+                result.stamps[relative] = stamp
+            }
         }
         return result
     }
@@ -140,7 +163,9 @@ final class MirrorManager: ObservableObject {
     /// Mirrors whose folder changed while a sync was running or waiting for the debounce.
     @Published private(set) var pending: Set<UUID> = []
     let storeURL: URL
-    weak var queue: TransferQueue?
+    weak var queue: TransferQueue? {
+        didSet { queue?.uploadExclusions = { [weak self] transfer in self?.exclusions(forTransfer: transfer) } }
+    }
     var accountLookup: ((String) -> Account?)?
     /// Time to let a burst of file-system events settle before planning a sync.
     var debounce: Duration = .seconds(3)
@@ -158,6 +183,8 @@ final class MirrorManager: ObservableObject {
     private var scheduled: [UUID: Task<Void, Never>] = [:]
     private var dirty: Set<UUID> = []
     private var subscription: AnyCancellable?
+    /// Compiled rules per mirror, dropped whenever the rules change. Case sensitivity follows the local volume.
+    private var matchers: [UUID: SyncExclusionMatcher] = [:]
 
     init(storeURL: URL = LocalStore.directory.appendingPathComponent("mirrors.json")) {
         self.storeURL = storeURL
@@ -189,7 +216,7 @@ final class MirrorManager: ObservableObject {
         watchers.removeValue(forKey: id)?.stop()
         if let url = scopedURLs.removeValue(forKey: id) { url.stopAccessingSecurityScopedResource() }
         scheduled.removeValue(forKey: id)?.cancel(); dirty.remove(id); pending.remove(id)
-        pollers.removeValue(forKey: id)?.cancel(); running.remove(id); massDeletionAllowed.remove(id)
+        pollers.removeValue(forKey: id)?.cancel(); running.remove(id); massDeletionAllowed.remove(id); matchers[id] = nil
         mirrors.removeAll { $0.id == id }
         if let transfer { queue?.cancel(transfer) }
         do { try persist() } catch { persistenceError = error.localizedDescription }
@@ -205,6 +232,26 @@ final class MirrorManager: ObservableObject {
     func syncNow(_ id: UUID, applyingMassDeletion: Bool = false) {
         if applyingMassDeletion { massDeletionAllowed.insert(id) }
         scheduleSync(id, immediate: true)
+    }
+
+    /// Replaces a mirror's rules and syncs again, so whatever a rule no longer covers goes up now. Nothing that a
+    /// new rule covers is deleted on either side: it is simply no longer looked at.
+    func setExclusions(_ rules: SyncExclusions, for id: UUID) throws {
+        guard let index = mirrors.firstIndex(where: { $0.id == id }) else { return }
+        guard mirrors[index].exclusions != rules else { return }
+        mirrors[index].exclusions = rules
+        matchers[id] = nil
+        try persist()
+        scheduleSync(id, immediate: true)
+    }
+    func exclusions(of mirror: FolderMirror) -> SyncExclusionMatcher {
+        if let cached = matchers[mirror.id] { return cached }
+        let matcher = mirror.exclusions.matcher(caseInsensitive: SyncExclusions.isCaseInsensitive(resolvedURL(mirror)))
+        matchers[mirror.id] = matcher
+        return matcher
+    }
+    private func exclusions(forTransfer transfer: UUID) -> SyncExclusionMatcher? {
+        mirrors.first { $0.activeTransferID == transfer }.map(exclusions(of:))
     }
 
     /// What the sidebar shows next to a mirror.
@@ -294,7 +341,8 @@ final class MirrorManager: ObservableObject {
         let url = resolvedURL(mirror)
         do {
             guard FileManager.default.fileExists(atPath: url.path) else { throw CloudError.message(L("La carpeta local ya no existe en \(url.path).")) }
-            let current = try await blockingIO { try MirrorPlanner.stamps(of: url) }
+            let rules = exclusions(of: mirror)
+            let current = try await blockingIO { try MirrorPlanner.scan(url, exclusions: rules).stamps }
             guard let position = mirrors.firstIndex(where: { $0.id == id }) else { return }
             let unchanged = MirrorPlanner.completedKeys(current: current, previous: mirrors[position].stamps.filter { mirrors[position].remoteEntries["./" + $0.key] != nil })
             if unchanged.count == current.count + unchanged.filter({ !current.keys.contains(String($0.dropFirst(2))) }).count, current.allSatisfy({ mirrors[position].stamps[$0.key] == $0.value && mirrors[position].remoteEntries["./" + $0.key] != nil }), mirrors[position].lastSync != nil {
@@ -330,6 +378,7 @@ final class MirrorManager: ObservableObject {
             guard FileManager.default.fileExists(atPath: url.path) else { throw CloudError.message(L("La carpeta local ya no existe en \(url.path).")) }
             guard let api = try queue?.client?(account.id) else { throw CloudError.message(L("Vuelve a conectar la cuenta de este reflejo.")) }
             let engine = TwoWaySyncEngine(api: api, localRoot: url, remoteRoot: mirror.remoteFolderID, baseline: mirror.baseline)
+            engine.exclusions = exclusions(of: mirror)
             engine.allowMassDeletion = massDeletionAllowed.remove(id) != nil
             engine.persist = { [weak self] baseline in
                 guard let self, let position = self.mirrors.firstIndex(where: { $0.id == id }) else { return }

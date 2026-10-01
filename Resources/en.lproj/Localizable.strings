@@ -1011,3 +1011,15 @@
 "«%@» cambió en la nube mientras se descargaba. Se volverá a descargar la versión nueva." = "“%@” changed in the cloud while it was downloading. The new version will be downloaded again.";
 "%lld sin suma del proveedor (solo se comprobó el tamaño)" = "%lld without a provider checksum (only the size was checked)";
 "%lld exportados de Google, sin suma que comparar" = "%lld exported from Google, with no checksum to compare";
+/* Exclusiones, pausa y cambios pendientes de los reflejos. */
+"Exclusiones…" = "Exclusions…";
+"Exclusiones de «%@»" = "Exclusions for “%@”";
+"Excluir los archivos del sistema y de bloqueo habituales" = "Exclude the usual system and lock files";
+"Excluir los archivos y carpetas ocultos (los que empiezan por punto)" = "Exclude hidden files and folders (those starting with a dot)";
+"Excluir los paquetes (.app, .photoslibrary, .bundle…)" = "Exclude packages (.app, .photoslibrary, .bundle…)";
+"Patrones propios, uno por línea" = "Your own patterns, one per line";
+"«*» es cualquier texto dentro de un nombre, «?» un carácter, «[a-z]» uno de la lista y «**» cualquier número de carpetas. Si el patrón lleva «/», cuenta desde la carpeta reflejada; si no, vale para el nombre a cualquier profundidad. Una «/» al final lo limita a carpetas. Las líneas que empiezan por «#» son comentarios." = "“*” is any text within a name, “?” one character, “[a-z]” one from the list and “**” any number of folders. If the pattern contains “/”, it counts from the mirrored folder; otherwise it applies to the name at any depth. A trailing “/” limits it to folders. Lines starting with “#” are comments.";
+"Prueba una ruta, por ejemplo Fotos/IMG_001.tmp" = "Try a path, for example Photos/IMG_001.tmp";
+"Excluido" = "Excluded";
+"Se sincroniza" = "Synced";
+"Cambiar las reglas no borra nada: lo que ya se sincronizó y ahora queda excluido se deja como está, en el Mac y en la nube." = "Changing the rules deletes nothing: whatever was already synced and is now excluded is left as it is, on the Mac and in the cloud.";

@@ -27,6 +27,9 @@ final class TransferQueue: ObservableObject {
     var didFinish: ((Transfer) -> Void)?
     /// Fires for every single file that ends up on this Mac, or whose local original was just uploaded.
     var didStoreLocalCopy: ((LocalCopy) -> Void)?
+    /// Rules a folder upload must leave out, by job; mirrors answer for their own uploads and everything else gets nil.
+    /// Asked as the tree is walked, so a file that appears after the sync was planned is judged as well.
+    var uploadExclusions: ((UUID) -> SyncExclusionMatcher?)?
     var retryDelay: Double = 1
     /// Minimum interval between two progress updates; URLSession can report dozens of times per second.
     var reportInterval: TimeInterval = 0.1
@@ -584,6 +587,8 @@ final class TransferQueue: ObservableObject {
         let values = try local.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey])
         guard values.isSymbolicLink != true else { throw CloudError.message(L("No se admiten enlaces simbólicos.")) }
         let folder = values.isDirectory == true
+        // Excluded: never uploaded, never listed, never counted. The root itself is the mirror and is never excluded.
+        if key != ".", let rules = uploadExclusions?(id), rules.excludes(String(key.dropFirst(2)), isFolder: folder) { return }
         if try job(id).completedPaths.contains(key) { done += try await blockingIO { try Self.localSize(local) }; mark(id, done: done); return }
         // A mirror's own folder is never created remotely: its contents go into one that already exists, so its name
         // never reaches the provider. Judging it by the provider's rules stopped a mirror of "Fotos." from ever
