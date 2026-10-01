@@ -66,14 +66,14 @@ struct ConnectView: View {
             .onAppear { model.connectionError = nil }
             .sheet(item: $model.serverLogin) { cloud in ServerLoginView(model: model, cloud: cloud) }
             .sheet(isPresented: $model.showAdvanced) { AdvancedDriveView(model: model) }
-            .sheet(item: $model.o2Login) { request in O2WebLoginView(model: model, host: request.host) }
+            .sheet(item: $model.o2Login) { request in O2WebLoginView(model: model, request: request) }
     }
 
     private func providerButton(_ cloud: Cloud, title: LocalizedStringKey, subtitle: LocalizedStringKey, icon: String) -> some View {
         Button {
             // A self-hosted provider needs an address and credentials before anything can be attempted.
             if cloud == .volume { Task { await model.connectVolume() } }
-            else if cloud.usesWebLogin { model.connectionError = nil; model.o2Login = O2LoginRequest(id: "cloud.o2online.es") }
+            else if cloud.usesWebLogin { model.connectionError = nil; model.o2Login = O2LoginRequest(host: "cloud.o2online.es") }
             else if cloud.usesPasswordLogin { model.connectionError = nil; model.serverLogin = cloud }
             else { Task { await model.connect(cloud: cloud) } }
         } label: {

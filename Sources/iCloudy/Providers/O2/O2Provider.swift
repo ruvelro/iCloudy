@@ -375,7 +375,7 @@ extension O2Provider {
             // The address O2 hands out may well be a different fleet of servers. The session belongs to O2's own
             // host and nowhere else: sending it wherever the answer points would hand the account's cookies to
             // whoever that turns out to be.
-            if let answering = url.host?.lowercased(), answering == o2Host.lowercased() || answering.hasSuffix("." + o2Host.lowercased()) {
+            if let answering = url.host, O2WebSession.domain(o2Host, covers: answering) {
                 state.apply(to: &request)
             }
             let sent = state.validationKey
