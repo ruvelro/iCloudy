@@ -8,8 +8,8 @@ enum CloudError: LocalizedError {
         switch self {
         case .message(let text): return text
         case .sessionExpired(let detail):
-            let base = "La sesión de esta cuenta ha caducado o el acceso se ha revocado. Vuelve a conectar la cuenta desde la barra lateral."
-            return detail.map { base + " Detalle del proveedor: \($0)" } ?? base
+            let base = L("La sesión de esta cuenta ha caducado o el acceso se ha revocado. Vuelve a conectar la cuenta desde la barra lateral.")
+            return detail.map { base + " " + L("Detalle del proveedor: \($0)") } ?? base
         }
     }
     var isSessionExpired: Bool { if case .sessionExpired = self { return true } else { return false } }

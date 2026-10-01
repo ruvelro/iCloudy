@@ -31,6 +31,37 @@ struct Account: Codable, Identifiable, Hashable {
         if driveID != nil { base.recents = false; base.sharedWithMe = false }
         return base
     }
+    /// Why `action` cannot be applied to these items in this account, or nil when it can. The provider's own reason
+    /// where it has one, so the interface can explain the action instead of offering it and failing afterwards.
+    func limitation(_ action: ItemAction, for files: [CloudFile]) -> String? {
+        let capabilities = self.capabilities
+        guard !capabilities.allows(action, on: files) else { return nil }
+        let folders = files.contains(where: \.isFolder)
+        switch action {
+        case .copy:
+            guard capabilities.copy, folders else { return L("\(cloud.title) no permite copiar desde iCloudy.") }
+            switch cloud {
+            case .google: return L("Google Drive no permite copiar carpetas. Copia los archivos que contiene.")
+            case .mega: return L("Mega solo copia archivos, no carpetas.")
+            default: return L("\(cloud.title) no copia carpetas desde iCloudy. Copia los archivos que contiene.")
+            }
+        case .publicLink:
+            guard capabilities.publicLinks else { return L("\(cloud.title) no crea enlaces públicos desde iCloudy.") }
+            if folders, !capabilities.linksFolders {
+                return cloud == .mega
+                    ? L("Mega comparte una carpeta con una clave de compartición aparte, un paso que iCloudy todavía no sabe dar. Crea el enlace de la carpeta desde mega.nz; los archivos sueltos sí se comparten desde aquí.")
+                    : L("\(cloud.title) solo crea enlaces públicos de archivos, no de carpetas.")
+            }
+            return cloud == .o2
+                ? L("O2 Cloud crea enlaces de carpetas. Para un archivo suelto, compártelo desde su web.")
+                : L("\(cloud.title) solo crea enlaces públicos de carpetas, no de archivos sueltos.")
+        case .permanentDelete:
+            guard capabilities.permanentDelete, folders else { return L("\(cloud.title) no permite el borrado definitivo desde iCloudy.") }
+            return cloud == .o2
+                ? L("O2 Cloud solo elimina archivos de forma definitiva desde otras aplicaciones. Envía la carpeta a la papelera y vacíala desde su web.")
+                : L("\(cloud.title) solo elimina archivos de forma definitiva desde iCloudy, no carpetas.")
+        }
+    }
     /// An account restricted to one shared drive or document library. It is a view of the parent account rather than a
     /// new sign-in: the identifier keeps the parent's prefix and the credential stays in the parent's Keychain entry.
     static func scoped(to driveID: String, named name: String, from parent: Account) -> Account {
@@ -38,7 +69,7 @@ struct Account: Codable, Identifiable, Hashable {
                 email: parent.email + " · " + name, clientID: parent.clientID, clientSecret: parent.clientSecret,
                 serverURL: nil, bookmark: nil, options: ["driveID": driveID, "credentialSource": parent.id])
     }
-    static let demo = Account(id: "demo:local", cloud: .google, name: "Demo local", email: "Sin conexión · datos de prueba", clientID: "", clientSecret: nil)
+    static let demo = Account(id: "demo:local", cloud: .google, name: L("Demo local"), email: L("Sin conexión · datos de prueba"), clientID: "", clientSecret: nil)
 }
 
 extension Account {

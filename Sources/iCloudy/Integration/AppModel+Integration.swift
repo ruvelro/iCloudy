@@ -135,16 +135,11 @@ extension AppModel {
         }
     }
 
-    func waitUntilReady() async throws {
-        while loadingAccounts { try await Task.sleep(for: .milliseconds(20)) }
-        if let accountLoadError { throw accountLoadError }
-    }
-
     /// Asks for a local folder and mirrors it, one way, into the given remote folder of the current account.
     func pickMirrorSource(for folder: CloudFile, twoWay: Bool = false) async {
         guard let account, folder.isFolder else { return }
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
-        panel.prompt = twoWay ? "Sincronizar" : "Reflejar"
+        panel.prompt = twoWay ? L("Sincronizar") : L("Reflejar")
         panel.message = twoWay
             ? L("La carpeta elegida y «\(folder.name)» se mantendrán iguales en los dos sentidos: lo que cambie en una se aplica en la otra. Lo borrado en un lado va a la papelera del otro, si la tiene; si un archivo cambia en los dos a la vez se conservan las dos versiones. Un borrado de la mayor parte de un lado se detiene y pregunta.")
             : L("Los archivos de la carpeta elegida se subirán a «\(folder.name)» y se mantendrán al día. Solo en un sentido: iCloudy nunca borra ni modifica lo local, y no elimina en la nube lo que borres aquí.")

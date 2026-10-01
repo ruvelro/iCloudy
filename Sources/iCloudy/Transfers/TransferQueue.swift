@@ -116,7 +116,7 @@ final class TransferQueue: ObservableObject {
     /// Coalesced writes batch the per-block checkpoints into one file write every `flushDelay`. The server is the
     /// authority on resume anyway, so losing the last seconds of offsets only costs a probe request.
     private func persist(coalesce: Bool = false) throws {
-        guard writable else { throw CloudError.message(persistenceError ?? "La cola no se puede guardar.") }
+        guard writable else { throw CloudError.message(persistenceError ?? L("La cola no se puede guardar.")) }
         if coalesce { dirty = true; scheduleFlush(); return }
         flushTask?.cancel(); flushTask = nil; dirty = false
         do { try LocalStore.save(items, to: storeURL) }
@@ -337,7 +337,7 @@ final class TransferQueue: ObservableObject {
             } catch {
                 if let index = index(id), items[index].state == .running {
                     if Task.isCancelled { items[index].state = .paused; items[index].detail = "" }
-                    else { items[index].state = .failed; items[index].detail = error.localizedDescription + " Los elementos ya completados se conservan." }
+                    else { items[index].state = .failed; items[index].detail = error.localizedDescription + " " + L("Los elementos ya completados se conservan.") }
                     items[index].bytesPerSecond = 0
                     do { try persist() } catch { persistenceError = error.localizedDescription }
                 }
@@ -369,7 +369,7 @@ final class TransferQueue: ObservableObject {
     }
     static func completionSummary(verified: Int, unverified: Int) -> String {
         guard verified + unverified > 0 else { return "" }
-        var parts = ["Completada"]
+        var parts = [L("Completada")]
         if verified > 0 { parts.append(L("\(verified) \(verified == 1 ? L("archivo verificado") : L("archivos verificados")) con la suma del proveedor")) }
         if unverified > 0 { parts.append(L("\(unverified) sin verificar (reanudados o sin suma del proveedor)")) }
         return parts.joined(separator: " · ")

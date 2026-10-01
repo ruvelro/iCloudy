@@ -66,7 +66,7 @@ struct ExplorerView: View {
             }
             Button("Cancelar", role: .cancel) { model.pendingShare = nil }
         } message: {
-            Text("Cualquier persona con el enlace podrá ver «\(model.pendingShare?.file.name ?? "")» sin iniciar sesión. El permiso queda en \(model.pendingShare?.account.cloud.title ?? "la nube") hasta que lo revoques desde su web.")
+            Text("Cualquier persona con el enlace podrá ver «\(model.pendingShare?.file.name ?? "")» sin iniciar sesión. El permiso queda en \(model.pendingShare?.account.cloud.title ?? L("la nube")) hasta que lo revoques desde su web.")
         }
         .confirmationDialog(trashTitle, isPresented: Binding(get: { model.pendingTrash != nil }, set: { if !$0 { model.pendingTrash = nil } }), titleVisibility: .visible) {
             Button(model.account?.capabilities.reversibleTrash == false ? "Eliminar definitivamente" : "Enviar a la papelera", role: .destructive) {
@@ -78,8 +78,8 @@ struct ExplorerView: View {
             Text(model.account?.capabilities.reversibleTrash == false
                  ? L("Este servidor no tiene papelera: lo que elimines se borra de forma definitiva, con todo el contenido de las carpetas. iCloudy no puede deshacerlo.")
                  : model.account?.cloud == .volume ? L("Los elementos van a la papelera del Mac y se pueden restaurar desde el Finder.")
-                 : model.account?.capabilities.trashListing == true ? L("Los elementos van a la papelera de \(model.account?.cloud.title ?? "la nube"), con todo el contenido de las carpetas. Desde la pestaña Papelera se pueden restaurar o eliminar definitivamente.")
-                 : L("Los elementos van a la papelera de \(model.account?.cloud.title ?? "la nube") y se pueden restaurar desde su web. Las carpetas se envían con todo su contenido."))
+                 : model.account?.capabilities.trashListing == true ? L("Los elementos van a la papelera de \(model.account?.cloud.title ?? L("la nube")), con todo el contenido de las carpetas. Desde la pestaña Papelera se pueden restaurar o eliminar definitivamente.")
+                 : L("Los elementos van a la papelera de \(model.account?.cloud.title ?? L("la nube")) y se pueden restaurar desde su web. Las carpetas se envían con todo su contenido."))
         }
         .confirmationDialog(purgeTitle, isPresented: Binding(get: { model.pendingPurge != nil }, set: { if !$0 { model.pendingPurge = nil } }), titleVisibility: .visible) {
             Button("Eliminar definitivamente", role: .destructive) {
@@ -88,7 +88,7 @@ struct ExplorerView: View {
             }
             Button("Cancelar", role: .cancel) { model.pendingPurge = nil }
         } message: {
-            Text("Se borra de \(model.account?.cloud.title ?? "la nube") sin pasar por la papelera, con todo el contenido de las carpetas. Ni iCloudy ni el proveedor pueden deshacerlo.")
+            Text("Se borra de \(model.account?.cloud.title ?? L("la nube")) sin pasar por la papelera, con todo el contenido de las carpetas. Ni iCloudy ni el proveedor pueden deshacerlo.")
         }
         .confirmationDialog("¿Vaciar la papelera?", isPresented: $model.pendingEmptyTrash, titleVisibility: .visible) {
             Button("Vaciar papelera", role: .destructive) {
@@ -97,7 +97,7 @@ struct ExplorerView: View {
             }
             Button("Cancelar", role: .cancel) { model.pendingEmptyTrash = false }
         } message: {
-            Text("Todo lo que hay en la papelera de \(model.account?.cloud.title ?? "la nube") se elimina de forma definitiva, también lo que otras aplicaciones hayan enviado ahí. No se puede deshacer.")
+            Text("Todo lo que hay en la papelera de \(model.account?.cloud.title ?? L("la nube")) se elimina de forma definitiva, también lo que otras aplicaciones hayan enviado ahí. No se puede deshacer.")
         }
         .confirmationDialog("¿Desconectar esta cuenta?", isPresented: $confirmDisconnect, titleVisibility: .visible, presenting: disconnectTarget) { account in
             Button("Desconectar", role: .destructive) { model.disconnect(account) }

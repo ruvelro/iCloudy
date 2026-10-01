@@ -8,7 +8,7 @@ struct ServiceError: LocalizedError {
     /// Seconds the provider asked us to wait, from its `Retry-After` header. Waiting less is what turns one refusal
     /// into a string of them.
     var retryAfter: Double? = nil
-    var errorDescription: String? { detail ?? "El servicio devolvió HTTP \(status)." }
+    var errorDescription: String? { detail ?? L("El servicio devolvió HTTP \(status).") }
     var retryable: Bool { [408, 429, 500, 502, 503, 504].contains(status) }
 }
 

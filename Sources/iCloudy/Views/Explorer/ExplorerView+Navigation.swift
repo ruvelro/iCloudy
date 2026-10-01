@@ -231,7 +231,7 @@ extension ExplorerView {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(model.path.last?.name ?? model.collection.title).font(.system(size: 27, weight: .semibold))
-                    Text(model.account?.email ?? "Un explorador sencillo para tus nubes").foregroundStyle(.secondary)
+                    Text(model.account?.email ?? L("Un explorador sencillo para tus nubes")).foregroundStyle(.secondary)
                 }
                 Spacer()
                 if model.showingCachedListing {

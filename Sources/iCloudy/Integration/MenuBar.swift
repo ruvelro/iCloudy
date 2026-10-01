@@ -61,9 +61,8 @@ struct MenuBarContent: View {
 
 /// Receives files and text sent from any app through the Services menu. It runs inside iCloudy, so it needs neither an
 /// app extension nor an App Group; the pasteboard carries the sandbox extensions that grant read access to the files.
+/// Picking the service can launch the app, so the request waits for the accounts instead of finding no model.
 final class ServicesProvider: NSObject {
-    weak var model: AppModel?
-
     @objc func uploadToICloudy(_ pasteboard: NSPasteboard, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString>) {
         let urls = (pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL] ?? []).filter(\.isFileURL)
         let text = pasteboard.string(forType: .string)
@@ -71,11 +70,13 @@ final class ServicesProvider: NSObject {
             error.pointee = L("No hay archivos ni texto que subir.") as NSString
             return
         }
-        Task { @MainActor [weak self] in
-            guard let model = self?.model else { return }
-            NSApp.activate(ignoringOtherApps: true)
-            if !urls.isEmpty { _ = model.enqueueUploads(urls) }
-            else if let text { model.uploadText(text) }
+        // The pasteboard is read above, while the system still holds it; only the upload waits.
+        Task { @MainActor in
+            ColdStart.deliver { model in
+                NSApp.activate(ignoringOtherApps: true)
+                if !urls.isEmpty { _ = model.enqueueUploads(urls) }
+                else if let text { model.uploadText(text) }
+            }
         }
     }
 }

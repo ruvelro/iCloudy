@@ -13,7 +13,6 @@ struct Relocation: Identifiable {
     var title: String {
         switch kind { case .move: return L("Mover a…"); case .copy: return L("Copiar a…"); case .transfer: return L("Enviar a otra nube…") }
     }
-    var verb: String { switch kind { case .move: return "Mover"; case .copy: return "Copiar"; case .transfer: return "Enviar" } }
     var confirm: String { switch kind { case .move: return L("Mover aquí"); case .copy: return L("Copiar aquí"); case .transfer: return L("Enviar aquí") } }
 }
 
@@ -74,7 +73,13 @@ struct FolderPickerView: View {
     }
     private var summary: String {
         let what = request.files.count == 1 ? L("«\(request.files[0].name)»") : L("\(request.files.count) elementos")
-        return L("\(request.verb) \(what) a \(model.accountTitle(request.account)) · \(request.account.email)")
+        let title = model.accountTitle(request.account), email = request.account.email
+        // One whole sentence per verb: a verb spliced into a shared sentence stayed Spanish in English.
+        switch request.kind {
+        case .move: return L("Mover \(what) a \(title) · \(email)")
+        case .copy: return L("Copiar \(what) a \(title) · \(email)")
+        case .transfer: return L("Enviar \(what) a \(title) · \(email)")
+        }
     }
 
     var body: some View {

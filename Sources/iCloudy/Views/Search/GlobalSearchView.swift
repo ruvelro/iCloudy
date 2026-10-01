@@ -65,7 +65,7 @@ struct GlobalSearchView: View {
             .overlay {
                 if search.visibleHits.isEmpty {
                     ContentUnavailableView {
-                        Label(search.submittedQuery.isEmpty ? "Todas tus cuentas, una búsqueda" : (search.loadingIDs.isEmpty ? L("Sin resultados con estos filtros") : L("Buscando…")), systemImage: "magnifyingglass")
+                        Label(search.submittedQuery.isEmpty ? L("Todas tus cuentas, una búsqueda") : (search.loadingIDs.isEmpty ? L("Sin resultados con estos filtros") : L("Buscando…")), systemImage: "magnifyingglass")
                     } description: {
                         Text(search.submittedQuery.isEmpty ? L("Escribe un término y pulsa Intro. Cada proveedor usa su propio índice de nombres y contenido.") : L("Los filtros se aplican a los resultados recibidos. Si quedan páginas, carga más; si hubo errores, reintenta la cuenta."))
                     }.allowsHitTesting(false)
@@ -119,7 +119,9 @@ struct GlobalSearchView: View {
         // The explorer checks this and the search did not, so here the action was offered for FTP and for a volume
         // and answered with the provider's refusal.
         if let account = model.accounts.first(where: { $0.id == hit.accountID }), account.capabilities.publicLinks {
-            Button("Crear enlace público de solo lectura…") { model.pendingShare = (hit.file, account) }
+            Button("Crear enlace público de solo lectura…") { model.requestPublicLink(hit.file, account: account) }
+                .disabled(account.limitation(.publicLink, for: [hit.file]) != nil)
+                .help(account.limitation(.publicLink, for: [hit.file]) ?? "")
         }
         ForEach(hit.file.exportOptions, id: \.ext) { option in
             if let account = model.accounts.first(where: { $0.id == hit.accountID }) {

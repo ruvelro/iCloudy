@@ -122,7 +122,7 @@ final class PreviewModel: ObservableObject {
     }
     var authorizedLimit: Int64 { max(Self.automaticLimit, file?.size ?? 0) }
     var confirmationText: String {
-        let size = file?.size.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .decimal) } ?? "tamaño desconocido"
+        let size = file?.size.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .decimal) } ?? L("tamaño desconocido")
         return L("Este archivo tiene \(size). Se descargará temporalmente, con un máximo de \(ByteCountFormatter.string(fromByteCount: authorizedLimit, countStyle: .decimal)). ¿Continuar?")
     }
     func open(file: CloudFile, account: Account, client: CloudAPI) {
@@ -130,7 +130,7 @@ final class PreviewModel: ObservableObject {
         close()
         self.file = file; self.account = account; self.client = client
         guard let kind = PreviewKind.forFile(file) else { phase = .unsupported; return }
-        guard store != nil else { phase = .failed(initializationError ?? "No se pudo preparar la vista previa."); return }
+        guard store != nil else { phase = .failed(initializationError ?? L("No se pudo preparar la vista previa.")); return }
         // Exports have no size, but Drive caps them at 10 MB, well under the automatic limit.
         if kind != .exportedPDF, file.size == nil || file.size! < 0 || file.size! > Self.automaticLimit { phase = .confirmation }
         else { start() }

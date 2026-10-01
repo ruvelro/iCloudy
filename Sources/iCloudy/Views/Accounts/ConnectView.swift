@@ -69,7 +69,7 @@ struct ConnectView: View {
             .sheet(item: $model.o2Login) { request in O2WebLoginView(model: model, host: request.host) }
     }
 
-    private func providerButton(_ cloud: Cloud, title: String, subtitle: String, icon: String) -> some View {
+    private func providerButton(_ cloud: Cloud, title: LocalizedStringKey, subtitle: LocalizedStringKey, icon: String) -> some View {
         Button {
             // A self-hosted provider needs an address and credentials before anything can be attempted.
             if cloud == .volume { Task { await model.connectVolume() } }

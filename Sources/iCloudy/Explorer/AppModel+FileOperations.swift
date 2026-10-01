@@ -22,19 +22,29 @@ extension AppModel {
         } catch { self.error = error.localizedDescription }
     }
 
-    /// Whether "copy to…" can do anything with this selection. Drive cannot copy a folder, and offering the action
-    /// only to answer with a refusal afterwards is a worse way of saying so.
+    /// Whether "copy to…" can do anything with this selection. Drive and Mega cannot copy a folder, and offering the
+    /// action only to answer with a refusal afterwards is a worse way of saying so.
     func canCopy(_ files: [CloudFile]) -> Bool {
-        guard let account, account.capabilities.copy, !files.isEmpty else { return false }
-        return account.cloud != .google || !files.contains(where: \.isFolder)
+        guard let account, !files.isEmpty else { return false }
+        return account.capabilities.allows(.copy, on: files)
+    }
+
+    /// Why `action` is not available for these items in the current account; shown as the disabled action's help.
+    func limitation(_ action: ItemAction, for files: [CloudFile], account target: Account? = nil) -> String? {
+        guard let account = target ?? account else { return nil }
+        return account.limitation(action, for: files)
+    }
+
+    /// Asks for confirmation before a public link, unless the provider cannot make one for this kind of item.
+    func requestPublicLink(_ file: CloudFile, account target: Account? = nil) {
+        guard let account = target ?? account else { return }
+        if let reason = account.limitation(.publicLink, for: [file]) { error = reason; return }
+        pendingShare = (file, account)
     }
 
     func requestRelocation(_ files: [CloudFile], copy: Bool) {
         guard let account, !files.isEmpty else { return }
-        if copy, account.cloud == .google, files.contains(where: \.isFolder) {
-            error = L("Google Drive no permite copiar carpetas. Copia los archivos que contiene."); return
-        }
-        if copy, !account.capabilities.copy { error = L("\(account.cloud.title) no permite copiar desde iCloudy."); return }
+        if copy, let reason = account.limitation(.copy, for: files) { error = reason; return }
         relocation = Relocation(files: files, kind: copy ? .copy : .move, account: account, origin: path.isEmpty && collection != .files ? nil : folderID)
     }
 
@@ -73,7 +83,8 @@ extension AppModel {
             let siblings = try await api.list(parent: destination)
             let clashes = request.files.filter { file in siblings.contains { $0.id != file.id && $0.name.localizedCaseInsensitiveCompare(file.name) == .orderedSame } }
             guard clashes.isEmpty else {
-                throw CloudError.message(L("En la carpeta de destino ya existe ") + clashes.map { "«\($0.name)»" }.joined(separator: ", ") + ". Renombra antes de mover o copiar.")
+                let names = clashes.map { "«\($0.name)»" }.joined(separator: ", ")
+                throw CloudError.message(L("En la carpeta de destino ya existe \(names). Renombra antes de mover o copiar."))
             }
             if request.isMove, queue.hasActive(accountID: request.account.id) { throw CloudError.message(L("Pausa las transferencias de esta cuenta antes de mover sus archivos.")) }
             for file in request.files {
@@ -91,14 +102,18 @@ extension AppModel {
                 }
             }
             if request.isMove { try LocalStore.save(favorites, to: favoritesURL) }
-            let target = destinationPath.last?.name ?? "Mis archivos"
+            let target = destinationPath.last?.name ?? L("Mis archivos")
             if !request.isMove, request.account.cloud == .microsoft, !request.account.isDemo {
                 info = L("Copia enviada a OneDrive. Su estado se muestra en Transferencias hasta que el servidor confirme el resultado.")
                 reload(fresh: true)
                 return
             }
-            let verb = request.isMove ? (done == 1 ? "movido" : "movidos") : (done == 1 ? "copiado" : "copiados")
-            info = L("\(done == 1 ? L("«\(request.files[0].name)»") : L("\(done) elementos")) \(verb) a «\(target)».") + (!request.isMove && request.account.cloud == .microsoft ? L(" OneDrive puede tardar unos segundos en mostrar la copia.") : L(""))
+            // Whole sentences, so the participle agrees in each language instead of being spliced in Spanish.
+            let name = request.files[0].name
+            let summary = request.isMove
+                ? (done == 1 ? L("«\(name)» movido a «\(target)».") : L("\(done) elementos movidos a «\(target)»."))
+                : (done == 1 ? L("«\(name)» copiado a «\(target)».") : L("\(done) elementos copiados a «\(target)»."))
+            info = summary + (!request.isMove && request.account.cloud == .microsoft ? L(" OneDrive puede tardar unos segundos en mostrar la copia.") : "")
         } catch {
             self.error = (done > 0 ? L("Se completaron \(done) de \(request.files.count). ") : L("")) + error.localizedDescription
         }
@@ -117,7 +132,7 @@ extension AppModel {
 
     func requestPermanentDelete(_ files: [CloudFile]) {
         guard let account, !files.isEmpty else { return }
-        guard account.capabilities.permanentDelete else { error = L("\(account.cloud.title) no permite el borrado definitivo desde iCloudy."); return }
+        if let reason = account.limitation(.permanentDelete, for: files) { error = reason; return }
         pendingPurge = files
     }
 
