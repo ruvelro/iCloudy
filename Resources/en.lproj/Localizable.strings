@@ -1011,3 +1011,26 @@
 "«%@» cambió en la nube mientras se descargaba. Se volverá a descargar la versión nueva." = "“%@” changed in the cloud while it was downloading. The new version will be downloaded again.";
 "%lld sin suma del proveedor (solo se comprobó el tamaño)" = "%lld without a provider checksum (only the size was checked)";
 "%lld exportados de Google, sin suma que comparar" = "%lld exported from Google, with no checksum to compare";
+/* Cifrado compatible con Cryptomator */
+"Esta bóveda no se puede abrir desde iCloudy: %@" = "This vault cannot be opened from iCloudy: %@";
+"Esta carpeta no es una bóveda de Cryptomator: le faltan vault.cryptomator o masterkey.cryptomator." = "This folder is not a Cryptomator vault: vault.cryptomator or masterkey.cryptomator is missing.";
+"La bóveda está bloqueada. Desbloquéala para seguir." = "The vault is locked. Unlock it to continue.";
+"La bóveda está dañada: %@" = "The vault is damaged: %@";
+"La contraseña de la bóveda no es correcta." = "The vault password is not correct.";
+"el cifrado de contenido de esta bóveda no es SIV_GCM ni SIV_CTRMAC." = "this vault's content cipher is neither SIV_GCM nor SIV_CTRMAC.";
+"el generador de números aleatorios del sistema no respondió." = "the system's random number generator did not respond.";
+"el umbral de acortamiento de nombres no es válido." = "the name shortening threshold is not valid.";
+"hmacMasterKey no es Base64." = "hmacMasterKey is not Base64.";
+"la firma de vault.cryptomator no corresponde a esta clave." = "the signature of vault.cryptomator does not match this key.";
+"la sal de scrypt no es Base64." = "the scrypt salt is not Base64.";
+"la versión de masterkey.cryptomator no coincide con su firma." = "the version in masterkey.cryptomator does not match its signature.";
+"las claves envueltas no tienen la longitud esperada." = "the wrapped keys do not have the expected length.";
+"los parámetros de scrypt (N=%lld, r=%lld) no son válidos o piden demasiada memoria." = "the scrypt parameters (N=%lld, r=%lld) are not valid or ask for too much memory.";
+"masterkey.cryptomator no se puede leer." = "masterkey.cryptomator cannot be read.";
+"primaryMasterKey no es Base64." = "primaryMasterKey is not Base64.";
+"solo se admite el formato 8 de Cryptomator." = "only Cryptomator vault format 8 is supported.";
+"vault.cryptomator no dice dónde está la clave." = "vault.cryptomator does not say where its key is.";
+"vault.cryptomator no es un JWT válido." = "vault.cryptomator is not a valid JWT.";
+"vault.cryptomator usa una firma que Cryptomator no admite." = "vault.cryptomator uses a signature Cryptomator does not accept.";
+"versionMac no es Base64." = "versionMac is not Base64.";
+"«%@» no se pudo descifrar: el contenido cifrado está dañado o alguien lo ha modificado. No se ha guardado nada." = "“%@” could not be decrypted: the encrypted content is damaged or someone has modified it. Nothing has been saved.";
