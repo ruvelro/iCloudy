@@ -10,19 +10,12 @@ final class TabsAndPanesTests: XCTestCase {
     private func place(_ account: String, _ folders: String...) -> BrowserLocation {
         BrowserLocation(accountID: account, collection: .files, path: folders.map(folder))
     }
-    private var roots: [URL] = []
-    override func tearDown() {
-        for root in roots { try? FileManager.default.removeItem(at: root) }
-        roots = []
-        super.tearDown()
-    }
-    /// An account over a temporary folder of this Mac.
-    private func volume() throws -> Account {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("panel-" + UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        roots.append(root)
-        return Account(id: "volume:" + root.standardizedFileURL.path, cloud: .volume, name: root.lastPathComponent, email: "local",
-                       clientID: "", clientSecret: nil, serverURL: root.standardizedFileURL.path)
+    /// An account over a folder of this Mac that does not exist. The model lists whatever a tab shows as soon as it
+    /// shows it; with this, the listing fails at once without asking anybody for credentials, and nothing reaches the
+    /// app's real listing cache or Spotlight index.
+    private func phantom(_ name: String = UUID().uuidString) -> Account {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("no-existe-" + name).path
+        return Account(id: "volume:" + root, cloud: .volume, name: name, email: "local", clientID: "", clientSecret: nil, serverURL: root)
     }
 
     // MARK: - History
@@ -220,19 +213,18 @@ final class TabsAndPanesTests: XCTestCase {
         XCTAssertNil(WorkspaceStore(url: nil).load())
     }
 
-    func testTheModelOpensClosesAndRetargetsTabs() throws {
+    func testTheModelOpensClosesAndRetargetsTabs() {
         let model = AppModel()
-        // Folders of this Mac: listing them asks nobody for credentials.
-        let drive = try volume(), box = try volume()
+        let drive = phantom(), box = phantom()
         model.accounts = [drive, box]
         model.workspace = ExplorerWorkspace(panes: [ExplorerPane(tabs: [BrowserState(accountID: box.id, path: [folder("1")])])])
-        model.workspace.current.files = [folder("2")]
-        model.openInNewTab(folder("2"))
-        XCTAssertEqual(model.tabCount, 2)
-        XCTAssertEqual(model.path.map(\.id), ["1", "2"], "Se abre la carpeta en la pestaña nueva, que pasa a ser la activa")
-        XCTAssertEqual(model.tabTitle(model.workspace.current), "Carpeta 2")
         model.openInNewTab(CloudFile(id: "f", name: "a.txt", mime: "text/plain", size: 1, modified: nil, webURL: nil, isFolder: false))
-        XCTAssertEqual(model.tabCount, 2, "Un archivo no se abre en una pestaña")
+        XCTAssertEqual(model.tabCount, 1, "Un archivo no se abre en una pestaña")
+        model.newTab()
+        XCTAssertEqual(model.tabCount, 2)
+        XCTAssertEqual(model.path.map(\.id), ["1"], "La pestaña nueva empieza donde estaba la activa")
+        XCTAssertEqual(model.tabTitle(model.workspace.current), "Carpeta 1")
+        model.go(to: place(box.id, "1", "2"))
         model.newTab()
         XCTAssertEqual(model.tabCount, 3)
         XCTAssertEqual(model.workspace.panes[0].activeTab, 2)
