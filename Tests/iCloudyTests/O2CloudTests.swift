@@ -84,11 +84,44 @@ final class O2CloudTests: XCTestCase {
     func testOnlyTheSignInDomainsCount() {
         // The window visits nothing else, but naming them keeps it that way.
         for host in ["t3.o2online.es", "apiseg.telefonica.es", "cloud.o2online.es"] {
-            XCTAssertTrue(O2SilentRenewal.signInDomains.contains { host.hasSuffix($0) }, host)
+            XCTAssertTrue(O2SilentRenewal.signInDomains.contains { O2WebSession.domain($0, covers: host) }, host)
         }
-        for host in ["ejemplo.com", "google.com", "o2online.es.malicioso.com"] {
-            XCTAssertFalse(O2SilentRenewal.signInDomains.contains { host.hasSuffix($0) }, host)
+        for host in ["ejemplo.com", "google.com", "o2online.es.malicioso.com", "evilo2online.es", "notelefonica.es"] {
+            XCTAssertFalse(O2SilentRenewal.signInDomains.contains { O2WebSession.domain($0, covers: host) }, host)
         }
+    }
+
+    func testADomainOnlyCoversItselfAndTheNamesBelowIt() {
+        // Comparing bare suffixes let "evilo2.es" pass for ".o2.es", and every filter of O2's cookies went through
+        // that comparison: what is kept in the Keychain, what is sent, what a renewal reads back.
+        XCTAssertTrue(O2WebSession.domain(".o2.es", covers: "x.o2.es"))
+        XCTAssertTrue(O2WebSession.domain(".o2.es", covers: "o2.es"), "El punto inicial no cambia el dominio")
+        XCTAssertTrue(O2WebSession.domain("o2.es", covers: "a.b.o2.es"))
+        XCTAssertTrue(O2WebSession.domain(".O2.ES", covers: "X.o2.es"), "Sin distinguir mayúsculas")
+        XCTAssertFalse(O2WebSession.domain(".o2.es", covers: "evilo2.es"), "Acabar en las mismas letras no basta")
+        XCTAssertFalse(O2WebSession.domain("o2.es", covers: "evilo2.es"))
+        XCTAssertFalse(O2WebSession.domain("x.o2.es", covers: "o2.es"), "Un subdominio no cubre a su padre")
+        XCTAssertFalse(O2WebSession.domain(".o2.es", covers: "o2.es.malicioso.com"))
+        XCTAssertFalse(O2WebSession.domain("", covers: "o2.es"))
+        XCTAssertFalse(O2WebSession.domain(".", covers: "o2.es"), "Un dominio vacío no lo cubre todo")
+
+        func cookie(_ domain: String) -> HTTPCookie {
+            HTTPCookie(properties: [.name: "c", .value: "v", .domain: domain, .path: "/"])!
+        }
+        let host = "cloud.o2online.es"
+        XCTAssertTrue(O2WebSession.isServerCookie(cookie("cloud.o2online.es"), host: host))
+        XCTAssertTrue(O2WebSession.isServerCookie(cookie(".o2online.es"), host: host), "Se le envía al servidor")
+        XCTAssertTrue(O2WebSession.isServerCookie(cookie("api.cloud.o2online.es"), host: host))
+        XCTAssertFalse(O2WebSession.isServerCookie(cookie("ud.o2online.es"), host: host),
+                       "«cloud» acaba en «ud», pero no es el mismo servidor")
+        XCTAssertFalse(O2WebSession.isServerCookie(cookie("evilcloud.o2online.es"), host: host))
+
+        XCTAssertTrue(O2WebSession.isSignInCookie(cookie("t3.o2online.es"), host: host))
+        XCTAssertTrue(O2WebSession.isSignInCookie(cookie(".telefonica.es"), host: host))
+        XCTAssertFalse(O2WebSession.isSignInCookie(cookie("evilo2online.es"), host: host))
+        XCTAssertFalse(O2WebSession.isSignInCookie(cookie("nomovistar.es"), host: host))
+        XCTAssertFalse(O2WebSession.isSignInCookie(cookie("cloud.o2online.es"), host: host),
+                       "Las del servidor son de la sesión, no del acceso")
     }
 
     func testTheSessionKeepsPresentingTheClientItWasGrantedTo() async throws {

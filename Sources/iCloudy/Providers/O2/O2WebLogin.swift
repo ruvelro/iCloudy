@@ -93,7 +93,7 @@ final class O2WebLoginModel: ObservableObject {
     private func sessionCookies() async -> [HTTPCookie] {
         guard let webView else { return [] }
         let cookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
-        return cookies.filter { host.hasSuffix($0.domain) || $0.domain.hasSuffix(host) }
+        return cookies.filter { O2WebSession.isServerCookie($0, host: host) }
     }
     /// The cookies of the sign-in itself, which belong to Telefónica rather than to O2. They are kept because they
     /// are what lets the session be renewed later without asking anyone anything, and because the web view throws
@@ -102,10 +102,7 @@ final class O2WebLoginModel: ObservableObject {
     private func signInCookies() async -> [HTTPCookie] {
         guard let webView else { return [] }
         let cookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
-        return cookies.filter { cookie in
-            O2SilentRenewal.signInDomains.contains { cookie.domain.hasSuffix($0) }
-                && !(host.hasSuffix(cookie.domain) || cookie.domain.hasSuffix(host))
-        }
+        return cookies.filter { O2WebSession.isSignInCookie($0, host: host) }
     }
 
     /// The way out if the session is established but the key never shows up on its own. Nothing is stored unless the
@@ -252,9 +249,31 @@ enum O2WebSession {
     private static let alsoCleared = ["o2.de", "telefonica.com"]
     /// Hosts whose stored data belongs to this sign-in: O2's own server and the operator's identity provider.
     static func belongs(_ record: String, host: String) -> Bool {
-        let name = record.lowercased(), server = host.lowercased()
-        if server == name || server.hasSuffix("." + name) { return true }
-        return signInDomains.contains(name) || alsoCleared.contains(name)
+        if domain(record, covers: host) { return true }
+        return signInDomains.contains(record.lowercased()) || alsoCleared.contains(record.lowercased())
+    }
+    /// Whether something scoped to `domain` reaches `host`, the way a browser decides whether to send a cookie.
+    ///
+    /// A domain covers itself and every name below it, with or without the leading dot a `Set-Cookie` may carry,
+    /// and never a name that merely ends in the same letters: ".o2.es" covers "o2.es" and "x.o2.es", not
+    /// "evilo2.es". Comparing bare suffixes got that last one wrong, and every filter of O2's cookies went through it.
+    static func domain(_ domain: String, covers host: String) -> Bool {
+        let scope = bare(domain), name = bare(host)
+        guard !scope.isEmpty, !name.isEmpty else { return false }
+        return name == scope || name.hasSuffix("." + scope)
+    }
+    private static func bare(_ name: String) -> String {
+        let lower = name.lowercased()
+        return lower.hasPrefix(".") ? String(lower.dropFirst()) : lower
+    }
+    /// A cookie of O2's own server: one it would be sent to, or one set for a name below it.
+    static func isServerCookie(_ cookie: HTTPCookie, host: String) -> Bool {
+        domain(cookie.domain, covers: host) || domain(host, covers: cookie.domain)
+    }
+    /// A cookie of the operator's sign-in, which is what lets a session be renewed later. The server's own are left
+    /// out: O2 Spain's server lives under one of the sign-in domains itself.
+    static func isSignInCookie(_ cookie: HTTPCookie, host: String) -> Bool {
+        signInDomains.contains { domain($0, covers: cookie.domain) } && !isServerCookie(cookie, host: host)
     }
     @MainActor
     static func forget(host: String) async {
@@ -320,13 +339,10 @@ final class O2SilentRenewal {
         while Date() < deadline {
             try? await Task.sleep(nanoseconds: 700_000_000)
             let cookies = await configuration.websiteDataStore.httpCookieStore.allCookies()
-            let mine = cookies.filter { host.hasSuffix($0.domain) || $0.domain.hasSuffix(host) }
+            let mine = cookies.filter { O2WebSession.isServerCookie($0, host: host) }
             if let key = mine.first(where: { $0.name == "validationKey" })?.value, !key.isEmpty {
                 let agent = (try? await webView.evaluateJavaScript("navigator.userAgent")) as? String
-                let fresh = cookies.filter { cookie in
-                    Self.signInDomains.contains { cookie.domain.hasSuffix($0) }
-                        && !(host.hasSuffix(cookie.domain) || cookie.domain.hasSuffix(host))
-                }
+                let fresh = cookies.filter { O2WebSession.isSignInCookie($0, host: host) }
                 O2Log.record("renovación silenciosa · conseguida sin intervención")
                 return (key, mine, agent, fresh)
             }
