@@ -110,6 +110,7 @@ struct ConnectView: View {
         case .volume: return .brown
         case .mega: return .red
         case .o2: return .mint
+        case .pcloud: return .teal
         }
     }
 }

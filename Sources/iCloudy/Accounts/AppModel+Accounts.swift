@@ -303,6 +303,7 @@ extension AppModel {
         case .volume: return .gray
         case .mega: return .red
         case .o2: return .pink
+        case .pcloud: return .teal
         }
     }
 

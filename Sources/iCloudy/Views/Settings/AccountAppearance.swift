@@ -90,6 +90,7 @@ struct AccountIcon: View {
         case .volume: return "externaldrive.connected.to.line.below.fill"
         case .mega: return "lock.icloud.fill"
         case .o2: return "antenna.radiowaves.left.and.right.circle.fill"
+        case .pcloud: return "cloud.circle.fill"
         }
     }
     var body: some View {

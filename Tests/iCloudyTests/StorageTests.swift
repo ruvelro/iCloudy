@@ -142,6 +142,11 @@ final class StorageTests: XCTestCase {
                     XCTAssertEqual(query?.first { $0.name == "action" }?.value, "get-storage-space")
                     XCTAssertEqual(query?.first { $0.name == "validationkey" }?.value, "clave")
                     return (200, [:], Data(#"{"data":{"used":40,"quota":100,"nolimit":false}}"#.utf8))
+                case .pcloud:
+                    XCTAssertEqual(request.httpMethod, "GET")
+                    XCTAssertEqual(url.host, "api.pcloud.com", "Sin región guardada se usa el anfitrión de Estados Unidos")
+                    XCTAssertEqual(url.path, "/userinfo")
+                    return (200, [:], Data(#"{"result":0,"quota":100,"usedquota":40}"#.utf8))
                 case .ftp, .sftp, .volume:
                     XCTFail("\(cloud) no llega hasta aquí"); return (500, [:], Data())
                 case .webdav:
