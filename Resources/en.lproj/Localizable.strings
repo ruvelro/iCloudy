@@ -891,3 +891,8 @@
 "Mostrar las nubes en el Finder (experimental)" = "Show the clouds in the Finder (experimental)";
 "Cada cuenta aparece como una ubicación en la barra lateral del Finder, con sus archivos bajo demanda. Requiere la extensión de archivos, que solo lleva la versión firmada con un identificador de equipo." = "Each account appears as a location in the Finder's sidebar, with its files on demand. It needs the file extension, which only the build signed with a Team ID carries.";
 "Esta versión no lleva la extensión del Finder: necesita una firma con identificador de equipo de Apple. Los archivos siguen disponibles desde la ventana de iCloudy." = "This build does not carry the Finder extension: it needs a signature with an Apple Team ID. The files remain available from iCloudy's window.";
+
+/* Arranque en frío: Dock, Servicios y Atajos. */
+"iCloudy sigue leyendo las cuentas guardadas en el Llavero. Si macOS ha pedido permiso para acceder a ellas, acéptalo e inténtalo de nuevo." = "iCloudy is still reading the stored accounts from the Keychain. If macOS asked for permission to access them, allow it and try again.";
+"No se ha recibido ningún archivo que subir." = "No files to upload were received.";
+"Salir" = "Quit";

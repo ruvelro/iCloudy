@@ -135,11 +135,6 @@ extension AppModel {
         }
     }
 
-    func waitUntilReady() async throws {
-        while loadingAccounts { try await Task.sleep(for: .milliseconds(20)) }
-        if let accountLoadError { throw accountLoadError }
-    }
-
     /// Asks for a local folder and mirrors it, one way, into the given remote folder of the current account.
     func pickMirrorSource(for folder: CloudFile, twoWay: Bool = false) async {
         guard let account, folder.isFolder else { return }
