@@ -59,7 +59,7 @@ extension FTPProvider {
         let session = FTPSession(host: endpoint.host, port: endpoint.port,
                                  user: String(pair[pair.startIndex..<separator]),
                                  password: String(pair[pair.index(after: separator)...]),
-                                 security: endpoint.security)
+                                 security: endpoint.security, account: account.id)
         ftpSession = session
         return session
     }

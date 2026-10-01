@@ -13,7 +13,11 @@ actor SFTPClient {
     /// Answers that arrived while another request was being waited for.
     private var parked: [UInt32: (type: UInt8, body: Data)] = [:]
 
-    init(transport: SSHTransport) { self.transport = transport }
+    /// The account this session belongs to, for the diagnostic log, and the last request sent, which names a failure.
+    private let diagnosticsAccount: String?
+    private var lastVerb = ""
+
+    init(transport: SSHTransport, account: String? = nil) { self.transport = transport; self.diagnosticsAccount = account }
     var hostKey: Data? { get async { await transport.hostKey } }
 
     enum Packet {
@@ -100,9 +104,13 @@ actor SFTPClient {
     private func withSession<T>(_ work: () async throws -> T) async throws -> T {
         try await start()
         do { return try await work() }
-        catch let error as Refusal { throw error }
+        catch let error as Refusal {
+            Diagnostics.sftp(lastVerb, host: transport.host, account: diagnosticsAccount, status: Int(error.code), error: error)
+            throw error
+        }
         catch is CancellationError { await close(); throw CancellationError() }
         catch {
+            Diagnostics.sftp(lastVerb, host: transport.host, account: diagnosticsAccount, error: error)
             await close()
             throw error
         }
@@ -126,6 +134,11 @@ actor SFTPClient {
     private func request(_ type: UInt8, _ fill: (inout SSHWriter) -> Void) async throws -> UInt32 {
         nextID &+= 1
         let id = nextID
+        lastVerb = Diagnostics.sftpVerb(type)
+        // Blocks of a transfer are left out even at the detailed level: thousands of them would bury everything else.
+        if ![Packet.read, Packet.write, Packet.readdir].contains(type) {
+            Diagnostics.sftp(lastVerb, host: transport.host, account: diagnosticsAccount)
+        }
         var writer = SSHWriter()
         writer.byte(type); writer.uint32(id)
         fill(&writer)

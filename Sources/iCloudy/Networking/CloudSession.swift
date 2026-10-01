@@ -29,6 +29,7 @@ class CloudSession {
     func expireSession(_ reason: String? = nil) {
         guard !sessionExpired else { return }
         sessionExpired = true
+        Diagnostics.sessionExpired(account, reason: reason)
         sessionDidExpire?(reason)
     }
 
@@ -66,8 +67,10 @@ class CloudSession {
             // one account being disconnected abort the renewal another account is waiting on.
             guard !invalidated else { throw CancellationError() }
             cachedCredential = renewed
+            Diagnostics.tokenRenewed(account)
             return renewed.accessToken
         } catch let error as CloudError {
+            Diagnostics.tokenFailed(account, error: error)
             // The refresh may have been started by another client sharing this entry; this one has to notice too.
             if case .sessionExpired(let reason) = error { expireSession(reason) }
             throw error
@@ -106,6 +109,7 @@ class CloudSession {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.timeoutInterval = 120
+        Diagnostics.stamp(&request, account: account)
         request.setValue(account.cloud.authorizationScheme + " " + (try await token()), forHTTPHeaderField: "Authorization")
         if let body {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -117,6 +121,7 @@ class CloudSession {
     /// Sends an authenticated request. A first 401 renews the token and retries once; a second 401 means the provider
     /// no longer honours this account, so the session is marked as expired instead of failing silently on every call.
     func send(_ request: inout URLRequest) async throws -> (Data, URLResponse) {
+        Diagnostics.stamp(&request, account: account)
         let (data, response) = try await session.data(for: request, delegate: RedirectGuard.shared)
         // A self-hosted server asking for Digest is not rejecting the password: iCloudy only speaks Basic. Calling
         // that an expired session sent people to re-type credentials that were right all along.
@@ -153,6 +158,7 @@ class CloudSession {
     /// block, a second means the account is gone. The block uploads of Dropbox and Box go straight to their own hosts
     /// and used to miss that, so a token that expired mid-upload failed the transfer with a bare "HTTP 401".
     func upload(_ request: inout URLRequest, from data: Data) async throws -> (Data, URLResponse) {
+        Diagnostics.stamp(&request, account: account)
         let (body, response) = try await session.upload(for: request, from: data, delegate: RedirectGuard.shared)
         guard (response as? HTTPURLResponse)?.statusCode == 401, tokenProvider == nil else { return (body, response) }
         request.setValue(account.cloud.authorizationScheme + " " + (try await token(force: true)), forHTTPHeaderField: "Authorization")
@@ -167,6 +173,7 @@ class CloudSession {
             try Task.checkCancellation()
             let (data, response) = try await send(&request)
             if attempt < 3, let delay = Self.retryDelay(response, method: method, attempt: attempt) {
+                Diagnostics.retrying(account, method: method, url: url, status: (response as? HTTPURLResponse)?.statusCode, attempt: attempt + 1, delay: delay)
                 try await Task.sleep(for: .seconds(delay))
                 continue
             }
@@ -209,6 +216,7 @@ class CloudSession {
     func downloadHTTP(_ initialRequest: URLRequest, to destination: URL, maxBytes: Int64?, progress: @escaping (Int64, Int64) -> Void) async throws {
         let delegate = DownloadProgress(maxBytes: maxBytes) { bytes, total in Task { @MainActor in progress(bytes, total) } }
         var request = initialRequest
+        Diagnostics.stamp(&request, account: account)
         var temporary: URL, response: URLResponse
         do {
             (temporary, response) = try await session.download(for: request, delegate: delegate)

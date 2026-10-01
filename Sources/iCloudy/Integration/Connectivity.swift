@@ -24,6 +24,7 @@ final class Connectivity: ObservableObject {
     func update(_ online: Bool) {
         guard online != isOnline else { return }
         isOnline = online
+        Diagnostics.networkChanged(online: online)
         onChange?(online)
     }
     func updateCost(_ costly: Bool) {

@@ -413,12 +413,19 @@ final class TransferQueue: ObservableObject {
         tasks[id] = Task {
             // A pause or cancel can land between scheduling and this first line; never overwrite what the user chose.
             guard (try? job(id))?.state == .queued else { finish(id); return }
+            let diagnostics = Diagnostics.context(for: next) { try? self.client?($0).account }
+            let started = Date()
             do {
                 try edit(id) { $0.state = .running; $0.detail = L("Preparando…") }
                 meters[id] = (started: Date(), startBytes: next.bytes, lastReport: .distantPast)
                 while true {
                     // The buckets reach the providers through the task, and only for the bytes of this queue.
-                    do { try await TransferThrottle.$active.withValue(throttle) { try await run(id) }; break }
+                    do {
+                        try await Diagnostics.$context.withValue(diagnostics) {
+                            try await TransferThrottle.$active.withValue(throttle) { try await run(id) }
+                        }
+                        break
+                    }
                     catch {
                         try Task.checkCancellation()
                         let current = try job(id)
@@ -427,6 +434,8 @@ final class TransferQueue: ObservableObject {
                         case .waitForNetwork: throw NetworkGone()
                         case .retry:
                             try edit(id) { $0.attempts += 1; $0.detail = L("Conexión interrumpida. Reintento \($0.attempts)/3…") }
+                            Diagnostics.transferRetrying(current, context: diagnostics, attempt: current.attempts + 1,
+                                                         wait: Self.retryWait(after: error, attempt: current.attempts, base: retryDelay), error: error)
                             try await Task.sleep(for: .seconds(Self.retryWait(after: error, attempt: current.attempts, base: retryDelay)))
                         }
                     }
@@ -441,9 +450,11 @@ final class TransferQueue: ObservableObject {
                     }
                 }
                 if let finished = items.first(where: { $0.id == id && $0.state == .completed }) { didFinish?(finished) }
+                if let finished = items.first(where: { $0.id == id && $0.state == .completed }) { Diagnostics.transferFinished(finished, context: diagnostics, since: started) }
                 didComplete?(next.accountID)
                 if let target = next.targetAccountID, target != next.accountID { didComplete?(target) }
             } catch is NetworkGone {
+                Diagnostics.transferWaitsForNetwork(next, context: diagnostics)
                 if let index = index(id), !items[index].finished {
                     items[index].state = .paused; items[index].bytesPerSecond = 0
                     items[index].hold = .offline
@@ -457,6 +468,7 @@ final class TransferQueue: ObservableObject {
                         items[index].state = .failed; items[index].detail = error.localizedDescription + " " + L("Los elementos ya completados se conservan.")
                         if let cursor = inFlight[id] { items[index].recordFailure(at: cursor, error) }
                     }
+                    if items[index].state == .failed { Diagnostics.transferFailed(items[index], context: diagnostics, error: error, since: started) }
                     items[index].bytesPerSecond = 0
                     do { try persist() } catch { persistenceError = error.localizedDescription }
                 }
