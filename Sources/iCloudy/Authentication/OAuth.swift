@@ -165,7 +165,8 @@ final class OAuth {
                 guard state == self.expectedState || (state == nil && self.toleratesMissingState) else { connection.cancel(); return }
                 let result = Result { try OAuthRequest.callbackCode(target: parts[1], expectedState: self.expectedState,
                                                                     toleratesMissingState: self.toleratesMissingState) }
-                self.callbackItems = items
+                // The first accepted answer is the one that completes the sign-in; a later one must not replace it.
+                if self.callbackItems.isEmpty { self.callbackItems = items }
                 let body = L("Puedes cerrar esta ventana y volver a iCloudy.")
                 let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
                 connection.send(content: Data(response.utf8), completion: .contentProcessed { [weak self] _ in
