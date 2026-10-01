@@ -52,6 +52,13 @@ struct TransferWindow: Codable, Equatable {
 enum TransferHold: String, Codable {
     case offline, schedule, costlyNetwork
 
+    var symbol: String {
+        switch self {
+        case .offline: return "wifi.slash"
+        case .schedule: return "clock"
+        case .costlyNetwork: return "antenna.radiowaves.left.and.right"
+        }
+    }
     func detail(window: TransferWindow?) -> String {
         switch self {
         case .offline: return L("Sin conexión · se reanudará automáticamente al volver la red")
@@ -75,13 +82,15 @@ struct TransferPolicy: Equatable {
 
     static let concurrencyRange = 1...8
     static let perAccountRange = 1...4
+    /// Below this a suspended download waits so long between turns that the server may give up on it.
+    static let minimumLimit: Int64 = 32_000
 
     static func stored(in defaults: UserDefaults = .standard) -> TransferPolicy {
         func int(_ key: String) -> Int? { defaults.object(forKey: key) as? Int }
         func bool(_ key: String) -> Bool { defaults.object(forKey: key) as? Bool ?? false }
         func limit(_ enabled: String, _ value: String, _ unit: String) -> Int64? {
             guard bool(enabled), let amount = int(value), amount > 0 else { return nil }
-            return Int64(amount) * (BandwidthUnit(rawValue: defaults.string(forKey: unit) ?? "") ?? .megabytes).bytes
+            return max(minimumLimit, Int64(amount) * (BandwidthUnit(rawValue: defaults.string(forKey: unit) ?? "") ?? .megabytes).bytes)
         }
         var policy = TransferPolicy()
         policy.maxConcurrent = int(Prefs.transferConcurrency).map { min(max($0, concurrencyRange.lowerBound), concurrencyRange.upperBound) } ?? 3

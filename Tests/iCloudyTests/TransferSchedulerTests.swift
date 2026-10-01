@@ -312,6 +312,8 @@ final class TransferSchedulerTests: XCTestCase {
         XCTAssertNil(policy.downloadLimit, "Switched off keeps its value but limits nothing")
         XCTAssertEqual(policy.window, TransferWindow(start: 0, end: 360), "Midnight is a valid start")
         XCTAssertTrue(policy.pauseOnCostlyNetwork)
+        defaults.set(true, forKey: Prefs.downloadLimitEnabled); defaults.set(1, forKey: Prefs.downloadLimitValue); defaults.set("KB", forKey: Prefs.downloadLimitUnit)
+        XCTAssertEqual(TransferPolicy.stored(in: defaults).downloadLimit, TransferPolicy.minimumLimit, "Never slower than the floor")
     }
 
     // MARK: - Persistence

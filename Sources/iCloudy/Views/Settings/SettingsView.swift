@@ -102,6 +102,7 @@ private struct TransferSettings: View {
                 Text("Las transferencias se reanudan solas al recuperar la red y al abrir la app quedan en pausa, nunca se pierden.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
+            TransferQueueSettings(model: model)
         }.formStyle(.grouped)
     }
 }
