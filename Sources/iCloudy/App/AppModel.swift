@@ -66,6 +66,7 @@ final class AppModel: ObservableObject {
     let queue = TransferQueue()
     let remoteCopies = RemoteCopies()
     let history = TransferHistory()
+    let planner = TransferPlanCoordinator()
     let connectivity = Connectivity()
     let mirrors = MirrorManager()
     let spotlight = SpotlightIndex()

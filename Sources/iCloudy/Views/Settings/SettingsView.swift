@@ -73,6 +73,7 @@ private struct GeneralSettings: View {
 private struct TransferSettings: View {
     @ObservedObject var model: AppModel
     @AppStorage(Prefs.historyLimit) private var historyLimit = 200
+    @AppStorage(Prefs.transferPlan) private var transferPlan = true
 
     var body: some View {
         Form {
@@ -100,6 +101,11 @@ private struct TransferSettings: View {
                     }
                 }
                 Text("Las transferencias se reanudan solas al recuperar la red y al abrir la app quedan en pausa, nunca se pierden.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Section {
+                Toggle("Mostrar un plan antes de las transferencias grandes", isOn: $transferPlan)
+                Text("Con más de \(TransferPlan.fileThreshold) archivos o \(TransferPlanView.bytes(TransferPlan.byteThreshold)), o cuando falta espacio, se muestra antes de empezar cuánto hay que mover, el espacio necesario, lo que ya existe en el destino y lo que no se puede transferir tal cual.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }.formStyle(.grouped)

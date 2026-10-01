@@ -126,7 +126,7 @@ extension ExplorerView {
         .dropDestination(for: URL.self) { urls, _ in
             let local = urls.filter(\.isFileURL)
             guard !local.isEmpty, model.canWrite else { return false }
-            model.enqueueUploads(local); return true
+            model.planUploads(local); return true
         } isTargeted: { dropTarget = $0 }
     }
 }

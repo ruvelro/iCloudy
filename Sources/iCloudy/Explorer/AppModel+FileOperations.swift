@@ -55,13 +55,20 @@ extension AppModel {
     }
 
     /// Queues one job per item; the queue stages each file locally and uploads it with checkpoints and verification.
+    /// A large selection goes through the transfer plan first.
     func enqueueCrossCloud(_ files: [CloudFile], from source: Account, to target: Account, parent: String, destinationPath: [CloudFile]) {
+        planCrossCloud(files, from: source, to: target, parent: parent) { [weak self] seeds in
+            self?.enqueueCrossCloud(files, from: source, to: target, parent: parent, destinationPath: destinationPath, seeds: seeds)
+        }
+    }
+    func enqueueCrossCloud(_ files: [CloudFile], from source: Account, to target: Account, parent: String, destinationPath: [CloudFile], seeds: [[String: FileRecord]]?) {
         let label = ([target.email] + destinationPath.map(\.name)).joined(separator: " / ")
         let batch = UUID()
-        let jobs = files.map { file -> Transfer in
+        let jobs = files.enumerated().map { index, file -> Transfer in
             var job = Transfer(batchID: batch, name: file.name, destination: label, accountID: source.id, direction: .transfer, localURL: URL(fileURLWithPath: "/"), parent: parent, file: file)
             job.localURL = queue.scratchDirectory(for: job.id)
             job.targetAccountID = target.id
+            job.seed(seeds?.indices.contains(index) == true ? seeds?[index] : nil)
             return job
         }
         do { try queue.add(jobs); info = L("\(jobs.count == 1 ? L("«\(files[0].name)»") : L("\(jobs.count) elementos")) en cola hacia \(accountTitle(target)). Sigue el progreso en Transferencias.") }

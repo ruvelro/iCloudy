@@ -41,6 +41,7 @@ struct ExplorerView: View {
         .sheet(item: Binding(get: { model.queue.conflict }, set: { _ in })) { request in
             ConflictView(queue: model.queue, request: request)
         }
+        .background(TransferPlanHost(planner: model.planner))
         .onChange(of: model.folderID) { selected.removeAll() }
         .onChange(of: model.selectedAccountID) { selected.removeAll() }
         .onChange(of: selected) {
