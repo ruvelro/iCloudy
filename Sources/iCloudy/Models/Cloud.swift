@@ -2,6 +2,7 @@ import Foundation
 
 enum Cloud: String, Codable, CaseIterable, Identifiable {
     case google, microsoft, dropbox, box, webdav, ftp, sftp, volume, mega, o2
+    case s3
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -15,6 +16,7 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
         case .volume: return L("Volumen")
         case .mega: return L("Mega")
         case .o2: return L("O2 Cloud")
+        case .s3: return L("S3")
         }
     }
     var tokenURL: String { OAuthProviderSettings.settings(for: self)?.tokenEndpoint ?? "" }
@@ -23,7 +25,7 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
     /// True when the user brings their own server and credentials instead of signing in at a provider.
     var isSelfHosted: Bool { [.webdav, .ftp, .sftp, .volume].contains(self) }
     /// True when connecting means typing a server address and credentials, rather than picking a folder or a browser sign-in.
-    var usesPasswordLogin: Bool { [.webdav, .ftp, .sftp, .mega].contains(self) }
+    var usesPasswordLogin: Bool { [.webdav, .ftp, .sftp, .mega].contains(self) || self == .s3 }
     /// True when signing in happens on the provider's own pages, inside a window, because it cannot be reproduced
     /// from a form: O2 sends the person to Telefónica's sign-in, with a national identity number or a text message.
     var usesWebLogin: Bool { self == .o2 }
@@ -41,6 +43,7 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
         case .google, .microsoft, .webdav, .ftp, .sftp, .volume, .mega, .o2: return "root"
         case .dropbox: return "" // Dropbox addresses the root as an empty path
         case .box: return "0"
+        case .s3: return "root"
         }
     }
     var capabilities: CloudCapabilities { CloudCapabilities.of(self) }
@@ -147,6 +150,11 @@ struct CloudCapabilities {
             return CloudCapabilities(oauth: false, search: false, recents: false, sharedWithMe: false,
                                      copy: false, checksum: false, permanentDelete: true,
                                      linksFiles: false, purgesFolders: false)
+        case .s3:
+            // S3 has no bin, no quota and no activity feeds. Search is by key prefix only. Uploads are checked against
+            // the ETag, and a link is a presigned URL: temporary by nature, and only for an object, not a prefix.
+            return CloudCapabilities(oauth: false, recents: false, sharedWithMe: false, quota: false,
+                                     reversibleTrash: false, linksFolders: false)
         }
     }
 }

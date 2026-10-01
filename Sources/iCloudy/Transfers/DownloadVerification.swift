@@ -63,7 +63,7 @@ extension CloudAPI {
         var verification = DownloadVerification.unavailable
         if let expected = file.size, expected != size {
             problem = .sizeMismatch(name: file.name, expected: expected, actual: size)
-        } else if checksum, let listed = file.checksum {
+        } else if checksum, let listed = demo == nil ? provider.verifiableChecksum(of: file) : file.checksum {
             let algorithm = listed.algorithm
             let (digest, _) = try await blockingIO { try ContentHasher.digest(of: local, algorithm: algorithm) }
             if listed.matches(digest) { verification = .verified } else { problem = .checksumMismatch(name: file.name) }

@@ -21,6 +21,8 @@ final class AppModel: ObservableObject {
     func dismissAlert() { if error != nil { error = nil } else { info = nil } }
     /// File awaiting confirmation before a public link is created for it.
     @Published var pendingShare: (file: CloudFile, account: Account)?
+    /// S3 file awaiting the choice of how long its presigned link lives.
+    @Published var pendingTemporaryLink: (file: CloudFile, account: Account)?
     /// Items awaiting confirmation before being sent to the provider's trash.
     @Published var pendingTrash: [CloudFile]?
     /// The item whose sharing sheet is open.

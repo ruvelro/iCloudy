@@ -144,6 +144,8 @@ final class StorageTests: XCTestCase {
                     return (200, [:], Data(#"{"data":{"used":40,"quota":100,"nolimit":false}}"#.utf8))
                 case .ftp, .sftp, .volume:
                     XCTFail("\(cloud) no llega hasta aquí"); return (500, [:], Data())
+                case .s3:
+                    XCTFail("\(cloud) no llega hasta aquí"); return (500, [:], Data())
                 case .webdav:
                     XCTAssertEqual(request.httpMethod, "PROPFIND")
                     XCTAssertEqual(request.value(forHTTPHeaderField: "Depth"), "0")

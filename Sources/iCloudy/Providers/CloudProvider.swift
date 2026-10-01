@@ -38,6 +38,9 @@ protocol CloudProvider: CloudSession {
     func currentMetadata(of file: CloudFile) async throws -> CloudFile?
     /// False for items whose listed size and checksum are known not to describe the bytes a download returns.
     func canVerifyDownload(of file: CloudFile) -> Bool
+    /// The checksum a download of `file` can be held to: the listed one, unless the provider has since learnt that
+    /// it does not describe the content (an S3 ETag of an object encrypted with KMS looks like an MD5 and is not).
+    func verifiableChecksum(of file: CloudFile) -> ContentHash?
     func uploadFile(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt
     func resumeCommittedUpload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt?
 }
@@ -63,6 +66,7 @@ extension CloudProvider {
     func resumeCommittedUpload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt? { nil }
     func currentMetadata(of file: CloudFile) async throws -> CloudFile? { nil }
     func canVerifyDownload(of file: CloudFile) -> Bool { true }
+    func verifiableChecksum(of file: CloudFile) -> ContentHash? { file.checksum }
     func abandonUploadSessions(urls: [URL], boxSessions: [String]) async {
         for url in urls where url.scheme == "https" {
             var request = URLRequest(url: url)

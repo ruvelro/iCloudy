@@ -28,6 +28,9 @@ struct ConnectView: View {
                     providerButton(.ftp, title: "Conectar FTP", subtitle: "FTP, FTPS explícito e implícito, con usuario y contraseña", icon: "arrow.up.arrow.down.square")
                     providerButton(.volume, title: "Conectar un volumen o carpeta", subtitle: "SMB, AFP, NFS, discos externos y carpetas del Mac", icon: "externaldrive.connected.to.line.below")
                 }.disabled(model.connecting)
+                Text("ALMACENAMIENTO DE OBJETOS").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                providerButton(.s3, title: "Conectar S3", subtitle: "Amazon S3, Backblaze B2, Wasabi, Cloudflare R2, MinIO y compatibles", icon: "cylinder.split.1x2")
+                    .disabled(model.connecting)
                 Button("Conectar a un servidor en el Finder…") { model.openFinderConnect() }
                     .buttonStyle(.link).font(.caption)
                     .help("Monta el recurso de red y vuelve aquí para elegir su carpeta")
@@ -64,7 +67,9 @@ struct ConnectView: View {
             }.padding(30)
         }.frame(width: 470, height: 640).interactiveDismissDisabled(model.connecting)
             .onAppear { model.connectionError = nil }
-            .sheet(item: $model.serverLogin) { cloud in ServerLoginView(model: model, cloud: cloud) }
+            .sheet(item: $model.serverLogin) { cloud in
+                if cloud == .s3 { S3LoginView(model: model) } else { ServerLoginView(model: model, cloud: cloud) }
+            }
             .sheet(isPresented: $model.showAdvanced) { AdvancedDriveView(model: model) }
             .sheet(item: $model.o2Login) { request in O2WebLoginView(model: model, request: request) }
     }
@@ -110,6 +115,7 @@ struct ConnectView: View {
         case .volume: return .brown
         case .mega: return .red
         case .o2: return .mint
+        case .s3: return .orange
         }
     }
 }
