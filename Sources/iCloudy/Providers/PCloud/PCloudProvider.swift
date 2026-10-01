@@ -189,6 +189,11 @@ extension PCloudProvider {
         return try await pcloudChecksum(of: file).file
     }
 
+    /// The listing carries no content hash, so the shared download check gets the one `checksumfile` reports.
+    func downloadChecksum(of file: CloudFile) async throws -> ContentHash? {
+        try await pcloudChecksum(of: file).checksum
+    }
+
     func rename(file: CloudFile, name: String) async throws { try await pcloudRename(file, ["toname": name]) }
 
     func move(file: CloudFile, to destination: String) async throws { try await pcloudRename(file, ["tofolderid": Self.folderID(destination)]) }

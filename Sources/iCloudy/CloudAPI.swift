@@ -131,6 +131,10 @@ final class CloudAPI {
     @discardableResult
     func download(file: CloudFile, to destination: URL, exportMime: String? = nil, maxBytes: Int64? = nil, checksum: Bool = true,
                   progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws -> DownloadVerification {
+        // A provider that lists no checksum may still answer one per file; it is asked before the bytes travel.
+        var file = file
+        if demo == nil, checksum, exportMime == nil, file.checksum == nil, !file.isFolder,
+           let asked = try await provider.downloadChecksum(of: file) { file.checksum = asked }
         if let demo {
             try await demo.download(file, to: destination, maxBytes: maxBytes, progress: progress)
         } else {

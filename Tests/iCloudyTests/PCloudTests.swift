@@ -458,4 +458,58 @@ final class PCloudTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: target), payload)
         XCTAssertNil(contentAuthorization, "El enlace firmado es la credencial: el token no viaja al servidor de contenido")
     }
+
+    func testDownloadsAreCheckedAgainstTheDigestPCloudReports() async throws {
+        let payload = Data("contenido remoto".utf8)
+        let modified = 1_767_323_045
+        var reported = UploadHasher.hex(SHA256.hash(data: payload)), asked = 0
+        StubProtocol.handler = { request in
+            switch request.url?.path {
+            case "/checksumfile":
+                asked += 1
+                XCTAssertEqual(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "fileid" }?.value, "5")
+                return (200, [:], Data(#"{"result":0,"sha1":"x","sha256":"\#(reported)","metadata":{"id":"f5","name":"a.txt","size":\#(payload.count),"modified":\#(modified)}}"#.utf8))
+            case "/getfilelink":
+                return (200, [:], Data(#"{"result":0,"path":"/cBZ/a.txt","hosts":["c1.pcloud.com"]}"#.utf8))
+            default:
+                return (200, [:], payload)
+            }
+        }
+        let file = CloudFile(id: "f5", name: "a.txt", mime: "text/plain", size: Int64(payload.count),
+                             modified: Date(timeIntervalSince1970: 1_767_323_045), webURL: nil, isFolder: false)
+        let target = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: target) }
+        let api = client()
+        let verified = try await api.download(file: file, to: target)
+        XCTAssertEqual(verified, .verified, "El listado no trae suma, pero checksumfile sí")
+        XCTAssertEqual(asked, 1)
+        try FileManager.default.removeItem(at: target)
+
+        // The same digest twice, and not the one of the bytes that arrived: the copy is damaged.
+        reported = String(repeating: "0", count: 64); asked = 0
+        do { _ = try await api.download(file: file, to: target); XCTFail("Una suma distinta no se da por buena") }
+        catch { XCTAssertEqual(error as? DownloadIntegrityError, .checksumMismatch(name: "a.txt")) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: target.path), "La copia dañada no se queda en el destino")
+        XCTAssertEqual(asked, 2, "Antes de culpar a la descarga se vuelve a preguntar por el archivo")
+
+        // The file changed between the question and the download: that is a remote change, worth retrying.
+        asked = 0
+        StubProtocol.handler = { [payload] request in
+            switch request.url?.path {
+            case "/checksumfile":
+                asked += 1
+                let digest = asked == 1 ? String(repeating: "0", count: 64) : "1" + String(repeating: "0", count: 63)
+                return (200, [:], Data(#"{"result":0,"sha256":"\#(digest)","metadata":{"id":"f5","name":"a.txt","size":\#(payload.count),"modified":\#(1_767_323_045 + asked)}}"#.utf8))
+            case "/getfilelink": return (200, [:], Data(#"{"result":0,"path":"/a","hosts":["c1.pcloud.com"]}"#.utf8))
+            default: return (200, [:], payload)
+            }
+        }
+        do { _ = try await api.download(file: file, to: target); XCTFail("Debe fallar") }
+        catch { XCTAssertTrue((error as? DownloadIntegrityError)?.retryable == true, "\(error)") }
+
+        // Without the check (a preview above its limit) nothing extra is asked.
+        asked = 0
+        _ = try await api.download(file: file, to: target, checksum: false)
+        XCTAssertEqual(asked, 0)
+    }
 }
