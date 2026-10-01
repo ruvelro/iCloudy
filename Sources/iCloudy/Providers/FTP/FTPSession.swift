@@ -280,6 +280,41 @@ actor FTPSession {
         guard reply.isPositive else { throw failure(reply, description) }
         return reply
     }
+    /// One command of a `sequence`, with the replies that let the sequence go on and what to say otherwise.
+    struct Step: Sendable {
+        let line: String
+        let accepts: @Sendable (Reply) -> Bool
+        let description: String
+    }
+    /// Runs several commands back to back under a single hold of the control channel, so that no other operation
+    /// can send anything between them. Stops at the first reply a step does not accept and reports it.
+    @discardableResult
+    func sequence(_ steps: [Step]) async throws -> [Reply] {
+        let replies = try await exclusive {
+            try await self.withConnection { () -> [Reply] in
+                var replies: [Reply] = []
+                for step in steps {
+                    let reply = try await self.send(step.line)
+                    replies.append(reply)
+                    guard step.accepts(reply) else { break }
+                }
+                return replies
+            }
+        }
+        for (step, reply) in zip(steps, replies) where !step.accepts(reply) { throw failure(reply, step.description) }
+        return replies
+    }
+    /// RNFR names the item and RNTO moves it, and the server forgets the RNFR as soon as any other command arrives.
+    /// Sent as two separate operations, a listing from the explorer could land in between and the RNTO was refused,
+    /// or on a lenient server applied to whatever that command left behind.
+    func rename(from source: String, to destination: String) async throws {
+        try await sequence([
+            Step(line: "RNFR " + source, accepts: { $0.code == 350 },
+                 description: L("El servidor no encontró el elemento que se quiere mover.")),
+            Step(line: "RNTO " + destination, accepts: { $0.isPositive },
+                 description: L("El servidor rechazó el nuevo nombre o destino."))
+        ])
+    }
 
     // MARK: - Data channel
 

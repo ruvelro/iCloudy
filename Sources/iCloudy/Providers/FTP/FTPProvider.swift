@@ -88,10 +88,7 @@ extension FTPProvider {
         try await ftpMove(file: file, toPath: FTPListing.join(try ftpPath(destination), file.name))
     }
     private func ftpMove(file: CloudFile, toPath: String) async throws {
-        let session = try await ftp()
-        let from = try await session.command("RNFR " + file.id)
-        guard from.code == 350 else { throw CloudError.message(L("El servidor no encontró el elemento que se quiere mover.")) }
-        try await session.require("RNTO " + toPath, L("El servidor rechazó el nuevo nombre o destino."))
+        try await ftp().rename(from: file.id, to: toPath)
     }
     /// FTP deletes for good, and an empty directory is a precondition for RMD, so folders are emptied depth first.
     func ftpDelete(file: CloudFile) async throws {

@@ -29,6 +29,10 @@ final class FakeFTPServer: @unchecked Sendable {
     private var listings: [String: String]
     private let stallRetrievals: Bool
     private(set) var commands: [String] = []
+    /// Seconds to wait before answering a verb, to hold an operation open while another one is started.
+    var replyDelays: [String: TimeInterval] = [:]
+    /// The verb of the previous command, so RNTO is refused unless it comes straight after RNFR, as real servers do.
+    private var previousVerb = ""
 
     init(files: [String: Data], listings: [String: String], stallRetrievals: Bool = false) throws {
         self.stallRetrievals = stallRetrievals
@@ -69,6 +73,10 @@ final class FakeFTPServer: @unchecked Sendable {
     private func send(_ text: String) {
         control?.send(content: Data(text.utf8), completion: .contentProcessed { _ in })
     }
+    private func send(_ text: String, after delay: TimeInterval) {
+        guard delay > 0 else { send(text); return }
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in self?.send(text) }
+    }
     private func read() {
         control?.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] data, _, complete, _ in
             guard let self else { return }
@@ -85,6 +93,9 @@ final class FakeFTPServer: @unchecked Sendable {
         lock.withLock { commands.append(line) }
         let verb = line.split(separator: " ").first.map(String.init)?.uppercased() ?? ""
         let argument = line.dropFirst(verb.count).trimmingCharacters(in: .whitespaces)
+        let renaming = previousVerb == "RNFR"
+        previousVerb = verb
+        let delay = replyDelays[verb] ?? 0
         switch verb {
         case "USER": send("331 Necesita contraseña\r\n")
         case "PASS": send(argument == "secreta" ? "230 Sesión iniciada\r\n" : "530 Credenciales incorrectas\r\n")
@@ -122,8 +133,9 @@ final class FakeFTPServer: @unchecked Sendable {
             return   // the 226 is sent once the upload finishes
         case "MKD": send("257 \"\(argument)\" creada\r\n")
         case "DELE", "RMD": send("250 Eliminado\r\n")
-        case "RNFR": send("350 Listo para el nuevo nombre\r\n")
-        case "RNTO": send("250 Renombrado\r\n")
+        case "RNFR": send("350 Listo para el nuevo nombre\r\n", after: delay)
+        case "RNTO": send(renaming ? "250 Renombrado\r\n" : "503 RNFR primero\r\n")
+        case "NOOP": send("200 Sigo aquí\r\n")
         case "QUIT": send("221 Adiós\r\n")
         default: send("502 No implementado\r\n")
         }
@@ -392,6 +404,29 @@ final class FTPTests: XCTestCase {
         // Every data transfer opens its own passive channel, and they must not overlap: a STOR between two MLSDs.
         let transfers = server.log().filter { $0.hasPrefix("MLSD") || $0.hasPrefix("STOR") }
         XCTAssertEqual(transfers.count, 3, "\(server.log())")
+    }
+
+    func testRenameIsOneExchangeThatNothingCanInterrupt() async throws {
+        // The server forgets RNFR as soon as another command arrives. RNFR and RNTO used to be two operations on the
+        // shared session, so a command started while RNFR was waiting for its reply ran between them and the RNTO was
+        // refused. The fake server answers RNFR slowly and refuses an RNTO that does not follow it, as vsftpd does.
+        let server = try FakeFTPServer(files: [:], listings: ["/": ""])
+        server.replyDelays["RNFR"] = 0.4
+        let port = try await server.start()
+        defer { server.stop() }
+        let api = client(port: port)
+        try await hurry(api)
+        let session = try await (api.provider as! FTPProvider).ftp()
+        _ = try await session.command("PWD")   // connected, so the rename starts with RNFR straight away
+
+        let file = CloudFile(id: "/a.txt", name: "a.txt", mime: "text/plain", size: 3, modified: nil, webURL: nil, isFolder: false)
+        async let renamed: Void = api.rename(file: file, name: "b.txt")
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(server.log().last, "RNFR /a.txt", "La otra orden tiene que llegar mientras RNFR espera: \(server.log())")
+        let interloper = try await session.command("PWD")
+        try await renamed
+        XCTAssertEqual(interloper.code, 257)
+        XCTAssertEqual(Array(server.log().suffix(3)), ["RNFR /a.txt", "RNTO /b.txt", "PWD"], "\(server.log())")
     }
 
     func testALineBreakInANameNeverReachesTheServer() async throws {
