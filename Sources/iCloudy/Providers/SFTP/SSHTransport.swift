@@ -91,7 +91,9 @@ actor SSHTransport {
             if line.hasPrefix("SSH-") { serverVersion = line; break }
         }
         guard serverVersion.hasPrefix("SSH-2.0") || serverVersion.hasPrefix("SSH-1.99") else {
-            throw CloudError.message(L("Eso no es un servidor SSH 2 (respondió «\(serverVersion.prefix(40))»)."))
+            // A String, not the Substring `prefix` gives: older compilers cannot interpolate one into a localized value.
+            let shown = String(serverVersion.prefix(40))
+            throw CloudError.message(L("Eso no es un servidor SSH 2 (respondió «\(shown)»)."))
         }
     }
 

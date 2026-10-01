@@ -16,7 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain
+        # The image's default Xcode lags behind; the newest one installed is the closest to what the app is built with.
         run: |
+          newest="$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$newest"
           xcodebuild -version
           swift --version
       - uses: actions/cache@v4
