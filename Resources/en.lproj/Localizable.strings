@@ -1011,3 +1011,12 @@
 "«%@» cambió en la nube mientras se descargaba. Se volverá a descargar la versión nueva." = "“%@” changed in the cloud while it was downloading. The new version will be downloaded again.";
 "%lld sin suma del proveedor (solo se comprobó el tamaño)" = "%lld without a provider checksum (only the size was checked)";
 "%lld exportados de Google, sin suma que comparar" = "%lld exported from Google, with no checksum to compare";
+/* Disponible sin conexión */
+"Disponible sin conexión" = "Available offline";
+"Actualizando la copia sin conexión" = "Updating the offline copy";
+"Copia sin conexión desactualizada" = "Offline copy out of date";
+"Error en la copia sin conexión" = "Offline copy error";
+"Los documentos de Google no son un archivo que se pueda guardar sin conexión. Expórtalo como Word o PDF y guarda esa copia." = "Google documents are not a file that can be kept offline. Export it as Word or PDF and keep that copy.";
+"«%@» no cabe en el espacio para copias sin conexión: lo marcado ocuparía %@ y el límite es %@. Sube el límite en Configuración › Sin conexión o quita otros elementos." = "“%@” does not fit in the space for offline copies: what is marked would take %@ and the limit is %@. Raise the limit in Settings › Offline or remove other items.";
+"«%@» se ha borrado de la nube y ya no está disponible sin conexión." = "“%@” was deleted from the cloud and is no longer available offline.";
+"«%@» ya no está en la nube y se ha quitado de Sin conexión." = "“%@” is no longer in the cloud and has been removed from Offline.";
