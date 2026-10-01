@@ -47,6 +47,8 @@ final class MegaState {
     /// that way is wrapped with one of these and not with the master key, so without them every shared item showed
     /// up as "Elemento sin acceso".
     var shareKeys: [String: Data] = [:]
+    /// The account's public links, by the handle of the node they export. They arrive with the tree, in `ph`.
+    var exports: [String: MegaExport] = [:]
     /// When the tree was last fetched. Mega does not push changes made elsewhere, so a tree older than
     /// `MegaProvider.megaTreeMaxAge` is fetched again on the next listing; until then changes are applied in place.
     var loadedAt: Date?

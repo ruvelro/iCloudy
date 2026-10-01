@@ -74,6 +74,7 @@ extension MegaProvider {
         let shares = answer["ok"] as? [[String: Any]] ?? []
         let masterKey = state.masterKey
         state.adopt(try await blockingIO { MegaAPI.tree(files, masterKey: masterKey, shares: shares) })
+        state.exports = MegaAPI.exports(answer["ph"] as? [[String: Any]] ?? [])
         guard !state.root.isEmpty else { throw CloudError.message(L("No se encontró la raíz de la cuenta de Mega.")) }
         return state
     }
@@ -268,6 +269,7 @@ extension MegaProvider {
         guard let handle = try await megaCall(["a": "l", "n": node.handle]) as? String else {
             throw CloudError.message(L("Mega no devolvió el enlace."))
         }
+        state.exports[node.handle] = MegaExport(publicHandle: handle)
         // The key goes in the fragment, which browsers never send to the server: without it the link is unreadable.
         guard let url = URL(string: "https://mega.nz/file/\(handle)#\(MegaCrypto.encode(node.key))") else {
             throw CloudError.message(L("Mega no devolvió el enlace."))

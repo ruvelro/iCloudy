@@ -22,6 +22,14 @@ protocol CloudProvider: CloudSession {
     /// Gives `recipient` (an e-mail address, or a user name where the server has them) access at `role`.
     func share(file: CloudFile, with recipient: String, role: ShareRole) async throws
     func revoke(_ permission: SharePermission, from file: CloudFile) async throws
+    /// Public links on one item, with what each lets people do.
+    func publicLinks(for file: CloudFile) async throws -> [PublicLink]
+    /// Creates a link with these options, already checked against `LinkFeatures`. A provider that refuses one of them
+    /// throws its reason; it never hands back a link without the expiry or password that was asked for.
+    func createPublicLink(for file: CloudFile, options: PublicLinkOptions) async throws -> PublicLink
+    func revokePublicLink(_ link: PublicLink) async throws
+    /// Every public link the account has created, where the provider can enumerate them.
+    func allPublicLinks() async throws -> [PublicLink]
     func searchPage(term: String, cursor: String?, filters: SearchFilters, referenceDate: Date) async throws -> SearchPage
     func folderTrail(id: String) async throws -> [CloudFile]
     func storageQuota() async throws -> StorageQuota
@@ -53,6 +61,10 @@ extension CloudProvider {
     func permissions(for file: CloudFile) async throws -> [SharePermission] { throw CloudError.message(L("\(account.cloud.title) no permite compartir con personas desde iCloudy.")) }
     func share(file: CloudFile, with recipient: String, role: ShareRole) async throws { throw CloudError.message(L("\(account.cloud.title) no permite compartir con personas desde iCloudy.")) }
     func revoke(_ permission: SharePermission, from file: CloudFile) async throws { throw CloudError.message(L("\(account.cloud.title) no permite compartir con personas desde iCloudy.")) }
+    func publicLinks(for file: CloudFile) async throws -> [PublicLink] { throw CloudError.message(L("\(account.cloud.title) no gestiona enlaces públicos desde iCloudy.")) }
+    func createPublicLink(for file: CloudFile, options: PublicLinkOptions) async throws -> PublicLink { throw CloudError.message(L("\(account.cloud.title) no gestiona enlaces públicos desde iCloudy.")) }
+    func revokePublicLink(_ link: PublicLink) async throws { throw CloudError.message(L("\(account.cloud.title) no gestiona enlaces públicos desde iCloudy.")) }
+    func allPublicLinks() async throws -> [PublicLink] { throw CloudError.message(L("\(account.cloud.title) no permite listar todos sus enlaces públicos.")) }
     func canResumeWithoutSource(_ checkpoint: UploadCheckpoint?) -> Bool { false }
     func rootID() async throws -> String { account.cloud.rootAlias }
     func availableDrives() async throws -> [RemoteDrive] { throw CloudError.message(L("\(account.cloud.title) no tiene unidades compartidas.")) }

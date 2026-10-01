@@ -43,7 +43,11 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
         case .box: return "0"
         }
     }
-    var capabilities: CloudCapabilities { CloudCapabilities.of(self) }
+    var capabilities: CloudCapabilities {
+        var capabilities = CloudCapabilities.of(self)
+        capabilities.links = LinkFeatures.of(self)
+        return capabilities
+    }
 }
 
 /// Actions whose support depends on the kind of item as well as on the provider.
@@ -80,6 +84,9 @@ struct CloudCapabilities {
     var linksFolders = true
     /// Folders can be deleted for good as well as files. O2 purges files only.
     var purgesFolders = true
+    /// How far public links can be managed: listed, created with an expiry or a password, revoked. Set from
+    /// `LinkFeatures.of(_:)` at the end of this file rather than in the table above.
+    var links = LinkFeatures()
 
     /// Whether the provider can apply `action` to every one of these items. The flags above say whether it has the
     /// action at all; this adds what depends on the kind of item, so the interface stops offering an action that the
@@ -149,4 +156,36 @@ struct CloudCapabilities {
                                      linksFiles: false, purgesFolders: false)
         }
     }
+}
+
+extension LinkFeatures {
+    /// Public link management, provider by provider. What a plan or an administrator can still refuse (Dropbox's
+    /// expiry on a free account, Drive's expiry on a personal one) is declared here and explained when it happens.
+    static func of(_ cloud: Cloud) -> LinkFeatures {
+        switch cloud {
+        case .google:
+            // An "anyone" permission can be a reader or a writer. Drive takes an expiry only where the account type
+            // allows it on that kind of permission, and says so with a 400 when it does not.
+            return LinkFeatures(manage: true, expiration: true, edit: true, editFolders: true, inventory: true)
+        case .microsoft:
+            // Graph's createLink takes an expiry and a password, both subject to the account type; there is no call
+            // that lists every link of a drive.
+            return LinkFeatures(manage: true, expiration: true, password: true, edit: true, editFolders: true)
+        case .dropbox:
+            // Editor links exist for files only; expiry, password and blocking downloads need a paid plan.
+            return LinkFeatures(manage: true, expiration: true, password: true, edit: true, downloadToggle: true, inventory: true)
+        case .box:
+            // One shared link per item. `can_edit` is accepted on files only, and Box has no listing of all of them.
+            return LinkFeatures(manage: true, expiration: true, password: true, edit: true, downloadToggle: true)
+        case .mega:
+            // Links are listed from the tree and revoked by removing the export. Expiry and password-protected links
+            // are Pro features with their own cryptography, and neither is attempted.
+            return LinkFeatures(manage: true, inventory: true)
+        default:
+            // Plain WebDAV, FTP, SFTP, volumes and O2. Nextcloud is a WebDAV flavour and gets `nextcloud` from its account.
+            return LinkFeatures()
+        }
+    }
+    /// Nextcloud's and ownCloud's OCS share API, enabled per account when connecting.
+    static let nextcloud = LinkFeatures(manage: true, expiration: true, password: true, edit: true, editFolders: true, inventory: true)
 }

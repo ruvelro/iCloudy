@@ -21,7 +21,7 @@ extension WebDAVProvider {
         default: return SharePermission(id: id, kind: .person, name: display ?? with ?? "?", email: with.flatMap { $0.contains("@") ? $0 : nil }, role: role)
         }
     }
-    private func ocsRequest(_ url: URL, method: String, form: [String: String]? = nil) async throws -> [String: Any] {
+    func ocsRequest(_ url: URL, method: String, form: [String: String]? = nil) async throws -> [String: Any] {
         var request = try await request(url, method: method)
         request.setValue("true", forHTTPHeaderField: "OCS-APIRequest")
         if let form {
