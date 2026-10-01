@@ -204,7 +204,7 @@ final class DuplicateScanner {
                 for child in children {
                     let path = ComparisonEngine.join(prefix, child.name)
                     if child.isFolder { pending.append((child, path)); continue }
-                    let id = root.key + "|" + child.id
+                    let id = Self.identity(of: child, under: root)
                     guard seen.insert(id).inserted else { continue }
                     guard candidates.count < fileLimit else { truncated = true; break walk }
                     candidates.append(DuplicateCandidate(id: id, rootIndex: index, entry: child, parent: folder, path: path, hashesLocally: root.source.hashesLocally))
@@ -236,5 +236,13 @@ final class DuplicateScanner {
         state.current = ""
         progress(state)
         return report
+    }
+
+    /// What makes two finds the same file. Whatever hashes locally is on this Mac's disk, and a volume account and a
+    /// Mac folder can reach the same file by two roads: offering one as a duplicate of the other would mean deleting
+    /// the only copy.
+    static func identity(of entry: InventoryEntry, under root: Root) -> String {
+        guard root.source.hashesLocally, let path = entry.url?.path ?? entry.file?.id else { return root.key + "|" + entry.id }
+        return "disk|" + URL(fileURLWithPath: path).resolvingSymlinksInPath().path
     }
 }

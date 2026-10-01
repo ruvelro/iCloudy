@@ -120,6 +120,8 @@ extension ExplorerView {
             Button("Reflejar una carpeta local aquí…") { Task { await model.pickMirrorSource(for: file) } }
             Button("Sincronizar en ambos sentidos con una carpeta local…") { Task { await model.pickMirrorSource(for: file, twoWay: true) } }
             Button("Descargar carpeta…") { Task { await model.save(file) } }
+            Button("Comparar con…") { model.openComparator(with: file) }
+            Button("Buscar duplicados aquí…") { model.openDuplicateFinder(in: file) }
         } else if !file.isGoogleDocument {
             Button("Descargar…") { Task { await model.save(file) } }
         }

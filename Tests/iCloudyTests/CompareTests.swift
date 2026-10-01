@@ -390,6 +390,86 @@ final class CompareTests: XCTestCase {
         XCTAssertEqual(partial.files, 2)
     }
 
+    func testAVolumeAccountAndAMacFolderReachingOneFileAreNotDuplicatesOfEachOther() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("same-disk-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("foto.jpg")
+        try Data("misma".utf8).write(to: url)
+        // A volume account lists the file under its path, the way VolumeProvider does.
+        let volume = TreeSource(caseSensitive: false, hashesLocally: true, [])
+        let mac = LocalInventorySource(root: root)
+        let volumeEntry: InventoryEntry? = entry(url.standardizedFileURL.path, size: 5)
+        let macEntry = try await mac.children(of: nil).first
+        XCTAssertEqual(DuplicateScanner.identity(of: try XCTUnwrap(volumeEntry), under: .init(key: "volume-account", source: volume)),
+                       DuplicateScanner.identity(of: try XCTUnwrap(macEntry), under: .init(key: "local", source: mac)))
+        // Clouds keep their own identity, per account.
+        let drive = TreeSource([file("x")])
+        XCTAssertEqual(DuplicateScanner.identity(of: entry("x"), under: .init(key: "drive", source: drive)), "drive|cloud:x")
+    }
+
+    // MARK: - Copies and validation
+
+    func testCopiesLandInTheCounterpartFolderAndGoThroughTheQueue() throws {
+        let drive = Account(id: "drive", cloud: .google, name: "Drive", email: "a@example.com", clientID: "", clientSecret: nil)
+        let dropbox = Account(id: "dropbox", cloud: .dropbox, name: "Dropbox", email: "b@example.com", clientID: "", clientSecret: nil)
+        let a = FolderLocation(place: .cloud(accountID: "drive", folder: folder("top-a")), trail: ["top-a"])
+        let b = FolderLocation(place: .cloud(accountID: "dropbox", folder: folder("/top-b")), trail: ["top-b"])
+        let items = [CompareCenter.CopyItem(entry: entry("Fotos/c.jpg"), parent: InventoryEntry(file: folder("/top-b/Fotos")), directory: "Fotos"),
+                     CompareCenter.CopyItem(entry: InventoryEntry(file: folder("Solo")), parent: nil, directory: "")]
+        let scratch = URL(fileURLWithPath: "/tmp/scratch")
+        let jobs = try CompareCenter.transfers(items, from: a, to: b, accounts: [drive, dropbox], label: { "B / " + $0 },
+                                               scratch: { scratch.appendingPathComponent($0.uuidString) })
+        XCTAssertEqual(jobs.map(\.direction), [.transfer, .transfer])
+        XCTAssertEqual(jobs.map(\.accountID), ["drive", "drive"])
+        XCTAssertEqual(jobs.map(\.targetAccountID), ["dropbox", "dropbox"])
+        XCTAssertEqual(jobs.map(\.parent), ["/top-b/Fotos", "/top-b"], "Sin carpeta intermedia, va a la carpeta comparada")
+        XCTAssertEqual(jobs.map(\.file?.id), ["Fotos/c.jpg", "Solo"])
+        XCTAssertEqual(jobs[0].localURL, scratch.appendingPathComponent(jobs[0].id.uuidString))
+        XCTAssertEqual(Set(jobs.map(\.batchID)).count, 1)
+        XCTAssertEqual(jobs[0].destination, "B / Fotos")
+
+        // From a Mac folder: uploads; to a Mac folder: downloads into the counterpart folder.
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("copies-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("Fotos"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let photo = root.appendingPathComponent("Fotos/c.jpg")
+        try Data("x".utf8).write(to: photo)
+        let mac = FolderLocation(place: .local(root))
+        let up = try CompareCenter.transfers([CompareCenter.CopyItem(entry: InventoryEntry(url: photo, isFolder: false, size: 1, modified: nil),
+                                                                     parent: InventoryEntry(file: folder("/top-b/Fotos")), directory: "Fotos")],
+                                             from: mac, to: b, accounts: [dropbox], label: { $0 }, scratch: { _ in scratch })
+        XCTAssertEqual(up.map(\.direction), [.upload])
+        XCTAssertEqual(up.first?.accountID, "dropbox")
+        XCTAssertEqual(up.first?.parent, "/top-b/Fotos")
+        XCTAssertEqual(up.first?.localURL, photo)
+        XCTAssertNotNil(up.first?.bookmark)
+
+        let fotos = InventoryEntry(url: root.appendingPathComponent("Fotos"), isFolder: true, size: nil, modified: nil)
+        let down = try CompareCenter.transfers([CompareCenter.CopyItem(entry: entry("Fotos/d.jpg"), parent: fotos, directory: "Fotos"),
+                                                CompareCenter.CopyItem(entry: entry("e.jpg"), parent: nil, directory: "")],
+                                               from: a, to: mac, accounts: [drive], label: { $0 }, scratch: { _ in scratch })
+        XCTAssertEqual(down.map(\.direction), [.download, .download])
+        XCTAssertEqual(down.map(\.localURL), [root.appendingPathComponent("Fotos"), root])
+        XCTAssertEqual(down.map(\.accountID), ["drive", "drive"])
+
+        XCTAssertThrowsError(try CompareCenter.transfers(items, from: a, to: b, accounts: [drive], label: { $0 }, scratch: { _ in scratch }),
+                             "Sin la cuenta de destino no se encola nada")
+        XCTAssertThrowsError(try CompareCenter.transfers([], from: mac, to: mac, accounts: [], label: { $0 }, scratch: { _ in scratch }))
+    }
+
+    func testOnlyTwoDifferentFoldersWithAtLeastOneCloudCanBeCompared() {
+        let top = FolderLocation(place: .cloud(accountID: "drive", folder: nil))
+        let alsoTop = FolderLocation(place: .cloud(accountID: "drive", folder: folder("root")), trail: ["otra etiqueta"])
+        let sub = FolderLocation(place: .cloud(accountID: "drive", folder: folder("sub")))
+        let mac = FolderLocation(place: .local(URL(fileURLWithPath: "/tmp/a")))
+        XCTAssertTrue(top.isSame(as: alsoTop))
+        XCTAssertNotNil(CompareCenter.problem(comparing: top, with: alsoTop))
+        XCTAssertNil(CompareCenter.problem(comparing: top, with: sub), "Dos carpetas de la misma cuenta sí se comparan")
+        XCTAssertNil(CompareCenter.problem(comparing: mac, with: sub))
+        XCTAssertNotNil(CompareCenter.problem(comparing: mac, with: FolderLocation(place: .local(URL(fileURLWithPath: "/tmp/b")))))
+    }
+
     // MARK: - Pacing and retries
 
     func testListingsAreRetriedOnlyForTransientFailures() async throws {
