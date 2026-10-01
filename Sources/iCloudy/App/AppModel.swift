@@ -9,6 +9,9 @@ final class AppModel: ObservableObject {
     /// active tab, so everything that asks for "the open folder" keeps getting exactly that.
     @Published var workspace = ExplorerWorkspace(panes: [ExplorerPane(tabs: [AppModel.newBrowser()])])
     let workspaceStore = WorkspaceStore()
+    /// A move from one pane to another account, waiting for confirmation.
+    @Published var pendingPaneMove: PaneMoveRequest?
+    let paneTransfers = PaneTransfers()
     var selectedAccountID: String? {
         get { workspace.current.accountID }
         set { workspace.current.accountID = newValue }
@@ -182,7 +185,10 @@ final class AppModel: ObservableObject {
             guard let self, let account = self.accounts.first(where: { $0.id == id }) else { throw CloudError.message(L("Vuelve a conectar la cuenta de esta transferencia.")) }
             return try self.client(account)
         }
-        queue.didFinish = { [weak self] transfer in self?.history.record(transfer); self?.mirrors.handleFinished(transfer) }
+        queue.didFinish = { [weak self] transfer in
+            self?.history.record(transfer); self?.mirrors.handleFinished(transfer)
+            self?.finishPaneMove(transfer)
+        }
         queue.didStoreLocalCopy = { [weak self] copy in self?.localCopies.record(copy) }
         connectivity.onChange = { [weak self] online in
             guard let self else { return }

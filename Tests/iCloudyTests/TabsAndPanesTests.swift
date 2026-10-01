@@ -238,4 +238,209 @@ final class TabsAndPanesTests: XCTestCase {
         XCTAssertFalse(model.closeTab(), "La última se queda")
         XCTAssertEqual(model.tabCount, 1)
     }
+
+    // MARK: - Two panes
+
+    func testSplittingOpensASecondPaneWhereTheFirstStands() {
+        var workspace = ExplorerWorkspace(panes: [ExplorerPane(tabs: [BrowserState(accountID: "a", path: [folder("1")], viewMode: "grid")])])
+        XCTAssertNil(workspace.otherPane)
+        XCTAssertFalse(workspace.focus(1), "Sin segundo panel no hay a quién dar el foco")
+        workspace.setSplit(true)
+        XCTAssertEqual(workspace.panes.count, 2)
+        XCTAssertEqual(workspace.panes[1].current.location, place("a", "1"))
+        XCTAssertEqual(workspace.panes[1].current.viewMode, "grid")
+        XCTAssertNotEqual(workspace.panes[1].current.id, workspace.panes[0].current.id)
+        XCTAssertEqual(workspace.visibleTabs.count, 2)
+        XCTAssertEqual(workspace.otherPane, 1)
+        XCTAssertTrue(workspace.focus(1))
+        XCTAssertEqual(workspace.otherPane, 0)
+        workspace.current.open(place("b"))
+        XCTAssertEqual(workspace.panes[0].current.location, place("a", "1"), "Cada panel tiene su propio sitio")
+        let second = workspace.panes[1].current.id
+        workspace.setSplit(false)
+        XCTAssertEqual(workspace.focusedPane, 0, "Con un panel, el foco es suyo")
+        XCTAssertEqual(workspace.visibleTabs.map(\.id), [workspace.panes[0].current.id])
+        workspace.setSplit(true)
+        XCTAssertEqual(workspace.panes[1].current.id, second, "Al volver a abrirlo, el segundo panel está como se dejó")
+        workspace.closePane(0)
+        XCTAssertFalse(workspace.split)
+        XCTAssertEqual(workspace.current.id, second, "Cerrar el primero deja el segundo en su lugar")
+    }
+
+    func testTheSplitSurvivesARelaunchAndANonsensicalOneDoesNot() throws {
+        var workspace = ExplorerWorkspace(panes: [pane("1"), pane("2")])
+        workspace.setSplit(true); workspace.focus(1)
+        let decoded = try JSONDecoder().decode(ExplorerWorkspace.self, from: JSONEncoder().encode(workspace))
+        XCTAssertTrue(decoded.split)
+        XCTAssertEqual(decoded.focusedPane, 1)
+        XCTAssertEqual(decoded.current.folderID, "2")
+        let lonely = try JSONDecoder().decode(ExplorerWorkspace.self, from: Data(#"{"panes": [{}], "split": true, "focusedPane": 1}"#.utf8))
+        XCTAssertFalse(lonely.split, "Dos paneles con uno solo guardado no tienen sentido")
+        XCTAssertEqual(lonely.focusedPane, 0)
+        let older = try JSONDecoder().decode(ExplorerWorkspace.self, from: Data(#"{"panes": [{}, {}], "focusedPane": 1}"#.utf8))
+        XCTAssertFalse(older.split, "Un archivo sin el campo abre con un solo panel")
+        XCTAssertEqual(older.focusedPane, 0)
+    }
+
+    private func splitModel() -> (AppModel, Account, Account) {
+        let model = AppModel()
+        let left = phantom("izquierda"), right = phantom("derecha")
+        model.accounts = [left, right]
+        var workspace = ExplorerWorkspace(panes: [ExplorerPane(tabs: [BrowserState(accountID: left.id)]),
+                                                  ExplorerPane(tabs: [BrowserState(accountID: right.id, path: [folder("x")])])])
+        workspace.setSplit(true)
+        model.workspace = workspace
+        return (model, left, right)
+    }
+
+    func testEverythingThatReadsTheOpenFolderFollowsTheFocusedPane() {
+        let (model, left, right) = splitModel()
+        XCTAssertEqual(model.account?.id, left.id)
+        XCTAssertEqual(model.folderID, "root")
+        model.focusPane(1)
+        XCTAssertEqual(model.account?.id, right.id)
+        XCTAssertEqual(model.folderID, "x", "Subir, el Dock y Servicios van a la carpeta del panel con el foco")
+        XCTAssertTrue(model.canWrite)
+        XCTAssertTrue(model.location.hasSuffix("Carpeta x"))
+        model.selectedIDs = ["s"]
+        XCTAssertEqual(model.workspace.panes[1].current.selection, ["s"])
+        XCTAssertTrue(model.workspace.panes[0].current.selection.isEmpty)
+        model.select(left.id)
+        XCTAssertEqual(model.workspace.panes[1].current.location, BrowserLocation(accountID: left.id), "La barra lateral cambia el panel con el foco")
+        XCTAssertEqual(model.workspace.panes[0].current.location, BrowserLocation(accountID: left.id))
+        XCTAssertEqual(model.isFavorite(folder("x"), in: model.workspace.panes[0].current), false)
+        model.focusOtherPane()
+        XCTAssertEqual(model.workspace.focusedPane, 0)
+        model.toggleSplit()
+        XCTAssertFalse(model.isSplit)
+        model.focusPane(1)
+        XCTAssertEqual(model.workspace.focusedPane, 0, "Un panel que no se ve no recibe el foco")
+    }
+
+    func testEachPaneKeepsItsOwnHistory() {
+        let (model, left, right) = splitModel()
+        model.go(to: place(left.id, "1"))
+        model.go(to: place(left.id, "1", "2"))
+        model.focusPane(1)
+        XCTAssertFalse(model.canGoBack, "El historial del otro panel no cuenta")
+        model.go(to: place(right.id, "y"))
+        model.goBack()
+        XCTAssertEqual(model.workspace.panes[1].current.location, place(right.id, "x"))
+        XCTAssertEqual(model.workspace.panes[0].current.location, place(left.id, "1", "2"), "Volver en un panel no mueve el otro")
+        model.focusPane(0)
+        model.goBack()
+        XCTAssertEqual(model.path.map(\.id), ["1"])
+        XCTAssertTrue(model.canGoForward)
+        model.focusPane(1)
+        XCTAssertTrue(model.canGoForward)
+        model.goForward()
+        XCTAssertEqual(model.workspace.panes[1].current.location, place(right.id, "y"))
+        XCTAssertEqual(model.workspace.panes[0].current.location, place(left.id, "1"))
+    }
+
+    func testWhatGoingToTheOtherPaneMeans() {
+        let drive = Account(id: "google:ana", cloud: .google, name: "Ana", email: "ana@ejemplo.com", clientID: "id", clientSecret: nil)
+        let box = Account(id: "box:ana", cloud: .box, name: "Ana", email: "ana@box", clientID: "id", clientSecret: nil)
+        let file = CloudFile(id: "f", name: "a.txt", mime: "text/plain", size: 1, modified: nil, webURL: nil, isFolder: false)
+        let document = CloudFile(id: "d", name: "Informe", mime: "application/vnd.google-apps.document", size: nil, modified: nil, webURL: nil, isFolder: false)
+        let here = BrowserState(accountID: drive.id, path: [folder("1")])
+        let there = BrowserState(accountID: drive.id, path: [folder("2")])
+        func plan(_ files: [CloudFile], _ from: BrowserState, _ fromAccount: Account?, _ to: BrowserState, _ toAccount: Account?, move: Bool) -> PaneTransfer {
+            AppModel.paneTransfer(files, from: from, account: fromAccount, to: to, account: toAccount, move: move)
+        }
+        XCTAssertEqual(plan([file], here, drive, there, drive, move: true), .sameAccount(move: true))
+        XCTAssertEqual(plan([file], here, drive, there, drive, move: false), .sameAccount(move: false))
+        XCTAssertEqual(plan([file], here, drive, BrowserState(accountID: box.id), box, move: false), .crossCloud(move: false))
+        XCTAssertEqual(plan([file], here, drive, BrowserState(accountID: box.id), box, move: true), .crossCloud(move: true))
+        func refused(_ result: PaneTransfer) -> Bool { if case .refused = result { return true } else { return false } }
+        XCTAssertTrue(refused(plan([], here, drive, there, drive, move: true)), "Sin selección no hay nada que hacer")
+        XCTAssertTrue(refused(plan([file], here, drive, there, nil, move: true)), "El otro panel necesita una cuenta")
+        XCTAssertTrue(refused(plan([file], here, drive, here, drive, move: true)), "La misma carpeta en los dos paneles")
+        XCTAssertTrue(refused(plan([folder("2")], here, drive, BrowserState(accountID: drive.id, path: [folder("2"), folder("3")]), drive, move: true)),
+                      "Una carpeta dentro de sí misma")
+        XCTAssertTrue(refused(plan([folder("9")], here, drive, there, drive, move: false)), "Drive no copia carpetas")
+        XCTAssertEqual(plan([folder("9")], here, drive, there, drive, move: true), .sameAccount(move: true), "Pero sí las mueve")
+        XCTAssertTrue(refused(plan([file], BrowserState(accountID: drive.id, collection: .trash), drive, there, drive, move: true)))
+        XCTAssertTrue(refused(plan([file], here, drive, BrowserState(accountID: box.id, collection: .recent), box, move: false)), "Recientes no es una carpeta")
+        XCTAssertTrue(refused(plan([document], here, drive, BrowserState(accountID: box.id), box, move: true)),
+                      "Un documento de Google llega convertido: se copia, no se mueve")
+        XCTAssertEqual(plan([document], here, drive, BrowserState(accountID: box.id), box, move: false), .crossCloud(move: false))
+    }
+
+    func testF6AcrossAccountsAsksBeforeMovingAndRefusalsAreExplained() {
+        let (model, left, right) = splitModel()
+        let file = CloudFile(id: "f", name: "a.txt", mime: "text/plain", size: 1, modified: nil, webURL: nil, isFolder: false)
+        model.workspace.current.files = [file]
+        model.selectedIDs = ["f"]
+        model.sendSelectionToOtherPane(move: true)
+        let request = model.pendingPaneMove
+        XCTAssertEqual(request?.files.map(\.id), ["f"])
+        XCTAssertEqual(request?.source.id, left.id)
+        XCTAssertEqual(request?.target.id, right.id)
+        XCTAssertEqual(request?.parent, "x", "Al otro panel: su carpeta, no la de este")
+        XCTAssertEqual(request?.destinationPath.map(\.id), ["x"])
+        XCTAssertTrue(model.queue.items.allSatisfy { $0.file?.id != "f" }, "Nada se pone en cola antes de confirmar")
+        model.pendingPaneMove = nil
+        model.selectedIDs = []
+        model.sendSelectionToOtherPane(move: false)
+        XCTAssertEqual(model.error, L("Selecciona lo que quieras copiar o mover al otro panel."))
+        XCTAssertNil(model.pendingPaneMove)
+    }
+
+    func testDroppingOnTheOtherPane() {
+        XCTAssertTrue(AppModel.dropMoves(sameAccount: true, modifiers: []), "En la misma cuenta, arrastrar mueve")
+        XCTAssertFalse(AppModel.dropMoves(sameAccount: true, modifiers: .option), "Y con ⌥ copia")
+        XCTAssertFalse(AppModel.dropMoves(sameAccount: false, modifiers: []), "Entre cuentas, copia")
+        XCTAssertTrue(AppModel.dropMoves(sameAccount: false, modifiers: .command), "Y con ⌘ mueve, preguntando antes")
+        let (model, _, right) = splitModel()
+        let a = CloudFile(id: "a", name: "a.txt", mime: "text/plain", size: 1, modified: nil, webURL: nil, isFolder: false)
+        let b = CloudFile(id: "b", name: "b.txt", mime: "text/plain", size: 1, modified: nil, webURL: nil, isFolder: false)
+        model.workspace.current.files = [a, b]
+        model.selectedIDs = ["a", "b"]
+        _ = model.paneDragProvider(for: a, pane: 0)
+        XCTAssertEqual(model.paneTransfers.drag?.files.map(\.id), ["a", "b"], "Arrastrar algo seleccionado lleva toda la selección")
+        _ = model.paneDragProvider(for: b, pane: 0)
+        model.selectedIDs = ["a"]
+        _ = model.paneDragProvider(for: b, pane: 0)
+        XCTAssertEqual(model.paneTransfers.drag?.files.map(\.id), ["b"], "Y algo sin seleccionar va solo")
+        let token = model.paneTransfers.drag?.token ?? ""
+        XCTAssertFalse(model.dropOnPane("icloudy-pane:otro", pane: 1, modifiers: .command), "Un arrastre que no es este no hace nada")
+        XCTAssertFalse(model.dropOnPane(token, pane: 0, modifiers: .command), "Soltar en el mismo panel no hace nada")
+        XCTAssertTrue(model.dropOnPane(token, pane: 1, modifiers: .command))
+        XCTAssertEqual(model.pendingPaneMove?.target.id, right.id)
+        XCTAssertNil(model.paneTransfers.drag, "Cada arrastre se usa una vez")
+        XCTAssertFalse(model.dropOnPane(token, pane: 1, modifiers: .command))
+    }
+
+    private func copyJob(_ change: (inout Transfer) -> Void) -> Transfer {
+        var job = Transfer(name: "a", destination: "", accountID: "a", direction: .transfer, localURL: URL(fileURLWithPath: "/"))
+        job.state = .completed; job.completedPaths = [".", "./x"]; job.names = [".": "a", "./x": "x"]; job.verifiedFiles = 1
+        change(&job)
+        return job
+    }
+
+    func testTheOriginalGoesOnlyAfterEverythingArrivedVerified() {
+        XCTAssertTrue(AppModel.copyAllowsRemovingSource(copyJob { _ in }))
+        XCTAssertFalse(AppModel.copyAllowsRemovingSource(copyJob { $0.state = .failed }))
+        XCTAssertFalse(AppModel.copyAllowsRemovingSource(copyJob { $0.state = .cancelled }))
+        XCTAssertFalse(AppModel.copyAllowsRemovingSource(copyJob { $0.unverifiedFiles = 1 }), "Algo sin suma que comparar")
+        XCTAssertFalse(AppModel.copyAllowsRemovingSource(copyJob { $0.names["./x"] = nil }), "Algo omitido por un nombre repetido")
+        XCTAssertFalse(AppModel.copyAllowsRemovingSource(copyJob { $0.completedPaths = []; $0.names = [:] }))
+        XCTAssertFalse(AppModel.copyAllowsRemovingSource(copyJob { $0.direction = .upload }))
+        XCTAssertTrue(AppModel.copyAllowsRemovingSource(copyJob { $0.verifiedFiles = 0; $0.completedPaths = ["."]; $0.names = [".": "Vacía"] }),
+                      "Una carpeta vacía copiada no tiene archivos que verificar")
+    }
+
+    func testAMoveWhoseCopyCouldNotBeVerifiedKeepsTheOriginal() {
+        let (model, left, _) = splitModel()
+        let file = CloudFile(id: "f", name: "a.txt", mime: "text/plain", size: 1, modified: nil, webURL: nil, isFolder: false)
+        let job = copyJob { $0.unverifiedFiles = 1 }
+        model.paneTransfers.pending[job.id] = PaneTransfers.Pending(sourceAccountID: left.id, file: file, targetTitle: "Destino")
+        model.finishPaneMove(job)
+        XCTAssertNil(model.paneTransfers.pending[job.id])
+        XCTAssertEqual(model.error, L("«a.txt» se ha copiado a Destino, pero no todo pudo verificarse o algo se omitió. El original se queda donde estaba."))
+        model.error = nil
+        model.finishPaneMove(copyJob { _ in })
+        XCTAssertNil(model.error, "Un trabajo que no es de un movimiento no toca nada")
+    }
 }

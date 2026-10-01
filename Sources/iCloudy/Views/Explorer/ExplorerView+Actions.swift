@@ -38,6 +38,10 @@ extension ExplorerView {
                 } label: { Image(systemName: "arrow.up.arrow.down") }
                 .accessibilityLabel("Ordenar la lista")
                     .help("Ordenar la lista")
+                Button { model.toggleSplit() } label: {
+                    Image(systemName: "rectangle.split.2x1").symbolVariant(model.isSplit ? .fill : .none)
+                }.help(model.isSplit ? "Cerrar el segundo panel (⇧⌘D)" : "Dividir en dos paneles (⇧⌘D)")
+                    .accessibilityLabel("Doble panel")
             }
             ToolbarSeparator()
             // Personalizar and Desconectar used to hang off an ⋯ menu here. They belong to a cloud, not to the
@@ -63,10 +67,10 @@ extension ExplorerView {
         return files.count == 1 ? L("¿Eliminar «\(files[0].name)» definitivamente?") : L("¿Eliminar \(files.count) elementos definitivamente?")
     }
 
-    var emptyTitle: String {
-        if !model.search.isEmpty { return L("Sin resultados") }
-        if model.path.isEmpty {
-            switch model.collection {
+    func emptyTitle(_ tab: BrowserState) -> String {
+        if !tab.search.isEmpty { return L("Sin resultados") }
+        if tab.path.isEmpty {
+            switch tab.collection {
             case .recent: return L("Todavía no hay elementos recientes")
             case .shared: return L("Nadie ha compartido nada contigo")
             case .trash: return L("La papelera está vacía")
@@ -76,9 +80,9 @@ extension ExplorerView {
         return L("Esta carpeta está vacía")
     }
 
-    var emptyDescription: String {
-        if model.inTrash { return L("Lo que envíes a la papelera aparece aquí hasta que lo restaures o lo elimines definitivamente.") }
-        return model.canWrite ? L("Arrastra archivos o carpetas para subirlos aquí.") : L("Esta lista la calcula el proveedor y no admite subidas.")
+    func emptyDescription(_ tab: BrowserState) -> String {
+        if tab.collection == .trash { return L("Lo que envíes a la papelera aparece aquí hasta que lo restaures o lo elimines definitivamente.") }
+        return tab.isWritableLocation ? L("Arrastra archivos o carpetas para subirlos aquí.") : L("Esta lista la calcula el proveedor y no admite subidas.")
     }
 
     func previewSelection() {
@@ -114,6 +118,7 @@ extension ExplorerView {
             .disabled(!model.canCopy([file]))
             .help(model.limitation(.copy, for: [file]) ?? "")
         if model.accounts.count > 1 { Button("Enviar a otra nube…") { model.requestCrossCloud([file]) } }
+        otherPaneActions([file])
         Divider()
         if file.isFolder {
             Button("Abrir carpeta") { model.navigate(file) }

@@ -11,7 +11,8 @@ struct ExplorerView: View {
         get { model.selectedIDs }
         nonmutating set { model.selectedIDs = newValue }
     }
-    @State var dropTarget = false
+    /// The pane files from the Finder are being dragged over, if any.
+    @State var dropTarget: Int?
     /// The transfers drawer starts closed and opens itself when something is transferring.
     @State var showTransfers = false
     @State var confirmDisconnect = false
@@ -21,12 +22,22 @@ struct ExplorerView: View {
     /// Which half of the sidebar is showing. Favourites used to live under every account, so reaching them on a Mac
     /// with six clouds connected meant scrolling past all of them.
     @State var sidebarTab = SidebarTab.clouds
-    @FocusState var gridFocused: Bool
+    /// Which pane's list has the keyboard. Tab moves it to the other pane when there are two.
+    @FocusState var focusedList: Int?
     /// Where a run of files starts when one is taken with Shift held down.
     @State var anchor: CloudFile.ID?
 
     var body: some View {
         navigation
+        .background(PaneKeyMonitor(enabled: model.isSplit) { model.focusOtherPane(); focusedList = model.workspace.focusedPane })
+        .confirmationDialog(paneMoveTitle, isPresented: Binding(get: { model.pendingPaneMove != nil }, set: { if !$0 { model.pendingPaneMove = nil } }), titleVisibility: .visible, presenting: model.pendingPaneMove) { request in
+            Button("Copiar y luego quitar el original", role: .destructive) { model.pendingPaneMove = nil; model.startPaneMove(request) }
+            Button("Solo copiar") {
+                model.pendingPaneMove = nil
+                model.enqueueCrossCloud(request.files, from: request.source, to: request.target, parent: request.parent, destinationPath: request.destinationPath)
+            }
+            Button("Cancelar", role: .cancel) { model.pendingPaneMove = nil }
+        } message: { request in Text(paneMoveMessage(request)) }
         .sheet(isPresented: $model.showConnect) { ConnectView(model: model) }
         .sheet(item: $model.appearanceAccount) { account in AccountAppearanceEditor(model: model, account: account) }
         .sheet(isPresented: $model.showNameDialog) {

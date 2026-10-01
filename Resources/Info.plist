@@ -30,6 +30,16 @@
             </array>
         </dict>
     </array>
+    <!-- What a row carries when it is dragged from one pane to the other. Offered only inside the app. -->
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key><string>dev.icloudy.pane-items</string>
+            <key>UTTypeDescription</key><string>Elementos de un panel de iCloudy</string>
+            <key>UTTypeConformsTo</key>
+            <array><string>public.data</string></array>
+        </dict>
+    </array>
     <!-- A NAS on the local network often serves WebDAV over plain HTTP with a name macOS cannot verify. This allows
          that, and only that: everything outside the local network still has to use TLS. -->
     <key>NSAppTransportSecurity</key>

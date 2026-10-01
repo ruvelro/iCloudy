@@ -187,10 +187,15 @@ struct ExplorerPane: Identifiable {
 struct ExplorerWorkspace {
     var panes: [ExplorerPane]
     var focusedPane = 0
+    /// True while the window shows two panes side by side. The second pane keeps its tabs when it is closed, so
+    /// opening it again finds them where they were.
+    private(set) var split = false
 
-    init(panes: [ExplorerPane] = [ExplorerPane(tabs: [BrowserState()])], focusedPane: Int = 0) {
-        self.panes = panes.isEmpty ? [ExplorerPane(tabs: [BrowserState()])] : panes
-        self.focusedPane = min(max(0, focusedPane), self.panes.count - 1)
+    init(panes: [ExplorerPane] = [ExplorerPane(tabs: [BrowserState()])], focusedPane: Int = 0, split: Bool = false) {
+        self.panes = Array((panes.isEmpty ? [ExplorerPane(tabs: [BrowserState()])] : panes).prefix(2))
+        self.split = split && self.panes.count == 2
+        // With one pane on screen, that pane has the focus.
+        self.focusedPane = self.split ? min(max(0, focusedPane), 1) : 0
     }
 
     var current: BrowserState {
@@ -198,8 +203,39 @@ struct ExplorerWorkspace {
         set { panes[focusedPane].current = newValue }
     }
 
+    /// The panes on screen: the first one, and the second while the window is split.
+    var visiblePanes: Range<Int> { 0..<(split ? 2 : 1) }
+
     /// The tab each pane on screen is showing; these are the listings worth keeping fresh.
-    var visibleTabs: [BrowserState] { panes.map(\.current) }
+    var visibleTabs: [BrowserState] { visiblePanes.map { panes[$0].current } }
+
+    /// The pane F5 and F6 send things to.
+    var otherPane: Int? { split ? 1 - focusedPane : nil }
+
+    /// Opens or closes the second pane. Opened for the first time, it starts where the first one stands.
+    mutating func setSplit(_ on: Bool) {
+        if on, panes.count < 2 {
+            let model = panes[0].current
+            panes.append(ExplorerPane(tabs: [BrowserState(accountID: model.accountID, collection: model.collection, path: model.path,
+                                                          sortMode: model.sortMode, viewMode: model.viewMode)]))
+        }
+        split = on
+        if !on { focusedPane = 0 }
+    }
+
+    /// Closes a pane by hiding it: what stays on screen is the other one, which becomes the first.
+    mutating func closePane(_ pane: Int) {
+        guard split, visiblePanes.contains(pane) else { return }
+        if pane == 0 { panes.swapAt(0, 1) }
+        setSplit(false)
+    }
+
+    /// Gives the focus to a pane on screen; returns false when it already had it or is not showing.
+    @discardableResult mutating func focus(_ pane: Int) -> Bool {
+        guard visiblePanes.contains(pane), pane != focusedPane else { return false }
+        focusedPane = pane
+        return true
+    }
 
     var allTabs: [BrowserState] { panes.flatMap(\.tabs) }
 
@@ -299,11 +335,19 @@ extension ExplorerPane: Codable {
 }
 
 extension ExplorerWorkspace: Codable {
-    enum CodingKeys: String, CodingKey { case panes, focusedPane }
+    enum CodingKeys: String, CodingKey { case panes, focusedPane, split }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         self.init(panes: (try? values.decodeIfPresent([ExplorerPane].self, forKey: .panes)) ?? [],
-                  focusedPane: (try? values.decodeIfPresent(Int.self, forKey: .focusedPane)) ?? 0)
+                  focusedPane: (try? values.decodeIfPresent(Int.self, forKey: .focusedPane)) ?? 0,
+                  split: (try? values.decodeIfPresent(Bool.self, forKey: .split)) ?? false)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(panes, forKey: .panes)
+        try values.encode(focusedPane, forKey: .focusedPane)
+        try values.encode(split, forKey: .split)
     }
 }

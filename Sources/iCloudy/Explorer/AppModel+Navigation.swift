@@ -126,9 +126,12 @@ extension AppModel {
 
     /// Lists again what the tabs on screen show, those of one account or all of them.
     func reloadVisible(accountID: String? = nil, fresh: Bool = false) {
-        for tab in workspace.visibleTabs {
+        var listed: Set<BrowserState.ID> = []
+        for tab in workspace.visibleTabs where !listed.contains(tab.id) {
             guard let id = tab.accountID, accountID == nil || id == accountID, accounts.contains(where: { $0.id == id }) else { continue }
             reload(tab: tab.id, fresh: fresh)
+            // A fresh listing already brought the other pane along when it shows the same account.
+            listed.formUnion(fresh ? workspace.visibleTabs.filter { $0.accountID == id }.map(\.id) : [tab.id])
         }
     }
 
@@ -143,8 +146,18 @@ extension AppModel {
             return
         }
         refreshStorage(account)
-        // Something was just written to this account: whatever other tabs show of it may be out of date too.
-        if fresh { workspace.updateAll { if $0.id != id && $0.accountID == account.id { $0.stale = true } } }
+        // Something was just written to this account: whatever other tabs show of it may be out of date too. The
+        // other pane lists again now (a move from one pane to the other changes both); tabs out of sight do when
+        // they come back.
+        if fresh {
+            let visible = Set(workspace.visibleTabs.map(\.id))
+            var others: [BrowserState.ID] = []
+            workspace.updateAll { tab in
+                guard tab.id != id, tab.accountID == account.id else { return }
+                if visible.contains(tab.id) { others.append(tab.id) } else { tab.stale = true }
+            }
+            for other in others { reload(tab: other) }
+        }
         let parent = state.folderID
         // Show what was there last time at once; the provider's answer replaces it when it arrives.
         let cached = !fresh && Prefs.bool(Prefs.listingCache, default: true) && state.files.isEmpty ? listings.cached(accountID: account.id, parent: parent) : nil

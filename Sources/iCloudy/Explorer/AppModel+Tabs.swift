@@ -48,7 +48,7 @@ extension AppModel {
         guard workspace.panes.indices.contains(pane) else { return }
         preview.close(); globalSearch.cancel(); showGlobalSearch = false
         let id = workspace.panes[pane].addTab(at: place)
-        workspace.focusedPane = pane
+        workspace.focus(pane)
         reload(tab: id)
     }
 
@@ -64,9 +64,10 @@ extension AppModel {
         return true
     }
 
-    /// ⌘W: the tab if there are others, the window when it is the last one.
+    /// ⌘W: the tab if there are others; with the last one, the pane if there are two, and the window otherwise.
     func closeTabOrWindow(_ window: NSWindow?) {
-        if !closeTab() { window?.performClose(nil) }
+        if closeTab() { return }
+        if workspace.split { closePane(workspace.focusedPane) } else { window?.performClose(nil) }
     }
 
     func closeOtherTabs(than id: BrowserState.ID) {
@@ -81,7 +82,7 @@ extension AppModel {
         let changed = workspace.panes[pane].activeTab != index || workspace.focusedPane != pane
         guard changed else { return }
         workspace.panes[pane].activeTab = index
-        workspace.focusedPane = pane
+        workspace.focus(pane)
         tabsDidSwitch()
     }
 

@@ -43,6 +43,12 @@ struct iCloudyApp: App {
             // There is still one window; ⌘T opens a tab in it instead of a second one.
             CommandGroup(replacing: .newItem) {
                 Button("Nueva pestaña") { model.newTab() }.keyboardShortcut("t", modifiers: .command)
+                Divider()
+                // F5 and F6, as in the two-pane file managers they come from.
+                Button("Copiar al otro panel") { model.sendSelectionToOtherPane(move: false) }
+                    .keyboardShortcut(KeyEquivalent.function(5), modifiers: []).disabled(!model.isSplit)
+                Button("Mover al otro panel") { model.sendSelectionToOtherPane(move: true) }
+                    .keyboardShortcut(KeyEquivalent.function(6), modifiers: []).disabled(!model.isSplit)
             }
             CommandGroup(replacing: .saveItem) {
                 // ⌘W closes a tab while there are others and the window with the last one. Any other window with
@@ -74,6 +80,8 @@ struct iCloudyApp: App {
                 Button("Buscar en todas las nubes") { model.preview.close(); model.showGlobalSearch = true }.keyboardShortcut("f", modifiers: [.command, .shift])
             }
             CommandGroup(after: .toolbar) {
+                Button(model.isSplit ? "Cerrar el segundo panel" : "Dividir en dos paneles") { model.toggleSplit() }
+                    .keyboardShortcut("d", modifiers: [.command, .shift])
                 Toggle("Mostrar iCloudy en la barra de menús", isOn: $menuBarEnabled)
             }
         }

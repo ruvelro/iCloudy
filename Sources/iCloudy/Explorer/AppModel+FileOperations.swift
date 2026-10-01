@@ -55,7 +55,8 @@ extension AppModel {
     }
 
     /// Queues one job per item; the queue stages each file locally and uploads it with checkpoints and verification.
-    func enqueueCrossCloud(_ files: [CloudFile], from source: Account, to target: Account, parent: String, destinationPath: [CloudFile]) {
+    /// Returns the jobs queued, none if the queue refused them.
+    @discardableResult func enqueueCrossCloud(_ files: [CloudFile], from source: Account, to target: Account, parent: String, destinationPath: [CloudFile]) -> [Transfer] {
         let label = ([target.email] + destinationPath.map(\.name)).joined(separator: " / ")
         let batch = UUID()
         let jobs = files.map { file -> Transfer in
@@ -65,7 +66,8 @@ extension AppModel {
             return job
         }
         do { try queue.add(jobs); info = L("\(jobs.count == 1 ? L("«\(files[0].name)»") : L("\(jobs.count) elementos")) en cola hacia \(accountTitle(target)). Sigue el progreso en Transferencias.") }
-        catch { self.error = error.localizedDescription }
+        catch { self.error = error.localizedDescription; return [] }
+        return jobs
     }
 
     /// Checks cycles and name clashes first, then processes item by item and stops at the first failure.
