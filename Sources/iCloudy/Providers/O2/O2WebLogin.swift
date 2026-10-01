@@ -57,26 +57,46 @@ final class O2WebLoginModel: ObservableObject {
         host = clean
     }
 
+    /// How long the watcher waits between two looks at the cookies, and how many looks it takes before giving up.
+    var pollInterval: Duration = .milliseconds(700)
+    var pollAttempts = 600
+    /// Reads every cookie in the window's store. The web view supplies it; a test can hand in a jar of its own.
+    private var readCookies: (@MainActor () async -> [HTTPCookie])?
+
     /// Watches the web view's cookies. The web client stores the key that authorises every later call in a cookie
     /// called `validationKey`, so its appearance is what says the session is ready.
     func watch(_ webView: WKWebView) {
         self.webView = webView
+        let jar = webView.configuration.websiteDataStore.httpCookieStore
+        watch { await jar.allCookies() }
+    }
+    func watch(reading cookies: @escaping @MainActor () async -> [HTTPCookie]) {
+        readCookies = cookies
         guard watcher == nil else { return }
+        let interval = pollInterval, attempts = pollAttempts
         watcher = Task { [weak self] in
-            for _ in 0..<600 {
-                try? await Task.sleep(nanoseconds: 700_000_000)
-                guard let self, !self.done else { return }
-                let mine = await self.sessionCookies()
+            for _ in 0..<attempts {
+                // A cancelled sleep throws at once. Swallowing that turned "stop" into running every remaining check
+                // back to back, and one of them could still hand a session to a window that had been closed.
+                do { try await Task.sleep(for: interval) } catch { return }
+                guard let self, !self.done, !Task.isCancelled else { return }
+                let all = await self.allCookies()
+                guard !Task.isCancelled else { return }
+                let mine = all.filter { O2WebSession.isServerCookie($0, host: self.host) }
                 // Any cookie at all appears the moment the first page loads, so offering the way out from there
                 // invited people to press it before they had typed anything. A session cookie is the earliest sign
                 // that there is something worth keeping.
                 self.canFinishByHand = mine.contains { $0.name.uppercased().contains("SESSION") || $0.name == "validationKey" }
                 guard let key = mine.first(where: { $0.name == "validationKey" })?.value, !key.isEmpty else { continue }
+                let agent = await self.identity()
+                let sso = await self.signInCookies()
+                guard !Task.isCancelled, !self.done else { return }
                 self.done = true
                 self.status = L("Sesión iniciada. Cerrando…")
-                self.onSuccess?(key, mine, await self.identity(), await self.signInCookies())
+                self.onSuccess?(key, mine, agent, sso)
                 return
             }
+            guard !Task.isCancelled else { return }
             self?.failed = L("No se completó el acceso. Cierra esta ventana y vuelve a intentarlo.")
         }
     }
@@ -90,19 +110,16 @@ final class O2WebLoginModel: ObservableObject {
         return (value as? String).flatMap { $0.isEmpty ? nil : $0 }
     }
 
+    private func allCookies() async -> [HTTPCookie] { await readCookies?() ?? [] }
     private func sessionCookies() async -> [HTTPCookie] {
-        guard let webView else { return [] }
-        let cookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
-        return cookies.filter { O2WebSession.isServerCookie($0, host: host) }
+        await allCookies().filter { O2WebSession.isServerCookie($0, host: host) }
     }
     /// The cookies of the sign-in itself, which belong to Telefónica rather than to O2. They are kept because they
     /// are what lets the session be renewed later without asking anyone anything, and because the web view throws
     /// them away when the app quits: they carry no expiry, so WebKit treats them as belonging to that run alone.
     /// Nothing outside the sign-in is taken: the window visits no other site.
     private func signInCookies() async -> [HTTPCookie] {
-        guard let webView else { return [] }
-        let cookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
-        return cookies.filter { O2WebSession.isSignInCookie($0, host: host) }
+        await allCookies().filter { O2WebSession.isSignInCookie($0, host: host) }
     }
 
     /// The way out if the session is established but the key never shows up on its own. Nothing is stored unless the

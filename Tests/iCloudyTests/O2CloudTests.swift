@@ -857,6 +857,51 @@ final class O2CloudTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(start.query).contains("deviceid=" + first), start.absoluteString)
     }
 
+    private func cookie(_ name: String, _ value: String, on domain: String) -> HTTPCookie {
+        HTTPCookie(properties: [.name: name, .value: value, .domain: domain, .path: "/"])!
+    }
+
+    func testTheSignInWatcherHandsOverTheSessionOnceTheKeyAppears() async throws {
+        let login = O2WebLoginModel(host: "cloud.o2online.es")
+        login.pollInterval = .milliseconds(5)
+        var jar = [cookie("JSESSIONID", "abc", on: "cloud.o2online.es")]
+        var granted: [(key: String, sso: [String])] = []
+        login.onSuccess = { key, _, _, sso in granted.append((key, sso.map(\.name))) }
+        login.watch { jar }
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertTrue(granted.isEmpty, "Sin clave no hay sesión")
+        XCTAssertTrue(login.canFinishByHand)
+
+        jar += [cookie("validationKey", "clave", on: "cloud.o2online.es"),
+                cookie("SSOSESSION", "xyz", on: "t3.o2online.es"),
+                cookie("SSOSESSION", "robada", on: "evilo2online.es")]
+        for _ in 0..<100 where granted.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertEqual(granted.map(\.key), ["clave"])
+        XCTAssertEqual(granted.first?.sso, ["SSOSESSION"], "Solo la del acceso de verdad")
+    }
+
+    func testStoppingTheSignInWatcherStopsItsChecks() async throws {
+        // A cancelled sleep throws at once, and `try?` swallowed that: stopping the watcher ran every remaining check
+        // back to back, and the first one to find the key handed a session to a window that had been closed.
+        let login = O2WebLoginModel(host: "cloud.o2online.es")
+        login.pollInterval = .milliseconds(5)
+        var reads = 0
+        var jar: [HTTPCookie] = []
+        var granted = 0
+        login.onSuccess = { _, _, _, _ in granted += 1 }
+        login.watch { reads += 1; return jar }
+        for _ in 0..<100 where reads == 0 { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertGreaterThan(reads, 0, "Mientras vigila, mira")
+
+        login.stop()
+        let atStop = reads
+        jar = [cookie("validationKey", "clave", on: "cloud.o2online.es")]
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertLessThanOrEqual(reads, atStop + 1, "Como mucho termina la lectura que ya estaba en marcha")
+        XCTAssertEqual(granted, 0, "Una ventana cerrada no recibe ninguna sesión")
+        XCTAssertNil(login.failed, "Ni un aviso de que se agotó el tiempo")
+    }
+
     func testDisconnectingTakesTheSignInThatSurvivesTheSession() {
         // What makes a silent renewal possible is the sign-in kept at Telefónica, which outlives the O2 session.
         // Leaving it behind would make "desconectar" mean rather less than it says.
