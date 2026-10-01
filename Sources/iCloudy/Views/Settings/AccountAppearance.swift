@@ -29,7 +29,7 @@ struct AccountAppearance: Codable, Equatable {
     ]
     func title(for account: Account) -> String {
         let name = alias.trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.isEmpty ? (account.isDemo ? L("Demo local") : account.cloud.title) : name
+        return name.isEmpty ? (account.isDemo ? L("Demo local") : account.isCryptomatorVault ? account.name : account.cloud.title) : name
     }
     func validated() throws -> Self {
         var value = self

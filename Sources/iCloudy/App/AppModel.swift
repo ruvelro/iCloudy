@@ -70,6 +70,8 @@ final class AppModel: ObservableObject {
     let mirrors = MirrorManager()
     let spotlight = SpotlightIndex()
     let localCopies = LocalCopyIndex()
+    /// Cryptomator vaults unlocked in this run, each browsed as an account of its own.
+    let cryptomator = CryptomatorVaults()
     /// The running model, so App Intents and the Services menu can reach it. Intents run inside the app process.
     @MainActor static private(set) weak var shared: AppModel?
     let listings = ListingCache()
@@ -116,7 +118,7 @@ final class AppModel: ObservableObject {
     /// script that measured it was dropping one line in three. The shape of the fix stands; the reason given did not.)
     static let keepAliveCheck: TimeInterval = 4 * 60
 
-    var account: Account? { accounts.first { $0.id == selectedAccountID } }
+    var account: Account? { accounts.first { $0.id == selectedAccountID } ?? cryptomator.account(selectedAccountID) }
     var folderID: String { path.last?.id ?? collection.rootID }
     /// Recents and shared lists are not folders: nothing can be uploaded or created in them until a real folder is opened.
     var canWrite: Bool { account != nil && (collection == .files || !path.isEmpty) }
@@ -143,7 +145,9 @@ final class AppModel: ObservableObject {
         favoriteKeys = Set(favorites.map(\.id))
         if UserDefaults.standard.bool(forKey: "demoEnabled") { enableDemo(select: false) }
         queue.client = { [weak self] id in
-            guard let self, let account = self.accounts.first(where: { $0.id == id }) else { throw CloudError.message(L("Vuelve a conectar la cuenta de esta transferencia.")) }
+            guard let self, let account = self.accounts.first(where: { $0.id == id }) ?? self.cryptomator.account(id) else {
+                throw CloudError.message(CryptomatorVaults.isVaultAccount(id) ? L("Desbloquea la bóveda de esta transferencia para continuar.") : L("Vuelve a conectar la cuenta de esta transferencia."))
+            }
             return try self.client(account)
         }
         queue.didFinish = { [weak self] transfer in self?.history.record(transfer); self?.mirrors.handleFinished(transfer) }

@@ -62,6 +62,7 @@ extension ExplorerView {
                                     }
                                 }
                         }
+                        CryptomatorSidebarSection(model: model, vaults: model.cryptomator)
                         if model.loadingAccounts {
                             HStack(spacing: 8) {
                                 ProgressView().controlSize(.small)
@@ -158,6 +159,7 @@ extension ExplorerView {
                                 else { Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.connecting) }
                             }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
                         }
+                        CryptomatorBanner(model: model)
                         fileBrowser
                     }
                     }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)

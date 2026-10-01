@@ -36,7 +36,8 @@ final class ListingCache {
     private func key(_ accountID: String, _ parent: String) -> String { accountID + "\u{1F}" + parent }
 
     func cached(accountID: String, parent: String) -> [CloudFile]? {
-        guard enabled else { return nil }
+        // Decrypted names of an encrypted vault never touch the disk.
+        guard enabled, !CryptomatorVaults.isVaultAccount(accountID) else { return nil }
         let key = key(accountID, parent)
         if let files = memory[key], let date = dates[key], Date().timeIntervalSince(date) <= maxAge { return files }
         memory[key] = nil; dates[key] = nil
@@ -51,7 +52,7 @@ final class ListingCache {
         return files
     }
     func store(_ files: [CloudFile], accountID: String, parent: String) {
-        guard enabled else { return }
+        guard enabled, !CryptomatorVaults.isVaultAccount(accountID) else { return }
         guard files.count <= min(maxItems, maxTotalItems),
               let encoded = try? JSONEncoder().encode(files), encoded.count <= maxBytes else { invalidate(accountID: accountID, parent: parent); return }
         memory[key(accountID, parent)] = files

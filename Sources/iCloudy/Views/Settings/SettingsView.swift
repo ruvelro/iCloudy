@@ -8,6 +8,7 @@ struct SettingsView: View {
             GeneralSettings(model: model).tabItem { Label("General", systemImage: "gearshape") }
             TransferSettings(model: model).tabItem { Label("Transferencias", systemImage: "arrow.up.arrow.down") }
             StorageSettings(model: model).tabItem { Label("Almacenamiento", systemImage: "internaldrive") }
+            CryptomatorSettings(model: model, vaults: model.cryptomator).tabItem { Label("Cifrado", systemImage: "lock.shield") }
         }.frame(width: 540, height: 430)
     }
 }

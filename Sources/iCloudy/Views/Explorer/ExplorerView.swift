@@ -22,6 +22,7 @@ struct ExplorerView: View {
 
     var body: some View {
         navigation
+        .cryptomatorSheets(model: model)
         .sheet(isPresented: $model.showConnect) { ConnectView(model: model) }
         .sheet(item: $model.appearanceAccount) { account in AccountAppearanceEditor(model: model, account: account) }
         .sheet(isPresented: $model.showNameDialog) {

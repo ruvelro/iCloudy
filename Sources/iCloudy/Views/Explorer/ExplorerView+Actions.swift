@@ -107,7 +107,10 @@ extension ExplorerView {
     @ViewBuilder func liveFileActions(_ file: CloudFile) -> some View {
         Button("Vista previa") { model.showPreview(file) }
         Divider()
-        Button(model.isFavorite(file) ? L("Quitar de favoritos") : L("Añadir a favoritos")) { model.toggleFavorite(file) }
+        // A favourite or a mirror would keep a decrypted name on disk and point at a vault that locks.
+        if !model.inEncryptedVault {
+            Button(model.isFavorite(file) ? L("Quitar de favoritos") : L("Añadir a favoritos")) { model.toggleFavorite(file) }
+        }
         Button("Renombrar…") { model.promptName(file) }
         Button("Mover a…") { model.requestRelocation([file], copy: false) }
         Button("Copiar a…") { model.requestRelocation([file], copy: true) }
@@ -117,9 +120,12 @@ extension ExplorerView {
         Divider()
         if file.isFolder {
             Button("Abrir carpeta") { model.navigate(file) }
-            Button("Reflejar una carpeta local aquí…") { Task { await model.pickMirrorSource(for: file) } }
-            Button("Sincronizar en ambos sentidos con una carpeta local…") { Task { await model.pickMirrorSource(for: file, twoWay: true) } }
+            if !model.inEncryptedVault {
+                Button("Reflejar una carpeta local aquí…") { Task { await model.pickMirrorSource(for: file) } }
+                Button("Sincronizar en ambos sentidos con una carpeta local…") { Task { await model.pickMirrorSource(for: file, twoWay: true) } }
+            }
             Button("Descargar carpeta…") { Task { await model.save(file) } }
+            CryptomatorFolderActions(model: model, folder: file)
         } else if !file.isGoogleDocument {
             Button("Descargar…") { Task { await model.save(file) } }
         }

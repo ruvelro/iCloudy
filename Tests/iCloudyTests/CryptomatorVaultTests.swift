@@ -294,6 +294,94 @@ final class CryptomatorVaultTests: XCTestCase {
         catch { XCTAssertEqual(error as? CryptomatorError, .locked) }
     }
 
+    /// Keychain operations kept in a dictionary, so a test can see what was stored without touching the real one.
+    private final class FakeKeychain {
+        var values: [String: Data] = [:]
+        var attributes: [String: [String: Any]] = [:]
+        var operations: KeychainOperations {
+            KeychainOperations(update: { query, changes in
+                let key = (query as NSDictionary)[kSecAttrAccount] as! String
+                guard self.values[key] != nil else { return errSecItemNotFound }
+                self.values[key] = (changes as NSDictionary)[kSecValueData] as? Data
+                return errSecSuccess
+            }, add: { item, _ in
+                let dictionary = item as NSDictionary as! [String: Any]
+                let key = dictionary[kSecAttrAccount as String] as! String
+                self.values[key] = dictionary[kSecValueData as String] as? Data
+                self.attributes[key] = dictionary
+                return errSecSuccess
+            }, copy: { query, result in
+                guard let value = self.values[(query as NSDictionary)[kSecAttrAccount] as! String] else { return errSecItemNotFound }
+                result?.pointee = value as CFData
+                return errSecSuccess
+            }, delete: { query in
+                self.values[(query as NSDictionary)[kSecAttrAccount] as! String] = nil
+                return errSecSuccess
+            })
+        }
+    }
+
+    func testUnlockedVaultsAreAccountsThatLockOnDemandWhenIdleAndWithTheirStorage() async throws {
+        let storage = MemoryProvider()
+        let folder = try await CryptomatorVault.create(named: "Privado", in: "root", provider: storage, passphrase: "contraseña larga", costParam: 16)
+        let keychain = FakeKeychain()
+        let vaults = CryptomatorVaults(passphrases: KeychainStorage(operations: keychain.operations))
+        let base = Account(id: "memory", cloud: .google, name: "M", email: "m@example.com", clientID: "", clientSecret: nil)
+        let vaultFolder = CloudFile(id: folder, name: "Privado", mime: CryptomatorProvider.folderMime, size: nil, modified: nil, webURL: nil, isFolder: true)
+        var locked: [String] = []
+        vaults.didLock = { locked.append($0.id) }
+
+        do {
+            try await vaults.unlock(folder: vaultFolder, base: base, provider: { storage }, passphrase: "contraseña corta", remember: true)
+            XCTFail("Contraseña equivocada")
+        } catch { XCTAssertEqual(error as? CryptomatorError, .invalidPassphrase) }
+        XCTAssertTrue(keychain.values.isEmpty, "Una contraseña que no abre no se guarda")
+
+        let entry = try await vaults.unlock(folder: vaultFolder, base: base, provider: { storage }, passphrase: "contraseña larga", remember: true)
+        XCTAssertTrue(entry.account.isCryptomatorVault)
+        XCTAssertEqual(entry.id, CryptomatorVaults.accountID(base: "memory", folder: folder), "El mismo id cada vez que se abre")
+        XCTAssertEqual(vaults.account(entry.id)?.name, "Privado")
+        XCTAssertFalse(entry.account.capabilities.search); XCTAssertFalse(entry.account.capabilities.publicLinks)
+        XCTAssertFalse(entry.account.capabilities.copy); XCTAssertTrue(entry.account.capabilities.move)
+        XCTAssertEqual(vaults.rememberedPassphrase(base: "memory", folder: folder), "contraseña larga")
+        let stored = try XCTUnwrap(keychain.attributes[CryptomatorVaults.passphraseKey(entry.id)])
+        XCTAssertEqual(stored[kSecAttrAccessible as String] as? String, kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String)
+
+        // Idle: a busy vault stays open, an unused one locks.
+        let now = Date()
+        vaults.isBusy = { _ in true }
+        XCTAssertTrue(vaults.lockIdle(now: now.addingTimeInterval(3600), minutes: 15).isEmpty)
+        vaults.isBusy = { _ in false }
+        XCTAssertTrue(vaults.lockIdle(now: now.addingTimeInterval(60), minutes: 15).isEmpty, "Un minuto no es inactividad")
+        XCTAssertTrue(vaults.lockIdle(now: now.addingTimeInterval(3600), minutes: 0).isEmpty, "Cero es nunca")
+        XCTAssertEqual(vaults.lockIdle(now: now.addingTimeInterval(16 * 60), minutes: 15), [entry.id])
+        XCTAssertEqual(locked, [entry.id])
+        XCTAssertNil(vaults.client(for: entry.id))
+        do { _ = try await entry.client.list(parent: "root"); XCTFail("Bloqueada") } catch {}
+
+        // Again, then gone with the account that stores it.
+        let again = try await vaults.unlock(folder: vaultFolder, base: base, provider: { storage }, passphrase: "contraseña larga", remember: false)
+        XCTAssertEqual(again.id, entry.id)
+        vaults.lockAll(storedIn: "otra")
+        XCTAssertEqual(vaults.unlocked.count, 1)
+        vaults.lockAll(storedIn: "memory")
+        XCTAssertTrue(vaults.unlocked.isEmpty)
+        vaults.forgetPassphrase(entry.id)
+        XCTAssertNil(vaults.rememberedPassphrase(base: "memory", folder: folder))
+    }
+
+    func testDecryptedNamesStayOffTheListingCache() async {
+        let directory = scratch.appendingPathComponent("listados")
+        let cache = ListingCache(directory: directory)
+        let file = CloudFile(id: "cm:F:x.c9r:", name: "secreto.txt", mime: "text/plain", size: 1, modified: nil, webURL: nil, isFolder: false)
+        cache.store([file], accountID: CryptomatorVaults.accountID(base: "a", folder: "b"), parent: "root")
+        await cache.settle()
+        XCTAssertNil(cache.cached(accountID: CryptomatorVaults.accountID(base: "a", folder: "b"), parent: "root"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path), "Nada escrito en disco")
+        cache.store([file], accountID: "a", parent: "root")
+        XCTAssertNotNil(cache.cached(accountID: "a", parent: "root"), "Las cuentas normales siguen igual")
+    }
+
     func testItemIdsSurviveDirectoryIdsWithColons() {
         let id = CryptomatorProvider.itemID(.folder, node: "abc=.c9r", parentDirID: "a:b:c")
         let parsed = CryptomatorProvider.parse(id)
