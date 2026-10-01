@@ -354,15 +354,24 @@ final class O2SilentRenewal {
         O2Log.record("renovación silenciosa · empieza")
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            try? await Task.sleep(nanoseconds: 700_000_000)
+            // Cancelled means the account was disconnected or signed in to again: the web view stops here rather
+            // than carrying on to a session nobody will adopt.
+            do { try await Task.sleep(nanoseconds: 700_000_000) } catch { break }
             let cookies = await configuration.websiteDataStore.httpCookieStore.allCookies()
+            guard !Task.isCancelled else { break }
             let mine = cookies.filter { O2WebSession.isServerCookie($0, host: host) }
             if let key = mine.first(where: { $0.name == "validationKey" })?.value, !key.isEmpty {
                 let agent = (try? await webView.evaluateJavaScript("navigator.userAgent")) as? String
+                guard !Task.isCancelled else { break }
                 let fresh = cookies.filter { O2WebSession.isSignInCookie($0, host: host) }
                 O2Log.record("renovación silenciosa · conseguida sin intervención")
                 return (key, mine, agent, fresh)
             }
+        }
+        if Task.isCancelled {
+            webView.stopLoading()
+            O2Log.record("renovación silenciosa · cancelada")
+            return nil
         }
         // Normally this means Telefónica wants to see the person again. Saying which page it stopped on is the only
         // clue available afterwards, and it is why this is written down at all.

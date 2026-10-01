@@ -98,6 +98,8 @@ final class AppModel: ObservableObject {
     var touching: Set<String> = []
     /// Accounts whose session is being renewed in the background, so it is only attempted once at a time.
     @Published var renewingAccountIDs: Set<String> = []
+    /// The renewals themselves, so disconnecting or signing in again can cancel one and refuse what it brings back.
+    let o2Renewals = O2RenewalTasks()
     var editContext: (Account, String)?
     let favoritesURL = LocalStore.directory.appendingPathComponent("favorites.json")
     /// Opening folders refreshes the quota at most this often; explicit requests and finished transfers always do.

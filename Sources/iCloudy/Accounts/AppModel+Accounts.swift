@@ -123,34 +123,43 @@ extension AppModel {
         } catch { self.error = error.localizedDescription }
     }
 
-    /// Stores the session O2 handed out on its own pages. iCloudy never saw the password or the code.
     /// Tries to get a new session without involving the person. Only worth attempting for a provider whose sign-in
     /// outlives its session, which is O2: its server gives up after an hour of silence, so a Mac that spent the
     /// night off always wakes to a dead one. Failing here is normal and simply leaves the account marked expired.
+    ///
+    /// The renewal belongs to the account: disconnecting it, or signing in to it by hand, cancels the renewal and
+    /// makes sure nothing it brings back is written.
     func renewSilently(_ account: Account) {
-        guard account.cloud.usesWebLogin, !renewingAccountIDs.contains(account.id) else { return }
-        renewingAccountIDs.insert(account.id)
-        let host = account.options["host"] ?? "cloud.o2online.es"
-        Task { [weak self] in
-            let stored = try? Vault.read(Credential.self, key: account.credentialKey)
+        // The account captured by a client may predate later changes to it; the list holds the current one.
+        guard account.cloud.usesWebLogin, let current = accounts.first(where: { $0.id == account.id }),
+              !o2Renewals.isRunning(current.id) else { return }
+        let host = current.options["host"] ?? "cloud.o2online.es"
+        let started = o2Renewals.start(current.id, attempt: {
+            let stored = try? Vault.read(Credential.self, key: current.credentialKey)
             let sso = stored.map { O2API.restoreSSO($0.secret) } ?? []
-            let renewed = await O2SilentRenewal(host: host).attempt(sso: sso)
-            guard let self else { return }
+            return await O2SilentRenewal(host: host).attempt(sso: sso)
+        }, adopt: { [weak self] renewed, isCurrent in
+            await self?.completeO2(host: host, validationKey: renewed.key, cookies: renewed.cookies,
+                                   userAgent: renewed.userAgent, sso: renewed.sso, replacing: current,
+                                   select: false, isCurrent: isCurrent)
+        }, finished: { [weak self] in
             // Released only once the new session has been proved and written. Clearing it before that showed the
             // "expired" notice, with its button, over an account that was about to fix itself.
-            defer { renewingAccountIDs.remove(account.id) }
-            guard let renewed else { return }
-            await completeO2(host: host, validationKey: renewed.key, cookies: renewed.cookies,
-                             userAgent: renewed.userAgent, sso: renewed.sso, replacing: account, select: false)
-        }
+            self?.renewingAccountIDs.remove(current.id)
+        })
+        if started { renewingAccountIDs.insert(current.id) }
     }
 
+    /// Stores the session O2 handed out on its own pages. iCloudy never saw the password or the code.
+    ///
+    /// `isCurrent` comes with a silent renewal and is asked right before anything is written: proving the session
+    /// takes a request, and the account may have been disconnected, or signed in to by hand, while it was out.
     func completeO2(host: String, validationKey: String, cookies: [HTTPCookie], userAgent: String?,
                     sso: [HTTPCookie] = [], replacing existing: Account? = nil,
-                    select shouldSelect: Bool = true) async {
-        connectionError = nil
-        connecting = shouldSelect
-        defer { connecting = false }
+                    select shouldSelect: Bool = true, isCurrent: (@MainActor () -> Bool)? = nil) async {
+        // A renewal runs in the background and must not touch the state of a connection sheet somebody may be using.
+        if shouldSelect { connectionError = nil; connecting = true }
+        defer { if shouldSelect { connecting = false } }
         do {
             guard !validationKey.isEmpty else {
                 throw CloudError.message(L("El acceso no terminó de completarse. Vuelve a intentarlo desde la página de O2."))
@@ -173,10 +182,20 @@ extension AppModel {
             let credential = Credential(accessToken: "", refreshToken: "", expires: .distantFuture,
                                         secret: O2API.store(validationKey: validationKey, cookies: cookies,
                                                             userAgent: userAgent, sso: sso))
+            // Nothing between this check and the writes below awaits, so it cannot go stale in between.
+            if let isCurrent {
+                guard isCurrent(), let existing, accounts.contains(where: { $0.id == existing.id }) else {
+                    O2Log.record("renovación silenciosa · descartada: la cuenta se desconectó o se volvió a conectar")
+                    return
+                }
+            }
             try Vault.save(credential, key: account.id)
             var updated = accounts.filter { $0.id != account.id }; updated.append(account)
             try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
             accounts = updated; sessions.remove(account.id)
+            // Signing in by hand makes any renewal still out for this account stale: its result would overwrite the
+            // session just written with whichever of the two finished last.
+            if isCurrent == nil { o2Renewals.invalidate(account.id); renewingAccountIDs.remove(account.id) }
             expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
             lastKeepAlive[account.id] = Date()
             if shouldSelect { select(account.id); showConnect = false }
@@ -329,6 +348,8 @@ extension AppModel {
 
     /// Drops everything kept locally about an account: its client, quota, listings, mirrors, index and search rows.
     func forget(_ account: Account) {
+        // A renewal still out would write the account straight back, credential and all.
+        o2Renewals.invalidate(account.id); renewingAccountIDs.remove(account.id)
         remoteCopies.removeAccount(account.id)
         quotas.remove(account.id)
         sessions.remove(account.id)

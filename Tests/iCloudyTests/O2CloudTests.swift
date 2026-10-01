@@ -857,6 +857,87 @@ final class O2CloudTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(start.query).contains("deviceid=" + first), start.absoluteString)
     }
 
+    // MARK: - Silent renewal
+
+    /// Lets the main actor run whatever was waiting, which is all a finished renewal needs to tidy up.
+    private func settle() async { for _ in 0..<20 { await Task.yield() } }
+
+    func testDisconnectingDuringARenewalDiscardsWhatItBringsBack() async throws {
+        // The renewal spends up to half a minute in a hidden web view. Disconnecting the account in that time let
+        // it finish and write the account straight back, credential and all.
+        let renewals = O2RenewalTasks()
+        var pending: CheckedContinuation<String?, Never>?
+        var adopted: [String] = []
+        var finished = 0
+        XCTAssertTrue(renewals.start("o2:cuenta", attempt: {
+            await withCheckedContinuation { pending = $0 }
+        }, adopt: { session, _ in adopted.append(session) }, finished: { finished += 1 }))
+        await settle()
+        XCTAssertTrue(renewals.isRunning("o2:cuenta"))
+
+        renewals.invalidate("o2:cuenta")
+        XCTAssertFalse(renewals.isRunning("o2:cuenta"), "La cuenta ya no tiene ninguna en marcha")
+        try XCTUnwrap(pending).resume(returning: "sesión nueva")
+        await settle()
+        XCTAssertEqual(adopted, [], "Lo que trae una renovación de una cuenta desconectada se tira")
+        XCTAssertEqual(finished, 0, "Quien desconecta ya ha recogido; la renovación vieja no toca nada")
+    }
+
+    func testCancellingARenewalReachesTheWorkItIsDoing() async throws {
+        // Without this the hidden web view kept loading O2's pages for a session nobody would adopt.
+        let renewals = O2RenewalTasks()
+        var sawCancellation = false
+        renewals.start("o2:cuenta", attempt: { () async -> String? in
+            do { try await Task.sleep(for: .seconds(30)) } catch { sawCancellation = true }
+            return nil
+        }, adopt: { _, _ in XCTFail("No hay nada que adoptar") })
+        await settle()
+        renewals.invalidate("o2:cuenta")
+        for _ in 0..<100 where !sawCancellation { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertTrue(sawCancellation)
+    }
+
+    func testARenewalThatOutlivesItsGenerationIsNotWrittenEvenMidAdoption() async throws {
+        // Adopting awaits too: the new session is proved against the server before it is written. Signing in by
+        // hand, or disconnecting, during that request must still win.
+        let renewals = O2RenewalTasks()
+        var proving: CheckedContinuation<Void, Never>?
+        var checks: [Bool] = []
+        renewals.start("o2:cuenta", attempt: { "sesión nueva" }, adopt: { _, isCurrent in
+            checks.append(isCurrent())
+            await withCheckedContinuation { proving = $0 }
+            checks.append(isCurrent())
+        })
+        await settle()
+        XCTAssertEqual(checks, [true], "Al empezar a adoptar, la cuenta sigue siendo la misma")
+        renewals.invalidate("o2:cuenta")
+        try XCTUnwrap(proving).resume()
+        await settle()
+        XCTAssertEqual(checks, [true, false], "Y justo antes de escribir ya no lo es")
+    }
+
+    func testOneRenewalPerAccountAndAnotherOnceItEnds() async throws {
+        let renewals = O2RenewalTasks()
+        var pending: CheckedContinuation<String?, Never>?
+        var adopted: [String] = []
+        var finished = 0
+        XCTAssertTrue(renewals.start("o2:a", attempt: { await withCheckedContinuation { pending = $0 } },
+                                     adopt: { session, _ in adopted.append(session) }, finished: { finished += 1 }))
+        XCTAssertFalse(renewals.start("o2:a", attempt: { "otra" }, adopt: { session, _ in adopted.append(session) }),
+                       "Una sola a la vez por cuenta")
+        XCTAssertTrue(renewals.start("o2:b", attempt: { String?.none }, adopt: { _, _ in }), "Otra cuenta va por su lado")
+        renewals.invalidate("o2:b")
+        await settle()
+        XCTAssertTrue(renewals.isRunning("o2:a"), "Desconectar una cuenta no toca la renovación de otra")
+
+        try XCTUnwrap(pending).resume(returning: "sesión nueva")
+        await settle()
+        XCTAssertEqual(adopted, ["sesión nueva"])
+        XCTAssertEqual(finished, 1)
+        XCTAssertFalse(renewals.isRunning("o2:a"))
+        XCTAssertTrue(renewals.start("o2:a", attempt: { String?.none }, adopt: { _, _ in }), "Y al terminar se puede otra")
+    }
+
     private func cookie(_ name: String, _ value: String, on domain: String) -> HTTPCookie {
         HTTPCookie(properties: [.name: name, .value: value, .domain: domain, .path: "/"])!
     }
