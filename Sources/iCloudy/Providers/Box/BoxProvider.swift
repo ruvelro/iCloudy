@@ -26,7 +26,8 @@ extension BoxProvider {
                          size: (value["size"] as? NSNumber)?.int64Value,
                          modified: date(value["modified_at"] as? String),
                          webURL: ((value["shared_link"] as? [String: Any])?["url"] as? String).flatMap(URL.init(string:)),
-                         isFolder: folder)
+                         isFolder: folder,
+                         checksum: (value["sha1"] as? String).flatMap { $0.isEmpty ? nil : ContentHash(algorithm: .sha1, value: $0) })
     }
 
     /// Paged with a marker rather than an offset: Box refuses an offset past 10 000, so a folder with more items than

@@ -48,7 +48,8 @@ extension DropboxProvider {
                          mime: folder ? "application/vnd.google-apps.folder" : mime(forName: name),
                          size: (value["size"] as? NSNumber)?.int64Value,
                          modified: date(value["server_modified"] as? String),
-                         webURL: nil, isFolder: folder)
+                         webURL: nil, isFolder: folder,
+                         checksum: (value["content_hash"] as? String).map { ContentHash(algorithm: .dropbox, value: $0) })
     }
 
     func dropboxList(parent: String, onPage: (([CloudFile]) -> Void)?) async throws -> [CloudFile] {

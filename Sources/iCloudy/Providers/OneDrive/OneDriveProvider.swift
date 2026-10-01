@@ -13,7 +13,16 @@ extension OneDriveProvider {
         return CloudFile(
             id: id, name: name, mime: remote ? "application/vnd.google-apps.shortcut" : ((value["file"] as? [String: Any])?["mimeType"] as? String ?? "application/octet-stream"),
             size: (value["size"] as? NSNumber)?.int64Value, modified: date(value["lastModifiedDateTime"] as? String), webURL: (value["webUrl"] as? String).flatMap(URL.init(string:)),
-            isFolder: !remote && value["folder"] != nil)
+            isFolder: !remote && value["folder"] != nil, checksum: microsoftChecksum(value))
+    }
+    /// QuickXorHash first: Microsoft computes it for every account type and is retiring SHA-1 on personal ones, so it is
+    /// the hash least likely to be stale. The SHA digests are the fallback where an older item lacks it.
+    static func microsoftChecksum(_ value: [String: Any]) -> ContentHash? {
+        let hashes = (value["file"] as? [String: Any])?["hashes"] as? [String: Any]
+        if let quick = hashes?["quickXorHash"] as? String, !quick.isEmpty { return ContentHash(algorithm: .quickXor, value: quick) }
+        if let sha = hashes?["sha256Hash"] as? String, !sha.isEmpty { return ContentHash(algorithm: .sha256, value: sha) }
+        if let sha = hashes?["sha1Hash"] as? String, !sha.isEmpty { return ContentHash(algorithm: .sha1, value: sha) }
+        return nil
     }
 
     var graphDrive: String {
