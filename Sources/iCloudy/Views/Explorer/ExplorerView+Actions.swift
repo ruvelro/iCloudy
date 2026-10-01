@@ -127,6 +127,8 @@ extension ExplorerView {
         ForEach(file.exportOptions, id: \.ext) { option in
             Button("Exportar como \(option.title)…") { Task { await model.save(file, export: (option.mime, option.ext)) } }
         }
+        Divider()
+        offlineActions(file)
         if let copy = model.localStatus(file).copy {
             Divider()
             Button("Mostrar la copia de este Mac en el Finder") { model.revealLocalCopy(file) }

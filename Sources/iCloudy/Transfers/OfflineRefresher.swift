@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 /// Keeps the offline copies current. Each account is refreshed by one task at a time, pin by pin; a request that
 /// arrives while one runs is merged into the next round instead of starting a second walk of the same tree.
@@ -30,8 +31,9 @@ final class OfflineRefresher {
     private(set) var lastFullRefresh = Date.distantPast
     private var tasks: [String: Task<Void, Never>] = [:]
     private var pending: [String: Scope] = [:]
-    /// The periodic timer, owned here so the model does not need a property of its own for it.
+    /// The periodic timer and the model's observers, owned here so the model needs no properties of its own for them.
     var timer: Task<Void, Never>?
+    var subscriptions = Set<AnyCancellable>()
 
     init(store: OfflineStore) { self.store = store }
 

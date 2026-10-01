@@ -8,9 +8,10 @@ extension ExplorerView {
         Table(model.visibleFiles, selection: $selected) {
             TableColumn("Nombre") { file in
                 HStack(spacing: 8) {
-                    // Folders carry no badge: iCloudy cannot claim that everything inside is present and current.
+                    // Folders carry no cloud/Mac badge: iCloudy cannot claim that everything inside is present and
+                    // current. A folder kept offline is the exception, because then the refresh does know.
                     Group {
-                        if file.isFolder { Color.clear } else { LocalCopyBadge(status: model.localStatus(file)) }
+                        FileStateBadge(file: file, local: model.localStatus(file), offline: model.offlineStatus(file))
                     }.frame(width: 15)
                     FileIcon(file: file)
                     Text(file.name).lineLimit(1)
@@ -66,8 +67,8 @@ extension ExplorerView {
                             VStack(spacing: 10) {
                                 FileIcon(file: file, size: 42)
                                     .overlay(alignment: .bottomTrailing) {
-                                        if !file.isFolder {
-                                            LocalCopyBadge(status: model.localStatus(file), size: 14)
+                                        if !file.isFolder || model.offlineStatus(file) != nil {
+                                            FileStateBadge(file: file, local: model.localStatus(file), offline: model.offlineStatus(file), size: 14)
                                                 .background(Circle().fill(.background).padding(-1))
                                                 .offset(x: 8, y: 2)
                                         }

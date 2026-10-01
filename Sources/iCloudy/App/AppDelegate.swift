@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         current?.queue.flush() // coalesced checkpoints still in memory
         current?.localCopies.flush() // and the index of what a finished transfer put on this Mac
+        current?.offline.flush() // and the copies kept for offline use
         current?.preview.close()
     }
 }
