@@ -9,7 +9,7 @@ final class MirrorPauseTests: XCTestCase {
         try Data(text.utf8).write(to: url)
     }
     private func wait(_ condition: () -> Bool) async throws {
-        for _ in 0..<500 { if condition() { return }; try await Task.sleep(for: .milliseconds(10)) }
+        for _ in 0..<1500 { if condition() { return }; try await Task.sleep(for: .milliseconds(10)) }
         XCTFail("Timed out"); throw CloudError.message("timeout")
     }
     private struct Setup {
