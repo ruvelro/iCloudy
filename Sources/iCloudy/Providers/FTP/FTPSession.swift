@@ -36,8 +36,12 @@ actor FTPSession {
     private(set) var timeout: TimeInterval = 45
     func setTimeout(_ seconds: TimeInterval) { timeout = seconds }
 
-    init(host: String, port: UInt16, user: String, password: String, security: Security) {
+    /// The account this session belongs to, for the diagnostic log.
+    private let diagnosticsAccount: String?
+
+    init(host: String, port: UInt16, user: String, password: String, security: Security, account: String? = nil) {
         self.host = host; self.port = port; self.user = user; self.password = password; self.security = security
+        self.diagnosticsAccount = account
     }
 
     // MARK: - Connection
@@ -300,6 +304,17 @@ actor FTPSession {
     static func isSafeLine(_ line: String) -> Bool { !line.unicodeScalars.contains { $0 == "\r" || $0 == "\n" || $0 == "\0" } }
     /// Writes one command and reads its reply. Callers hold the lock and have a live connection.
     private func send(_ line: String) async throws -> Reply {
+        let began = Date()
+        do {
+            let answer = try await transmit(line)
+            Diagnostics.ftp(line, host: host, account: diagnosticsAccount, code: answer.code, duration: Date().timeIntervalSince(began))
+            return answer
+        } catch {
+            Diagnostics.ftp(line, host: host, account: diagnosticsAccount, code: nil, duration: Date().timeIntervalSince(began), error: error)
+            throw error
+        }
+    }
+    private func transmit(_ line: String) async throws -> Reply {
         guard Self.isSafeLine(line) else { throw CloudError.message(L("El nombre contiene un salto de línea, que FTP no admite.")) }
         guard let connection = control else { throw ConnectionLost() }
         do { try await rawSend(connection, Data((line + "\r\n").utf8)) }

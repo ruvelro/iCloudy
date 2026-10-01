@@ -122,6 +122,8 @@ enum MegaAPI {
             do { (data, response) = try await session.data(for: request, delegate: RedirectGuard.shared) }
             catch let error as URLError {
                 guard error.code != .cancelled else { throw CancellationError() }
+                Diagnostics.mega(command, severity: Self.worthRepeating(error.code) && drops < Self.maxDrops ? .retry : .error,
+                                 attempt: drops + 1, error: error, note: "petición sin respuesta")
                 guard Self.worthRepeating(error.code), drops < Self.maxDrops else { throw unreachable(error) }
                 try await pause(Self.waitDelay(drops), unreachable(error))
                 drops += 1
@@ -135,6 +137,7 @@ enum MegaAPI {
                     throw CloudError.message(L("Mega sigue pidiendo una prueba de trabajo después de resolverla. Vuelve a intentarlo dentro de un momento."))
                 }
                 proofs += 1
+                Diagnostics.mega(command, severity: .retry, attempt: proofs, status: 402, note: "prueba de trabajo")
                 request.setValue(try await solve(challenge), forHTTPHeaderField: "X-Hashcash")
                 continue
             }
@@ -142,6 +145,8 @@ enum MegaAPI {
             // same way a dropped request is rather than handed to the user on the first try.
             if (500..<600).contains(http.statusCode) || http.statusCode == 429 {
                 let unavailable = CloudError.message(L("Mega no está disponible en este momento."))
+                Diagnostics.mega(command, severity: drops < Self.maxDrops ? .retry : .error, attempt: drops + 1,
+                                 status: http.statusCode, note: "servidor no disponible")
                 guard drops < Self.maxDrops else { throw unavailable }
                 try await pause(Self.waitDelay(drops), unavailable)
                 drops += 1
@@ -157,6 +162,8 @@ enum MegaAPI {
             var result: Any? = body
             if let list = body as? [Any] { result = list.first }
             if let code = result as? Int, code < 0 {
+                Diagnostics.mega(command, severity: code == -3 && waits < Self.maxWaits ? .retry : .error, code: code,
+                                 attempt: waits + 1, note: code == -3 ? "ocupado, se espera" : "error de Mega")
                 guard code == -3, waits < Self.maxWaits else { throw failure(code, command: command) }
                 // Mega's own clients back off and keep asking. Half a second five times was not nearly enough: a
                 // delete would surface "-3" to the user and work fine the moment they tried it again by hand.

@@ -53,7 +53,7 @@ extension SFTPProvider {
                                      user: String(pair[pair.startIndex..<separator]),
                                      password: String(pair[pair.index(after: separator)...]),
                                      expectedHostKey: Self.storedHostKey(account))
-        let client = SFTPClient(transport: transport)
+        let client = SFTPClient(transport: transport, account: account.id)
         sftpClient = client
         return client
     }
