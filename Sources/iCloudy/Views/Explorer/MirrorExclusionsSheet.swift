@@ -10,14 +10,14 @@ struct MirrorExclusionsSheet: View {
     @State private var text: String
     @State private var probe = ""
     @State private var error: String?
-    private let caseInsensitive: Bool
+    /// Follows the local volume; asked on appear, since resolving the folder can write the mirror store.
+    @State private var caseInsensitive = true
 
     init(mirror: FolderMirror, manager: MirrorManager) {
         self.mirror = mirror
         self.manager = manager
         _rules = State(initialValue: mirror.exclusions)
         _text = State(initialValue: mirror.exclusions.patterns.joined(separator: "\n"))
-        caseInsensitive = manager.exclusions(of: mirror).caseInsensitive
     }
 
     private var edited: SyncExclusions {
@@ -73,5 +73,6 @@ struct MirrorExclusionsSheet: View {
         }
         .padding(20)
         .frame(width: 500)
+        .onAppear { caseInsensitive = manager.exclusions(of: mirror).caseInsensitive }
     }
 }
