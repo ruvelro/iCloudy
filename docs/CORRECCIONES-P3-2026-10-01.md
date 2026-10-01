@@ -1,0 +1,7 @@
+# Correcciones P3 — 1 de octubre de 2026
+
+Deuda técnica pendiente tras las correcciones P1 y P2 y las funciones nuevas (pestañas y doble panel, cola paralela, plan e informe, enlaces, versiones, copias sin conexión, comparador, S3, pCloud, bóvedas Cryptomator, diagnóstico y exclusiones de reflejos). Alcance: el apartado «Calidad, arquitectura y aspectos pendientes de validar» de la auditoría y los huecos que señalaron los propios trabajos de esas funciones.
+
+| Punto | Corrección |
+| --- | --- |
+| Concurrencia (auditoría, «Calidad») | `swift build -c release -Xswiftc -strict-concurrency=complete` pasa de 68 diagnósticos distintos con ubicación (138 líneas de aviso) a **cero**, y `swift build` sigue sin avisos. Contratos explícitos en lugar de silenciar: `MegaState` y las fuentes del comparador pasan al actor principal; el árbol de Mega se descifra fuera de él recibiendo la respuesta con `sending`; las operaciones exclusivas de FTP y SFTP exigen trabajo `@Sendable` y resultados `Sendable`; el progreso de FTP, SFTP y volúmenes vuelve al actor principal a través de un cierre aislado en él; el plan de transferencias declara que calcula en el actor principal; la extensión del Finder guarda su backend en una caja del actor principal y solo envuelve los callbacks del sistema, que la documentación permite llamar desde cualquier hilo, en un tipo `@unchecked Sendable` justificado. `FileProvider` se importa con `@preconcurrency` porque el SDK no anota sus callbacks. |

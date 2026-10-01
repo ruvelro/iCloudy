@@ -23,8 +23,8 @@ final class TransferPlanCoordinator: ObservableObject {
     static var enabled: Bool { Prefs.bool(Prefs.transferPlan, default: true) }
 
     /// `compute` receives a progress callback; `start` receives the plan, or nil when the person chose to go ahead
-    /// without one after the enumeration failed.
-    func begin(title: String, compute: @escaping (@escaping (PlanProgress) -> Void) async throws -> TransferPlan,
+    /// without one after the enumeration failed. Both run on the main actor, where the planner and this sheet live.
+    func begin(title: String, compute: @escaping @MainActor (@escaping @MainActor (PlanProgress) -> Void) async throws -> TransferPlan,
                start: @escaping (TransferPlan?) -> Void) {
         cancel()
         let session = Session(title: title)

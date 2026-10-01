@@ -208,7 +208,7 @@ actor FTPSession {
     /// reply as its own, and the upload would read the listing's. Each public operation runs to completion before the
     /// next one starts, in the order they arrived.
     private var lastOperation: Task<Void, Never>?
-    private func exclusive<T>(_ work: @escaping () async throws -> T) async throws -> T {
+    private func exclusive<T: Sendable>(_ work: @escaping @Sendable () async throws -> T) async throws -> T {
         let previous = lastOperation
         let operation = Task<T, Error> {
             await previous?.value

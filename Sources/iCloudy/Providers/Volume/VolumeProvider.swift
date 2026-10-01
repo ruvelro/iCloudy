@@ -233,7 +233,7 @@ extension VolumeProvider {
         try volumeCheckMounted()
         let source = try volumeURL(file.id)
         let path = try VolumePath(root: volumeRoot(), url: source)
-        try await Self.volumeCopyContents(from: source, to: destination, input: path.openFile(O_RDONLY), maxBytes: maxBytes, progress: progress)
+        try await Self.volumeCopyContents(from: source, to: destination, input: path.openFile(O_RDONLY), maxBytes: maxBytes, progress: { progress($0, $1) })
     }
     func volumeUpload(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint,
                       save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
@@ -246,7 +246,7 @@ extension VolumeProvider {
         guard fd >= 0 else { throw VolumePath.error() }
         let output = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         defer { try? output.close(); unlinkat(path.parent, staging, 0) }
-        try await Self.volumeCopyContents(from: local, to: target, output: output, progress: progress)
+        try await Self.volumeCopyContents(from: local, to: target, output: output, progress: { progress($0, $1) })
         try cursor.sourceStamp?.validate(local)
         // rename replaces the directory entry itself and never follows a substituted final symlink.
         let flags = replacing == nil ? UInt32(RENAME_EXCL) : 0
@@ -256,7 +256,7 @@ extension VolumeProvider {
         return UploadReceipt(remoteID: target.standardizedFileURL.path, verification: .unavailable)
     }
     /// Copies in blocks so large files report progress and can be cancelled, unlike a single copyItem call.
-    nonisolated static func volumeCopyContents(from source: URL, to destination: URL, input suppliedInput: FileHandle? = nil, output suppliedOutput: FileHandle? = nil, maxBytes: Int64? = nil, progress: @escaping (Int64, Int64) -> Void) async throws {
+    nonisolated static func volumeCopyContents(from source: URL, to destination: URL, input suppliedInput: FileHandle? = nil, output suppliedOutput: FileHandle? = nil, maxBytes: Int64? = nil, progress: @escaping @MainActor @Sendable (Int64, Int64) -> Void) async throws {
         let stamp = try UploadSourceStamp(source)
         let total = stamp.size
         try DownloadBudget.check(total, maximum: maxBytes)

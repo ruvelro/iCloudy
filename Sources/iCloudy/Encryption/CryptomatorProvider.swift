@@ -247,7 +247,8 @@ final class CryptomatorProvider: CloudSession, CloudProvider {
         let parentStorage = try await storageFolder(parentDirID, create: parentDirID.isEmpty)
         let names = try nodeName(name, in: parentDirID)
         let existing = try await readDirectory(parentDirID)
-        var replaced = try await replacing.asyncMap { try await node(for: $0).node }
+        var replaced: Node?
+        if let replacing { replaced = try await node(for: replacing).node }
         // Replacing a file whose name differs only in case means a different encrypted name: the new one is written
         // beside it and the old one removed afterwards, rather than overwritten.
         var retire: Node?
@@ -438,11 +439,4 @@ final class CryptomatorProvider: CloudSession, CloudProvider {
         throw CloudError.message(L("Las búsquedas no entran en las bóvedas cifradas."))
     }
     func canVerifyDownload(of file: CloudFile) -> Bool { true }
-}
-
-private extension Optional {
-    func asyncMap<T>(_ transform: (Wrapped) async throws -> T) async rethrows -> T? {
-        guard let value = self else { return nil }
-        return try await transform(value)
-    }
 }

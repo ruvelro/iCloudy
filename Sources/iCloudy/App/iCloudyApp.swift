@@ -16,7 +16,8 @@ import UniformTypeIdentifiers
 /// What the `iCloudyMain` binary calls. The app itself is a library, so the Finder extension can link the same
 /// providers; a library cannot carry `@main`, so the entry point is spelled out here instead.
 public enum AppLauncher {
-    public static func run() { iCloudyApp.main() }
+    /// `main.swift` runs on the main thread, which is where SwiftUI expects to be entered.
+    @MainActor public static func run() { iCloudyApp.main() }
 }
 
 struct iCloudyApp: App {

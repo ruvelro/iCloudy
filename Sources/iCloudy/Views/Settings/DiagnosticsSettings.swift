@@ -35,7 +35,7 @@ struct DiagnosticsSettings: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Picker("Nivel", selection: Binding(get: { level }, set: choose)) {
+                Picker("Nivel", selection: Binding(get: { level }, set: { choose($0) })) {
                     ForEach(DiagnosticsLevel.allCases) { Text($0.title).tag($0) }
                 }.pickerStyle(.segmented).frame(maxWidth: 300)
                 Spacer()

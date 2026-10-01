@@ -35,7 +35,9 @@ struct MegaNode: Hashable {
 }
 
 /// A signed-in Mega session: the identifier the server accepts, the master key that unwraps every node key, and the
-/// tree itself once it has been fetched.
+/// tree itself once it has been fetched. It belongs to the provider, on the main actor, which is also what lets a
+/// running tree fetch hand it to every caller waiting on it.
+@MainActor
 final class MegaState {
     let sid: String
     let masterKey: Data

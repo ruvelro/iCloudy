@@ -118,7 +118,9 @@ extension SFTPProvider {
         let total = cursor.total
         let path = try replacing ?? FTPListing.join(sftpPath(parent), name)
         cursor.offset = 0; try save(cursor)
-        try await sftpTranslating { try await sftp().upload(local, to: path) { sent in Task { @MainActor in progress(min(sent, total), total) } } }
+        // The client reports from its own actor; the callback only ever runs back here, on the main actor.
+        let relay: @MainActor @Sendable (Int64) -> Void = { sent in progress(min(sent, total), total) }
+        try await sftpTranslating { try await sftp().upload(local, to: path) { sent in Task { @MainActor in relay(sent) } } }
         cursor.offset = total; cursor.complete = true; try save(cursor); progress(total, total)
         // The protocol reports no checksum; the closing status is the only confirmation.
         return UploadReceipt(remoteID: path, verification: .unavailable)
@@ -177,7 +179,8 @@ extension SFTPProvider {
     }
     func download(file: CloudFile, to destination: URL, exportMime: String?, maxBytes: Int64?, progress: @escaping (Int64, Int64) -> Void) async throws {
         let total = file.size ?? 0
-        try await sftpTranslating { try await sftp().download(file.id, to: destination, maxBytes: maxBytes) { got in Task { @MainActor in progress(got, total) } } }
+        let relay: @MainActor @Sendable (Int64) -> Void = { got in progress(got, total) }
+        try await sftpTranslating { try await sftp().download(file.id, to: destination, maxBytes: maxBytes) { got in Task { @MainActor in relay(got) } } }
     }
     func identityChange(file: CloudFile, name: String, destination: String?) throws -> RemoteIdentityChange {
         let newID = FTPListing.join(try destination.map(sftpPath) ?? (file.id as NSString).deletingLastPathComponent, name)

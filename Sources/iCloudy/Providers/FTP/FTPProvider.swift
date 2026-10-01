@@ -104,8 +104,10 @@ extension FTPProvider {
     }
     func ftpDownload(file: CloudFile, to destination: URL, maxBytes: Int64? = nil, progress: @escaping (Int64, Int64) -> Void) async throws {
         let total = file.size ?? 0
+        // The session reports from its own actor; the callback only ever runs back here, on the main actor.
+        let relay: @MainActor @Sendable (Int64) -> Void = { sent in progress(sent, total) }
         try await ftp().retrieve(path: file.id, to: destination, maxBytes: maxBytes) { sent in
-            Task { @MainActor in progress(sent, total) }
+            Task { @MainActor in relay(sent) }
         }
     }
     /// A plain STOR from start to finish: FTP has no session that survives a broken connection, so a retry starts over.
@@ -114,8 +116,9 @@ extension FTPProvider {
         let total = cursor.total
         let path = try replacing ?? FTPListing.join(ftpPath(parent), name)
         cursor.offset = 0; try save(cursor)
+        let relay: @MainActor @Sendable (Int64) -> Void = { sent in progress(min(sent, total), total) }
         try await ftp().store(local, to: path) { sent in
-            Task { @MainActor in progress(min(sent, total), total) }
+            Task { @MainActor in relay(sent) }
         }
         cursor.offset = total; cursor.complete = true; try save(cursor); progress(total, total)
         // Nothing to compare against: the protocol reports no checksum for the stored file.

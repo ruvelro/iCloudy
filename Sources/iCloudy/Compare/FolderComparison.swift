@@ -128,6 +128,8 @@ enum FolderComparison {
     /// Decides what two files under the same name are. A digest beats everything; when the provider lists one and the
     /// other side is a folder of this Mac, the Mac's copy is hashed in the provider's algorithm, and only when the
     /// sizes already agree. `digest` returns nil when a file cannot be read, which leaves size and date to decide.
+    /// On the main actor, like the engine that calls it: `digest` reads and updates the engine's progress.
+    @MainActor
     static func classify(_ a: InventoryEntry, _ b: InventoryEntry, hashesA: Bool, hashesB: Bool,
                          digest: (ComparisonSide, ContentHash.Algorithm) async throws -> String?) async throws -> ComparisonStatus {
         if a.isFolder != b.isFolder { return .different(.kind, newer: nil) }
