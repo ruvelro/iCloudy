@@ -32,6 +32,7 @@ extension AppModel {
     }
 
     func client(_ account: Account) throws -> CloudAPI {
+        if account.isCryptomatorVault { guard let vault = cryptomator.client(for: account.id) else { throw CryptomatorError.locked }; return vault }
         if let client = sessions.cached(for: account.id) { return client }
         if account.isDemo && demo == nil { demo = try DemoStore() }
         let client = CloudAPI(account: account, demo: account.isDemo ? demo : nil)
@@ -419,6 +420,7 @@ extension AppModel {
     func forget(_ account: Account) {
         // A renewal still out would write the account straight back, credential and all.
         o2Renewals.invalidate(account.id); renewingAccountIDs.remove(account.id)
+        cryptomator.lockAll(storedIn: account.id)
         remoteCopies.removeAccount(account.id)
         quotas.remove(account.id)
         sessions.remove(account.id)

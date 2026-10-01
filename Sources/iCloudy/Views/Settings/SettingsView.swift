@@ -10,6 +10,7 @@ struct SettingsView: View {
             StorageSettings(model: model).tabItem { Label("Almacenamiento", systemImage: "internaldrive") }
             OfflineSettingsView(model: model, store: model.offline).tabItem { Label("Sin conexión", systemImage: "arrow.down.circle") }
             DiagnosticsSettings(model: model).tabItem { Label("Diagnóstico", systemImage: "stethoscope") }
+            CryptomatorSettings(model: model, vaults: model.cryptomator).tabItem { Label("Cifrado", systemImage: "lock.shield") }
         }.frame(width: 540, height: 430)
     }
 }

@@ -106,6 +106,8 @@ final class SpotlightIndex {
 
     /// Records an item the user acted on. Repeats refresh its position instead of duplicating it.
     func note(_ file: CloudFile, accountID: String, path: [CloudFile], accountLabel: String) {
+        // Spotlight would keep the decrypted names of a vault long after it is locked.
+        guard !CryptomatorVaults.isVaultAccount(accountID) else { return }
         let entry = IndexedItem(accountID: accountID, file: file, path: path.map(\.name), seen: Date())
         items.removeAll { $0.accountID == accountID && $0.file.id == file.id }
         items.insert(entry, at: 0)
