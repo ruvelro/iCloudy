@@ -35,10 +35,15 @@ struct FolderMirror: Identifiable, Codable {
     /// What this mirror never uploads, downloads or deletes. Records written before exclusions existed get the
     /// built-in defaults.
     var exclusions = SyncExclusions()
+    /// Paused by the person: nothing is planned or transferred until they resume, across relaunches too.
+    var paused = false
+    /// Relative paths FSEvents reported while paused, for the sidebar's count. The run on resume compares the whole
+    /// folder anyway, so this is never what decides what travels and losing it would lose nothing.
+    var changesWhilePaused: Set<String> = []
 }
 
 extension FolderMirror {
-    enum CodingKeys: String, CodingKey { case id, mode, baseline, lastReport, accountID, remoteFolderID, remoteName, localURL, bookmark, stamps, pendingStamps, lastSync, activeTransferID, lastError, remoteEntries, exclusions }
+    enum CodingKeys: String, CodingKey { case id, mode, baseline, lastReport, accountID, remoteFolderID, remoteName, localURL, bookmark, stamps, pendingStamps, lastSync, activeTransferID, lastError, remoteEntries, exclusions, paused, changesWhilePaused }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
@@ -57,6 +62,8 @@ extension FolderMirror {
         lastError = try values.decodeIfPresent(String.self, forKey: .lastError)
         remoteEntries = try values.decodeIfPresent([String: CloudFile].self, forKey: .remoteEntries) ?? [:]
         exclusions = try values.decodeIfPresent(SyncExclusions.self, forKey: .exclusions) ?? SyncExclusions()
+        paused = try values.decodeIfPresent(Bool.self, forKey: .paused) ?? false
+        changesWhilePaused = try values.decodeIfPresent(Set<String>.self, forKey: .changesWhilePaused) ?? []
     }
 }
 
@@ -122,25 +129,31 @@ enum MirrorPlanner {
     }
 }
 
-/// Recursive FSEvents watcher for one folder; fires on the given queue after the system's own coalescing latency.
+/// Recursive FSEvents watcher for one folder; fires on the given queue after the system's own coalescing latency,
+/// with the absolute paths of what changed.
 final class FolderWatcher {
     /// What the FSEvents callback is handed. The stream keeps this alive and this keeps nothing alive, so an event
     /// already on its way when the watcher goes finds an empty box instead of freed memory.
     private final class Callback {
-        var onChange: (() -> Void)?
-        init(_ onChange: @escaping () -> Void) { self.onChange = onChange }
+        var onChange: (([String]) -> Void)?
+        init(_ onChange: @escaping ([String]) -> Void) { self.onChange = onChange }
     }
     private var stream: FSEventStreamRef?
     private let callback: Callback
-    init(url: URL, latency: TimeInterval = 2, onChange: @escaping () -> Void) {
-        callback = Callback(onChange)
+    convenience init(url: URL, latency: TimeInterval = 2, onChange: @escaping () -> Void) {
+        self.init(url: url, latency: latency, onPaths: { _ in onChange() })
+    }
+    init(url: URL, latency: TimeInterval = 2, onPaths: @escaping ([String]) -> Void) {
+        callback = Callback(onPaths)
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passRetained(callback).toOpaque(), retain: nil,
                                            release: { info in Unmanaged<Callback>.fromOpaque(info!).release() },
                                            copyDescription: nil)
-        let flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer)
-        stream = FSEventStreamCreate(nil, { _, info, _, _, _, _ in
+        let flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer | kFSEventStreamCreateFlagUseCFTypes)
+        stream = FSEventStreamCreate(nil, { _, info, _, paths, _, _ in
             guard let info else { return }
-            Unmanaged<Callback>.fromOpaque(info).takeUnretainedValue().onChange?()
+            // With UseCFTypes the paths arrive as a CFArray of CFStrings.
+            let changed = (Unmanaged<CFArray>.fromOpaque(paths).takeUnretainedValue() as NSArray) as? [String] ?? []
+            Unmanaged<Callback>.fromOpaque(info).takeUnretainedValue().onChange?(changed)
         }, &context, [url.path] as CFArray, FSEventStreamEventId(kFSEventStreamEventIdSinceNow), latency, flags)
         if let stream {
             FSEventStreamSetDispatchQueue(stream, DispatchQueue(label: "icloudy.mirror.fsevents"))
@@ -185,6 +198,8 @@ final class MirrorManager: ObservableObject {
     private var subscription: AnyCancellable?
     /// Compiled rules per mirror, dropped whenever the rules change. Case sensitivity follows the local volume.
     private var matchers: [UUID: SyncExclusionMatcher] = [:]
+    /// How many changed paths a paused mirror remembers; past this the sidebar just says "more than".
+    static let pausedChangesLimit = 1000
 
     init(storeURL: URL = LocalStore.directory.appendingPathComponent("mirrors.json")) {
         self.storeURL = storeURL
@@ -229,7 +244,51 @@ final class MirrorManager: ObservableObject {
         try persist()
     }
     func removeAll(accountID: String) { for mirror in mirrors where mirror.accountID == accountID { remove(mirror.id) } }
+    /// Pausing stops planning, puts a running upload on hold in the queue and lets a two-way run finish only the
+    /// step it is on. Resuming runs at once: the run compares the whole folder, so it applies everything that
+    /// changed meanwhile, including what changed while iCloudy was closed.
+    func setPaused(_ paused: Bool, for id: UUID) {
+        guard let index = mirrors.firstIndex(where: { $0.id == id }), mirrors[index].paused != paused else { return }
+        mirrors[index].paused = paused
+        if paused {
+            scheduled.removeValue(forKey: id)?.cancel(); pending.remove(id); dirty.remove(id); massDeletionAllowed.remove(id)
+            if let active = mirrors[index].activeTransferID, let item = queue?.items.first(where: { $0.id == active }), [.queued, .running].contains(item.state) {
+                queue?.cancel(active, pause: true)
+            }
+        } else {
+            mirrors[index].changesWhilePaused = []
+        }
+        do { try persist() } catch { persistenceError = error.localizedDescription }
+        if !paused { scheduleSync(id, immediate: true) }
+    }
+    func isPaused(_ id: UUID) -> Bool { mirrors.first { $0.id == id }?.paused == true }
+    /// What FSEvents reported for a mirror. While paused the paths are only noted down, relative to the folder and
+    /// without what the rules exclude, so .DS_Store churn does not show up as pending work.
+    func noteChanges(_ paths: [String], for id: UUID) {
+        guard let index = mirrors.firstIndex(where: { $0.id == id }) else { return }
+        guard mirrors[index].paused else { scheduleSync(id, immediate: false); return }
+        let mirror = mirrors[index]
+        // FSEvents reports real paths (/private/var/…), so the folder is tried both as stored and resolved. The
+        // event paths themselves are not resolved: a deleted file has nothing left to resolve.
+        let url = resolvedURL(mirror)
+        let roots = Set([url.standardizedFileURL.path, url.resolvingSymlinksInPath().path])
+        let rules = exclusions(of: mirror)
+        var changes = mirror.changesWhilePaused
+        for path in paths {
+            var path = path
+            while path.count > 1, path.hasSuffix("/") { path.removeLast() }
+            guard let root = roots.first(where: { path.hasPrefix($0 + "/") }) else { continue }
+            let relative = String(path.dropFirst(root.count + 1))
+            guard !rules.excludes(relative, isFolder: false), changes.count < Self.pausedChangesLimit else { continue }
+            changes.insert(relative)
+        }
+        guard changes != mirror.changesWhilePaused else { return }
+        mirrors[index].changesWhilePaused = changes
+        do { try persist() } catch { persistenceError = error.localizedDescription }
+    }
     func syncNow(_ id: UUID, applyingMassDeletion: Bool = false) {
+        // A permission granted to a paused mirror would wait for the resume and apply to a run nobody asked for.
+        guard !isPaused(id) else { return }
         if applyingMassDeletion { massDeletionAllowed.insert(id) }
         scheduleSync(id, immediate: true)
     }
@@ -256,6 +315,12 @@ final class MirrorManager: ObservableObject {
 
     /// What the sidebar shows next to a mirror.
     func status(of mirror: FolderMirror) -> String {
+        if mirror.paused {
+            if running.contains(mirror.id) { return L("Deteniéndose al acabar el paso en curso…") }
+            let count = mirror.changesWhilePaused.count
+            if count >= Self.pausedChangesLimit { return L("En pausa · más de \(Self.pausedChangesLimit) cambios esperando") }
+            return count == 0 ? L("En pausa") : L("En pausa · \(count) cambios esperando")
+        }
         if running.contains(mirror.id) { return L("Sincronizando en ambos sentidos…") }
         if let active = mirror.activeTransferID, let item = queue?.items.first(where: { $0.id == active }), [.queued, .running].contains(item.state) {
             return item.state == .running ? L("Sincronizando…") : L("En cola")
@@ -295,7 +360,7 @@ final class MirrorManager: ObservableObject {
         guard watching, watchers[mirror.id] == nil else { return }
         let url = resolvedURL(mirror)
         let id = mirror.id
-        watchers[id] = FolderWatcher(url: url) { [weak self] in Task { @MainActor in self?.scheduleSync(id, immediate: false) } }
+        watchers[id] = FolderWatcher(url: url) { [weak self] paths in Task { @MainActor in self?.noteChanges(paths, for: id) } }
         // The cloud sends no events: a two-way mirror asks it now and then for what changed elsewhere.
         if mirror.mode == .twoWay, pollers[id] == nil {
             let interval = remotePollInterval
@@ -309,7 +374,8 @@ final class MirrorManager: ObservableObject {
         }
     }
     private func scheduleSync(_ id: UUID, immediate: Bool, resumeInterrupted: Bool = false) {
-        guard mirrors.contains(where: { $0.id == id }) else { return }
+        // A paused mirror plans nothing: not on events, not on the remote poll and not on "sync now".
+        guard let mirror = mirrors.first(where: { $0.id == id }), !mirror.paused else { return }
         pending.insert(id)
         scheduled[id]?.cancel()
         let delay = immediate ? Duration.zero : debounce
@@ -379,6 +445,7 @@ final class MirrorManager: ObservableObject {
             guard let api = try queue?.client?(account.id) else { throw CloudError.message(L("Vuelve a conectar la cuenta de este reflejo.")) }
             let engine = TwoWaySyncEngine(api: api, localRoot: url, remoteRoot: mirror.remoteFolderID, baseline: mirror.baseline)
             engine.exclusions = exclusions(of: mirror)
+            engine.shouldStop = { [weak self] in self?.isPaused(id) ?? true }
             engine.allowMassDeletion = massDeletionAllowed.remove(id) != nil
             engine.persist = { [weak self] baseline in
                 guard let self, let position = self.mirrors.firstIndex(where: { $0.id == id }) else { return }
@@ -394,7 +461,9 @@ final class MirrorManager: ObservableObject {
             try persist()
         } catch {
             if let position = mirrors.firstIndex(where: { $0.id == id }) {
-                mirrors[position].lastError = (error as? CancellationError) == nil ? error.localizedDescription : L("Sincronización cancelada")
+                // Paused halfway: every finished step is in the baseline already, so that is not an error.
+                if error is SyncPaused { mirrors[position].lastError = nil }
+                else { mirrors[position].lastError = (error as? CancellationError) == nil ? error.localizedDescription : L("Sincronización cancelada") }
                 try? persist()
             }
         }

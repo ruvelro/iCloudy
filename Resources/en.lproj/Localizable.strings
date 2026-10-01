@@ -1023,3 +1023,8 @@
 "Excluido" = "Excluded";
 "Se sincroniza" = "Synced";
 "Cambiar las reglas no borra nada: lo que ya se sincronizó y ahora queda excluido se deja como está, en el Mac y en la nube." = "Changing the rules deletes nothing: whatever was already synced and is now excluded is left as it is, on the Mac and in the cloud.";
+"Deja de sincronizar este reflejo hasta que lo reanudes, también tras cerrar la app" = "Stops syncing this mirror until you resume it, even after quitting the app";
+"Deteniéndose al acabar el paso en curso…" = "Stopping after the current step…";
+"En pausa" = "Paused";
+"En pausa · %lld cambios esperando" = "Paused · %lld changes waiting";
+"En pausa · más de %lld cambios esperando" = "Paused · more than %lld changes waiting";

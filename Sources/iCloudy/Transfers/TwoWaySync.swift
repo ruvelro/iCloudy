@@ -62,6 +62,9 @@ struct MassDeletionRefused: LocalizedError {
     }
 }
 
+/// Thrown between two steps of a run whose mirror was paused. The baseline already records every finished step.
+struct SyncPaused: Error {}
+
 /// Pure planning. Given both trees and the baseline, decides what has to happen to make them agree again.
 enum TwoWayPlanner {
     static let massDeletionMinimum = 10
@@ -179,6 +182,8 @@ final class TwoWaySyncEngine {
     var allowMassDeletion = false
     /// What this sync leaves alone on both sides; see `TwoWayPlanner.plan`.
     var exclusions: SyncExclusionMatcher = .none
+    /// Asked before every step; true stops the run there with `SyncPaused`.
+    var shouldStop: (() -> Bool)?
     /// Tests bypass the Finder Trash, which a temporary folder on some volumes does not have.
     var trashLocally: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }
 
@@ -211,8 +216,12 @@ final class TwoWaySyncEngine {
         var (remote, folders) = try await remoteSnapshot()
         let plan = try TwoWayPlanner.plan(local: local, remote: remote, baseline: baseline, allowMassDeletion: allowMassDeletion, exclusions: exclusions)
         var touchedRemote: Set<String> = []
+        var stopped = false
         for action in plan {
             try Task.checkCancellation()
+            // Paused: stop here, but still fill in the dates of what was uploaded, or the next run would take
+            // those files for remote edits and download them again.
+            if shouldStop?() == true { stopped = true; break }
             switch action {
             case .createRemoteFolder(let path):
                 let parent = try remoteParent(of: path, folders: folders)
@@ -267,6 +276,7 @@ final class TwoWaySyncEngine {
             }
             try persist?(baseline)
         }
+        if stopped { throw SyncPaused() }
         return report
     }
 
