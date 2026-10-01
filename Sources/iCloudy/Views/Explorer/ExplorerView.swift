@@ -40,6 +40,7 @@ struct ExplorerView: View {
         .sheet(item: $model.sharing) { request in SharingView(model: model, request: request) }
         .sheet(item: $model.publicLinkManager) { request in PublicLinksView(model: model, request: request) }
         .sheet(item: $model.linkInventory) { account in LinkInventoryView(model: model, account: account) }
+        .sheet(item: $model.versionHistory) { request in VersionsView(model: model, request: request) }
         .sheet(item: Binding(get: { model.queue.conflict }, set: { _ in })) { request in
             ConflictView(queue: model.queue, request: request)
         }

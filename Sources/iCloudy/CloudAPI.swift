@@ -131,6 +131,10 @@ final class CloudAPI {
     @discardableResult
     func download(file: CloudFile, to destination: URL, exportMime: String? = nil, maxBytes: Int64? = nil, checksum: Bool = true,
                   progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws -> DownloadVerification {
+        // An earlier version, handed over by the versions sheet to the same preview and queue as any other file.
+        if demo == nil, let reference = VersionedFile.reference(file) {
+            return try await downloadVersion(file, reference: reference, to: destination, exportMime: exportMime, maxBytes: maxBytes, checksum: checksum, progress: progress)
+        }
         if let demo {
             try await demo.download(file, to: destination, maxBytes: maxBytes, progress: progress)
         } else {
