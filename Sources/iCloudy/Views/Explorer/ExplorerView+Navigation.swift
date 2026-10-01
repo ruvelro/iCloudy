@@ -72,6 +72,7 @@ extension ExplorerView {
                             }.padding(Layout.sidebarInner)
                         }
                         if !model.mirrors.mirrors.isEmpty { MirrorList(model: model, mirrors: model.mirrors) }
+                        if !model.offline.pins.isEmpty || !model.offline.notices.isEmpty { OfflineList(model: model, store: model.offline) }
                     }
                   } else {
                     FavoritesList(model: model)

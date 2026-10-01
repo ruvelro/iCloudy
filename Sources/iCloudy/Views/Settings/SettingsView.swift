@@ -8,6 +8,7 @@ struct SettingsView: View {
             GeneralSettings(model: model).tabItem { Label("General", systemImage: "gearshape") }
             TransferSettings(model: model).tabItem { Label("Transferencias", systemImage: "arrow.up.arrow.down") }
             StorageSettings(model: model).tabItem { Label("Almacenamiento", systemImage: "internaldrive") }
+            OfflineSettingsView(model: model, store: model.offline).tabItem { Label("Sin conexión", systemImage: "arrow.down.circle") }
         }.frame(width: 540, height: 430)
     }
 }

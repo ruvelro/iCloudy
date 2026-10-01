@@ -73,6 +73,9 @@ final class AppModel: ObservableObject {
     let mirrors = MirrorManager()
     let spotlight = SpotlightIndex()
     let localCopies = LocalCopyIndex()
+    /// Managed offline copies ("Disponible sin conexión") and what keeps them current.
+    let offline = OfflineStore()
+    lazy var offlineRefresher = OfflineRefresher(store: offline)
     /// The running model, so App Intents and the Services menu can reach it. Intents run inside the app process.
     @MainActor static private(set) weak var shared: AppModel?
     let listings = ListingCache()
@@ -187,6 +190,7 @@ final class AppModel: ObservableObject {
                                                bookmark: try? TransferQueue.bookmark(destination), size: file.size ?? 0,
                                                remoteModified: file.modified, savedAt: Date(), origin: .preview))
         }
+        startOffline()
         Self.shared = self
     }
 

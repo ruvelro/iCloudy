@@ -425,6 +425,7 @@ extension AppModel {
         mirrors.removeAll(accountID: account.id)
         spotlight.removeAccount(account.id)
         localCopies.removeAccount(account.id)
+        forgetOffline(account.id)
         globalSearch.removeAccount(account.id)
     }
 

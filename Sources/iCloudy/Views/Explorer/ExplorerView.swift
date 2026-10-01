@@ -106,6 +106,7 @@ struct ExplorerView: View {
             Button("Cancelar", role: .cancel) {}
         } message: { account in
             Text("\(account.cloud.title) · \(account.email)\nSe eliminará la sesión local, sin borrar archivos de la nube ni descargas. Los favoritos y las transferencias pausadas se conservan para cuando vuelvas a conectar esta cuenta. No se revoca el permiso en el proveedor.")
+                + Text(model.offlineDisconnectNote(account))
         }
     }
 

@@ -196,6 +196,7 @@ extension AppModel {
     private func forgetLocally(_ file: CloudFile, account: Account) {
         spotlight.forget(accountID: account.id, fileID: file.id)
         favorites.removeAll { $0.accountID == account.id && ($0.file.id == file.id || $0.path.contains { $0.id == file.id }) }
+        offline.itemDeleted(file, accountID: account.id)
     }
 
     /// Sends the items to the trash one by one and stops at the first failure so the user sees exactly what remains.
@@ -208,6 +209,7 @@ extension AppModel {
                 try await api.trash(file: file)
                 moved += 1
                 spotlight.forget(accountID: account.id, fileID: file.id)
+                offline.itemDeleted(file, accountID: account.id)
                 favorites.removeAll { $0.accountID == account.id && ($0.file.id == file.id || $0.path.contains { $0.id == file.id }) }
             }
             try LocalStore.save(favorites, to: favoritesURL)
@@ -248,6 +250,7 @@ extension AppModel {
         if selectedAccountID == account.id { path = path.map(change.file); files = files.map(change.file) }
         listings.removeAll(accountID: account.id)
         localCopies.remap(change, accountID: account.id)
+        offlineFollow(change, account: account, destinationPath: destinationPath)
         spotlight.remap(change, accountID: account.id, accountLabel: accountTitle(account), oldParent: previousParent, newParent: destinationPath?.map(\.name))
         try mirrors.remap(change, accountID: account.id)
         try queue.remap(change, accountID: account.id)
