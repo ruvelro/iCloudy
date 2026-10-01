@@ -8,13 +8,17 @@ struct OAuthConfiguration: Codable {
     var dropboxAppKey: String = ""
     var boxClientID: String = ""
     var boxClientSecret: String = ""
+    var pcloudClientID: String = ""
+    var pcloudClientSecret: String = ""
 
     /// Older builds shipped a plist with only the first three keys; missing ones simply mean "not configured yet".
     init(googleClientID: String = "", googleDesktopClientSecret: String = "", microsoftClientID: String = "",
-         dropboxAppKey: String = "", boxClientID: String = "", boxClientSecret: String = "") {
+         dropboxAppKey: String = "", boxClientID: String = "", boxClientSecret: String = "",
+         pcloudClientID: String = "", pcloudClientSecret: String = "") {
         self.googleClientID = googleClientID; self.googleDesktopClientSecret = googleDesktopClientSecret
         self.microsoftClientID = microsoftClientID; self.dropboxAppKey = dropboxAppKey
         self.boxClientID = boxClientID; self.boxClientSecret = boxClientSecret
+        self.pcloudClientID = pcloudClientID; self.pcloudClientSecret = pcloudClientSecret
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -23,7 +27,9 @@ struct OAuthConfiguration: Codable {
                   microsoftClientID: try values.decodeIfPresent(String.self, forKey: .microsoftClientID) ?? "",
                   dropboxAppKey: try values.decodeIfPresent(String.self, forKey: .dropboxAppKey) ?? "",
                   boxClientID: try values.decodeIfPresent(String.self, forKey: .boxClientID) ?? "",
-                  boxClientSecret: try values.decodeIfPresent(String.self, forKey: .boxClientSecret) ?? "")
+                  boxClientSecret: try values.decodeIfPresent(String.self, forKey: .boxClientSecret) ?? "",
+                  pcloudClientID: try values.decodeIfPresent(String.self, forKey: .pcloudClientID) ?? "",
+                  pcloudClientSecret: try values.decodeIfPresent(String.self, forKey: .pcloudClientSecret) ?? "")
     }
 
     static func load(bundle: Bundle = .main) throws -> Self {
@@ -46,7 +52,7 @@ struct OAuthConfiguration: Codable {
         case .dropbox: raw = dropboxAppKey; secret = ""
         case .box: raw = boxClientID; secret = boxClientSecret
         case .webdav, .ftp, .sftp, .volume, .mega, .o2: raw = ""; secret = ""
-        case .pcloud: raw = ""; secret = ""
+        case .pcloud: raw = pcloudClientID; secret = pcloudClientSecret
         }
         let id = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let valid: Bool
@@ -57,7 +63,8 @@ struct OAuthConfiguration: Codable {
         case .dropbox: valid = id.count >= 10 && id.allSatisfy { $0.isLetter || $0.isNumber }
         case .box: valid = id.count >= 20 && id.allSatisfy { $0.isLetter || $0.isNumber }
         case .webdav, .ftp, .sftp, .volume, .mega, .o2: valid = false
-        case .pcloud: valid = false
+        // pCloud's client ids are short alphanumeric strings, and without PKCE the secret is required to sign in.
+        case .pcloud: valid = id.count >= 8 && id.allSatisfy { $0.isLetter || $0.isNumber } && !secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         guard valid else {
             throw CloudError.message(L("La conexión con \(cloud.title) todavía no está habilitada en esta versión de iCloudy. No necesitas configurar nada en tu cuenta."))
@@ -86,13 +93,16 @@ enum OAuthRequest {
         return url.url!
     }
 
-    static func callbackCode(target: String, expectedState: String) throws -> String {
+    /// `toleratesMissingState` accepts a callback with no `state` at all, for a provider known to drop it; one that
+    /// carries a `state` still has to carry exactly the expected one.
+    static func callbackCode(target: String, expectedState: String, toleratesMissingState: Bool = false) throws -> String {
         guard target.hasPrefix("/callback?"), let url = URLComponents(string: "http://127.0.0.1" + target), url.path == "/callback" else {
             throw CloudError.message(L("Respuesta de inicio de sesión no válida."))
         }
         let items = url.queryItems ?? []
         let states = items.filter { $0.name == "state" }
-        guard !expectedState.isEmpty, states.count == 1, states.first?.value == expectedState else {
+        let stateless = toleratesMissingState && states.isEmpty
+        guard !expectedState.isEmpty, stateless || (states.count == 1 && states.first?.value == expectedState) else {
             throw CloudError.message(L("No se pudo verificar la respuesta de inicio de sesión."))
         }
         if items.contains(where: { $0.name == "error" }) {

@@ -1029,3 +1029,7 @@
 "pCloud no devolvió el enlace de descarga." = "pCloud did not return the download link.";
 "pCloud no devolvió el enlace." = "pCloud did not return the link.";
 "pCloud no ofrece búsqueda a otras aplicaciones. Navega por las carpetas o usa el filtro de la carpeta actual." = "pCloud does not offer search to other apps. Browse the folders or use the current folder's filter.";
+"pCloud indicó un servidor desconocido al volver del inicio de sesión. Vuelve a intentarlo." = "pCloud named an unknown server when returning from sign-in. Try again.";
+"pCloud no devolvió el acceso. Repite el consentimiento." = "pCloud did not grant access. Go through the consent again.";
+"Continuar con pCloud" = "Continue with pCloud";
+"Cuentas de pCloud en Europa o en Estados Unidos" = "pCloud accounts in Europe or the United States";

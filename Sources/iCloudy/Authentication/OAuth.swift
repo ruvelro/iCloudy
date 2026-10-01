@@ -11,6 +11,9 @@ final class OAuth {
     private var expectedState = ""
     private var connections: [NWConnection] = []
     private var cancelled = false
+    /// The query the browser came back with, for providers that put more than the code in it.
+    private var callbackItems: [URLQueryItem] = []
+    private var toleratesMissingState = false
     private let session: URLSession
     private let openURL: (URL) -> Bool
     /// Account picker, consent screen and a second factor can easily take several minutes.
@@ -35,6 +38,7 @@ final class OAuth {
     func signIn(cloud: Cloud, clientID: String, clientSecret: String) async throws -> (Account, Credential) {
         guard let settings = OAuthProviderSettings.settings(for: cloud) else { throw CloudError.message(L("Este proveedor no usa OAuth.")) }
         cancelled = false
+        callbackItems = []; toleratesMissingState = settings.toleratesMissingState
         let verifier = Self.random()
         expectedState = Self.random()
         defer { stop() }
@@ -56,6 +60,13 @@ final class OAuth {
                 self?.finish(.failure(CloudError.message(L("No llegó la respuesta del navegador en 10 minutos y se ha cancelado el inicio de sesión. Si aún estás en la página del proveedor, ciérrala y vuelve a pulsar «Continuar» para empezar de nuevo."))))
             }
             if !openURL(url) { finish(.failure(CloudError.message(L("No se pudo abrir el navegador.")))) }
+        }
+        // pCloud trades the code on its account's regional host, without PKCE, for a token with no refresh token.
+        if cloud == .pcloud {
+            let result = try await PCloudAuthentication.complete(code: code, callback: callbackItems, clientID: clientID,
+                                                                 clientSecret: clientSecret, session: session)
+            guard !cancelled else { throw CancellationError() }
+            return result
         }
         var fields = ["client_id": clientID, "code": code, "redirect_uri": redirect, "grant_type": "authorization_code", "code_verifier": verifier]
         // Google desktop clients and Box both expect their (public, extractable) secret alongside the PKCE verifier.
@@ -150,8 +161,11 @@ final class OAuth {
                 let parts = request.components(separatedBy: "\r\n")[0].components(separatedBy: " ")
                 guard parts.count >= 2, parts[0] == "GET", let components = URLComponents(string: "http://127.0.0.1" + parts[1]), components.path == "/callback" else { connection.cancel(); return }
                 let items = components.queryItems ?? []
-                guard items.first(where: { $0.name == "state" })?.value == self.expectedState else { connection.cancel(); return }
-                let result = Result { try OAuthRequest.callbackCode(target: parts[1], expectedState: self.expectedState) }
+                let state = items.first(where: { $0.name == "state" })?.value
+                guard state == self.expectedState || (state == nil && self.toleratesMissingState) else { connection.cancel(); return }
+                let result = Result { try OAuthRequest.callbackCode(target: parts[1], expectedState: self.expectedState,
+                                                                    toleratesMissingState: self.toleratesMissingState) }
+                self.callbackItems = items
                 let body = L("Puedes cerrar esta ventana y volver a iCloudy.")
                 let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
                 connection.send(content: Data(response.utf8), completion: .contentProcessed { [weak self] _ in

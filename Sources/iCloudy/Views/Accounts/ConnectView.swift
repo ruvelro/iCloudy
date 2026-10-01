@@ -18,6 +18,7 @@ struct ConnectView: View {
                     providerButton(.microsoft, title: "Continuar con Microsoft", subtitle: "OneDrive · Outlook, Hotmail o Microsoft 365", icon: "cloud.fill")
                     providerButton(.dropbox, title: "Continuar con Dropbox", subtitle: "Dropbox personal o de equipo", icon: "shippingbox")
                     providerButton(.box, title: "Continuar con Box", subtitle: "Box personal o de empresa", icon: "square.stack.3d.up")
+                    providerButton(.pcloud, title: "Continuar con pCloud", subtitle: "Cuentas de pCloud en Europa o en Estados Unidos", icon: "cloud.circle")
                     providerButton(.mega, title: "Conectar Mega", subtitle: "Cifrado de extremo a extremo, con correo y contraseña", icon: "lock.icloud")
                     providerButton(.o2, title: "Conectar O2 Cloud", subtitle: "Inicias sesión en las páginas de O2, con tu móvil o tu NIF", icon: "antenna.radiowaves.left.and.right")
                 }.disabled(model.connecting)

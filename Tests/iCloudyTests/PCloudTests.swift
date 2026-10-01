@@ -512,4 +512,139 @@ final class PCloudTests: XCTestCase {
         _ = try await api.download(file: file, to: target, checksum: false)
         XCTAssertEqual(asked, 0)
     }
+
+    // MARK: - Sign-in
+
+    private func stubbedSession() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        return URLSession(configuration: config)
+    }
+
+    func testTheCodeIsTradedOnTheRegionTheCallbackNames() async throws {
+        serve { method, parameters, _ in
+            if method == "oauth2_token" {
+                XCTAssertEqual(parameters, ["client_id": "clienteid1", "client_secret": "secreto", "code": "el-código"])
+                return (200, self.json(#"{"result":0,"access_token":"tok","token_type":"bearer","uid":7,"locationid":2}"#))
+            }
+            XCTAssertEqual(method, "userinfo")
+            return (200, self.json(#"{"result":0,"userid":7,"email":"ana@example.com","quota":10,"usedquota":1}"#))
+        }
+        let callback = [URLQueryItem(name: "code", value: "el-código"), URLQueryItem(name: "locationid", value: "2"),
+                        URLQueryItem(name: "hostname", value: "eapi.pcloud.com")]
+        let (account, credential) = try await PCloudAuthentication.complete(code: "el-código", callback: callback, clientID: "clienteid1",
+                                                                            clientSecret: "secreto", session: stubbedSession())
+        XCTAssertEqual(seen.map(\.host), ["eapi.pcloud.com", "eapi.pcloud.com"], "Ni el código ni el token pasan por Estados Unidos")
+        XCTAssertEqual(seen.first?.method, "POST", "El secreto va en el cuerpo, no en la dirección")
+        XCTAssertEqual(account.id, "pcloud:7")
+        XCTAssertEqual(account.cloud, .pcloud)
+        XCTAssertEqual(account.email, "ana@example.com")
+        XCTAssertEqual(account.options["apiHost"], "eapi.pcloud.com")
+        XCTAssertEqual(account.options["locationid"], "2")
+        XCTAssertNil(account.clientSecret, "Sin refresh token no hay nada para lo que guardar el secreto")
+        XCTAssertEqual(credential.accessToken, "tok")
+        XCTAssertFalse(credential.isRenewable)
+        XCTAssertEqual(credential.expires, .distantFuture, "Los tokens de pCloud no caducan")
+        XCTAssertEqual(PCloudRegion.host(for: account), "eapi.pcloud.com")
+    }
+
+    func testWithoutARegionTheCodeIsTriedInEuropeAfterTheUnitedStates() async throws {
+        serve { method, _, _ in
+            guard method == "oauth2_token" else { return (200, self.json(#"{"result":0,"userid":8,"email":"eu@example.com"}"#)) }
+            return self.seen.last?.host == "api.pcloud.com"
+                ? (200, self.json(#"{"result":2012,"error":"Invalid 'code' provided."}"#))
+                : (200, self.json(#"{"result":0,"access_token":"tok","hostname":"eapi.pcloud.com"}"#))
+        }
+        let (account, _) = try await PCloudAuthentication.complete(code: "c", callback: [URLQueryItem(name: "code", value: "c")],
+                                                                   clientID: "clienteid1", clientSecret: "secreto", session: stubbedSession())
+        XCTAssertEqual(seen.map { "\($0.host)\($0.path)" },
+                       ["api.pcloud.com/oauth2_token", "eapi.pcloud.com/oauth2_token", "eapi.pcloud.com/userinfo"])
+        XCTAssertEqual(account.options["apiHost"], "eapi.pcloud.com")
+    }
+
+    func testTheTokenAnswerDecidesTheRegionAndAnUnknownHostIsNeverTrusted() async throws {
+        serve { method, _, _ in
+            method == "oauth2_token" ? (200, self.json(#"{"result":0,"access_token":"tok","locationid":2,"hostname":"evil.example.com"}"#))
+                                     : (200, self.json(#"{"result":0,"userid":9,"email":"x@example.com"}"#))
+        }
+        let (account, _) = try await PCloudAuthentication.complete(code: "c", callback: [], clientID: "clienteid1", clientSecret: "secreto",
+                                                                   session: stubbedSession())
+        XCTAssertEqual(seen.map(\.host), ["api.pcloud.com", "eapi.pcloud.com"], "Un nombre desconocido se ignora; vale el número de región")
+        XCTAssertEqual(account.options["apiHost"], "eapi.pcloud.com")
+
+        // A callback that names another host is refused before the secret leaves the Mac.
+        seen = []
+        do {
+            _ = try await PCloudAuthentication.complete(code: "c", callback: [URLQueryItem(name: "hostname", value: "evil.example.com")],
+                                                        clientID: "clienteid1", clientSecret: "secreto", session: stubbedSession())
+            XCTFail("Un servidor ajeno no recibe el código")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("servidor desconocido"), error.localizedDescription) }
+        XCTAssertTrue(seen.isEmpty)
+    }
+
+    func testARefusedCodeIsExplainedInsteadOfLookingLikeASuccess() async {
+        serve { _, _, _ in (200, self.json(#"{"result":2012,"error":"Invalid 'code' provided."}"#)) }
+        do {
+            _ = try await PCloudAuthentication.complete(code: "c", callback: [URLQueryItem(name: "hostname", value: "api.pcloud.com")],
+                                                        clientID: "clienteid1", clientSecret: "secreto", session: stubbedSession())
+            XCTFail("pCloud rechazó el código")
+        } catch { XCTAssertEqual(error.localizedDescription, L("pCloud no aceptó el código de autorización. Vuelve a intentar la conexión.")) }
+        XCTAssertEqual(seen.count, 1, "Con la región conocida no se prueba otra")
+    }
+
+    func testOnlyPCloudMayComeBackWithoutTheState() throws {
+        XCTAssertEqual(try OAuthRequest.callbackCode(target: "/callback?code=a&locationid=2&hostname=eapi.pcloud.com", expectedState: "s",
+                                                     toleratesMissingState: true), "a")
+        XCTAssertThrowsError(try OAuthRequest.callbackCode(target: "/callback?code=a", expectedState: "s"), "Los demás siguen exigiéndolo")
+        for target in ["/callback?code=a&state=otro", "/callback?code=a&state=s&state=s", "/callback?code=&state=s"] {
+            XCTAssertThrowsError(try OAuthRequest.callbackCode(target: target, expectedState: "s", toleratesMissingState: true), target)
+        }
+        XCTAssertEqual(OAuthProviderSettings.settings(for: .pcloud)?.toleratesMissingState, true)
+        for cloud in [Cloud.google, .microsoft, .dropbox, .box] {
+            XCTAssertEqual(OAuthProviderSettings.settings(for: cloud)?.toleratesMissingState, false, "\(cloud)")
+        }
+        XCTAssertFalse(OAuthRequest.toleratesAnyPort(.pcloud), "La dirección registrada se compara entera")
+        let url = OAuthRequest.authorizationURL(cloud: .pcloud, clientID: "clienteid1", state: "s", challenge: "c")
+        let query = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
+        XCTAssertEqual(url.host, "my.pcloud.com")
+        XCTAssertEqual(url.path, "/oauth2/authorize")
+        XCTAssertEqual(query.first { $0.name == "response_type" }?.value, "code")
+        XCTAssertEqual(query.first { $0.name == "redirect_uri" }?.value, OAuthRequest.redirectURI)
+        XCTAssertNil(query.first { $0.name == "client_secret" })
+    }
+
+    func testAPermanentTokenIsUsedAsIsAndNeverRenewed() async throws {
+        StubProtocol.handler = { request in XCTFail("Nada que renovar: \(request.url!)"); return (500, [:], Data()) }
+        let store = MemoryCredentials()
+        store.stored["pcloud:7"] = .permanent(accessToken: "para-siempre")
+        let api = client(credentials: store)
+        let token = try await api.token()
+        XCTAssertEqual(token, "para-siempre")
+        do { _ = try await api.token(force: true); XCTFail("Si pCloud lo rechaza, solo queda volver a conectar") }
+        catch { XCTAssertTrue((error as? CloudError)?.isSessionExpired == true, "\(error)") }
+        XCTAssertTrue(api.sessionExpired)
+
+        // An entry saved without its expiry reads as already expired; without a refresh token it is still used as is.
+        let legacy = try JSONDecoder().decode(Credential.self, from: Data(#"{"accessToken":"viejo","refreshToken":""}"#.utf8))
+        XCTAssertEqual(legacy.expires, .distantPast)
+        store.stored["pcloud:7"] = legacy
+        let reread = try await client(credentials: store).token()
+        XCTAssertEqual(reread, "viejo")
+    }
+
+    func testTheConfigurationNeedsBothTheClientIDAndTheSecret() throws {
+        let config = OAuthConfiguration(pcloudClientID: "abcdEFGH123", pcloudClientSecret: "secreto")
+        let client = try config.client(for: .pcloud)
+        XCTAssertEqual(client.id, "abcdEFGH123")
+        XCTAssertEqual(client.secret, "secreto")
+        XCTAssertThrowsError(try OAuthConfiguration(pcloudClientID: "abcdEFGH123").client(for: .pcloud), "Sin PKCE el secreto es imprescindible")
+        XCTAssertThrowsError(try OAuthConfiguration(pcloudClientID: "corto", pcloudClientSecret: "s").client(for: .pcloud))
+        XCTAssertThrowsError(try OAuthConfiguration(pcloudClientID: "con espacios", pcloudClientSecret: "s").client(for: .pcloud))
+        let legacy = Data(#"<?xml version="1.0"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>boxClientID</key><string>x</string></dict></plist>"#.utf8)
+        XCTAssertEqual(try PropertyListDecoder().decode(OAuthConfiguration.self, from: legacy).pcloudClientID, "", "Un plist anterior sigue leyéndose")
+        let example = try PropertyListDecoder().decode(OAuthConfiguration.self, from: Data(contentsOf: URL(fileURLWithPath: "Configuration/OAuth.example.plist")))
+        XCTAssertEqual(example.pcloudClientSecret, "")
+        let plist = try String(contentsOf: URL(fileURLWithPath: "Configuration/OAuth.example.plist"), encoding: .utf8)
+        XCTAssertTrue(plist.contains("<key>pcloudClientID</key>") && plist.contains("<key>pcloudClientSecret</key>"))
+    }
 }
+
