@@ -97,7 +97,15 @@ class CloudSession {
         // throwing away the only token there is. An entry that is no longer there belongs to an account somebody
         // disconnected while this was in flight, and writing it back would resurrect what was just deleted.
         cachedCredential = updated
-        guard (try? credentials.read(account.credentialKey)) != nil else { return updated }
+        // A Keychain that cannot be read right now (locked, access refused) is not one where the entry is gone:
+        // treating it as gone dropped the only working refresh token without a word.
+        let stillThere: Bool
+        do { stillThere = try credentials.read(account.credentialKey) != nil }
+        catch {
+            credentialSaveDidFail?(L("No se pudo comprobar en el Llavero la sesión renovada de \(account.cloud.title): \(error.localizedDescription) La cuenta funciona ahora, pero habrá que volver a conectarla al abrir iCloudy de nuevo."))
+            return updated
+        }
+        guard stillThere else { return updated }
         do { try credentials.save(updated, key: account.credentialKey) }
         catch {
             credentialSaveDidFail?(L("No se pudo guardar la sesión renovada de \(account.cloud.title): \(error.localizedDescription) La cuenta funciona ahora, pero habrá que volver a conectarla al abrir iCloudy de nuevo."))

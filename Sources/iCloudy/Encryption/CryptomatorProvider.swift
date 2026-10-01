@@ -406,7 +406,7 @@ final class CryptomatorProvider: CloudSession, CloudProvider {
     func trash(file: CloudFile) async throws {
         let provider = try base()
         let (node, parentDirID) = try await node(for: file.id)
-        if node.kind == .folder, let dirID = try? await directoryID(of: file.id) {
+        if node.kind == .folder, let dirID = try await directoryIDToRemove(file.id) {
             try await removeTree(dirID, provider: provider)
         }
         try await provider.trash(file: node.item)
@@ -414,11 +414,23 @@ final class CryptomatorProvider: CloudSession, CloudProvider {
         directoryIDs[file.id] = nil
     }
 
+    /// The directory id to follow when removing a folder, or nil when there is nothing to follow: a symbolic link made
+    /// with Cryptomator, or a dir file that is missing or unreadable. Not reaching the provider is not one of those,
+    /// and stops the deletion: going ahead removed the folder and left its contents behind, with nothing pointing at them.
+    private func directoryIDToRemove(_ id: String) async throws -> String? {
+        do { return try await directoryID(of: id) }
+        catch let error as CryptomatorError where error != .locked { return nil }
+        catch CloudError.message { return nil }
+    }
+
     private func removeTree(_ dirID: String, provider: any CloudProvider) async throws {
-        guard let storage = try? await storageFolder(dirID) else { return }
+        let storage: CloudFile
+        // A folder whose storage was never created, or was already removed, has nothing to take with it.
+        do { storage = try await storageFolder(dirID) }
+        catch CryptomatorError.malformed { return }
         for node in try await readDirectory(dirID).values where node.kind == .folder {
             let id = Self.itemID(.folder, node: node.name, parentDirID: dirID)
-            if let child = try? await directoryID(of: id) { try await removeTree(child, provider: provider) }
+            if let child = try await directoryIDToRemove(id) { try await removeTree(child, provider: provider) }
         }
         try await provider.trash(file: storage)
         self.storage[dirID] = nil; listings[dirID] = nil

@@ -89,10 +89,7 @@ final class TransferQueue: ObservableObject {
     func discardSavedQueue() {
         guard !writable else { return }
         do {
-            if FileManager.default.fileExists(atPath: storeURL.path) {
-                let backup = storeURL.appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970))")
-                try FileManager.default.moveItem(at: storeURL, to: backup)
-            }
+            if FileManager.default.fileExists(atPath: storeURL.path) { try LocalStore.setAside(storeURL) }
             items = []; writable = true; persistenceError = nil
             stateChanges.send()
         } catch { persistenceError = L("No se pudo apartar la cola dañada: \(error.localizedDescription)") }

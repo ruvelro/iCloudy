@@ -53,7 +53,9 @@ extension AppModel {
     func storeRenewedBookmark(_ bookmark: Data, for account: Account) {
         guard let index = accounts.firstIndex(where: { $0.id == account.id }), accounts[index].bookmark != bookmark else { return }
         accounts[index].bookmark = bookmark
-        try? Vault.save(accounts.filter { !$0.isDemo }, key: "accounts")
+        // The renewed bookmark works for this run either way; unsaved, the account breaks again on the next launch.
+        do { try Vault.save(accounts.filter { !$0.isDemo }, key: "accounts") }
+        catch { self.error = L("No se pudo guardar el acceso renovado a «\(account.name)»: \(error.localizedDescription) Funciona ahora, pero puede que haya que volver a añadir la carpeta al abrir iCloudy de nuevo.") }
     }
 
     func isExpired(_ account: Account) -> Bool { expiredAccountIDs.contains(account.id) }

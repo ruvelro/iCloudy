@@ -26,6 +26,7 @@ extension AppModel {
         guard cryptomator.didLock == nil else { return }
         cryptomator.isBusy = { [weak self] id in self?.queue.hasActive(accountID: id) ?? false }
         cryptomator.didLock = { [weak self] entry in self?.vaultDidLock(entry) }
+        cryptomator.didFail = { [weak self] message in self?.error = message }
     }
 
     /// "Abrir bóveda…". A passphrase kept in the Keychain is tried first; the sheet only appears when it is missing or

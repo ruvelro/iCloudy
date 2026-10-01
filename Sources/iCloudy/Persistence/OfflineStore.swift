@@ -164,9 +164,17 @@ final class OfflineStore: ObservableObject {
          indexURL: URL = LocalStore.directory.appendingPathComponent("offline.json")) {
         self.root = root
         self.indexURL = indexURL
-        if let snapshot = try? LocalStore.read(Snapshot.self, from: indexURL) {
-            pins = snapshot.pins
-            entries = Dictionary(snapshot.entries.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
+        do {
+            if let snapshot = try LocalStore.read(Snapshot.self, from: indexURL) {
+                pins = snapshot.pins
+                entries = Dictionary(snapshot.entries.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
+            }
+        } catch {
+            // Starting empty used to overwrite the unreadable index on the next write, and every pin was gone with no
+            // word about it. The file is kept aside and the person is told; the copies stay on disk.
+            let kept = try? LocalStore.setAside(indexURL)
+            notices.append(OfflineNotice(text: L("No se pudo leer la lista de carpetas disponibles sin conexión: \(error.localizedDescription) Vuelve a marcar las que necesites.")
+                                         + (kept.map { " " + L("El archivo original se conserva en \($0.path).") } ?? "")))
         }
     }
     nonisolated static func key(accountID: String, fileID: String) -> String { accountID + "\u{1F}" + fileID }
@@ -438,7 +446,17 @@ final class OfflineStore: ObservableObject {
         dirty = false
         write()
     }
-    private func write() { try? LocalStore.save(Snapshot(pins: pins, entries: Array(entries.values)), to: indexURL) }
+    private func write() {
+        do { try LocalStore.save(Snapshot(pins: pins, entries: Array(entries.values)), to: indexURL); writeProblem = nil }
+        catch {
+            // Said once per kind of failure: a full disk fails every write, and one notice is enough.
+            let text = L("No se pudo guardar la lista de copias sin conexión: \(error.localizedDescription) Los cambios se perderán al cerrar iCloudy.")
+            guard text != writeProblem else { return }
+            writeProblem = text
+            notices.append(OfflineNotice(text: text))
+        }
+    }
+    private var writeProblem: String?
 
     private struct Snapshot: Codable {
         var pins: [OfflinePin]

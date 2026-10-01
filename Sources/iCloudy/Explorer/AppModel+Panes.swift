@@ -178,8 +178,9 @@ extension AppModel {
                 try await client(source).trash(file: move.file)
                 spotlight.forget(accountID: source.id, fileID: move.file.id)
                 favorites.removeAll { $0.accountID == source.id && ($0.file.id == move.file.id || $0.path.contains { $0.id == move.file.id }) }
-                try? LocalStore.save(favorites, to: favoritesURL)
                 reloadVisible(accountID: source.id, fresh: true)
+                do { try LocalStore.save(favorites, to: favoritesURL) }
+                catch { self.error = L("No se pudieron guardar los favoritos: \(error.localizedDescription)") }
             } catch {
                 self.error = L("«\(move.file.name)» se ha copiado a \(move.targetTitle), pero el original no se pudo quitar: \(error.localizedDescription)")
             }

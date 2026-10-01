@@ -226,6 +226,7 @@ Un archivo o una carpeta se marcan desde su menú contextual con «Disponible si
 - **Barra lateral.** La sección «Sin conexión» lista lo marcado con su cuenta, lo que ocupa y cuándo se actualizó, más el total usado frente al límite. Desde el menú de cada elemento se abre la copia, se guarda una copia editable, se muestra en el Finder, se va a su ubicación en la nube, se actualiza o se quita. Quitar borra la copia del Mac, nunca el archivo de la nube.
 - **Renombrar, mover y borrar.** Los cambios hechos desde iCloudy pasan por el mismo `RemoteIdentityChange` que favoritos, reflejos y cola, así que en los proveedores que direccionan por ruta lo marcado sigue a su elemento y a todo lo que cuelga de él. Lo que se envía a la papelera o se borra desde iCloudy deja de estar marcado al instante, con un aviso en la barra lateral; lo que se borra fuera se descubre en la siguiente actualización, que lo quita con el mismo aviso. En Mega, O2 y los demás proveedores que no saben describir un único elemento, un archivo movido fuera de iCloudy a otra carpeta se trata igual que uno borrado.
 - **Desconectar una cuenta** borra todas sus copias, marcadas o de vista previa, y la confirmación dice cuánto ocupan.
+- **Índice dañado.** Si la lista de lo marcado (`offline.json`) no se puede leer, se aparta junto a sí misma con el sufijo `.corrupt-<fecha>` en lugar de sobrescribirla, y la barra lateral lo avisa; las copias siguen en disco. Un fallo al guardarla también se avisa, una vez por tipo de error.
 
 ## Historial de versiones
 

@@ -16,6 +16,9 @@ struct RemoteCopy: Codable, Identifiable {
 @MainActor
 final class RemoteCopies: ObservableObject {
     @Published private(set) var items: [RemoteCopy] = []
+    /// Set when the receipts could not be written. A receipt that is not on disk is not resumed after a restart, so
+    /// the panel says so instead of letting the copy drop out of sight.
+    @Published private(set) var persistenceError: String?
     let storeURL: URL
     var client: ((String) throws -> CloudAPI)?
     var didComplete: ((String) -> Void)?
@@ -30,9 +33,13 @@ final class RemoteCopies: ObservableObject {
                 items[i].state = .uncertain
                 items[i].detail = L("La copia se interrumpió sin confirmación. Comprueba el destino antes de repetirla.")
             }
-        } catch { loadError = error }
+        } catch { loadError = error; persistenceError = L("No se pudieron leer las copias en curso de OneDrive: \(error.localizedDescription)") }
     }
-    private func persist() throws { if let loadError { throw loadError }; try LocalStore.save(items, to: storeURL) }
+    private func persist() throws {
+        if let loadError { throw loadError }
+        do { try LocalStore.save(items, to: storeURL); persistenceError = nil }
+        catch { persistenceError = L("No se pudieron guardar las copias en curso de OneDrive: \(error.localizedDescription)"); throw error }
+    }
     func start(file: CloudFile, destination: String, api: CloudAPI) async throws {
         let operation = RemoteCopy(accountID: api.account.id, name: file.name, destination: destination)
         items.append(operation)
