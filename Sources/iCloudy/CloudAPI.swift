@@ -126,15 +126,20 @@ final class CloudAPI {
         if let demo { return try demo.storageQuota() }
         return try await provider.storageQuota()
     }
-    func download(file: CloudFile, to destination: URL, exportMime: String? = nil, maxBytes: Int64? = nil, progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws {
+    /// Every download ends checked against the listed size and, when `checksum` allows it and the provider listed
+    /// one, its checksum. A copy that fails the check is deleted before the error reaches the caller.
+    @discardableResult
+    func download(file: CloudFile, to destination: URL, exportMime: String? = nil, maxBytes: Int64? = nil, checksum: Bool = true,
+                  progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws -> DownloadVerification {
         if let demo {
             try await demo.download(file, to: destination, maxBytes: maxBytes, progress: progress)
-            return
+        } else {
+            try await provider.download(file: file, to: destination, exportMime: exportMime, maxBytes: maxBytes, progress: progress)
+            if let maxBytes, Int64((try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > maxBytes {
+                try? FileManager.default.removeItem(at: destination)
+                throw CloudError.message(L("La vista previa supera el límite de descarga autorizado."))
+            }
         }
-        try await provider.download(file: file, to: destination, exportMime: exportMime, maxBytes: maxBytes, progress: progress)
-        if let maxBytes, Int64((try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > maxBytes {
-            try? FileManager.default.removeItem(at: destination)
-            throw CloudError.message(L("La vista previa supera el límite de descarga autorizado."))
-        }
+        return try await verifyDownload(file, at: destination, exported: exportMime != nil, checksum: checksum)
     }
 }

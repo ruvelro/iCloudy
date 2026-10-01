@@ -154,7 +154,10 @@ final class PreviewModel: ObservableObject {
                     if generation == request { task = nil }
                 }
                 do {
-                    try await client.download(file: file, to: destination, exportMime: kind.exportMime, maxBytes: limit) { [weak self] bytes, expected in
+                    // The size is always checked. The checksum only within the automatic limit, where hashing again costs
+                    // little next to the download; a confirmed multi-gigabyte preview is not worth another full read.
+                    let cheap = (file.size ?? .max) <= Self.automaticLimit
+                    try await client.download(file: file, to: destination, exportMime: kind.exportMime, maxBytes: limit, checksum: cheap) { [weak self] bytes, expected in
                         guard let self, self.generation == request, self.phase == .loading else { return }
                         self.received = bytes; self.total = expected
                     }

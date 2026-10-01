@@ -683,7 +683,6 @@
 "«%@»" = "“%@”";
 "«%@» es un nombre reservado por OneDrive." = "“%@” is a name reserved by OneDrive.";
 "«%@» está en la papelera de %@. Puedes restaurarlo desde su web." = "“%@” is in the %@ trash. You can restore it from its website.";
-"«%@» llegó incompleto de %@: %lld de %lld bytes." = "“%@” arrived incomplete from %@: %lld of %lld bytes.";
 "«%@» se refleja en «%@». La primera sincronización está en cola." = "“%@” is now mirrored to “%@”. The first sync is queued.";
 "«%@» ya no está en %@." = "“%@” is no longer in %@.";
 "«%@» ya no está en %@. Se ha quitado de la lista de copias locales." = "“%@” is no longer at %@. It has been removed from the list of local copies.";
@@ -1005,3 +1004,10 @@
 "No hay transferencias" = "No transfers";
 "La cola no se puede guardar." = "The queue cannot be saved.";
 "Los elementos ya completados se conservan." = "Items already completed are kept.";
+/* Verificación de descargas. */
+"«%@» llegó con %lld bytes, pero el proveedor anuncia %lld. La copia descargada se ha descartado." = "“%@” arrived with %lld bytes, but the provider lists %lld. The downloaded copy has been discarded.";
+"La suma de verificación de «%@» no coincide con la que informa el proveedor. La copia descargada se ha descartado." = "The checksum of “%@” does not match the one reported by the provider. The downloaded copy has been discarded.";
+"«%@» se borró o se movió mientras se descargaba." = "“%@” was deleted or moved while it was downloading.";
+"«%@» cambió en la nube mientras se descargaba. Se volverá a descargar la versión nueva." = "“%@” changed in the cloud while it was downloading. The new version will be downloaded again.";
+"%lld sin suma del proveedor (solo se comprobó el tamaño)" = "%lld without a provider checksum (only the size was checked)";
+"%lld exportados de Google, sin suma que comparar" = "%lld exported from Google, with no checksum to compare";

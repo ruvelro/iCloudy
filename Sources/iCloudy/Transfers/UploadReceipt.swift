@@ -8,8 +8,8 @@ struct UploadReceipt {
 }
 
 /// Incremental digests over the uploaded blocks. Drive reports `md5Checksum`; Graph reports `sha256Hash` or `sha1Hash`
-/// (personal accounts) and `quickXorHash` (business). QuickXorHash is not implemented, so business uploads stay
-/// "unavailable" rather than risking a false mismatch.
+/// (personal accounts) and `quickXorHash` (business). Uploads do not compare QuickXorHash yet, so business uploads stay
+/// "unavailable"; downloads do, through `ContentHasher`.
 struct UploadHasher {
     private var md5 = Insecure.MD5()
     private var sha1 = Insecure.SHA1()

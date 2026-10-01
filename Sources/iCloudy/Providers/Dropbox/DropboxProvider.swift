@@ -48,7 +48,8 @@ extension DropboxProvider {
                          mime: folder ? "application/vnd.google-apps.folder" : mime(forName: name),
                          size: (value["size"] as? NSNumber)?.int64Value,
                          modified: date(value["server_modified"] as? String),
-                         webURL: nil, isFolder: folder)
+                         webURL: nil, isFolder: folder,
+                         checksum: (value["content_hash"] as? String).map { ContentHash(algorithm: .dropbox, value: $0) })
     }
 
     func dropboxList(parent: String, onPage: (([CloudFile]) -> Void)?) async throws -> [CloudFile] {
@@ -294,6 +295,10 @@ extension DropboxProvider {
         var request = try await request(URL(string: "https://content.dropboxapi.com/2/files/download")!, method: "POST")
                     request.setValue(Self.asciiJSON(["path": dropboxPath(file.id)]), forHTTPHeaderField: "Dropbox-API-Arg")
                     return request
+    }
+
+    func currentMetadata(of file: CloudFile) async throws -> CloudFile? {
+        Self.dropboxFile(try await dropboxRPC("files/get_metadata", ["path": dropboxPath(file.id)], repeatable: true))
     }
 
     func rename(file: CloudFile, name: String) async throws {

@@ -39,6 +39,11 @@ struct Transfer: Identifiable, Codable {
     /// Files whose provider checksum matched the bytes sent, and files that could not be checked (resumed, or no hash).
     var verifiedFiles = 0
     var unverifiedFiles = 0
+    /// Google documents a download job exported: Drive lists no size or checksum for them, so there was nothing to check.
+    var exportedFiles = 0
+    /// How each downloaded file was checked, keyed like `uploads`. A failed check stays recorded on the failed job;
+    /// the map is dropped on completion, when the counters above carry the result.
+    var downloads: [String: DownloadIntegrity] = [:]
     /// Destination account of a cross-cloud transfer; `accountID` is then the source.
     var targetAccountID: String?
     /// nil for ordinary transfers; mirrors keep the exact remote object and its last observed version per path.
@@ -67,10 +72,26 @@ struct Transfer: Identifiable, Codable {
 }
 
 extension Transfer {
+    /// Records how a downloaded file was checked. Only a download job counts it towards the summary: in a cross-cloud
+    /// transfer the counters describe the upload, which is the copy that stays. A file recorded before, by a run that
+    /// stopped before marking it complete, is replaced rather than counted twice.
+    mutating func recordDownload(_ key: String, _ integrity: DownloadIntegrity) {
+        if direction == .download, let previous = downloads[key] { count(previous, -1) }
+        downloads[key] = integrity
+        if direction == .download { count(integrity, 1) }
+    }
+    private mutating func count(_ integrity: DownloadIntegrity, _ delta: Int) {
+        switch integrity {
+        case .verified: verifiedFiles += delta
+        case .unavailable: unverifiedFiles += delta
+        case .exported: exportedFiles += delta
+        case .failed: break
+        }
+    }
     enum CodingKeys: String, CodingKey {
         case id, batchID, name, destination, accountID, direction, localURL, bookmark, parent, file, exportMime, exportExtension
         case state, detail, bytes, total, bytesPerSecond, attempts, batchChoice, completedPaths, folders, uncertainFolders, names, replacements, uploads
-        case verifiedFiles, unverifiedFiles, targetAccountID, mirrorEntries
+        case verifiedFiles, unverifiedFiles, exportedFiles, downloads, targetAccountID, mirrorEntries
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -103,6 +124,9 @@ extension Transfer {
                   uploads: try values.decodeIfPresent([String: UploadCheckpoint].self, forKey: .uploads) ?? [:],
                   verifiedFiles: try values.decodeIfPresent(Int.self, forKey: .verifiedFiles) ?? 0,
                   unverifiedFiles: try values.decodeIfPresent(Int.self, forKey: .unverifiedFiles) ?? 0,
+                  exportedFiles: try values.decodeIfPresent(Int.self, forKey: .exportedFiles) ?? 0,
+                  // A state written by a newer version is not worth losing the whole queue over.
+                  downloads: (try? values.decodeIfPresent([String: DownloadIntegrity].self, forKey: .downloads)) ?? [:],
                   targetAccountID: try values.decodeIfPresent(String.self, forKey: .targetAccountID),
                   mirrorEntries: try values.decodeIfPresent([String: CloudFile].self, forKey: .mirrorEntries))
     }
