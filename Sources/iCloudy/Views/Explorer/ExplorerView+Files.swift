@@ -16,6 +16,7 @@ extension ExplorerView {
                     Text(file.name).lineLimit(1)
                     if model.isFavorite(file) { Image(systemName: "star.fill").font(.caption).foregroundStyle(.yellow) }
                 }.padding(.vertical, 5)
+                    .overlay { if file.isFolder { MiddleClick { model.openInNewTab(file) } } }
             }.width(min: 200, ideal: 320)
             TableColumn("Modificado") { file in
                 Text(file.modified?.formatted(date: .abbreviated, time: .omitted) ?? "—").foregroundStyle(.secondary)
@@ -51,7 +52,10 @@ extension ExplorerView {
             } else if let file = model.selection(ids).first { fileActions(file) }
         } primaryAction: { ids in
             guard let file = model.selection(ids).first else { return }
-            if file.isFolder { model.navigate(file) }
+            // ⌘ and a double-click open the folder in a tab of its own, as in the Finder; a single ⌘-click still
+            // adds to the selection.
+            if file.isFolder, NSEvent.modifierFlags.contains(.command) { model.openInNewTab(file) }
+            else if file.isFolder { model.navigate(file) }
             else if file.isGoogleDocument { model.openBrowser(file) }
             else { Task { await model.save(file) } }
         }
@@ -78,7 +82,8 @@ extension ExplorerView {
                                 .background(selected.contains(file.id) ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 10))
                                 .contentShape(Rectangle())
                                 .onTapGesture(count: 2) {
-                                    if file.isFolder { model.navigate(file) }
+                                    if file.isFolder, NSEvent.modifierFlags.contains(.command) { model.openInNewTab(file) }
+                                    else if file.isFolder { model.navigate(file) }
                                     else if file.isGoogleDocument { model.openBrowser(file) }
                                     else { Task { await model.save(file) } }
                                 }
@@ -95,6 +100,7 @@ extension ExplorerView {
                                     }
                                 }
                                 .contextMenu { fileActions(file) }
+                                .overlay { if file.isFolder { MiddleClick { model.openInNewTab(file) } } }
                                 .accessibilityLabel(file.name)
                                 .accessibilityAddTraits(selected.contains(file.id) ? [.isSelected, .isButton] : .isButton)
                         }

@@ -1016,3 +1016,15 @@
 "Atrás (⌘[)" = "Back (⌘[)";
 "Adelante" = "Forward";
 "Adelante (⌘])" = "Forward (⌘])";
+"Nueva pestaña" = "New Tab";
+"Nueva pestaña (⌘T)" = "New Tab (⌘T)";
+"Cerrar pestaña" = "Close Tab";
+"Cerrar pestaña (⌘W)" = "Close Tab (⌘W)";
+"Cerrar las otras pestañas" = "Close Other Tabs";
+"Cerrar ventana" = "Close Window";
+"Mostrar la pestaña anterior" = "Show Previous Tab";
+"Mostrar la pestaña siguiente" = "Show Next Tab";
+"Ir a la pestaña" = "Go to Tab";
+"Pestaña %lld" = "Tab %lld";
+"Última pestaña" = "Last Tab";
+"Abrir en una pestaña nueva" = "Open in New Tab";

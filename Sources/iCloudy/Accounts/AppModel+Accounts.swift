@@ -21,10 +21,11 @@ extension AppModel {
             remoteCopies.client = queue.client
             remoteCopies.didComplete = queue.didComplete
             remoteCopies.resume()
-            if selectedAccountID == nil { selectedAccountID = accounts.first?.id }
+            // Tabs restored from the last session may name accounts that are gone; they fall back to the first one.
+            workspace.reconcile(with: accounts)
             refreshSpotlightFavorites()
             if let waiting = pendingSpotlightItem { pendingSpotlightItem = nil; openSpotlightItem(identifier: waiting) }
-            if account != nil { reload() }
+            reloadVisible()
             for account in accounts where account.id != selectedAccountID { refreshStorage(account) }
             o2StoreMigration = Task { await self.moveO2AccountsToOwnStores() }
             startKeepAlive()
@@ -360,6 +361,7 @@ extension AppModel {
             for member in leaving { forget(member) }
             accounts = updated
             if let selected = selectedAccountID, leaving.contains(where: { $0.id == selected }) { select(accounts.first?.id) }
+            retargetTabs(leaving: Set(leaving.map(\.id)))
         } catch { self.error = error.localizedDescription }
     }
 

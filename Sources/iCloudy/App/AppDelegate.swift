@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         current?.queue.flush() // coalesced checkpoints still in memory
         current?.localCopies.flush() // and the index of what a finished transfer put on this Mac
+        if let model = current { model.workspaceStore.save(model.workspace) } // tabs changed in the last second
         current?.preview.close()
     }
 }

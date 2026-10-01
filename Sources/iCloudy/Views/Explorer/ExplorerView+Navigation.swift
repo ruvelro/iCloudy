@@ -104,6 +104,10 @@ extension ExplorerView {
                 GlobalSearchView(model: model, search: model.globalSearch)
             } else {
             VStack(spacing: 0) {
+                if model.workspace.panes[0].tabs.count > 1 {
+                    BrowserTabBar(model: model, pane: 0)
+                    Divider()
+                }
                 header
                 Divider()
                 // The file area and the transfers drawer sit side by side, so opening the drawer narrows the
@@ -158,7 +162,7 @@ extension ExplorerView {
                                 else { Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.connecting) }
                             }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
                         }
-                        fileBrowser
+                        tabFileBrowser
                     }
                     }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     if showTransfers {
@@ -200,6 +204,7 @@ extension ExplorerView {
             .background(Color(nsColor: .windowBackgroundColor))
         }
         .background(ExplorerWindowChrome())
+        .background(ExplorerWindowReader())
         .toolbarBackground(.hidden, for: .windowToolbar)
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {

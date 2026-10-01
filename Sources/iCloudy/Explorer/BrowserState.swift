@@ -34,6 +34,8 @@ struct BrowserState: Identifiable {
     var forward: [BrowserLocation] = []
     /// Enough to retrace a session; a tab is not a log of everything ever opened in it.
     static let historyLimit = 50
+    /// Set on a tab out of sight when something changed its account; it lists again when it comes back into view.
+    var stale = false
 
     init(id: UUID = UUID(), accountID: String? = nil, collection: Collection = .files, path: [CloudFile] = [],
          sortMode: String = "name", viewMode: String = "list") {
@@ -129,6 +131,54 @@ struct ExplorerPane: Identifiable {
         get { tabs[activeTab] }
         set { tabs[activeTab] = newValue }
     }
+
+    /// Opens a tab right after the active one and shows it. Like the Finder's ⌘T, it starts where the active tab
+    /// stands and draws the list the same way, with a history of its own.
+    @discardableResult mutating func addTab(at place: BrowserLocation? = nil) -> BrowserState.ID {
+        let model = current
+        var tab = BrowserState(accountID: model.accountID, collection: model.collection, path: model.path,
+                               sortMode: model.sortMode, viewMode: model.viewMode)
+        if let place { tab.location = place }
+        tabs.insert(tab, at: activeTab + 1)
+        activeTab += 1
+        return tab.id
+    }
+
+    /// Closes a tab and shows its neighbour, the one to its right if there is one. The last tab is never closed:
+    /// returns false so the caller can close the window (or the pane) instead.
+    @discardableResult mutating func closeTab(_ id: BrowserState.ID) -> Bool {
+        guard tabs.count > 1, let index = tabs.firstIndex(where: { $0.id == id }) else { return false }
+        let showing = tabs[activeTab].id
+        tabs.remove(at: index)
+        if let still = tabs.firstIndex(where: { $0.id == showing }) { activeTab = still }
+        else { activeTab = min(index, tabs.count - 1) }
+        return true
+    }
+
+    /// ⌘1 to ⌘8 pick that tab and ⌘9 the last one, as in a browser. Nothing happens beyond the last.
+    @discardableResult mutating func showTab(number: Int) -> Bool {
+        let index = number >= 9 ? tabs.count - 1 : number - 1
+        guard tabs.indices.contains(index), index != activeTab else { return false }
+        activeTab = index
+        return true
+    }
+
+    /// ⌃Tab and ⌃⇧Tab, round and round.
+    @discardableResult mutating func cycleTabs(forward: Bool) -> Bool {
+        guard tabs.count > 1 else { return false }
+        activeTab = (activeTab + (forward ? 1 : tabs.count - 1)) % tabs.count
+        return true
+    }
+
+    /// Drags a tab to where another one is; the active tab stays the active tab wherever it ends up.
+    mutating func moveTab(_ id: BrowserState.ID, to target: BrowserState.ID) {
+        guard id != target, let from = tabs.firstIndex(where: { $0.id == id }),
+              let to = tabs.firstIndex(where: { $0.id == target }) else { return }
+        let showing = tabs[activeTab].id
+        let tab = tabs.remove(at: from)
+        tabs.insert(tab, at: to)
+        activeTab = tabs.firstIndex { $0.id == showing } ?? 0
+    }
 }
 
 /// Everything the explorer window shows: its panes, which one has the focus and whether the second one is open.
@@ -168,5 +218,92 @@ struct ExplorerWorkspace {
     /// Changes every tab, for what has to follow an account or an item wherever it is shown.
     mutating func updateAll(_ change: (inout BrowserState) -> Void) {
         for p in panes.indices { for t in panes[p].tabs.indices { change(&panes[p].tabs[t]) } }
+    }
+}
+
+extension ExplorerWorkspace {
+    /// Puts every tab on an account that exists. Tabs come back from the last session before the accounts are read,
+    /// and an account may have been disconnected meanwhile: those tabs fall back to the first account's root, as the
+    /// sidebar would, and their history forgets what can no longer be listed.
+    @MainActor mutating func reconcile(with accounts: [Account]) {
+        let known = Dictionary(accounts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let mentioned = allTabs.flatMap { [$0.accountID] + $0.back.map(\.accountID) + $0.forward.map(\.accountID) }.compactMap { $0 }
+        let gone = Set(mentioned).subtracting(known.keys)
+        updateAll { tab in
+            tab.forgetHistory(of: gone)
+            if let id = tab.accountID, let account = known[id] {
+                // A collection the provider no longer offers is no place to stay either.
+                if !AppModel.collections(for: account).contains(tab.collection) { tab.open(BrowserLocation(accountID: id), remember: false) }
+            } else {
+                tab.open(BrowserLocation(accountID: accounts.first?.id), remember: false)
+            }
+        }
+    }
+}
+
+// MARK: - Persistence
+
+/// Tabs survive a relaunch: where each one stands, what it had selected, how it sorts and draws its list, and its
+/// history. The listing itself is not kept; it is asked for again. Every field is optional on the way in, so a file
+/// written by another version still opens.
+extension BrowserState: Codable {
+    enum CodingKeys: String, CodingKey { case id, accountID, collection, path, selection, sortMode, viewMode, back, forward }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: (try? values.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID(),
+                  accountID: (try? values.decodeIfPresent(String.self, forKey: .accountID)),
+                  collection: (try? values.decodeIfPresent(String.self, forKey: .collection)).flatMap(Collection.init(rawValue:)) ?? .files,
+                  path: (try? values.decodeIfPresent([CloudFile].self, forKey: .path)) ?? [],
+                  sortMode: (try? values.decodeIfPresent(String.self, forKey: .sortMode)) ?? "name",
+                  viewMode: (try? values.decodeIfPresent(String.self, forKey: .viewMode)) ?? "list")
+        selection = (try? values.decodeIfPresent(Set<CloudFile.ID>.self, forKey: .selection)) ?? []
+        back = Array(((try? values.decodeIfPresent([BrowserLocation].self, forKey: .back)) ?? []).suffix(Self.historyLimit))
+        forward = Array(((try? values.decodeIfPresent([BrowserLocation].self, forKey: .forward)) ?? []).suffix(Self.historyLimit))
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(id, forKey: .id)
+        try values.encodeIfPresent(accountID, forKey: .accountID)
+        try values.encode(collection.rawValue, forKey: .collection)
+        try values.encode(path, forKey: .path)
+        try values.encode(selection, forKey: .selection)
+        try values.encode(sortMode, forKey: .sortMode)
+        try values.encode(viewMode, forKey: .viewMode)
+        try values.encode(back, forKey: .back)
+        try values.encode(forward, forKey: .forward)
+    }
+}
+
+extension BrowserLocation {
+    enum CodingKeys: String, CodingKey { case accountID, collection, path }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        accountID = (try? values.decodeIfPresent(String.self, forKey: .accountID))
+        collection = (try? values.decodeIfPresent(String.self, forKey: .collection)).flatMap(Collection.init(rawValue:)) ?? .files
+        path = (try? values.decodeIfPresent([CloudFile].self, forKey: .path)) ?? []
+    }
+}
+
+extension ExplorerPane: Codable {
+    enum CodingKeys: String, CodingKey { case id, tabs, activeTab }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: (try? values.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID(),
+                  tabs: (try? values.decodeIfPresent([BrowserState].self, forKey: .tabs)) ?? [],
+                  activeTab: (try? values.decodeIfPresent(Int.self, forKey: .activeTab)) ?? 0)
+    }
+}
+
+extension ExplorerWorkspace: Codable {
+    enum CodingKeys: String, CodingKey { case panes, focusedPane }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(panes: (try? values.decodeIfPresent([ExplorerPane].self, forKey: .panes)) ?? [],
+                  focusedPane: (try? values.decodeIfPresent(Int.self, forKey: .focusedPane)) ?? 0)
     }
 }

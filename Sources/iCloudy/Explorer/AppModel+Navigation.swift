@@ -137,12 +137,14 @@ extension AppModel {
     func reload(tab id: BrowserState.ID, fresh: Bool = false) {
         navigationTasks[id]?.cancel()
         let requestID = UUID()
-        workspace.update(id) { $0.navigationID = requestID }
+        workspace.update(id) { $0.navigationID = requestID; $0.stale = false }
         guard let state = workspace.tab(id), let account = accounts.first(where: { $0.id == state.accountID }) else {
             workspace.update(id) { $0.files = []; $0.loading = false; $0.showingCachedListing = false }
             return
         }
         refreshStorage(account)
+        // Something was just written to this account: whatever other tabs show of it may be out of date too.
+        if fresh { workspace.updateAll { if $0.id != id && $0.accountID == account.id { $0.stale = true } } }
         let parent = state.folderID
         // Show what was there last time at once; the provider's answer replaces it when it arrives.
         let cached = !fresh && Prefs.bool(Prefs.listingCache, default: true) && state.files.isEmpty ? listings.cached(accountID: account.id, parent: parent) : nil

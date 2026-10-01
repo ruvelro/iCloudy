@@ -8,6 +8,7 @@ final class AppModel: ObservableObject {
     /// Panes and tabs, each with its own place and listing. The properties below forward to the focused pane's
     /// active tab, so everything that asks for "the open folder" keeps getting exactly that.
     @Published var workspace = ExplorerWorkspace(panes: [ExplorerPane(tabs: [AppModel.newBrowser()])])
+    let workspaceStore = WorkspaceStore()
     var selectedAccountID: String? {
         get { workspace.current.accountID }
         set { workspace.current.accountID = newValue }
@@ -173,6 +174,9 @@ final class AppModel: ObservableObject {
         catch { self.error = error.localizedDescription }
         // Property observers do not run while an initializer sets its own properties.
         favoriteKeys = Set(favorites.map(\.id))
+        // The tabs of the last session, put right against the accounts once those have been read.
+        if let restored = workspaceStore.load() { workspace = restored }
+        workspaceStore.watch($workspace)
         if UserDefaults.standard.bool(forKey: "demoEnabled") { enableDemo(select: false) }
         queue.client = { [weak self] id in
             guard let self, let account = self.accounts.first(where: { $0.id == id }) else { throw CloudError.message(L("Vuelve a conectar la cuenta de esta transferencia.")) }
