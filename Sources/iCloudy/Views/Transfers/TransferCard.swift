@@ -13,6 +13,7 @@ struct TransferCard: View {
     let model: AppModel
     @ObservedObject var queue: TransferQueue
     let transfer: Transfer
+    @State private var showReport = false
 
     /// Where the bytes end up: the far account of a cross-cloud copy, the target of an upload, and for a download
     /// the source, because that is the only cloud involved.
@@ -60,6 +61,10 @@ struct TransferCard: View {
     }
     private var actions: some View {
         HStack(spacing: 8) {
+            if hasReport {
+                Button("Ver informe") { showReport = true }
+                    .help("Qué ha pasado con cada archivo, y qué hay ya en el destino")
+            }
             if [.failed, .paused, .cancelled].contains(transfer.state) {
                 Button(transfer.state == .failed ? "Reintentar" : "Reanudar") { queue.retry(transfer.id) }
             }
@@ -106,8 +111,14 @@ struct TransferCard: View {
         .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 9))
         .overlay(RoundedRectangle(cornerRadius: 9).stroke(accent.opacity(transfer.state == .running ? 0.35 : 0.14), lineWidth: 1))
         .textSelection(.enabled)
+        .sheet(isPresented: $showReport) { TransferReportView(model: model, queue: queue, batchID: transfer.batchID) }
     }
     private var actionsAreEmpty: Bool {
-        transfer.state == .completed && !queue.isMovable(transfer)
+        transfer.state == .completed && !queue.isMovable(transfer) && !hasReport
+    }
+    /// A report is worth a button once a job with more than one file, or a batch of several, has stopped moving.
+    private var hasReport: Bool {
+        guard ![.queued, .running].contains(transfer.state) else { return false }
+        return transfer.report.count > 1 || queue.items.contains { $0.batchID == transfer.batchID && $0.id != transfer.id }
     }
 }

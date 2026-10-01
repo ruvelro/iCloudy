@@ -46,6 +46,8 @@ final class TransferQueue: ObservableObject {
     private var started = Date()
     private var startBytes: Int64 = 0
     private var lastReport = Date.distantPast
+    /// The item each running job is working on, so a failure lands on the right line of its report.
+    private var inFlight: [UUID: ReportCursor] = [:]
 
     init(storeURL: URL = LocalStore.directory.appendingPathComponent("transfers.json")) {
         self.storeURL = storeURL
@@ -165,6 +167,25 @@ final class TransferQueue: ObservableObject {
         guard let index = index(id), [.failed, .paused, .cancelled].contains(items[index].state) else { return }
         items[index].state = .queued; items[index].detail = ""; items[index].attempts = 0
         do { try persist(); kick() } catch { items[index].state = .failed }
+        stateChanges.send()
+    }
+    /// Puts a completed job back in the queue, after a check of the destination found part of it missing. The walk
+    /// skips whatever is still marked complete.
+    func requeue(_ id: UUID) {
+        guard let index = index(id), items[index].state == .completed else { return }
+        items[index].state = .paused
+        retry(id)
+    }
+    /// Updates one line of a job's report from outside a run. A file the destination no longer has goes back to
+    /// pending, and so do the folders above it, so that the next run walks down to it again.
+    func applyCheck(_ id: UUID, key: String, _ outcome: FileOutcome, reason: String?) {
+        guard let index = index(id) else { return }
+        items[index].record(key, outcome, reason: reason)
+        if outcome == .pending {
+            var current: String? = key
+            while let path = current { items[index].completedPaths.remove(path); current = Transfer.parentKey(path) }
+        }
+        do { try persist(coalesce: true) } catch { persistenceError = error.localizedDescription }
         stateChanges.send()
     }
     func cancel(_ id: UUID, pause: Bool = false) {
@@ -321,6 +342,7 @@ final class TransferQueue: ObservableObject {
                 if try job(id).state == .running {
                     try edit(id) {
                         $0.state = .completed; $0.bytes = max($0.bytes, $0.total); $0.bytesPerSecond = 0; $0.uploads = [:]; $0.downloads = [:]
+                        $0.settleReport()
                         $0.detail = Self.completionSummary(verified: $0.verifiedFiles, unverified: $0.unverifiedFiles,
                                                            exported: $0.exportedFiles, download: $0.direction == .download)
                     }
@@ -338,12 +360,15 @@ final class TransferQueue: ObservableObject {
             } catch {
                 if let index = index(id), items[index].state == .running {
                     if Task.isCancelled { items[index].state = .paused; items[index].detail = "" }
-                    else { items[index].state = .failed; items[index].detail = error.localizedDescription + " " + L("Los elementos ya completados se conservan.") }
+                    else {
+                        items[index].state = .failed; items[index].detail = error.localizedDescription + " " + L("Los elementos ya completados se conservan.")
+                        if let cursor = inFlight[id] { items[index].recordFailure(at: cursor, error) }
+                    }
                     items[index].bytesPerSecond = 0
                     do { try persist() } catch { persistenceError = error.localizedDescription }
                 }
             }
-            activeID = nil; task = nil
+            activeID = nil; task = nil; inFlight[id] = nil
             cleanScratch()
             stateChanges.send()
             kick()
@@ -461,11 +486,15 @@ final class TransferQueue: ObservableObject {
     private func transferTree(_ id: UUID, source: CloudAPI, target: CloudAPI, file: CloudFile, parent: String, scratch: URL, key: String, done: inout Int64, siblings: inout [String: [CloudFile]]) async throws {
         try Task.checkCancellation()
         if try job(id).completedPaths.contains(key) { done += file.size ?? 0; mark(id, done: done); return }
+        inFlight[id] = ReportCursor(key: key, leaf: file.name, folder: file.isFolder)
         var current = try job(id)
         let export = file.isGoogleDocument ? file.crossCloudExport : nil
         if file.isGoogleDocument && export == nil {
             // Forms, sites and shortcuts have nothing exportable; note it and move on instead of failing the whole tree.
-            try edit(id, coalesce: true) { $0.completedPaths.insert(key); $0.unverifiedFiles += 1 }
+            try edit(id, coalesce: true) {
+                $0.completedPaths.insert(key); $0.unverifiedFiles += 1
+                $0.record(key, .excluded, path: $0.reportPath(for: key, leaf: file.name), reason: L("Google no permite exportar formularios, sitios ni accesos directos."))
+            }
             return
         }
         let localName = export.map { file.name + "." + $0.ext } ?? file.name
@@ -483,7 +512,7 @@ final class TransferQueue: ObservableObject {
             var replacing: String?
             if let match = matches.first {
                 let choice = try await choose(id, name: name, replace: matches.count == 1 && match.isFolder == file.isFolder && !match.isGoogleDocument, folder: file.isFolder)
-                if choice == .skip { try edit(id) { $0.completedPaths.insert(key) }; done += file.size ?? 0; mark(id, done: done); return }
+                if choice == .skip { try edit(id) { $0.completedPaths.insert(key); $0.recordSkip(key, leaf: name, folder: file.isFolder, bytes: file.size) }; done += file.size ?? 0; mark(id, done: done); return }
                 if choice == .copy { name = Self.unique(name, existing: existing.map(\.name)) }
                 if choice == .replace { replacing = match.id }
             }
@@ -517,7 +546,7 @@ final class TransferQueue: ObservableObject {
                 }
                 try edit(id) {
                     $0.completedPaths.insert(key)
-                    if checkpoint.integrity == .verified { $0.verifiedFiles += 1 } else { $0.unverifiedFiles += 1 }
+                    $0.record(key, checkpoint.integrity == .verified ? .verified : .unverified, bytes: file.size)
                 }
                 try? FileManager.default.removeItem(at: staged)
                 done += file.size ?? 0; mark(id, done: done)
@@ -545,7 +574,7 @@ final class TransferQueue: ObservableObject {
                 } catch let error as DownloadIntegrityError { try recordFailedCheck(id, key: key, error); throw error }
                 try Task.checkCancellation()
                 try FileManager.default.moveItem(at: partial, to: staged)
-                try edit(id, coalesce: true) { $0.recordDownload(key, DownloadIntegrity(verification)) }
+                try edit(id, coalesce: true) { $0.recordDownload(key, DownloadIntegrity(verification), path: $0.reportPath(for: key)) }
             }
             let base = done
             try edit(id, coalesce: true) { $0.detail = L("Subiendo «\(name)» a \(target.account.cloud.title)…") }
@@ -555,7 +584,8 @@ final class TransferQueue: ObservableObject {
             // Persist the terminal state before deleting the only staged copy.
             try edit(id) {
                 $0.completedPaths.insert(key)
-                if receipt.verification == .verified { $0.verifiedFiles += 1 } else { $0.unverifiedFiles += 1 }
+                $0.record(key, receipt.verification == .verified ? .verified : .unverified, bytes: file.size,
+                          reason: export.map { L("Exportado de Google como .\($0.ext)") })
             }
             try? FileManager.default.removeItem(at: staged)
             done += file.size ?? 0
@@ -582,8 +612,9 @@ final class TransferQueue: ObservableObject {
     private func uploadTree(_ id: UUID, api: CloudAPI, local: URL, parent: String, key: String, done: inout Int64, siblings: inout [String: [CloudFile]]) async throws {
         try Task.checkCancellation()
         let values = try local.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey])
-        guard values.isSymbolicLink != true else { throw CloudError.message(L("No se admiten enlaces simbólicos.")) }
         let folder = values.isDirectory == true
+        inFlight[id] = ReportCursor(key: key, leaf: local.lastPathComponent, folder: folder)
+        guard values.isSymbolicLink != true else { throw CloudError.message(L("No se admiten enlaces simbólicos.")) }
         if try job(id).completedPaths.contains(key) { done += try await blockingIO { try Self.localSize(local) }; mark(id, done: done); return }
         // A mirror's own folder is never created remotely: its contents go into one that already exists, so its name
         // never reaches the provider. Judging it by the provider's rules stopped a mirror of "Fotos." from ever
@@ -618,6 +649,7 @@ final class TransferQueue: ObservableObject {
                 else { choice = try await choose(id, name: name, replace: matches.count == 1 && match.isFolder == folder && !match.isGoogleDocument, folder: folder) }
                 if choice == .skip { try edit(id) {
                     $0.completedPaths.insert(key)
+                    $0.recordSkip(key, leaf: local.lastPathComponent, folder: folder, bytes: values.fileSize.map(Int64.init))
                     $0.mirrorEntries = $0.mirrorEntries?.filter { $0.key != key && !$0.key.hasPrefix(key + "/") }
                 }; done += try await blockingIO { try Self.localSize(local) }; mark(id, done: done); return }
                 if choice == .copy { name = Self.unique(name, existing: existing.map(\.name)) }
@@ -662,7 +694,7 @@ final class TransferQueue: ObservableObject {
                 // A new session URL and the completion are durable at once; intermediate offsets are coalesced.
                 try self.edit(id, coalesce: checkpoint.offset > 0 && !checkpoint.complete) { $0.uploads[key] = checkpoint }
             }, progress: { bytes, total in self.report(id, base: base, bytes: bytes, total: total) })
-            try edit(id, coalesce: true) { if receipt.verification == .verified { $0.verifiedFiles += 1 } else { $0.unverifiedFiles += 1 } }
+            try edit(id, coalesce: true) { $0.record(key, receipt.verification == .verified ? .verified : .unverified, bytes: values.fileSize.map(Int64.init)) }
             if current.mirrorEntries != nil {
                 // Only an identity returned by this upload may become an automatically replaceable mirror target.
                 let remote = try await api.list(parent: parent)
@@ -696,6 +728,7 @@ final class TransferQueue: ObservableObject {
     private func downloadTree(_ id: UUID, api: CloudAPI, file: CloudFile, folder: URL, key: String, done: inout Int64) async throws {
         try Task.checkCancellation()
         if try job(id).completedPaths.contains(key) { done += file.size ?? 0; mark(id, done: done); return }
+        inFlight[id] = ReportCursor(key: key, leaf: file.name, folder: file.isFolder)
         var current = try job(id)
         let exporting = key == "." && current.exportMime != nil
         let name = FileNames.safe(file.name + (exporting ? "." + (current.exportExtension ?? "pdf") : (file.isGoogleDocument ? ".webloc" : "")))
@@ -705,7 +738,7 @@ final class TransferQueue: ObservableObject {
             if FileManager.default.fileExists(atPath: target.path) {
                 let values = try target.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
                 let choice = try await choose(id, name: name, replace: values.isDirectory == file.isFolder && values.isSymbolicLink != true, folder: file.isFolder)
-                if choice == .skip { try edit(id) { $0.completedPaths.insert(key) }; done += file.size ?? 0; mark(id, done: done); return }
+                if choice == .skip { try edit(id) { $0.completedPaths.insert(key); $0.recordSkip(key, leaf: name, folder: file.isFolder, bytes: file.size) }; done += file.size ?? 0; mark(id, done: done); return }
                 if choice == .copy { target = FileNames.available(in: folder, name: name) }
                 if choice == .replace { replace = true }
             }
@@ -742,7 +775,8 @@ final class TransferQueue: ObservableObject {
                 if replacing && FileManager.default.fileExists(atPath: destination.path) { _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary) }
                 else { try FileManager.default.moveItem(at: temporary, to: destination) }
             }
-            if let verification { try edit(id, coalesce: true) { $0.recordDownload(key, DownloadIntegrity(verification)) } }
+            if let verification { try edit(id, coalesce: true) { $0.recordDownload(key, DownloadIntegrity(verification), path: $0.reportPath(for: key)) } }
+            else { try edit(id, coalesce: true) { $0.record(key, .exported, reason: L("Guardado como enlace .webloc al documento de Google"), counted: false) } }
             done += file.size ?? 0
             mark(id, done: done)
             // Only real content counts as a local copy: a .webloc is a link and an export is a different document.

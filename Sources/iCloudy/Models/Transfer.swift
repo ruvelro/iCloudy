@@ -44,6 +44,11 @@ struct Transfer: Identifiable, Codable {
     /// How each downloaded file was checked, keyed like `uploads`. A failed check stays recorded on the failed job;
     /// the map is dropped on completion, when the counters above carry the result.
     var downloads: [String: DownloadIntegrity] = [:]
+    /// What became of each file, keyed like `completedPaths`. Unlike the checkpoints above it outlives completion: it
+    /// is what "Ver informe" shows and what a retry of only the pending part is decided from.
+    var report: [String: FileRecord] = [:]
+    /// True when the job was seeded from a transfer plan, so its report lists every file, reached or not.
+    var planned = false
     /// Destination account of a cross-cloud transfer; `accountID` is then the source.
     var targetAccountID: String?
     /// nil for ordinary transfers; mirrors keep the exact remote object and its last observed version per path.
@@ -72,26 +77,24 @@ struct Transfer: Identifiable, Codable {
 }
 
 extension Transfer {
-    /// Records how a downloaded file was checked. Only a download job counts it towards the summary: in a cross-cloud
-    /// transfer the counters describe the upload, which is the copy that stays. A file recorded before, by a run that
-    /// stopped before marking it complete, is replaced rather than counted twice.
-    mutating func recordDownload(_ key: String, _ integrity: DownloadIntegrity) {
-        if direction == .download, let previous = downloads[key] { count(previous, -1) }
-        downloads[key] = integrity
-        if direction == .download { count(integrity, 1) }
-    }
-    private mutating func count(_ integrity: DownloadIntegrity, _ delta: Int) {
-        switch integrity {
-        case .verified: verifiedFiles += delta
-        case .unavailable: unverifiedFiles += delta
-        case .exported: exportedFiles += delta
-        case .failed: break
+    /// Records how a downloaded file was checked, in the checkpoint and in the report. Only a download job reports a
+    /// passed check: in a cross-cloud transfer the report and the counters describe the upload, which is the copy
+    /// that stays. A file recorded before, by a run that stopped before marking it complete, is replaced rather than
+    /// counted twice; `record` takes care of that for anything it recorded itself.
+    mutating func recordDownload(_ key: String, _ integrity: DownloadIntegrity, path: String? = nil, reason: String? = nil) {
+        // A queue saved before reports existed counted the previous check without recording it: put the record in
+        // as it was counted, so the one below takes it back out of the counters.
+        if direction == .download, report[key] == nil, let previous = downloads[key] {
+            report[key] = FileRecord(path: path ?? reportPath(for: key), outcome: FileOutcome(previous))
         }
+        downloads[key] = integrity
+        guard direction == .download || integrity == .failed else { return }
+        record(key, FileOutcome(integrity), path: path, reason: reason)
     }
     enum CodingKeys: String, CodingKey {
         case id, batchID, name, destination, accountID, direction, localURL, bookmark, parent, file, exportMime, exportExtension
         case state, detail, bytes, total, bytesPerSecond, attempts, batchChoice, completedPaths, folders, uncertainFolders, names, replacements, uploads
-        case verifiedFiles, unverifiedFiles, exportedFiles, downloads, targetAccountID, mirrorEntries
+        case verifiedFiles, unverifiedFiles, exportedFiles, downloads, targetAccountID, mirrorEntries, report, planned
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -129,5 +132,8 @@ extension Transfer {
                   downloads: (try? values.decodeIfPresent([String: DownloadIntegrity].self, forKey: .downloads)) ?? [:],
                   targetAccountID: try values.decodeIfPresent(String.self, forKey: .targetAccountID),
                   mirrorEntries: try values.decodeIfPresent([String: CloudFile].self, forKey: .mirrorEntries))
+        // Like the checkpoints: a report the app cannot read is not worth losing the queue over.
+        report = (try? values.decodeIfPresent([String: FileRecord].self, forKey: .report)) ?? [:]
+        planned = try values.decodeIfPresent(Bool.self, forKey: .planned) ?? false
     }
 }
