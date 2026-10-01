@@ -173,6 +173,7 @@ final class AppModel: ObservableObject {
         listings.enabled = Prefs.bool(Prefs.listingCache, default: true)
         queue.cleanScratch()
         mirrors.queue = queue
+        configureTransferPolicy()
         mirrors.accountLookup = { [weak self] id in self?.accounts.first { $0.id == id } }
         loadAccounts()
         preview.download = { [weak self] file, account in

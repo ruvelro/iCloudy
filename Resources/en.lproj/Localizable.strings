@@ -1011,3 +1011,7 @@
 "«%@» cambió en la nube mientras se descargaba. Se volverá a descargar la versión nueva." = "“%@” changed in the cloud while it was downloading. The new version will be downloaded again.";
 "%lld sin suma del proveedor (solo se comprobó el tamaño)" = "%lld without a provider checksum (only the size was checked)";
 "%lld exportados de Google, sin suma que comparar" = "%lld exported from Google, with no checksum to compare";
+/* Cola de transferencias configurable */
+"Fuera del horario de transferencias · se reanudará automáticamente" = "Outside transfer hours · will resume automatically";
+"Fuera del horario de transferencias · se reanudará a las %@" = "Outside transfer hours · will resume at %@";
+"Red de datos móviles o en modo de datos reducidos · se reanudará en otra red" = "On a cellular or Low Data network · will resume on another network";
