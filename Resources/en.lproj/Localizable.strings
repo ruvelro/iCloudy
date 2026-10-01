@@ -1716,3 +1716,12 @@
 "No se pudo leer la lista de carpetas disponibles sin conexión: %@ Vuelve a marcar las que necesites." = "The list of folders available offline could not be read: %@ Mark the ones you need again.";
 "El archivo original se conserva en %@." = "The original file is kept at %@.";
 "No se pudo guardar la lista de copias sin conexión: %@ Los cambios se perderán al cerrar iCloudy." = "The list of offline copies could not be saved: %@ Changes will be lost when iCloudy quits.";
+
+/* Errores de Dropbox */
+"Dropbox está procesando demasiados cambios a la vez en esta cuenta. Se volverá a intentar en unos segundos." = "Dropbox is processing too many changes at once in this account. It will be tried again in a few seconds.";
+"No queda espacio en la cuenta de Dropbox para esta operación." = "There is no space left in the Dropbox account for this operation.";
+"Dropbox no admite ese nombre de archivo (por ejemplo, .DS_Store, desktop.ini o thumbs.db)." = "Dropbox does not accept that file name (for example .DS_Store, desktop.ini or thumbs.db).";
+"Dropbox no acepta esa ruta: revisa que el nombre no tenga caracteres no válidos ni termine en punto o espacio." = "Dropbox does not accept that path: check that the name has no invalid characters and does not end in a period or a space.";
+"Ya hay un elemento con ese nombre en ese lugar de Dropbox." = "There is already an item with that name in that place in Dropbox.";
+"Dropbox no encuentra ese elemento: puede que se haya movido o borrado desde otro sitio. Actualiza la carpeta." = "Dropbox cannot find that item: it may have been moved or deleted elsewhere. Refresh the folder.";
+"Dropbox rechazó la operación (%@)." = "Dropbox refused the operation (%@).";
