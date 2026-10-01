@@ -177,7 +177,6 @@
 "El alias no puede contener saltos de línea ni caracteres de control." = "The alias cannot contain line breaks or control characters.";
 "El archivo cambió durante la subida." = "The file changed during the upload.";
 "El archivo de origen cambió." = "The source file changed.";
-"El archivo de origen ha cambiado. Inicia otra subida." = "The source file has changed. Start a new upload.";
 "El archivo demo ya no existe." = "The demo file no longer exists.";
 "El archivo descargado de Mega no supera su comprobación de integridad." = "The file downloaded from Mega fails its integrity check.";
 "El archivo no es un PDF válido." = "The file is not a valid PDF.";
@@ -1725,3 +1724,8 @@
 "Ya hay un elemento con ese nombre en ese lugar de Dropbox." = "There is already an item with that name in that place in Dropbox.";
 "Dropbox no encuentra ese elemento: puede que se haya movido o borrado desde otro sitio. Actualiza la carpeta." = "Dropbox cannot find that item: it may have been moved or deleted elsewhere. Refresh the folder.";
 "Dropbox rechazó la operación (%@)." = "Dropbox refused the operation (%@).";
+
+/* Subidas cuyo origen cambió */
+"«%@» ha cambiado desde que empezó a subirse, o han cambiado sus permisos o su propietario. Lo ya enviado es de la versión anterior y no se mezcla con la nueva: usa «Empezar de cero» para subirlo entero." = "“%@” has changed since its upload began, or its permissions or owner have changed. What was already sent belongs to the earlier version and is not mixed with the new one: use “Start over” to upload it whole.";
+"Empezar de cero" = "Start over";
+"Sube entero el archivo que cambió, tal como está ahora. Lo ya completado no se repite." = "Uploads the changed file whole, as it is now. Whatever was already completed is not repeated.";

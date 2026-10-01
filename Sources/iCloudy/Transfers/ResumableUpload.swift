@@ -16,11 +16,8 @@ extension CloudAPI {
         let attributes = try local.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey, .isSymbolicLinkKey])
         guard attributes.isRegularFile == true, attributes.isSymbolicLink != true else { throw CloudError.message(L("Solo se admiten archivos regulares, sin enlaces simbólicos.")) }
         let total = Int64(attributes.fileSize ?? 0)
-        var cursor = checkpoint ?? UploadCheckpoint(total: total, modified: attributes.contentModificationDate)
-        guard cursor.total == total, cursor.modified == attributes.contentModificationDate else { throw CloudError.message(L("El origen ha cambiado. Cancela esta operación y vuelve a subirlo.")) }
-        let source = try UploadSourceStamp(local)
-        if let original = cursor.sourceStamp { try original.validate(local) }
-        cursor.sourceStamp = source
+        var cursor = try UploadCheckpoint.resuming(checkpoint, for: local, total: total, modified: attributes.contentModificationDate)
+        let source = cursor.sourceStamp!
         if cursor.complete {
             guard cursor.integrity != .pending, cursor.integrity != .failed,
                   cursor.integrity != nil || !provider.requiresVerifiedLegacyCheckpoint else {

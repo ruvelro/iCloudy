@@ -225,8 +225,19 @@ final class TransferQueue: ObservableObject {
     func retry(_ id: UUID) {
         guard let index = index(id), [.failed, .paused, .cancelled].contains(items[index].state) else { return }
         items[index].state = .queued; items[index].detail = ""; items[index].attempts = 0; items[index].hold = nil
+        items[index].needsRestart = false
         do { try persist(); kick() } catch { items[index].state = .failed }
         stateChanges.send()
+    }
+    /// "Empezar de cero": forgets the uploads that were under way, sessions included, and runs the job again. What
+    /// was completed stays completed; only the partly sent files go out whole, as they are now.
+    func restartFromZero(_ id: UUID) {
+        guard let index = index(id), [.failed, .paused].contains(items[index].state), tasks[id] == nil else { return }
+        var partial = items[index]
+        partial.uploads = partial.uploads.filter { !$0.value.complete }
+        abandonSessions(partial)
+        items[index].uploads = items[index].uploads.filter { $0.value.complete }
+        retry(id)
     }
     /// Puts a completed job back in the queue, after a check of the destination found part of it missing. The walk
     /// skips whatever is still marked complete.
@@ -463,6 +474,7 @@ final class TransferQueue: ObservableObject {
                     if Task.isCancelled { items[index].state = .paused; items[index].detail = "" }
                     else {
                         items[index].state = .failed; items[index].detail = error.localizedDescription + " " + L("Los elementos ya completados se conservan.")
+                        items[index].needsRestart = error is UploadSourceChanged
                         if let cursor = inFlight[id] { items[index].recordFailure(at: cursor, error) }
                     }
                     if items[index].state == .failed { Diagnostics.transferFailed(items[index], context: diagnostics, error: error, since: started) }

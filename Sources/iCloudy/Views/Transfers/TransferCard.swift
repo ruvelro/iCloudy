@@ -65,7 +65,10 @@ struct TransferCard: View {
                 Button("Ver informe") { showReport = true }
                     .help("Qué ha pasado con cada archivo, y qué hay ya en el destino")
             }
-            if [.failed, .paused, .cancelled].contains(transfer.state) {
+            if transfer.needsRestart, transfer.state == .failed {
+                Button("Empezar de cero") { queue.restartFromZero(transfer.id) }
+                    .help("Sube entero el archivo que cambió, tal como está ahora. Lo ya completado no se repite.")
+            } else if [.failed, .paused, .cancelled].contains(transfer.state) {
                 Button(transfer.state == .failed ? "Reintentar" : "Reanudar") { queue.retry(transfer.id) }
             }
             if queue.isMovable(transfer) {
