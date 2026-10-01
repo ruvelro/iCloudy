@@ -80,6 +80,10 @@ struct CloudCapabilities {
     var linksFolders = true
     /// Folders can be deleted for good as well as files. O2 purges files only.
     var purgesFolders = true
+    /// Earlier versions of a file can be listed, previewed, downloaded and restored from the app.
+    var versions = false
+    /// A single earlier version can also be deleted. Graph and Dropbox keep their history out of reach for that.
+    var deletesVersions = false
 
     /// Whether the provider can apply `action` to every one of these items. The flags above say whether it has the
     /// action at all; this adds what depends on the kind of item, so the interface stops offering an action that the
@@ -98,18 +102,22 @@ struct CloudCapabilities {
         case .google:
             // Drive has no server-side copy of a folder; its files have to be copied one by one.
             return CloudCapabilities(exportsDocuments: true, trashListing: true, permanentDelete: true, emptyTrash: true, memberSharing: true,
-                                     copiesFolders: false)
+                                     copiesFolders: false, versions: true, deletesVersions: true)
         case .microsoft:
             // Graph deletes for good with `permanentDelete`, but exposes no listing of the recycle bin to third parties.
-            return CloudCapabilities(permanentDelete: true, memberSharing: true)
+            // Its versions can be listed, read and restored, but not deleted one by one.
+            return CloudCapabilities(permanentDelete: true, memberSharing: true, versions: true)
         case .dropbox:
             // No "recent" or "shared with me" listing in this version; both need APIs beyond plain file browsing.
             // Deleted entries are listed alongside the live ones and files come back through their revisions.
             // Purging exists only on Business accounts; the provider explains the refusal on the others.
-            return CloudCapabilities(recents: false, sharedWithMe: false, trashListing: true, permanentDelete: true, memberSharing: true)
+            // Revisions are listed, downloaded and restored by `rev`; there is no call to delete a single one.
+            return CloudCapabilities(recents: false, sharedWithMe: false, trashListing: true, permanentDelete: true, memberSharing: true, versions: true)
         case .box:
             // Box has no single "empty trash" call; iCloudy walks the trash and purges item by item.
-            return CloudCapabilities(recents: false, sharedWithMe: false, trashListing: true, permanentDelete: true, emptyTrash: true, memberSharing: true)
+            // Earlier versions can be promoted back to current and deleted; on free accounts Box keeps none.
+            return CloudCapabilities(recents: false, sharedWithMe: false, trashListing: true, permanentDelete: true, emptyTrash: true, memberSharing: true,
+                                     versions: true, deletesVersions: true)
         case .webdav:
             // Plain WebDAV has no search, no sharing links and no recycle bin.
             return CloudCapabilities(oauth: false, search: false, recents: false, sharedWithMe: false,

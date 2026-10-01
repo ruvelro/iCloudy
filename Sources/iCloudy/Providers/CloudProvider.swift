@@ -38,6 +38,14 @@ protocol CloudProvider: CloudSession {
     func currentMetadata(of file: CloudFile) async throws -> CloudFile?
     /// False for items whose listed size and checksum are known not to describe the bytes a download returns.
     func canVerifyDownload(of file: CloudFile) -> Bool
+    /// Earlier versions of a file, newest first, the current one included and marked. Defaults live in
+    /// `CloudProvider+Versions.swift` and refuse with the reason.
+    func versions(of file: CloudFile) async throws -> [FileVersion]
+    /// The request that reads one version's bytes, or its export when `exportMime` is set (Google documents).
+    func versionContentRequest(for file: CloudFile, version: String, exportMime: String?) async throws -> URLRequest
+    /// Makes `version` the file's content again. Every provider keeps the history: what was current becomes a version.
+    func restoreVersion(_ version: FileVersion, of file: CloudFile) async throws
+    func deleteVersion(_ version: FileVersion, of file: CloudFile) async throws
     func uploadFile(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt
     func resumeCommittedUpload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt?
 }

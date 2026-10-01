@@ -1011,3 +1011,27 @@
 "«%@» cambió en la nube mientras se descargaba. Se volverá a descargar la versión nueva." = "“%@” changed in the cloud while it was downloading. The new version will be downloaded again.";
 "%lld sin suma del proveedor (solo se comprobó el tamaño)" = "%lld without a provider checksum (only the size was checked)";
 "%lld exportados de Google, sin suma que comparar" = "%lld exported from Google, with no checksum to compare";
+/* Historial de versiones */
+"%@ (versión %@)" = "%@ (version %@)";
+"Solo Nextcloud guarda versiones de los archivos. Si este servidor lo es, vuelve a conectarlo con la opción «Servidor Nextcloud u ownCloud» marcada." = "Only Nextcloud keeps versions of files. If this server is one, connect it again with the “Nextcloud or ownCloud server” option checked.";
+"Mega guarda versiones, pero las sirve con un protocolo propio que iCloudy todavía no habla. Consúltalas en mega.nz." = "Mega keeps versions, but serves them through a protocol of its own that iCloudy does not speak yet. Look them up at mega.nz.";
+"O2 Cloud no ofrece el historial de versiones a otras aplicaciones." = "O2 Cloud does not offer version history to other apps.";
+"Un volumen no guarda versiones de los archivos; de eso se encargan Time Machine o la aplicación que los edita." = "A volume does not keep versions of files; that is the job of Time Machine or the app that edits them.";
+"%@ no guarda versiones anteriores de los archivos." = "%@ does not keep earlier versions of files.";
+"Las carpetas no tienen versiones. Ábrela y consulta las de cada archivo." = "Folders have no versions. Open it and look at those of each file.";
+"Es un acceso directo. Abre el original para ver sus versiones." = "This is a shortcut. Open the original to see its versions.";
+"Google Drive no guarda versiones de los formularios." = "Google Drive does not keep versions of forms.";
+"Esta ya es la versión actual." = "This is already the current version.";
+"Google Drive no deja restaurar versiones de sus documentos desde otras aplicaciones. Usa «Historial de versiones» en el propio documento, o exporta esta versión." = "Google Drive does not let other apps restore versions of its documents. Use “Version history” in the document itself, or export this version.";
+"OneDrive no permite borrar versiones sueltas desde otras aplicaciones. Las antiguas caducan según la configuración de la biblioteca." = "OneDrive does not let other apps delete single versions. Old ones expire according to the library's settings.";
+"Dropbox no permite borrar revisiones sueltas. Caducan solas según el plan de la cuenta." = "Dropbox does not allow deleting single revisions. They expire on their own according to the account's plan.";
+"La versión actual no se puede borrar. Restaura otra antes, o envía el archivo a la papelera." = "The current version cannot be deleted. Restore another one first, or send the file to the trash.";
+"Google Drive solo borra versiones de archivos subidos, no de sus propios documentos." = "Google Drive only deletes versions of uploaded files, not of its own documents.";
+"Las versiones de un documento de Google solo se pueden exportar." = "Versions of a Google document can only be exported.";
+"Google Drive no ofrece esta versión en ese formato." = "Google Drive does not offer this version in that format.";
+"Esta cuenta de Box no guarda versiones anteriores. El historial de versiones depende del plan de Box." = "This Box account keeps no earlier versions. Version history depends on the Box plan.";
+"El servidor no dijo con qué usuario se ha iniciado sesión. Conecta la cuenta con la dirección /remote.php/dav/files/usuario." = "The server did not say which user is signed in. Connect the account with the address /remote.php/dav/files/user.";
+"El servidor no informó del identificador del archivo. Comprueba que es un Nextcloud." = "The server did not report the file's identifier. Check that it is a Nextcloud.";
+"Este servidor no tiene activada la aplicación de versiones de Nextcloud." = "This server does not have Nextcloud's versions app enabled.";
+"Esa versión ya no está disponible." = "That version is no longer available.";
+"Este servidor no permite borrar versiones sueltas. Nextcloud lo admite desde la versión 26." = "This server does not allow deleting single versions. Nextcloud supports it since version 26.";
