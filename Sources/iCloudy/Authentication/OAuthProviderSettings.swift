@@ -12,6 +12,9 @@ struct OAuthProviderSettings {
     /// True when the provider may come back without the `state` it was given. pCloud drops it on some of its
     /// sign-in paths; a `state` that is present still has to match.
     var toleratesMissingState = false
+    /// Scopes the app cannot work without. Google's consent screen lets people untick each one, and still hands back
+    /// a token, so the granted list is checked before the account is saved.
+    var requiredScopes: [String] = []
 
     static func settings(for cloud: Cloud) -> Self? {
         switch cloud {

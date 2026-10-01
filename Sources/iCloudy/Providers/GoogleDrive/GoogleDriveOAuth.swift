@@ -7,5 +7,6 @@ extension OAuthProviderSettings {
         toleratesAnyPort: true, usesClientSecret: true,
         authorizationParameters: ["scope": "openid email profile https://www.googleapis.com/auth/drive",
         "access_type": "offline",
-        "prompt": "consent select_account"])
+        "prompt": "consent select_account"],
+        requiredScopes: ["https://www.googleapis.com/auth/drive"])
 }

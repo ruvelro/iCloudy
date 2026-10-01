@@ -74,6 +74,9 @@ final class OAuth {
         let tokens = try await HTTP.token(cloud: cloud, values: fields, session: session)
         guard !cancelled else { throw CancellationError() }
         guard let access = tokens["access_token"] as? String, let refresh = tokens["refresh_token"] as? String else { throw CloudError.message(L("El proveedor no devolvió acceso permanente. Repite el consentimiento.")) }
+        if let missing = Self.missingScopes(granted: tokens["scope"] as? String, required: settings.requiredScopes), !missing.isEmpty {
+            throw CloudError.message(L("Google no ha dado acceso a tus archivos de Drive. Vuelve a conectar la cuenta y, en la pantalla de permisos de Google, marca la casilla «Ver, editar, crear y eliminar todos tus archivos de Google Drive»."))
+        }
         var request = URLRequest(url: URL(string: Self.profileEndpoint(cloud))!)
         // Dropbox exposes the current account through an RPC, so it is a POST even though it only reads.
         request.httpMethod = settings.profileMethod
@@ -92,6 +95,14 @@ final class OAuth {
         let account = Account(id: cloud.rawValue + ":" + identity, cloud: cloud, name: name, email: email, clientID: clientID,
                               clientSecret: settings.usesClientSecret && !clientSecret.isEmpty ? clientSecret : nil)
         return (account, Credential(accessToken: access, refreshToken: refresh, expires: Date().addingTimeInterval(tokens["expires_in"] as? Double ?? 3600)))
+    }
+
+    /// The required scopes the token response does not list. A response without `scope` is trusted: RFC 6749 lets a
+    /// server leave it out when it granted exactly what was asked.
+    static func missingScopes(granted: String?, required: [String]) -> [String]? {
+        guard let granted else { return nil }
+        let set = Set(granted.split(separator: " ").map(String.init))
+        return required.filter { !set.contains($0) }
     }
 
     static func profileEndpoint(_ cloud: Cloud) -> String { OAuthProviderSettings.settings(for: cloud)?.profileEndpoint ?? "" }

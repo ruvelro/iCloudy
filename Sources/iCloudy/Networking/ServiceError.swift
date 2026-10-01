@@ -11,6 +11,8 @@ struct ServiceError: LocalizedError {
     var errorDescription: String? { detail ?? L("El servicio devolvió HTTP \(status).") }
     /// Dropbox answers lock contention on the account with a 409 or 429 whose summary says so; it applied nothing and
     /// asks for the same request again.
+    /// Google's code for a token that was granted without a scope the request needs. Renewing it changes nothing.
+    static let scopeInsufficient = "ACCESS_TOKEN_SCOPE_INSUFFICIENT"
     var retryable: Bool { [408, 429, 500, 502, 503, 504].contains(status) || code.map(DropboxErrors.isBusy) == true }
 }
 

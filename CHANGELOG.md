@@ -5,7 +5,7 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
 
 ## 0.6.0 — 1 de octubre de 2026
 
-Doce funciones nuevas, dos nubes más y la deuda que quedaba de la auditoría. 789 pruebas, todas en verde salvo las
+Doce funciones nuevas, dos nubes más y la deuda que quedaba de la auditoría. 792 pruebas, todas en verde salvo las
 tres que necesitan un servidor real (SFTP, FTPS y MinIO), y ningún aviso al compilar, tampoco con la comprobación
 estricta de concurrencia. Lo nuevo se ha probado con respuestas simuladas, no contra cuentas reales.
 
@@ -51,6 +51,9 @@ estricta de concurrencia. Lo nuevo se ha probado con respuestas simuladas, no co
 - Arreglar los permisos de un archivo que no se pudo leer ya no deja su subida bloqueada.
 - Errores que se perdían en silencio (Llavero, índices, marcadores de volúmenes, borrados en bóvedas) ahora se dicen.
 - Las pruebas ya no leen las cuentas reales del Llavero de quien las ejecuta.
+- Google: una cuenta conectada sin marcar la casilla de acceso a Drive en la pantalla de permisos se rechaza al
+  conectar, y una que ya lo estaba pide volver a conectarse en vez de fallar en cada carpeta con «Request had
+  insufficient authentication scopes».
 - Detalle completo en [CORRECCIONES-P3-2026-10-01.md](docs/CORRECCIONES-P3-2026-10-01.md).
 
 ## 0.5.0 — 19 de septiembre de 2026

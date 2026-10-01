@@ -1733,3 +1733,7 @@
 /* Reflejos en pausa y paneles */
 "Todas las carpetas reflejadas están en pausa; no se ha comprobado ninguna." = "All mirrored folders are paused; none was checked.";
 "Comprobando %lld carpetas reflejadas; %lld en pausa se quedan como están." = "Checking %lld mirrored folders; %lld paused ones are left as they are.";
+
+/* Google: permiso de Drive no concedido */
+"Google no ha dado acceso a tus archivos de Drive. Vuelve a conectar la cuenta y, en la pantalla de permisos de Google, marca la casilla «Ver, editar, crear y eliminar todos tus archivos de Google Drive»." = "Google did not grant access to your Drive files. Reconnect the account and, on Google's permissions screen, tick the box “See, edit, create and delete all of your Google Drive files”.";
+"Esta cuenta se conectó sin permiso para tus archivos de Drive. Vuelve a conectarla y, en la pantalla de permisos de Google, marca la casilla de acceso a Google Drive." = "This account was connected without permission for your Drive files. Reconnect it and, on Google's permissions screen, tick the Google Drive access box.";

@@ -259,3 +259,49 @@ final class TokenTests: XCTestCase {
         catch let error as CloudError { XCTAssertTrue(error.isSessionExpired) }
     }
 }
+
+/// Google's consent screen lets people untick the Drive scope and still returns a token. Before, such an account looked
+/// connected and every folder failed with "Request had insufficient authentication scopes".
+extension TokenTests {
+    private var scopeRefusal: Data {
+        Data(#"{"error":{"code":403,"message":"Request had insufficient authentication scopes.","errors":[{"message":"Insufficient Permission","domain":"global","reason":"insufficientPermissions"}],"status":"PERMISSION_DENIED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"ACCESS_TOKEN_SCOPE_INSUFFICIENT","domain":"googleapis.com"}]}}"#.utf8)
+    }
+
+    func testASignInWithoutTheDriveScopeIsRefusedBeforeTheAccountIsSaved() {
+        let drive = OAuthProviderSettings.google.requiredScopes
+        XCTAssertEqual(drive, ["https://www.googleapis.com/auth/drive"])
+        XCTAssertEqual(OAuth.missingScopes(granted: "openid https://www.googleapis.com/auth/userinfo.email", required: drive), drive)
+        XCTAssertEqual(OAuth.missingScopes(granted: "openid https://www.googleapis.com/auth/drive email", required: drive), [])
+        XCTAssertNil(OAuth.missingScopes(granted: nil, required: drive), "A response that names no scopes granted what was asked")
+        XCTAssertTrue(OAuthProviderSettings.microsoft.requiredScopes.isEmpty)
+    }
+
+    func testGoogleScopeRefusalIsReadAsSuch() {
+        let (code, message) = HTTP.errorDetails(scopeRefusal)
+        XCTAssertEqual(code, ServiceError.scopeInsufficient)
+        XCTAssertTrue(message?.contains("Vuelve a conectarla") == true, message ?? "")
+        // The older shape, with the reason only in `errors`, means the same thing.
+        let legacy = Data(#"{"error":{"code":403,"message":"Request had insufficient authentication scopes.","errors":[{"reason":"insufficientPermissions"}]}}"#.utf8)
+        XCTAssertEqual(HTTP.errorDetails(legacy).code, ServiceError.scopeInsufficient)
+        // Any other permission refusal stays what it was.
+        let other = Data(#"{"error":{"code":403,"message":"The user does not have sufficient permissions for this file.","errors":[{"reason":"insufficientFilePermissions"}]}}"#.utf8)
+        XCTAssertNotEqual(HTTP.errorDetails(other).code, ServiceError.scopeInsufficient)
+    }
+
+    func testAMissingScopeMarksTheAccountForReconnectionInsteadOfFailingEveryFolder() async throws {
+        let store = MemoryCredentials(); store.stored[account.id] = credential(expiresIn: 3600)
+        var requests = 0
+        StubProtocol.handler = { [scopeRefusal] _ in requests += 1; return (403, [:], scopeRefusal) }
+        let api = client(store)
+        var notifications = 0
+        api.sessionDidExpire = { _ in notifications += 1 }
+        do { _ = try await api.list(parent: "root"); XCTFail("Expected an expired session") }
+        catch let error as CloudError {
+            XCTAssertTrue(error.isSessionExpired)
+            XCTAssertTrue(error.localizedDescription.contains("Google Drive"), error.localizedDescription)
+        }
+        XCTAssertTrue(api.sessionExpired)
+        XCTAssertEqual(notifications, 1)
+        XCTAssertEqual(requests, 1, "Renewing the token brings back the same grant, so it is not tried")
+    }
+}

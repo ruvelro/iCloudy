@@ -138,11 +138,23 @@ class CloudSession {
            challenge.contains("digest"), !challenge.contains("basic") {
             throw CloudError.message(L("Este servidor pide autenticación Digest, que iCloudy todavía no habla. Habilita la autenticación Basic sobre HTTPS en el servidor, o usa una contraseña de aplicación si la ofrece."))
         }
+        try expireIfScopeMissing(response, data)
         guard (response as? HTTPURLResponse)?.statusCode == 401, tokenProvider == nil else { return (data, response) }
         request.setValue(account.cloud.authorizationScheme + " " + (try await token(force: true)), forHTTPHeaderField: "Authorization")
         let (retriedData, retriedResponse) = try await session.data(for: request, delegate: RedirectGuard.shared)
         if (retriedResponse as? HTTPURLResponse)?.statusCode == 401 { expireSession(); throw CloudError.sessionExpired(nil) }
         return (retriedData, retriedResponse)
+    }
+
+    /// A token granted without a scope the app needs fails every request the same way, and renewing it brings back
+    /// the same grant. The account is marked as expired with the reason, so the window offers to reconnect it instead
+    /// of showing an English error on every folder.
+    private func expireIfScopeMissing(_ response: URLResponse, _ data: Data) throws {
+        guard (response as? HTTPURLResponse)?.statusCode == 403 else { return }
+        let (code, message) = HTTP.errorDetails(data)
+        guard code == ServiceError.scopeInsufficient else { return }
+        expireSession(message)
+        throw CloudError.sessionExpired(message)
     }
 
     /// How long to wait before repeating a refused request, or nil when it must not be repeated.
@@ -168,6 +180,7 @@ class CloudSession {
     func upload(_ request: inout URLRequest, from data: Data) async throws -> (Data, URLResponse) {
         Diagnostics.stamp(&request, account: account)
         let (body, response) = try await session.upload(for: request, from: data, delegate: RedirectGuard.shared)
+        try expireIfScopeMissing(response, body)
         guard (response as? HTTPURLResponse)?.statusCode == 401, tokenProvider == nil else { return (body, response) }
         request.setValue(account.cloud.authorizationScheme + " " + (try await token(force: true)), forHTTPHeaderField: "Authorization")
         let (retriedBody, retriedResponse) = try await session.upload(for: request, from: data, delegate: RedirectGuard.shared)

@@ -27,6 +27,13 @@ enum HTTP {
         // the object has no message of its own, so reading it first left every Dropbox refusal as a bare "HTTP 409".
         if let summary = object["error_summary"] as? String { return (summary, DropboxErrors.message(summary)) }
         if let error = object["error"] as? [String: Any] {
+            // Google says a token lacks a scope in `details` (ErrorInfo) and, on older endpoints, in `errors[].reason`.
+            let reasons = ((error["details"] as? [[String: Any]]) ?? []).compactMap { $0["reason"] as? String }
+                + ((error["errors"] as? [[String: Any]]) ?? []).compactMap { $0["reason"] as? String }
+            if reasons.contains(ServiceError.scopeInsufficient)
+                || (reasons.contains("insufficientPermissions") && (error["message"] as? String ?? "").contains("scope")) {
+                return (ServiceError.scopeInsufficient, L("Esta cuenta se conectó sin permiso para tus archivos de Drive. Vuelve a conectarla y, en la pantalla de permisos de Google, marca la casilla de acceso a Google Drive."))
+            }
             let code = (error["code"] as? String) ?? (error["status"] as? String)
             return (code, error["message"] as? String)
         }
