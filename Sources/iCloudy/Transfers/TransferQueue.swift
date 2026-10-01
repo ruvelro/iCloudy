@@ -32,20 +32,40 @@ final class TransferQueue: ObservableObject {
     var reportInterval: TimeInterval = 0.1
     /// Delay before coalesced checkpoint writes reach disk. State transitions and new upload sessions write at once.
     var flushDelay: Duration = .seconds(2)
-    var isWorking: Bool { task != nil }
+    var isWorking: Bool { !tasks.isEmpty }
     /// While offline nothing starts; jobs interrupted by the network resume by themselves when it returns.
     private(set) var isOnline = true
-    private var pausedByNetwork: Set<UUID> = []
+    /// How many jobs run at once, the bandwidth limits and the schedule. Setting it re-evaluates the queue at once.
+    var policy = TransferPolicy() {
+        didSet {
+            uploadLimiter.bytesPerSecond = policy.uploadLimit
+            downloadLimiter.bytesPerSecond = policy.downloadLimit
+            reevaluate()
+        }
+    }
+    /// The provider of each account, for the providers that can only do one thing at a time.
+    var cloud: ((String) -> Cloud?)?
+    /// The clock the schedule is read against; a seam for tests.
+    var now: () -> Date = Date.init
+    /// Why nothing is starting right now, shown above the list and as each paused job's status.
+    @Published private(set) var hold: TransferHold?
+    /// The jobs whose task is alive, running or still unwinding from a pause.
+    var runningIDs: Set<UUID> { Set(tasks.keys) }
+    /// The bandwidth limits, one bucket per direction shared by every job of this queue.
+    let uploadLimiter = BandwidthLimiter(), downloadLimiter = BandwidthLimiter()
+    private var costlyNetwork = false
+    private var windowTimer: Task<Void, Never>?
     let storeURL: URL
     private var writable = true
     private var dirty = false
     private var flushTask: Task<Void, Never>?
-    private var task: Task<Void, Never>?
-    private var activeID: UUID?
-    private var conflictContinuation: CheckedContinuation<ConflictChoice, Error>?
-    private var started = Date()
-    private var startBytes: Int64 = 0
-    private var lastReport = Date.distantPast
+    private var tasks: [UUID: Task<Void, Never>] = [:]
+    /// Several jobs can meet a name conflict at the same time; they wait in line and the sheet shows one at a time.
+    private var conflictContinuations: [UUID: CheckedContinuation<ConflictChoice, Error>] = [:]
+    private var pendingConflicts: [ConflictRequest] = []
+    /// Per job: when it started this run, from how many bytes, and when it last reported.
+    private var meters: [UUID: (started: Date, startBytes: Int64, lastReport: Date)] = [:]
+    private var claims = NameClaims()
     /// The item each running job is working on, so a failure lands on the right line of its report.
     private var inFlight: [UUID: ReportCursor] = [:]
 
@@ -53,7 +73,10 @@ final class TransferQueue: ObservableObject {
         self.storeURL = storeURL
         do {
             items = try LocalStore.read([Transfer].self, from: storeURL) ?? []
-            for index in items.indices where [.running, .queued].contains(items[index].state) { items[index].state = .paused; items[index].bytesPerSecond = 0 }
+            for index in items.indices where [.running, .queued].contains(items[index].state) { items[index].state = .paused; items[index].bytesPerSecond = 0; items[index].hold = nil }
+            // The queue comes back paused for the person to decide, as it always has, except for jobs waiting for the
+            // schedule or for a cheaper network: those were already decided, and the policy releases them.
+            for index in items.indices where items[index].hold == .offline { items[index].hold = nil; items[index].detail = "" }
         } catch { writable = false; persistenceError = L("No se pudo recuperar la cola. Se conserva el archivo original: \(error.localizedDescription)") }
     }
     /// True when the saved queue could not be read: nothing can be added until the user sets that file aside.
@@ -73,7 +96,7 @@ final class TransferQueue: ObservableObject {
     }
     var hasActive: Bool { items.contains { [.queued, .running].contains($0.state) } }
     func hasActive(accountID: String) -> Bool {
-        items.contains { ($0.accountID == accountID || $0.targetAccountID == accountID) && ([.queued, .running].contains($0.state) || $0.id == activeID) }
+        items.contains { ($0.accountID == accountID || $0.targetAccountID == accountID) && ([.queued, .running].contains($0.state) || tasks[$0.id] != nil) }
     }
     func remap(_ change: RemoteIdentityChange, accountID: String) throws {
         for i in items.indices where !items[i].finished {
@@ -103,13 +126,13 @@ final class TransferQueue: ObservableObject {
         }
         try persist()
     }
-    var protectedLocalURLs: [URL] { items.filter { !$0.finished || $0.id == activeID }.map(\.localURL) }
+    var protectedLocalURLs: [URL] { items.filter { !$0.finished || tasks[$0.id] != nil }.map(\.localURL) }
     /// Where cross-cloud transfers stage their bytes. One folder per job, removed when the job completes or is cancelled.
     var scratchRoot = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("iCloudy/Transfers", isDirectory: true)
     func scratchDirectory(for id: UUID) -> URL { scratchRoot.appendingPathComponent(id.uuidString, isDirectory: true) }
     /// Drops staging folders that no unfinished transfer can still use, e.g. after a crash.
     func cleanScratch() {
-        let live = Set(items.filter { $0.direction == .transfer && (!$0.finished || $0.id == activeID) }.map { $0.id.uuidString })
+        let live = Set(items.filter { $0.direction == .transfer && (!$0.finished || tasks[$0.id] != nil) }.map { $0.id.uuidString })
         for child in (try? FileManager.default.contentsOfDirectory(at: scratchRoot, includingPropertiesForKeys: nil)) ?? [] where !live.contains(child.lastPathComponent) {
             try? FileManager.default.removeItem(at: child)
         }
@@ -143,18 +166,54 @@ final class TransferQueue: ObservableObject {
     func setOnline(_ online: Bool) {
         guard online != isOnline else { return }
         isOnline = online
-        if online {
-            let resume = pausedByNetwork; pausedByNetwork = []
-            for id in resume where index(id).map({ items[$0].state == .paused }) == true { retry(id) }
-            kick()
-        } else {
+        reevaluate()
+    }
+    /// The network went to (or left) a hotspot, a cellular link or Low Data Mode. Only matters when the policy says so.
+    func setCostlyNetwork(_ costly: Bool) {
+        guard costly != costlyNetwork else { return }
+        costlyNetwork = costly
+        reevaluate()
+    }
+    /// The reason nothing may run right now, if any. No network comes first: it is the one nobody can wait out.
+    var currentHold: TransferHold? {
+        if !isOnline { return .offline }
+        if policy.pauseOnCostlyNetwork, costlyNetwork { return .costlyNetwork }
+        if let window = policy.window, !window.contains(now()) { return .schedule }
+        return nil
+    }
+    /// Applies the current hold: everything running or waiting is paused with its reason, or, once the reason is
+    /// gone, every job the queue paused by itself is queued again. Idempotent, so any change can simply call it.
+    func reevaluate() {
+        let current = currentHold
+        hold = current
+        if let current {
+            let detail = current.detail(window: policy.window)
             for id in items.filter({ [.running, .queued].contains($0.state) }).map(\.id) {
-                pausedByNetwork.insert(id)
                 cancel(id, pause: true)
-                if let index = index(id) { items[index].detail = L("Sin conexión · se reanudará automáticamente al volver la red") }
+                if let index = index(id) { items[index].hold = current; items[index].detail = detail }
             }
+            // Jobs held for another reason now wait for this one, and say so.
+            for index in items.indices where items[index].state == .paused && items[index].hold != nil {
+                items[index].hold = current; items[index].detail = detail
+            }
+            do { try persist() } catch { persistenceError = error.localizedDescription }
+        } else {
+            for id in items.filter({ $0.state == .paused && $0.hold != nil }).map(\.id) { retry(id) }
+            kick()
         }
+        scheduleWindowCheck()
         stateChanges.send()
+    }
+    /// Wakes the queue at the next edge of the schedule. Capped, so a clock or time zone change is noticed too.
+    private func scheduleWindowCheck() {
+        windowTimer?.cancel(); windowTimer = nil
+        guard let window = policy.window, let next = window.nextChange(after: now()) else { return }
+        let delay = min(max(1, next.timeIntervalSince(now())), 15 * 60)
+        windowTimer = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            self?.reevaluate()
+        }
     }
     func add(_ jobs: [Transfer]) throws {
         items += jobs
@@ -165,7 +224,7 @@ final class TransferQueue: ObservableObject {
     static func bookmark(_ url: URL) throws -> Data { try url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) }
     func retry(_ id: UUID) {
         guard let index = index(id), [.failed, .paused, .cancelled].contains(items[index].state) else { return }
-        items[index].state = .queued; items[index].detail = ""; items[index].attempts = 0
+        items[index].state = .queued; items[index].detail = ""; items[index].attempts = 0; items[index].hold = nil
         do { try persist(); kick() } catch { items[index].state = .failed }
         stateChanges.send()
     }
@@ -190,17 +249,17 @@ final class TransferQueue: ObservableObject {
     }
     func cancel(_ id: UUID, pause: Bool = false) {
         guard let index = index(id), !items[index].finished else { return }
-        items[index].state = pause ? .paused : .cancelled; items[index].bytesPerSecond = 0; items[index].detail = ""
+        items[index].state = pause ? .paused : .cancelled; items[index].bytesPerSecond = 0; items[index].detail = ""; items[index].hold = nil
         // Session URLs are pre-authenticated capabilities; a cancelled job will not resume them, so drop them from
         // disk, and tell the provider to forget them rather than leaving them to expire on their own.
         if !pause {
             abandonSessions(items[index])
             items[index].uploads = [:]
         }
-        if !pause, items[index].direction == .transfer, activeID != id { try? FileManager.default.removeItem(at: items[index].localURL) }
-        if activeID == id {
-            task?.cancel()
-            conflictContinuation?.resume(throwing: CancellationError()); conflictContinuation = nil; conflict = nil
+        if !pause, items[index].direction == .transfer, tasks[id] == nil { try? FileManager.default.removeItem(at: items[index].localURL) }
+        if let task = tasks[id] {
+            task.cancel()
+            dropConflict(of: id)
         }
         do { try persist() } catch { persistenceError = error.localizedDescription }
         stateChanges.send()
@@ -214,8 +273,8 @@ final class TransferQueue: ObservableObject {
               let api = try? lookup(transfer.targetAccountID ?? transfer.accountID) else { return }
         Task { await api.abandonUploadSessions(urls: urls, boxSessions: boxSessions) }
     }
-    /// True for jobs that can be re-prioritised: waiting or paused. The running job and finished ones keep their place.
-    func isMovable(_ transfer: Transfer) -> Bool { [.queued, .paused].contains(transfer.state) && transfer.id != activeID }
+    /// True for jobs that can be re-prioritised: waiting or paused. Running jobs and finished ones keep their place.
+    func isMovable(_ transfer: Transfer) -> Bool { [.queued, .paused].contains(transfer.state) && tasks[transfer.id] == nil }
     /// Same semantics as SwiftUI's `onMove`: `destination` is an index in the list before removal.
     func move(fromOffsets source: IndexSet, toOffset destination: Int) {
         guard !source.isEmpty, source.allSatisfy({ items.indices.contains($0) && isMovable(items[$0]) }), (0...items.count).contains(destination) else { return }
@@ -243,6 +302,13 @@ final class TransferQueue: ObservableObject {
         let to = items.firstIndex { isMovable($0) } ?? from
         guard to < from else { return }
         move(fromOffsets: IndexSet(integer: from), toOffset: to)
+    }
+    /// The opposite: behind every other waiting job, so whatever else is pending goes first.
+    func deprioritize(_ id: UUID) {
+        guard let from = index(id), isMovable(items[from]) else { return }
+        let last = items.lastIndex { isMovable($0) } ?? from
+        guard last > from else { return }
+        move(fromOffsets: IndexSet(integer: from), toOffset: last + 1)
     }
     /// Other jobs of the same batch that would still run; drives the "cancel the rest" affordance.
     func pendingBatchMates(of id: UUID) -> Int {
@@ -293,12 +359,28 @@ final class TransferQueue: ObservableObject {
     func resolve(_ choice: ConflictChoice, applyToBatch: Bool) {
         guard let request = conflict, let index = index(request.transferID) else { return }
         guard choice != .replace || request.canReplace else { return }
+        var answered = [request]
         if applyToBatch {
             let batch = items[index].batchID
             for i in items.indices where items[i].batchID == batch { items[i].batchChoice = choice }
+            // Mates of the batch already waiting in line take the same answer, as they would have had they asked
+            // a moment later. One that cannot be replaced keeps waiting, exactly like `choose` would ask it again.
+            answered += pendingConflicts.filter { pending in
+                pending.id != request.id && (choice != .replace || pending.canReplace)
+                    && items.first(where: { $0.id == pending.transferID })?.batchID == batch
+            }
         }
-        conflict = nil
-        conflictContinuation?.resume(returning: choice); conflictContinuation = nil
+        for request in answered {
+            pendingConflicts.removeAll { $0.id == request.id }
+            conflictContinuations.removeValue(forKey: request.transferID)?.resume(returning: choice)
+        }
+        conflict = pendingConflicts.first
+    }
+    /// Ends the wait of a job whose conflict will not be answered any more, and shows the next one in line.
+    private func dropConflict(of id: UUID) {
+        pendingConflicts.removeAll { $0.transferID == id }
+        conflictContinuations.removeValue(forKey: id)?.resume(throwing: CancellationError())
+        if conflict?.transferID == id || (conflict == nil && !pendingConflicts.isEmpty) { conflict = pendingConflicts.first }
     }
     private func index(_ id: UUID) -> Int? { items.firstIndex { $0.id == id } }
     private func job(_ id: UUID) throws -> Transfer {
@@ -314,18 +396,26 @@ final class TransferQueue: ObservableObject {
         try persist(coalesce: coalesce && !transition)
         if transition { stateChanges.send() }
     }
+    /// Starts every waiting job the policy has room for. Called after anything that frees a slot or adds a job.
     private func kick() {
-        guard isOnline, task == nil, let next = items.first(where: { $0.state == .queued }) else { return }
-        activeID = next.id
-        task = Task {
-            let id = next.id
+        // The schedule can close (or open) between two timer ticks; whoever notices first applies it.
+        guard currentHold == hold else { reevaluate(); return }
+        guard hold == nil else { return }
+        let ids = TransferScheduler.startable(items, running: runningIDs, policy: policy, cloud: { [cloud] in cloud?($0) })
+        for id in ids { start(id) }
+    }
+    private func start(_ id: UUID) {
+        guard let next = items.first(where: { $0.id == id }) else { return }
+        let throttle = TransferThrottle(upload: uploadLimiter, download: downloadLimiter)
+        tasks[id] = Task {
             // A pause or cancel can land between scheduling and this first line; never overwrite what the user chose.
-            guard (try? job(id))?.state == .queued else { activeID = nil; task = nil; kick(); return }
+            guard (try? job(id))?.state == .queued else { finish(id); return }
             do {
                 try edit(id) { $0.state = .running; $0.detail = L("Preparando…") }
-                started = Date(); startBytes = next.bytes
+                meters[id] = (started: Date(), startBytes: next.bytes, lastReport: .distantPast)
                 while true {
-                    do { try await run(id); break }
+                    // The buckets reach the providers through the task, and only for the bytes of this queue.
+                    do { try await TransferThrottle.$active.withValue(throttle) { try await run(id) }; break }
                     catch {
                         try Task.checkCancellation()
                         let current = try job(id)
@@ -351,10 +441,10 @@ final class TransferQueue: ObservableObject {
                 didComplete?(next.accountID)
                 if let target = next.targetAccountID, target != next.accountID { didComplete?(target) }
             } catch is NetworkGone {
-                pausedByNetwork.insert(id)
                 if let index = index(id), !items[index].finished {
                     items[index].state = .paused; items[index].bytesPerSecond = 0
-                    items[index].detail = L("Sin conexión · se reanudará automáticamente al volver la red")
+                    items[index].hold = .offline
+                    items[index].detail = TransferHold.offline.detail(window: policy.window)
                     do { try persist() } catch { persistenceError = error.localizedDescription }
                 }
             } catch {
@@ -368,11 +458,18 @@ final class TransferQueue: ObservableObject {
                     do { try persist() } catch { persistenceError = error.localizedDescription }
                 }
             }
-            activeID = nil; task = nil; inFlight[id] = nil
-            cleanScratch()
-            stateChanges.send()
-            kick()
+            inFlight[id] = nil
+            finish(id)
         }
+    }
+    /// The task of `id` is over, however it ended: its slot goes to the next job in line.
+    private func finish(_ id: UUID) {
+        tasks[id] = nil; meters[id] = nil
+        dropConflict(of: id)
+        if tasks.isEmpty { claims.removeAll() }
+        cleanScratch()
+        stateChanges.send()
+        kick()
     }
     /// What becomes of a job that has just thrown.
     enum Outcome: Equatable { case retry, fail, waitForNetwork }
@@ -421,19 +518,21 @@ final class TransferQueue: ObservableObject {
         try Task.checkCancellation()
         if let choice = try job(id).batchChoice, choice != .replace || replace { return choice }
         return try await withCheckedThrowingContinuation { continuation in
-            conflictContinuation = continuation
-            conflict = ConflictRequest(transferID: id, name: name, canReplace: replace, folder: folder)
+            conflictContinuations[id] = continuation
+            pendingConflicts.append(ConflictRequest(transferID: id, name: name, canReplace: replace, folder: folder))
+            if conflict == nil { conflict = pendingConflicts.first }
         }
     }
     private func report(_ id: UUID, base: Int64, bytes: Int64, total: Int64) {
-        guard let index = index(id), items[index].state == .running else { return }
+        guard let index = index(id), items[index].state == .running, let meter = meters[id] else { return }
         let now = Date()
-        // Throttle to `reportInterval`, but always deliver the final tick of an item.
-        guard now.timeIntervalSince(lastReport) >= reportInterval || (total > 0 && bytes >= total) else { return }
-        lastReport = now
+        // Throttle to `reportInterval`, but always deliver the final tick of an item. Each job keeps its own clock:
+        // with one shared, the jobs running beside each other swallowed each other's ticks.
+        guard now.timeIntervalSince(meter.lastReport) >= reportInterval || (total > 0 && bytes >= total) else { return }
+        meters[id]?.lastReport = now
         items[index].bytes = base + bytes
         items[index].total = max(items[index].total, base + total)
-        items[index].bytesPerSecond = Double(max(0, items[index].bytes - startBytes)) / max(0.1, Date().timeIntervalSince(started))
+        items[index].bytesPerSecond = Double(max(0, items[index].bytes - meter.startBytes)) / max(0.1, now.timeIntervalSince(meter.started))
         items[index].detail = L("Transfiriendo…")
     }
     /// Advances the byte count when an already completed item is skipped, so a retry does not show progress falling to zero.
@@ -506,20 +605,23 @@ final class TransferQueue: ObservableObject {
         }
         if current.names[key] == nil {
             if siblings[parent] == nil { siblings[parent] = try await target.list(parent: parent) }
-            let existing = siblings[parent] ?? []
+            let room = NameClaims.remote(account: target.account.id, parent: parent)
+            let existing = (siblings[parent] ?? []) + claimed(room, by: id, besides: siblings[parent] ?? [])
             let matches = existing.filter { $0.name.localizedCaseInsensitiveCompare(localName) == .orderedSame }
             var name = localName
             var replacing: String?
             if let match = matches.first {
-                let choice = try await choose(id, name: name, replace: matches.count == 1 && match.isFolder == file.isFolder && !match.isGoogleDocument, folder: file.isFolder)
+                let choice = try await choose(id, name: name, replace: matches.count == 1 && match.isFolder == file.isFolder && !match.isGoogleDocument && !match.id.isEmpty, folder: file.isFolder)
                 if choice == .skip { try edit(id) { $0.completedPaths.insert(key); $0.recordSkip(key, leaf: name, folder: file.isFolder, bytes: file.size) }; done += file.size ?? 0; mark(id, done: done); return }
-                if choice == .copy { name = Self.unique(name, existing: existing.map(\.name)) }
+                // Claimed again after the wait: another job may have taken a name while this one was asking.
+                if choice == .copy { name = Self.unique(name, existing: existing.map(\.name) + claims.others(in: room, excluding: id)) }
                 if choice == .replace { replacing = match.id }
             }
             try edit(id, coalesce: true) { $0.names[key] = name; $0.replacements[key] = replacing }
             current = try job(id)
         }
         let name = current.names[key]!
+        claims.claim(name, in: NameClaims.remote(account: target.account.id, parent: parent), by: id)
         if file.isFolder {
             let remote: String
             if let known = current.folders[key] ?? current.replacements[key] { remote = known }
@@ -634,7 +736,8 @@ final class TransferQueue: ObservableObject {
         }
         if current.names[key] == nil {
             if siblings[parent] == nil { siblings[parent] = try await api.list(parent: parent) }
-            let existing = siblings[parent] ?? []
+            let room = NameClaims.remote(account: api.account.id, parent: parent)
+            let existing = (siblings[parent] ?? []) + claimed(room, by: id, besides: siblings[parent] ?? [])
             let remembered = current.mirrorEntries?[key]
             var name = remembered?.name ?? local.lastPathComponent
             let matches = existing.filter { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame || $0.id == remembered?.id }
@@ -646,13 +749,13 @@ final class TransferQueue: ObservableObject {
                 } ?? false
                 let choice: ConflictChoice
                 if owned, matches.count == 1 { choice = .replace }
-                else { choice = try await choose(id, name: name, replace: matches.count == 1 && match.isFolder == folder && !match.isGoogleDocument, folder: folder) }
+                else { choice = try await choose(id, name: name, replace: matches.count == 1 && match.isFolder == folder && !match.isGoogleDocument && !match.id.isEmpty, folder: folder) }
                 if choice == .skip { try edit(id) {
                     $0.completedPaths.insert(key)
                     $0.recordSkip(key, leaf: local.lastPathComponent, folder: folder, bytes: values.fileSize.map(Int64.init))
                     $0.mirrorEntries = $0.mirrorEntries?.filter { $0.key != key && !$0.key.hasPrefix(key + "/") }
                 }; done += try await blockingIO { try Self.localSize(local) }; mark(id, done: done); return }
-                if choice == .copy { name = Self.unique(name, existing: existing.map(\.name)) }
+                if choice == .copy { name = Self.unique(name, existing: existing.map(\.name) + claims.others(in: room, excluding: id)) }
                 if choice == .replace { replacing = match.id; if folder { name = match.name } }
             }
             try edit(id, coalesce: true) {
@@ -666,6 +769,7 @@ final class TransferQueue: ObservableObject {
             current = try job(id)
         }
         let name = current.names[key]!
+        claims.claim(name, in: NameClaims.remote(account: api.account.id, parent: parent), by: id)
         if folder {
             let remote: String
             if let known = current.folders[key] ?? current.replacements[key] { remote = known }
@@ -716,6 +820,23 @@ final class TransferQueue: ObservableObject {
         }
         try edit(id, coalesce: true) { $0.completedPaths.insert(key) }
     }
+    /// Stand-ins for the names other running jobs have chosen in `room` and not created yet. Their empty id means they
+    /// can be avoided but never replaced.
+    private func claimed(_ room: String, by id: UUID, besides listed: [CloudFile]) -> [CloudFile] {
+        claims.others(in: room, excluding: id)
+            .filter { name in !listed.contains { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame } }
+            .map { CloudFile(id: "", name: $0, mime: "application/octet-stream", size: nil, modified: nil, webURL: nil, isFolder: false) }
+    }
+    /// `FileNames.available`, also stepping over the names other running jobs are downloading to.
+    private func available(in folder: URL, name: String, room: String, for id: UUID) -> URL {
+        var taken = claims.others(in: room, excluding: id)
+        guard !taken.isEmpty else { return FileNames.available(in: folder, name: name) }
+        while true {
+            let candidate = folder.appendingPathComponent(Self.unique(FileNames.safe(name), existing: taken))
+            if !FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+            taken.append(candidate.lastPathComponent)
+        }
+    }
     static func unique(_ name: String, existing: [String]) -> String {
         let url = URL(fileURLWithPath: name)
         var candidate = name; var number = 2
@@ -734,18 +855,24 @@ final class TransferQueue: ObservableObject {
         let name = FileNames.safe(file.name + (exporting ? "." + (current.exportExtension ?? "pdf") : (file.isGoogleDocument ? ".webloc" : "")))
         var target = folder.appendingPathComponent(current.names[key] ?? name)
         var replace = current.replacements[key] != nil
+        let room = NameClaims.local(folder)
         if current.names[key] == nil || (!file.isFolder && !replace && FileManager.default.fileExists(atPath: target.path)) {
-            if FileManager.default.fileExists(atPath: target.path) {
-                let values = try target.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-                let choice = try await choose(id, name: name, replace: values.isDirectory == file.isFolder && values.isSymbolicLink != true, folder: file.isFolder)
+            let exists = FileManager.default.fileExists(atPath: target.path)
+            // A name another running job is downloading to is as taken as one already on disk, but there is nothing
+            // there yet to replace.
+            let claimed = claims.others(in: room, excluding: id).contains { $0.localizedCaseInsensitiveCompare(target.lastPathComponent) == .orderedSame }
+            if exists || claimed {
+                let values = exists ? try target.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) : nil
+                let choice = try await choose(id, name: name, replace: !claimed && values?.isDirectory == file.isFolder && values?.isSymbolicLink != true, folder: file.isFolder)
                 if choice == .skip { try edit(id) { $0.completedPaths.insert(key); $0.recordSkip(key, leaf: name, folder: file.isFolder, bytes: file.size) }; done += file.size ?? 0; mark(id, done: done); return }
-                if choice == .copy { target = FileNames.available(in: folder, name: name) }
+                if choice == .copy { target = available(in: folder, name: name, room: room, for: id) }
                 if choice == .replace { replace = true }
             }
             let selectedName = target.lastPathComponent
             try edit(id, coalesce: true) { $0.names[key] = selectedName; if replace { $0.replacements[key] = "local" } }
             current = try job(id)
         }
+        claims.claim(target.lastPathComponent, in: room, by: id)
         // Never follow an externally substituted symlink, including on recovery.
         if FileManager.default.fileExists(atPath: target.path), try target.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink == true { throw CloudError.message(L("El destino es un enlace simbólico. Elige otra carpeta.")) }
         if file.isFolder {

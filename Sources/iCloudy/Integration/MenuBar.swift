@@ -8,15 +8,24 @@ struct MenuBarContent: View {
     @ObservedObject var queue: TransferQueue
     @Environment(\.openWindow) private var openWindow
 
-    private var active: Transfer? { queue.items.first { $0.state == .running } }
+    private var running: [Transfer] { queue.items.filter { $0.state == .running } }
     private var waiting: Int { queue.items.filter { $0.state == .queued }.count }
     private var paused: Int { queue.items.filter { $0.state == .paused }.count }
     private var failed: Int { queue.items.filter { $0.state == .failed }.count }
 
     var body: some View {
-        if let active {
+        if running.count == 1, let active = running.first {
             Text(active.name)
             Text(active.metrics)
+            if waiting > 0 { Text("\(waiting) en espera") }
+        } else if running.count > 1 {
+            // Several at once: the whole queue first, then each job, so the line under the icon still adds up.
+            let activity = TransferActivity(queue.items)
+            Text("\(running.count) transferencias en curso")
+            Text(verbatim: ([activity.progress.formatted(.percent.precision(.fractionLength(0)))] + (activity.speed.map { [$0] } ?? [])).joined(separator: " · "))
+            ForEach(running.prefix(5)) { transfer in
+                Text(verbatim: transfer.name + " · " + transfer.progress.formatted(.percent.precision(.fractionLength(0))))
+            }
             if waiting > 0 { Text("\(waiting) en espera") }
         } else if waiting > 0 {
             Text("\(waiting) transferencias en espera")
@@ -25,6 +34,7 @@ struct MenuBarContent: View {
         } else {
             Text("Sin transferencias activas")
         }
+        if let hold = queue.hold, hold != .offline { Text(verbatim: hold.detail(window: queue.policy.window)) }
         if paused > 0 { Text("\(paused) en pausa") }
         if failed > 0 { Text("\(failed) con error") }
         Divider()

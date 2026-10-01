@@ -295,6 +295,7 @@ actor SFTPClient {
                 let chunk = try answer.reader.string()
                 if chunk.isEmpty { finished = true; continue }
                 try DownloadBudget.check(written + Int64(chunk.count), maximum: maxBytes)
+                try await TransferThrottle.download(chunk.count)
                 try file.write(contentsOf: chunk)
                 written += Int64(chunk.count)
                 progress(written)
@@ -330,6 +331,7 @@ actor SFTPClient {
                 try stamp.validate(source)
                 let chunk = try file.read(upToCount: Self.blockSize) ?? Data()
                 if chunk.isEmpty { break }
+                try await TransferThrottle.upload(chunk.count)
                 let at = offset
                 outstanding.append(try await self.request(Packet.write) { $0.string(handle); $0.uint64(at); $0.string(chunk) })
                 offset += UInt64(chunk.count)

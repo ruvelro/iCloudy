@@ -7,12 +7,16 @@ import Network
 final class Connectivity: ObservableObject {
     @Published private(set) var isOnline = true
     var onChange: ((Bool) -> Void)?
+    /// True on a hotspot, a cellular link or with Low Data Mode on: the queue can wait for a cheaper network.
+    @Published private(set) var isCostly = false
+    var onCostChange: ((Bool) -> Void)?
     private let monitor = NWPathMonitor()
 
     init() {
         monitor.pathUpdateHandler = { [weak self] path in
             let online = path.status == .satisfied
-            Task { @MainActor in self?.update(online) }
+            let costly = path.isExpensive || path.isConstrained
+            Task { @MainActor in self?.update(online); self?.updateCost(costly) }
         }
         monitor.start(queue: DispatchQueue(label: "icloudy.connectivity"))
     }
@@ -21,6 +25,11 @@ final class Connectivity: ObservableObject {
         guard online != isOnline else { return }
         isOnline = online
         onChange?(online)
+    }
+    func updateCost(_ costly: Bool) {
+        guard costly != isCostly else { return }
+        isCostly = costly
+        onCostChange?(costly)
     }
     deinit { monitor.cancel() }
 }

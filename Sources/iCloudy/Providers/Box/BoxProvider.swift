@@ -187,6 +187,7 @@ extension BoxProvider {
                 throw CloudError.message(L("El archivo cambió durante la subida."))
             }
             let chunk = try await blockingIO { try handle.read(upToCount: Int(partSize)) ?? Data() }
+            try await TransferThrottle.upload(chunk.count)
             try cursor.sourceStamp?.validate(local)
             guard !chunk.isEmpty else { throw CloudError.message(L("El tamaño del origen ha cambiado.")) }
             whole.update(data: chunk)
@@ -241,6 +242,7 @@ extension BoxProvider {
     private func boxSimpleUpload(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint,
                                  save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
         let payload = try await blockingIO { try Data(contentsOf: local) }
+        try await TransferThrottle.upload(payload.count)
         try cursor.sourceStamp?.validate(local)
         let boundary = "icloudy-" + UUID().uuidString
         var attributes: [String: Any] = ["name": name]

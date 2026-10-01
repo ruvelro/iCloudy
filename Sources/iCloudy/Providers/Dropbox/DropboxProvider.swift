@@ -214,6 +214,7 @@ extension DropboxProvider {
             try cursor.sourceStamp?.validate(local)
             try Task.checkCancellation()
             let chunk = try await blockingIO { try handle.read(upToCount: Int(Self.dropboxChunk)) ?? Data() }
+            try await TransferThrottle.upload(chunk.count)
             try cursor.sourceStamp?.validate(local)
             guard !chunk.isEmpty else { throw CloudError.message(L("El tamaño del origen ha cambiado.")) }
             hasher?.update(chunk)

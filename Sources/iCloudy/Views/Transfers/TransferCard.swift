@@ -72,6 +72,9 @@ struct TransferCard: View {
                 Button { queue.prioritize(transfer.id) } label: { Image(systemName: "arrow.up.to.line") }
                     .accessibilityLabel("Pasar al principio")
                     .help("Pasar al principio de la cola")
+                Button { queue.deprioritize(transfer.id) } label: { Image(systemName: "arrow.down.to.line") }
+                    .accessibilityLabel("Pasar al final")
+                    .help("Pasar al final de la cola")
             }
             if [.running, .queued].contains(transfer.state) {
                 Button { queue.cancel(transfer.id, pause: true) } label: { Image(systemName: "pause.circle") }.help("Pausar")

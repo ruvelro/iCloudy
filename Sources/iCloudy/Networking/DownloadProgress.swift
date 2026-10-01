@@ -5,6 +5,8 @@ final class DownloadProgress: RedirectGuard, URLSessionDownloadDelegate, @unchec
     let maxBytes: Int64?
     private let lock = NSLock()
     private var exceeded = false
+    /// Read where the delegate is made, inside the job that asked for the download; nil outside the queue.
+    private let throttle = TaskThrottle(TransferThrottle.active?.download)
     var exceededLimit: Bool { lock.withLock { exceeded } }
     init(maxBytes: Int64? = nil, report: @escaping (Int64, Int64) -> Void) { self.maxBytes = maxBytes; self.report = report }
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {}
@@ -13,5 +15,6 @@ final class DownloadProgress: RedirectGuard, URLSessionDownloadDelegate, @unchec
             lock.withLock { exceeded = true }; downloadTask.cancel(); return
         }
         report(totalBytesWritten, max(0, totalBytesExpectedToWrite))
+        throttle?.pass(bytesWritten, of: downloadTask)
     }
 }

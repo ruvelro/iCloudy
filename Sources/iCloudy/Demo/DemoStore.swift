@@ -193,6 +193,7 @@ final class DemoStore {
             let data = try input.read(upToCount: 256 * 1024) ?? Data()
             try stamp.validate(local)
             guard !data.isEmpty else { throw CloudError.message(L("El archivo de origen cambió.")) }
+            try await TransferThrottle.upload(data.count)
             try output.write(contentsOf: data)
             try output.synchronize()
             cursor.offset += Int64(data.count)
@@ -227,6 +228,7 @@ final class DemoStore {
             let data = try input.read(upToCount: 256 * 1024) ?? Data()
             if data.isEmpty { break }
             if let maxBytes, bytes + Int64(data.count) > maxBytes { throw CloudError.message(L("La vista previa supera el límite de descarga autorizado.")) }
+            try await TransferThrottle.download(data.count)
             try output.write(contentsOf: data)
             bytes += Int64(data.count); progress(bytes, file.size ?? bytes)
             if let limit = failDownloadAfter, bytes >= limit { failDownloadAfter = nil; throw URLError(.networkConnectionLost) }

@@ -53,6 +53,9 @@ struct Transfer: Identifiable, Codable {
     var targetAccountID: String?
     /// nil for ordinary transfers; mirrors keep the exact remote object and its last observed version per path.
     var mirrorEntries: [String: CloudFile]?
+    /// Set when the queue paused this job by itself (no network, outside the schedule, a costly network), so it
+    /// resumes on its own when the reason goes away. nil for everything the person paused by hand.
+    var hold: TransferHold?
     var finished: Bool { [.completed, .cancelled, .failed].contains(state) }
     var failed: Bool { state == .failed }
     var progress: Double { state == .completed ? 1 : (total > 0 ? min(1, Double(bytes) / Double(total)) : 0) }
@@ -95,6 +98,7 @@ extension Transfer {
         case id, batchID, name, destination, accountID, direction, localURL, bookmark, parent, file, exportMime, exportExtension
         case state, detail, bytes, total, bytesPerSecond, attempts, batchChoice, completedPaths, folders, uncertainFolders, names, replacements, uploads
         case verifiedFiles, unverifiedFiles, exportedFiles, downloads, targetAccountID, mirrorEntries, report, planned
+        case hold
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -131,7 +135,9 @@ extension Transfer {
                   // A state written by a newer version is not worth losing the whole queue over.
                   downloads: (try? values.decodeIfPresent([String: DownloadIntegrity].self, forKey: .downloads)) ?? [:],
                   targetAccountID: try values.decodeIfPresent(String.self, forKey: .targetAccountID),
-                  mirrorEntries: try values.decodeIfPresent([String: CloudFile].self, forKey: .mirrorEntries))
+                  mirrorEntries: try values.decodeIfPresent([String: CloudFile].self, forKey: .mirrorEntries),
+                  // A reason added by a newer version is read as none: the job then waits for the person.
+                  hold: (try? values.decodeIfPresent(String.self, forKey: .hold)).flatMap { $0.flatMap(TransferHold.init(rawValue:)) })
         // Like the checkpoints: a report the app cannot read is not worth losing the queue over.
         report = (try? values.decodeIfPresent([String: FileRecord].self, forKey: .report)) ?? [:]
         planned = try values.decodeIfPresent(Bool.self, forKey: .planned) ?? false

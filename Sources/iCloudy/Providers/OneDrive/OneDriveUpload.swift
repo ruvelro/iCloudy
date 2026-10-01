@@ -66,6 +66,7 @@ extension OneDriveProvider {
             guard current.fileSize == attributes.fileSize, current.contentModificationDate == cursor.modified else { throw CloudError.message(L("El archivo cambió durante la subida.")) }
             // Reading 5 MiB blocks on the main actor stalled the interface on slow volumes.
             let data = try await blockingIO { try handle.read(upToCount: 5 * 1024 * 1024) ?? Data() }
+            try await TransferThrottle.upload(data.count)
             try cursor.sourceStamp?.validate(local)
             guard total == 0 || !data.isEmpty, cursor.offset + Int64(data.count) <= total else { throw CloudError.message(L("El tamaño del origen ha cambiado.")) }
             var upload = URLRequest(url: url)

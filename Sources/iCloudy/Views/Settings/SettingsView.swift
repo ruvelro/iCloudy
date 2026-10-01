@@ -109,6 +109,7 @@ private struct TransferSettings: View {
                 Text("Con más de \(TransferPlan.fileThreshold) archivos o \(TransferPlanView.bytes(TransferPlan.byteThreshold)), o cuando falta espacio, se muestra antes de empezar cuánto hay que mover, el espacio necesario, lo que ya existe en el destino y lo que no se puede transferir tal cual.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
+            TransferQueueSettings(model: model)
         }.formStyle(.grouped)
     }
 }

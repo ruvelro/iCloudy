@@ -37,6 +37,11 @@ struct TransferPanel: View {
             // Every tab owns the row under it: what it is counting or filtering, and its own broom. Clearing one
             // list never touches another, which is the whole point of having taken them apart.
             sectionBar.frame(height: Self.sectionBarHeight)
+            if tab == .active, let hold = queue.hold {
+                // Why nothing moves, once for the whole list rather than only on each paused card.
+                Label(hold.detail(window: queue.policy.window), systemImage: hold.symbol)
+                    .font(.caption2).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            }
             content.frame(maxHeight: .infinity)
             if let message = queue.persistenceError ?? (tab == .history ? history.persistenceError : nil) {
                 HStack(alignment: .top) {
@@ -66,6 +71,8 @@ struct TransferPanel: View {
             switch tab {
             case .active:
                 Text(tally(active.count, L("1 en curso"), L("\(active.count) en curso"), L("Nada en curso")))
+                // Several jobs move at once, so the speed that matters is the sum of all of them.
+                if let speed = TransferActivity(queue.items).speed { Text(verbatim: "· " + speed).monospacedDigit() }
                 Spacer(minLength: 0)
                 Button { queue.pauseAll() } label: { Image(systemName: "pause.circle") }
                     .accessibilityLabel("Pausar todas las transferencias")
