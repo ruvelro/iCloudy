@@ -33,6 +33,14 @@ final class FakeFTPServer: @unchecked Sendable {
     var replyDelays: [String: TimeInterval] = [:]
     /// The verb of the previous command, so RNTO is refused unless it comes straight after RNFR, as real servers do.
     private var previousVerb = ""
+    /// Verbs whose next arrival closes the control connection without a reply, as a server that crashes or a network
+    /// that drops at that moment would. Each entry fires once.
+    private var dropOnArrival: [String] = []
+    /// Closes the control connection once, after an upload has been received in full, instead of confirming it.
+    private var dropInsteadOfConfirmingUpload = false
+    func drop(on verb: String) { lock.withLock { dropOnArrival.append(verb) } }
+    func dropInsteadOfConfirmingNextUpload() { lock.withLock { dropInsteadOfConfirmingUpload = true } }
+    func count(_ verb: String) -> Int { log().filter { $0.split(separator: " ").first.map(String.init) == verb }.count }
 
     init(files: [String: Data], listings: [String: String], stallRetrievals: Bool = false) throws {
         self.stallRetrievals = stallRetrievals
@@ -96,6 +104,11 @@ final class FakeFTPServer: @unchecked Sendable {
         let renaming = previousVerb == "RNFR"
         previousVerb = verb
         let delay = replyDelays[verb] ?? 0
+        let dropping: Bool = lock.withLock {
+            guard let index = dropOnArrival.firstIndex(of: verb) else { return false }
+            dropOnArrival.remove(at: index); return true
+        }
+        if dropping { dropControl(); return }
         switch verb {
         case "USER": send("331 Necesita contraseña\r\n")
         case "PASS": send(argument == "secreta" ? "230 Sesión iniciada\r\n" : "530 Credenciales incorrectas\r\n")
@@ -122,8 +135,13 @@ final class FakeFTPServer: @unchecked Sendable {
                     connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, complete, _ in
                         if let data { received.append(data) }
                         if complete {
-                            self?.lock.withLock { self?.stored[path] = received }
-                            self?.send("226 Subida completa\r\n")
+                            guard let self else { return }
+                            let drop: Bool = self.lock.withLock {
+                                self.stored[path] = received
+                                defer { self.dropInsteadOfConfirmingUpload = false }
+                                return self.dropInsteadOfConfirmingUpload
+                            }
+                            if drop { self.dropControl() } else { self.send("226 Subida completa\r\n") }
                             connection.cancel()
                         } else { pump() }
                     }
@@ -427,6 +445,117 @@ final class FTPTests: XCTestCase {
         try await renamed
         XCTAssertEqual(interloper.code, 257)
         XCTAssertEqual(Array(server.log().suffix(3)), ["RNFR /a.txt", "RNTO /b.txt", "PWD"], "\(server.log())")
+    }
+
+    func testAChangeWhoseReplyIsLostIsReportedAsUncertainAndNotRepeated() async throws {
+        // The connection drops right after a command that changes the server. It may or may not have been carried
+        // out, so repeating it is wrong either way: a second DELE or RNTO fails on the result of the first, and a
+        // second MKD does it twice. Before, all of them were sent again on a new connection.
+        let listing = "type=file;size=3;modify=20260101120000; a.txt\r\n"
+        let server = try FakeFTPServer(files: [:], listings: ["/": listing])
+        let port = try await server.start()
+        defer { server.stop() }
+        let api = client(port: port)
+        try await hurry(api)
+        _ = try await api.list(parent: "root")
+        let file = CloudFile(id: "/a.txt", name: "a.txt", mime: "text/plain", size: 3, modified: nil, webURL: nil, isFolder: false)
+        let operations: [(verb: String, run: () async throws -> Void)] = [
+            ("DELE", { try await api.trash(file: file) }),
+            ("MKD", { _ = try await api.createFolder(name: "Nueva", parent: "root") }),
+            ("RNTO", { try await api.rename(file: file, name: "b.txt") }),
+            ("RMD", { try await api.trash(file: CloudFile(id: "/vacía", name: "vacía", mime: "application/vnd.google-apps.folder",
+                                                          size: nil, modified: nil, webURL: nil, isFolder: true)) })
+        ]
+        for operation in operations {
+            server.drop(on: operation.verb)
+            do {
+                try await operation.run()
+                XCTFail("\(operation.verb): sin respuesta no puede darse por hecho")
+            } catch {
+                XCTAssertTrue(error is FTPSession.OutcomeUncertain, "\(operation.verb): \(error)")
+                XCTAssertTrue(error.localizedDescription.contains("no se sabe si llegó a aplicarse"), error.localizedDescription)
+            }
+            XCTAssertEqual(server.count(operation.verb), 1, "\(operation.verb) no se repite: \(server.log())")
+            // The session is not left reading a reply that may still come; the next operation connects again.
+            let after = try await api.list(parent: "root")
+            XCTAssertEqual(after.map(\.name), ["a.txt"])
+        }
+        XCTAssertEqual(server.count("RNFR"), 1, "Tampoco se repite el par entero: \(server.log())")
+    }
+
+    func testAReadWhoseReplyIsLostIsRepeatedOnANewConnection() async throws {
+        // Reading twice changes nothing, so a listing, or the RNFR half of a rename, is simply sent again.
+        let listing = "type=file;size=3;modify=20260101120000; a.txt\r\n"
+        let server = try FakeFTPServer(files: [:], listings: ["/": listing])
+        let port = try await server.start()
+        defer { server.stop() }
+        let api = client(port: port)
+        try await hurry(api)
+        _ = try await api.list(parent: "root")
+        server.drop(on: "MLSD")
+        let listed = try await api.list(parent: "root")
+        XCTAssertEqual(listed.map(\.name), ["a.txt"])
+        XCTAssertEqual(server.count("MLSD"), 3, "\(server.log())")
+
+        server.drop(on: "RNFR")
+        let file = CloudFile(id: "/a.txt", name: "a.txt", mime: "text/plain", size: 3, modified: nil, webURL: nil, isFolder: false)
+        try await api.rename(file: file, name: "b.txt")
+        XCTAssertEqual(server.count("RNFR"), 2, "RNFR solo nombra; repetirlo no cambia nada: \(server.log())")
+        XCTAssertEqual(server.count("RNTO"), 1)
+        XCTAssertEqual(Array(server.log().suffix(2)), ["RNFR /a.txt", "RNTO /b.txt"])
+    }
+
+    func testAnUploadWhoseConfirmationIsLostIsReportedAsUncertain() async throws {
+        // Every byte reached the server, then the connection dropped instead of the 226. The file may be complete;
+        // uploading it again on our own would hide that, and failing as if nothing happened would be wrong too.
+        let server = try FakeFTPServer(files: [:], listings: ["/": ""])
+        let port = try await server.start()
+        defer { server.stop() }
+        let api = client(port: port)
+        try await hurry(api)
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data("contenido".utf8).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        var checkpoint = UploadCheckpoint(total: 9, modified: try source.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+        server.dropInsteadOfConfirmingNextUpload()
+        do {
+            _ = try await api.resumableUpload(local: source, parent: "root", name: "s.txt", replacing: nil,
+                                              checkpoint: checkpoint, save: { checkpoint = $0 }, progress: { _, _ in })
+            XCTFail("Sin confirmación no hay subida terminada")
+        } catch {
+            XCTAssertTrue(error is FTPSession.OutcomeUncertain, "\(error)")
+            XCTAssertTrue(error.localizedDescription.contains("no se sabe si el archivo quedó guardado"), error.localizedDescription)
+        }
+        XCTAssertEqual(server.count("STOR"), 1, "La subida no se repite sola: \(server.log())")
+        XCTAssertFalse(checkpoint.complete)
+        XCTAssertEqual(server.uploaded()["/s.txt"], Data("contenido".utf8), "El servidor sí la tenía")
+    }
+
+    func testAQuietConnectionIsCheckedBeforeAChangeIsSentDownIt() async throws {
+        // A server that dropped an idle connection is only noticed when something is sent. For a change that would be
+        // too late to repeat it, so a quiet connection is tested with NOOP first and reopened there.
+        let server = try FakeFTPServer(files: [:], listings: ["/": ""])
+        let port = try await server.start()
+        defer { server.stop() }
+        let api = client(port: port)
+        try await hurry(api)
+        let session = try await (api.provider as! FTPProvider).ftp()
+        await session.setIdleProbe(0)
+        _ = try await api.list(parent: "root")
+        server.dropControl()
+        try await Task.sleep(for: .milliseconds(200))
+        let path = try await api.createFolder(name: "Nueva", parent: "root")
+        XCTAssertEqual(path, "/Nueva")
+        XCTAssertEqual(server.count("MKD"), 1, "\(server.log())")
+        XCTAssertEqual(server.count("USER"), 2, "Se volvió a conectar antes de enviar el cambio: \(server.log())")
+        XCTAssertEqual(server.count("NOOP"), 0, "El NOOP murió con la conexión vieja; la nueva no lo necesita: \(server.log())")
+        // On a connection in use there is no extra round trip.
+        await session.setIdleProbe(60)
+        _ = try await api.createFolder(name: "Otra", parent: "root")
+        XCTAssertEqual(server.count("NOOP"), 0)
+        await session.setIdleProbe(0)
+        _ = try await api.createFolder(name: "Tercera", parent: "root")
+        XCTAssertEqual(server.count("NOOP"), 1, "\(server.log())")
     }
 
     func testALineBreakInANameNeverReachesTheServer() async throws {
