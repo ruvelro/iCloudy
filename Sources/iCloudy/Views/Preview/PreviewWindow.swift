@@ -29,7 +29,7 @@ final class PreviewWindow: NSObject, NSWindowDelegate {
             panel.minSize = NSSize(width: 480, height: 350)
             panel.delegate = self; panel.center(); window = panel
         }
-        window?.title = "Vista previa · " + file.name
+        window?.title = L("Vista previa · \(file.name)")
         window?.contentView = NSHostingView(rootView: PreviewContent(model: model, owner: self))
         window?.makeKeyAndOrderFront(nil)
     }
@@ -148,7 +148,7 @@ private struct PreviewContent: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading) {
-                    Text(model.file?.name ?? "Vista previa").font(.headline).lineLimit(1)
+                    Text(model.file?.name ?? L("Vista previa")).font(.headline).lineLimit(1)
                     Text(model.account?.email ?? "").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -184,9 +184,9 @@ private struct PreviewContent: View {
                         MediaPreview(url: url).id(url)
                     } else if let url = model.localURL { NativePreview(url: url, owner: owner).id(url) }
                 case .unsupported:
-                    unavailable("Vista previa no disponible", message: "Se admiten PDF, imágenes, texto y código, audio y vídeo (MP4, MOV, MP3, M4A, WAV…), documentos de Office e iWork, y Google Docs, Sheets y Slides exportados a PDF. Otros formatos se descargan o se abren en el navegador.")
+                    unavailable(L("Vista previa no disponible"), message: L("Se admiten PDF, imágenes, texto y código, audio y vídeo (MP4, MOV, MP3, M4A, WAV…), documentos de Office e iWork, y Google Docs, Sheets y Slides exportados a PDF. Otros formatos se descargan o se abren en el navegador."))
                 case .failed(let message):
-                    unavailable("No se pudo previsualizar", message: message)
+                    unavailable(L("No se pudo previsualizar"), message: message)
                 }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
             Divider()

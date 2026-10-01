@@ -49,11 +49,11 @@ struct Transfer: Identifiable, Codable {
     var status: String {
         switch state {
         case .queued: return L("En cola")
-        case .running: return detail.isEmpty ? "Transfiriendo…" : detail
-        case .paused: return detail.isEmpty ? "En pausa · Reanudar para continuar" : detail
+        case .running: return detail.isEmpty ? L("Transfiriendo…") : detail
+        case .paused: return detail.isEmpty ? L("En pausa · Reanudar para continuar") : detail
         case .failed: return detail
         case .cancelled: return L("Cancelada · Los elementos completados se conservan")
-        case .completed: return detail.isEmpty ? "Completada" : detail
+        case .completed: return detail.isEmpty ? L("Completada") : detail
         }
     }
     var metrics: String {
@@ -61,7 +61,7 @@ struct Transfer: Identifiable, Codable {
         let size = total > 0 ? " / " + ByteCountFormatter.string(fromByteCount: total, countStyle: .file) : ""
         guard state == .running, bytesPerSecond > 0 else { return done + size }
         let speed = ByteCountFormatter.string(fromByteCount: Int64(bytesPerSecond), countStyle: .file) + "/s"
-        let eta = total > bytes ? " · ~\(Int(Double(total - bytes) / bytesPerSecond)) s" : L("")
+        let eta = total > bytes ? " · ~\(Int(Double(total - bytes) / bytesPerSecond)) s" : ""
         return done + size + " · " + speed + eta
     }
 }

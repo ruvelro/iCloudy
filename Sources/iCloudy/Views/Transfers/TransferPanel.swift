@@ -108,13 +108,13 @@ struct TransferPanel: View {
         case .active:
             queueList(active, reorderable: true).overlay {
                 if active.isEmpty {
-                    empty("No hay transferencias", "Aquí aparecen las copias y las subidas mientras se hacen.", symbol: "arrow.up.arrow.down.circle")
+                    empty(L("No hay transferencias"), L("Aquí aparecen las copias y las subidas mientras se hacen."), symbol: "arrow.up.arrow.down.circle")
                 }
             }
         case .done:
             queueList(completed, reorderable: false).overlay {
                 if completed.isEmpty {
-                    empty("Nada terminado todavía", "Lo que acabe bien se queda aquí hasta que lo quites.", symbol: "checkmark.circle")
+                    empty(L("Nada terminado todavía"), L("Lo que acabe bien se queda aquí hasta que lo quites."), symbol: "checkmark.circle")
                 }
             }
         case .error:

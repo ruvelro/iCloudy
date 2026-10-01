@@ -15,7 +15,7 @@ enum HTTP {
         guard let response = response as? HTTPURLResponse else { throw CloudError.message(L("Respuesta HTTP no válida.")) }
         guard (200..<300).contains(response.statusCode) else {
             let (code, message) = errorDetails(data)
-            let fallback = "El servicio devolvió HTTP \(response.statusCode). \(response.statusCode == 401 ? L("Vuelve a conectar la cuenta.") : L("Inténtalo de nuevo más tarde."))"
+            let fallback = L("El servicio devolvió HTTP \(response.statusCode).") + " " + (response.statusCode == 401 ? L("Vuelve a conectar la cuenta.") : L("Inténtalo de nuevo más tarde."))
             throw ServiceError(status: response.statusCode, detail: message ?? fallback, code: code,
                                retryAfter: Double(response.value(forHTTPHeaderField: "Retry-After") ?? ""))
         }

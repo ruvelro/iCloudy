@@ -46,6 +46,9 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
     var capabilities: CloudCapabilities { CloudCapabilities.of(self) }
 }
 
+/// Actions whose support depends on the kind of item as well as on the provider.
+enum ItemAction { case copy, publicLink, permanentDelete }
+
 struct CloudCapabilities {
     var oauth = true
     var search = true
@@ -70,11 +73,32 @@ struct CloudCapabilities {
     /// Items can be shared with named people, at a chosen level, and those grants listed and revoked. Public links
     /// are `publicLinks`; this is the other kind of sharing.
     var memberSharing = false
+    /// Folders can be copied as well as files. Drive and Mega copy files only.
+    var copiesFolders = true
+    /// Which kinds of item a public link can be created for: O2 links folders only, Mega files only.
+    var linksFiles = true
+    var linksFolders = true
+    /// Folders can be deleted for good as well as files. O2 purges files only.
+    var purgesFolders = true
+
+    /// Whether the provider can apply `action` to every one of these items. The flags above say whether it has the
+    /// action at all; this adds what depends on the kind of item, so the interface stops offering an action that the
+    /// provider would only refuse after the request had gone out.
+    func allows(_ action: ItemAction, on files: [CloudFile]) -> Bool {
+        let folders = files.contains(where: \.isFolder), plain = files.contains { !$0.isFolder }
+        switch action {
+        case .copy: return copy && (copiesFolders || !folders)
+        case .publicLink: return publicLinks && (linksFolders || !folders) && (linksFiles || !plain)
+        case .permanentDelete: return permanentDelete && (purgesFolders || !folders)
+        }
+    }
 
     static func of(_ cloud: Cloud) -> CloudCapabilities {
         switch cloud {
         case .google:
-            return CloudCapabilities(exportsDocuments: true, trashListing: true, permanentDelete: true, emptyTrash: true, memberSharing: true)
+            // Drive has no server-side copy of a folder; its files have to be copied one by one.
+            return CloudCapabilities(exportsDocuments: true, trashListing: true, permanentDelete: true, emptyTrash: true, memberSharing: true,
+                                     copiesFolders: false)
         case .microsoft:
             // Graph deletes for good with `permanentDelete`, but exposes no listing of the recycle bin to third parties.
             return CloudCapabilities(permanentDelete: true, memberSharing: true)
@@ -110,14 +134,19 @@ struct CloudCapabilities {
             // The whole tree arrives decrypted in one response, so search and breadcrumbs cost nothing. There is no
             // "recent" or "shared with me" listing, and no checksum to compare after uploading, because the only MAC
             // Mega stores is the one iCloudy computed itself. The rubbish bin is one more folder of that tree.
+            // A node copy duplicates one file's key; a folder would need every child re-keyed, and a folder link
+            // needs a share key of its own. Neither is done yet, so both are offered for files only.
             return CloudCapabilities(oauth: false, recents: false, sharedWithMe: false, checksum: false,
-                                     trashListing: true, permanentDelete: true, emptyTrash: true)
+                                     trashListing: true, permanentDelete: true, emptyTrash: true,
+                                     copiesFolders: false, linksFolders: false)
         case .o2:
             // Funambol has no media search and no server-side copy for third parties, and reports no checksum.
             // Deleting is a soft delete, so the item stays recoverable from O2's own bin. The same call without the
             // soft-delete flag removes a file for good; its bin has no listing iCloudy has seen in use.
+            // Links exist for folders only, and only files have a hard delete among the calls seen in use.
             return CloudCapabilities(oauth: false, search: false, recents: false, sharedWithMe: false,
-                                     copy: false, checksum: false, permanentDelete: true)
+                                     copy: false, checksum: false, permanentDelete: true,
+                                     linksFiles: false, purgesFolders: false)
         }
     }
 }

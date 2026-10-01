@@ -6,7 +6,7 @@ extension AppModel {
     func pickUpload() async {
         guard let account, canWrite else { return }
         let parent = folderID, destination = location
-        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = true; panel.allowsMultipleSelection = true; panel.prompt = "Subir"
+        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = true; panel.allowsMultipleSelection = true; panel.prompt = L("Subir")
         if await panel.begin() == .OK { enqueueUploads(panel.urls, target: (account, parent, destination)) }
     }
 

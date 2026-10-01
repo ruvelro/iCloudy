@@ -96,7 +96,8 @@ extension ExplorerView {
         }
         Divider()
         Button("Eliminar definitivamente…", role: .destructive) { model.requestPermanentDelete([file]) }
-            .disabled(model.account?.capabilities.permanentDelete != true)
+            .disabled(model.limitation(.permanentDelete, for: [file]) != nil)
+            .help(model.limitation(.permanentDelete, for: [file]) ?? "")
     }
 
     @ViewBuilder func fileActions(_ file: CloudFile) -> some View {
@@ -110,7 +111,8 @@ extension ExplorerView {
         Button("Renombrar…") { model.promptName(file) }
         Button("Mover a…") { model.requestRelocation([file], copy: false) }
         Button("Copiar a…") { model.requestRelocation([file], copy: true) }
-            .disabled((file.isFolder && model.account?.cloud == .google) || model.account?.capabilities.copy == false)
+            .disabled(!model.canCopy([file]))
+            .help(model.limitation(.copy, for: [file]) ?? "")
         if model.accounts.count > 1 { Button("Enviar a otra nube…") { model.requestCrossCloud([file]) } }
         Divider()
         if file.isFolder {
@@ -137,13 +139,18 @@ extension ExplorerView {
         if let account = model.account, account.capabilities.memberSharing {
             Button("Compartir con personas…") { model.requestSharing(file) }
         }
+        // A provider without links hides the action; one that links only files or only folders explains the other.
         if let account = model.account, account.capabilities.publicLinks {
-            Button("Crear enlace público de solo lectura…") { model.pendingShare = (file, account) }
+            Button("Crear enlace público de solo lectura…") { model.requestPublicLink(file, account: account) }
+                .disabled(account.limitation(.publicLink, for: [file]) != nil)
+                .help(account.limitation(.publicLink, for: [file]) ?? "")
         }
         Divider()
         Button(model.account?.capabilities.reversibleTrash == false ? "Eliminar del servidor…" : "Enviar a la papelera…", role: .destructive) { model.requestTrash([file]) }
         if model.account?.capabilities.permanentDelete == true {
             Button("Eliminar definitivamente…", role: .destructive) { model.requestPermanentDelete([file]) }
+                .disabled(model.limitation(.permanentDelete, for: [file]) != nil)
+                .help(model.limitation(.permanentDelete, for: [file]) ?? "")
         }
     }
 }

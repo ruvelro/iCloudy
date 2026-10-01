@@ -152,7 +152,7 @@ final class OAuth {
                 let items = components.queryItems ?? []
                 guard items.first(where: { $0.name == "state" })?.value == self.expectedState else { connection.cancel(); return }
                 let result = Result { try OAuthRequest.callbackCode(target: parts[1], expectedState: self.expectedState) }
-                let body = "Puedes cerrar esta ventana y volver a iCloudy."
+                let body = L("Puedes cerrar esta ventana y volver a iCloudy.")
                 let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
                 connection.send(content: Data(response.utf8), completion: .contentProcessed { [weak self] _ in
                     connection.cancel()

@@ -214,10 +214,11 @@ final class MirrorManager: ObservableObject {
             return item.state == .running ? L("Sincronizando…") : L("En cola")
         }
         if pending.contains(mirror.id) { return L("Cambios detectados · sincronizando en breve") }
-        if let error = mirror.lastError { return L("Error: ") + error }
+        if let error = mirror.lastError { return L("Error: \(error)") }
         guard let last = mirror.lastSync else { return L("Pendiente de la primera sincronización") }
-        let formatter = RelativeDateTimeFormatter(); formatter.locale = Locale(identifier: "es_ES"); formatter.unitsStyle = .short
-        let when = L("Sincronizado ") + formatter.localizedString(for: last, relativeTo: Date())
+        // The person's own locale: pinning es_ES here showed "hace 5 min" in the middle of an English interface.
+        let formatter = RelativeDateTimeFormatter(); formatter.unitsStyle = .short
+        let when = L("Sincronizado \(formatter.localizedString(for: last, relativeTo: Date()))")
         if mirror.mode == .twoWay, let report = mirror.lastReport, !report.isEmpty { return when + " · " + report.summary }
         return when
     }
@@ -300,7 +301,7 @@ final class MirrorManager: ObservableObject {
                 // Nothing new since the last sync: no transfer, no network.
                 mirrors[position].lastError = nil; try persist(); return
             }
-            var job = Transfer(batchID: UUID(), name: "Reflejo · " + url.lastPathComponent, destination: mirror.remoteName, accountID: mirror.accountID, direction: .upload, localURL: url, bookmark: mirror.bookmark, parent: mirror.remoteFolderID)
+            var job = Transfer(batchID: UUID(), name: L("Reflejo · \(url.lastPathComponent)"), destination: mirror.remoteName, accountID: mirror.accountID, direction: .upload, localURL: url, bookmark: mirror.bookmark, parent: mirror.remoteFolderID)
             // The root receives the contents. Only unchanged remote identities previously written by this mirror
             // may be replaced automatically; new collisions and remote edits still go through the conflict dialog.
             job.names["."] = url.lastPathComponent
@@ -369,7 +370,7 @@ final class MirrorManager: ObservableObject {
         var changed = false
         for index in mirrors.indices {
             guard let active = mirrors[index].activeTransferID, let item = queue.items.first(where: { $0.id == active }), [.failed, .cancelled].contains(item.state) else { continue }
-            mirrors[index].lastError = item.state == .failed ? item.detail : "Sincronización cancelada"
+            mirrors[index].lastError = item.state == .failed ? item.detail : L("Sincronización cancelada")
             mirrors[index].activeTransferID = nil; mirrors[index].pendingStamps = nil
             changed = true
         }

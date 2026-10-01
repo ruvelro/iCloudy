@@ -632,6 +632,45 @@ final class ProviderTests: XCTestCase {
         XCTAssertEqual(Cloud.google.authorizationScheme, "Bearer")
     }
 
+    func testActionsDependOnTheKindOfItemAndTheRefusalIsExplainedBeforehand() {
+        // Mega was offered "copy" and "public link" for folders, and O2 a link for single files and a permanent delete
+        // for folders, only for the provider to refuse each one after the request had gone out.
+        func account(_ cloud: Cloud) -> Account {
+            Account(id: "\(cloud.rawValue):ana", cloud: cloud, name: "Ana", email: "ana@ejemplo.com", clientID: "", clientSecret: nil)
+        }
+        let folder = CloudFile(id: "d", name: "Fotos", mime: "", size: nil, modified: nil, webURL: nil, isFolder: true)
+        let file = CloudFile(id: "f", name: "a.pdf", mime: "application/pdf", size: 1, modified: nil, webURL: nil, isFolder: false)
+
+        let mega = account(.mega)
+        XCTAssertTrue(mega.capabilities.allows(.copy, on: [file]))
+        XCTAssertFalse(mega.capabilities.allows(.copy, on: [file, folder]), "One folder in the selection is enough")
+        XCTAssertEqual(mega.limitation(.copy, for: [folder]), L("Mega solo copia archivos, no carpetas."))
+        XCTAssertNil(mega.limitation(.publicLink, for: [file]))
+        XCTAssertTrue(mega.limitation(.publicLink, for: [folder])?.contains("mega.nz") == true)
+        XCTAssertNil(mega.limitation(.permanentDelete, for: [folder]))
+
+        let o2 = account(.o2)
+        XCTAssertNil(o2.limitation(.publicLink, for: [folder]))
+        XCTAssertEqual(o2.limitation(.publicLink, for: [file]), L("O2 Cloud crea enlaces de carpetas. Para un archivo suelto, compártelo desde su web."))
+        XCTAssertNil(o2.limitation(.permanentDelete, for: [file]))
+        XCTAssertNotNil(o2.limitation(.permanentDelete, for: [folder]))
+        XCTAssertNotNil(o2.limitation(.copy, for: [file]), "O2 has no copy at all")
+
+        let google = account(.google)
+        XCTAssertEqual(google.limitation(.copy, for: [folder]), L("Google Drive no permite copiar carpetas. Copia los archivos que contiene."))
+        XCTAssertNil(google.limitation(.copy, for: [file]))
+        XCTAssertNil(google.limitation(.publicLink, for: [folder]))
+
+        // Providers without the restriction, and the demo, offer everything to both kinds.
+        for cloud in [Cloud.microsoft, .dropbox, .box] {
+            for action in [ItemAction.copy, .publicLink, .permanentDelete] {
+                XCTAssertNil(account(cloud).limitation(action, for: [file, folder]), "\(cloud) \(action)")
+            }
+        }
+        XCTAssertNil(Account.demo.limitation(.copy, for: [folder]))
+        XCTAssertNotNil(account(.ftp).limitation(.publicLink, for: [file]), "No links at all is still a reason")
+    }
+
     func testAuthorizationURLsMatchEachProvidersEndpoint() {
         let dropbox = OAuthRequest.authorizationURL(cloud: .dropbox, clientID: "key", state: "s", challenge: "c")
         let query = URLComponents(url: dropbox, resolvingAgainstBaseURL: false)!.queryItems!

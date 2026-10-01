@@ -32,17 +32,21 @@ extension ExplorerView {
                 Button("Restaurar \(ids.count) elementos") { Task { await model.restore(model.selection(ids)) } }
                 Divider()
                 Button("Eliminar \(ids.count) elementos definitivamente…", role: .destructive) { model.requestPermanentDelete(model.selection(ids)) }
-                    .disabled(model.account?.capabilities.permanentDelete != true)
+                    .disabled(model.limitation(.permanentDelete, for: model.selection(ids)) != nil)
+                    .help(model.limitation(.permanentDelete, for: model.selection(ids)) ?? "")
             } else if ids.count > 1 {
                 Button("Descargar \(ids.count) elementos…") { Task { await model.saveMany(model.selection(ids)) } }
                 Button("Mover \(ids.count) elementos a…") { model.requestRelocation(model.selection(ids), copy: false) }
                 Button("Copiar \(ids.count) elementos a…") { model.requestRelocation(model.selection(ids), copy: true) }
                     .disabled(!model.canCopy(model.selection(ids)))
+                    .help(model.limitation(.copy, for: model.selection(ids)) ?? "")
                 if model.accounts.count > 1 { Button("Enviar \(ids.count) elementos a otra nube…") { model.requestCrossCloud(model.selection(ids)) } }
                 Divider()
                 Button("Enviar \(ids.count) elementos a la papelera…", role: .destructive) { model.requestTrash(model.selection(ids)) }
                 if model.account?.capabilities.permanentDelete == true {
                     Button("Eliminar \(ids.count) elementos definitivamente…", role: .destructive) { model.requestPermanentDelete(model.selection(ids)) }
+                        .disabled(model.limitation(.permanentDelete, for: model.selection(ids)) != nil)
+                        .help(model.limitation(.permanentDelete, for: model.selection(ids)) ?? "")
                 }
             } else if let file = model.selection(ids).first { fileActions(file) }
         } primaryAction: { ids in
