@@ -91,6 +91,7 @@ struct AccountIcon: View {
         case .mega: return "lock.icloud.fill"
         case .o2: return "antenna.radiowaves.left.and.right.circle.fill"
         case .pcloud: return "cloud.circle.fill"
+        case .s3: return "cylinder.split.1x2.fill"
         }
     }
     var body: some View {

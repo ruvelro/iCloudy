@@ -304,6 +304,7 @@ extension AppModel {
         case .mega: return .red
         case .o2: return .pink
         case .pcloud: return .teal
+        case .s3: return .orange
         }
     }
 

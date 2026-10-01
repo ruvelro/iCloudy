@@ -41,6 +41,7 @@ extension AppModel {
     func requestPublicLink(_ file: CloudFile, account target: Account? = nil) {
         guard let account = target ?? account else { return }
         if let reason = account.limitation(.publicLink, for: [file]) { error = reason; return }
+        if account.cloud == .s3, !account.isDemo { pendingTemporaryLink = (file, account); return }
         pendingShare = (file, account)
     }
 
@@ -220,7 +221,7 @@ extension AppModel {
                 favorites.removeAll { $0.accountID == account.id && ($0.file.id == file.id || $0.path.contains { $0.id == file.id }) }
             }
             try LocalStore.save(favorites, to: favoritesURL)
-            if [.ftp, .sftp, .webdav].contains(account.cloud), !account.isDemo {
+            if !account.capabilities.reversibleTrash, !account.isDemo {
                 info = L("\(moved) elementos eliminados del servidor de forma permanente.")
             } else if account.cloud == .volume {
                 info = L("\(moved) elementos enviados a la papelera. Puedes restaurarlos desde el Finder.")

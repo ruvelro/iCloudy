@@ -53,6 +53,7 @@ struct OAuthConfiguration: Codable {
         case .box: raw = boxClientID; secret = boxClientSecret
         case .webdav, .ftp, .sftp, .volume, .mega, .o2: raw = ""; secret = ""
         case .pcloud: raw = pcloudClientID; secret = pcloudClientSecret
+        case .s3: raw = ""; secret = ""
         }
         let id = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let valid: Bool
@@ -65,6 +66,7 @@ struct OAuthConfiguration: Codable {
         case .webdav, .ftp, .sftp, .volume, .mega, .o2: valid = false
         // pCloud's client ids are short alphanumeric strings, and without PKCE the secret is required to sign in.
         case .pcloud: valid = id.count >= 8 && id.allSatisfy { $0.isLetter || $0.isNumber } && !secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .s3: valid = false
         }
         guard valid else {
             throw CloudError.message(L("La conexión con \(cloud.title) todavía no está habilitada en esta versión de iCloudy. No necesitas configurar nada en tu cuenta."))

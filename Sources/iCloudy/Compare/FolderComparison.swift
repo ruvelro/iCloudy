@@ -16,7 +16,7 @@ enum ComparisonKey {
         switch cloud {
         case .microsoft, .dropbox, .box: return false
         case .volume: return false
-        case .google, .mega, .webdav, .ftp, .sftp, .o2, .pcloud: return true
+        case .google, .mega, .webdav, .ftp, .sftp, .o2, .pcloud, .s3: return true
         }
     }
 }

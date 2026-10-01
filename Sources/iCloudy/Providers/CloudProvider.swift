@@ -57,6 +57,9 @@ protocol CloudProvider: CloudSession {
     /// The checksum to check a download against when the listing carried none, asked for right before the download
     /// so that it describes the same version. nil where the provider has no such call.
     func downloadChecksum(of file: CloudFile) async throws -> ContentHash?
+    /// The checksum a download of `file` can be held to: the listed one, unless the provider has since learnt that
+    /// it does not describe the content (an S3 ETag of an object encrypted with KMS looks like an MD5 and is not).
+    func verifiableChecksum(of file: CloudFile) -> ContentHash?
     func uploadFile(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt
     func resumeCommittedUpload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt?
 }
@@ -87,6 +90,7 @@ extension CloudProvider {
     func currentMetadata(of file: CloudFile) async throws -> CloudFile? { nil }
     func canVerifyDownload(of file: CloudFile) -> Bool { true }
     func downloadChecksum(of file: CloudFile) async throws -> ContentHash? { nil }
+    func verifiableChecksum(of file: CloudFile) -> ContentHash? { file.checksum }
     func abandonUploadSessions(urls: [URL], boxSessions: [String]) async {
         for url in urls where url.scheme == "https" {
             var request = URLRequest(url: url)

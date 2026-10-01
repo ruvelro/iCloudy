@@ -72,6 +72,7 @@ struct ExplorerView: View {
         } message: {
             Text("Cualquier persona con el enlace podrá ver «\(model.pendingShare?.file.name ?? "")» sin iniciar sesión. El permiso queda en \(model.pendingShare?.account.cloud.title ?? L("la nube")) hasta que lo revoques desde su web.")
         }
+        .modifier(TemporaryLinkDialog(model: model))
         .confirmationDialog(trashTitle, isPresented: Binding(get: { model.pendingTrash != nil }, set: { if !$0 { model.pendingTrash = nil } }), titleVisibility: .visible) {
             Button(model.account?.capabilities.reversibleTrash == false ? "Eliminar definitivamente" : "Enviar a la papelera", role: .destructive) {
                 if let files = model.pendingTrash { Task { await model.trash(files) } }
