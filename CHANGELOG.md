@@ -3,6 +3,17 @@
 Las versiones siguen [SemVer](https://semver.org/lang/es/). Mientras el número mayor sea `0`, la app se considera
 en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y así se dirá aquí.
 
+## 0.6.1 — 1 de octubre de 2026
+
+Correcciones que sacó a la luz la primera ejecución de la integración continua, en un Mac con otro idioma y otra
+versión de Swift. 792 pruebas, en verde también en GitHub Actions.
+
+- Los códigos de error salen tal cual: en un sistema en inglés decían «TLS -9,807» o «code 1,234», porque el número
+  se formateaba con separador de miles. Afectaba a FTP, pCloud y el Llavero.
+- Compila con Swift 6.1 y 6.2 (Xcode 16 y 26): una frase traducible de SFTP y dos expresiones de Mega y de las
+  pestañas que esos compiladores no resolvían a tiempo.
+- La integración continua usa el Xcode más reciente del equipo de GitHub.
+
 ## 0.6.0 — 1 de octubre de 2026
 
 Doce funciones nuevas, dos nubes más y la deuda que quedaba de la auditoría. 792 pruebas, todas en verde salvo las
