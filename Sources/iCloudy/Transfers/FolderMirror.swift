@@ -104,6 +104,14 @@ enum MirrorPlanner {
         }
         return result
     }
+    /// What a one-way run would mark completed, and whether it has anything to do at all. The run and its dry run
+    /// both decide here, so the preview cannot drift from what the sync then does.
+    static func oneWayPlan(current: [String: FileStamp], mirror: FolderMirror) -> (completed: Set<String>, nothingNew: Bool) {
+        let completed = completedKeys(current: current, previous: mirror.stamps.filter { mirror.remoteEntries["./" + $0.key] != nil })
+        let nothingNew = completed.count == current.count + completed.filter({ !current.keys.contains(String($0.dropFirst(2))) }).count
+            && current.allSatisfy({ mirror.stamps[$0.key] == $0.value && mirror.remoteEntries["./" + $0.key] != nil }) && mirror.lastSync != nil
+        return (completed, nothingNew)
+    }
     /// Keys in the upload tree's format ("./a/b.txt", "./a") for unchanged files and for folders whose every file is
     /// unchanged. The root "." is never included, so the transfer always runs and re-checks the remote side.
     static func completedKeys(current: [String: FileStamp], previous: [String: FileStamp]) -> Set<String> {
@@ -410,8 +418,8 @@ final class MirrorManager: ObservableObject {
             let rules = exclusions(of: mirror)
             let current = try await blockingIO { try MirrorPlanner.scan(url, exclusions: rules).stamps }
             guard let position = mirrors.firstIndex(where: { $0.id == id }) else { return }
-            let unchanged = MirrorPlanner.completedKeys(current: current, previous: mirrors[position].stamps.filter { mirrors[position].remoteEntries["./" + $0.key] != nil })
-            if unchanged.count == current.count + unchanged.filter({ !current.keys.contains(String($0.dropFirst(2))) }).count, current.allSatisfy({ mirrors[position].stamps[$0.key] == $0.value && mirrors[position].remoteEntries["./" + $0.key] != nil }), mirrors[position].lastSync != nil {
+            let (unchanged, nothingNew) = MirrorPlanner.oneWayPlan(current: current, mirror: mirrors[position])
+            if nothingNew {
                 // Nothing new since the last sync: no transfer, no network.
                 mirrors[position].lastError = nil; try persist(); return
             }
@@ -442,9 +450,7 @@ final class MirrorManager: ObservableObject {
         let url = resolvedURL(mirror)
         do {
             guard FileManager.default.fileExists(atPath: url.path) else { throw CloudError.message(L("La carpeta local ya no existe en \(url.path).")) }
-            guard let api = try queue?.client?(account.id) else { throw CloudError.message(L("Vuelve a conectar la cuenta de este reflejo.")) }
-            let engine = TwoWaySyncEngine(api: api, localRoot: url, remoteRoot: mirror.remoteFolderID, baseline: mirror.baseline)
-            engine.exclusions = exclusions(of: mirror)
+            let engine = try makeEngine(mirror, account: account, url: url)
             engine.shouldStop = { [weak self] in self?.isPaused(id) ?? true }
             engine.allowMassDeletion = massDeletionAllowed.remove(id) != nil
             engine.persist = { [weak self] baseline in
@@ -468,6 +474,34 @@ final class MirrorManager: ObservableObject {
             }
         }
         if dirty.remove(id) != nil { scheduleSync(id, immediate: true) }
+    }
+    private func makeEngine(_ mirror: FolderMirror, account: Account, url: URL) throws -> TwoWaySyncEngine {
+        guard let api = try queue?.client?(account.id) else { throw CloudError.message(L("Vuelve a conectar la cuenta de este reflejo.")) }
+        let engine = TwoWaySyncEngine(api: api, localRoot: url, remoteRoot: mirror.remoteFolderID, baseline: mirror.baseline)
+        engine.exclusions = exclusions(of: mirror)
+        return engine
+    }
+    /// A dry run of the next sync, paused or not: the same scan and the same planner as the real one, and nothing
+    /// written anywhere. A two-way preview lists the cloud, which a one-way one never needs to.
+    func preview(_ id: UUID) async throws -> MirrorPreview {
+        guard let mirror = mirrors.first(where: { $0.id == id }) else { throw CloudError.message(L("Este reflejo ya no existe.")) }
+        let url = resolvedURL(mirror)
+        guard FileManager.default.fileExists(atPath: url.path) else { throw CloudError.message(L("La carpeta local ya no existe en \(url.path).")) }
+        let rules = exclusions(of: mirror)
+        if mirror.mode == .twoWay {
+            guard let account = accountLookup?(mirror.accountID) else { throw CloudError.message(L("Vuelve a conectar la cuenta de este reflejo.")) }
+            let engine = try makeEngine(mirror, account: account, url: url)
+            engine.allowMassDeletion = massDeletionAllowed.contains(id)
+            return try await engine.preview()
+        }
+        let scan = try await blockingIO { try MirrorPlanner.scan(url, exclusions: rules) }
+        guard let current = mirrors.first(where: { $0.id == id }) else { throw CloudError.message(L("Este reflejo ya no existe.")) }
+        let (completed, nothingNew) = MirrorPlanner.oneWayPlan(current: scan.stamps, mirror: current)
+        var preview = MirrorPreview.oneWay(current: scan.stamps, completed: completed, nothingNew: nothingNew, remoteEntries: current.remoteEntries, excluded: scan.excluded)
+        if let active = current.activeTransferID, let item = queue?.items.first(where: { $0.id == active }), item.mirrorEntries != nil, [.queued, .running, .paused].contains(item.state) {
+            preview.resumesQueuedUpload = true
+        }
+        return preview
     }
     /// Hooked to the queue's `didFinish`: promotes the planned stamps and re-syncs if the folder changed meanwhile.
     func handleFinished(_ transfer: Transfer) {

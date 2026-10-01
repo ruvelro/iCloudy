@@ -9,6 +9,7 @@ struct MirrorList: View {
     @ObservedObject var mirrors: MirrorManager
     @State private var removing: FolderMirror?
     @State private var editingExclusions: FolderMirror?
+    @State private var previewing: FolderMirror?
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
         Divider().padding(.vertical, 8)
@@ -33,6 +34,8 @@ struct MirrorList: View {
                     Button("Pausar") { mirrors.setPaused(true, for: mirror.id) }
                         .help("Deja de sincronizar este reflejo hasta que lo reanudes, también tras cerrar la app")
                 }
+                Button("Cambios pendientes…") { previewing = mirror }
+                    .help("Muestra lo que haría la próxima sincronización, sin hacerlo")
                 Button("Exclusiones…") { editingExclusions = mirror }
                 Divider()
                 Button("Abrir carpeta remota") { model.openFolder(accountID: mirror.accountID, folderID: mirror.remoteFolderID) }
@@ -47,5 +50,6 @@ struct MirrorList: View {
             Button("Cancelar", role: .cancel) { removing = nil }
         } message: { Text("Se deja de vigilar la carpeta. No se borra nada, ni en el Mac ni en la nube.") }
         .sheet(item: $editingExclusions) { mirror in MirrorExclusionsSheet(mirror: mirror, manager: mirrors) }
+        .sheet(item: $previewing) { mirror in MirrorPendingChangesSheet(mirror: mirror, manager: mirrors) }
     }
 }

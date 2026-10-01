@@ -184,6 +184,8 @@ final class TwoWaySyncEngine {
     var exclusions: SyncExclusionMatcher = .none
     /// Asked before every step; true stops the run there with `SyncPaused`.
     var shouldStop: (() -> Bool)?
+    /// The plan of the last `run()`, as the planner returned it.
+    private(set) var lastPlan: [SyncAction] = []
     /// Tests bypass the Finder Trash, which a temporary folder on some volumes does not have.
     var trashLocally: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }
 
@@ -209,12 +211,33 @@ final class TwoWaySyncEngine {
         return (files, folders)
     }
 
-    func run() async throws -> SyncReport {
-        report = SyncReport()
+    /// Both trees as the planner sees them. `run()` and `preview()` both start here, so a dry run is the real plan.
+    private func snapshot() async throws -> (local: [String: FileStamp], remote: [String: CloudFile], folders: [String: String]) {
         let root = localRoot, exclusions = exclusions
         let local = try await blockingIO { try MirrorPlanner.scan(root, exclusions: exclusions).all }
-        var (remote, folders) = try await remoteSnapshot()
+        let (remote, folders) = try await remoteSnapshot()
+        return (local, remote, folders)
+    }
+
+    /// What the next `run()` would do, without doing any of it. A run that would refuse a mass deletion still
+    /// shows what it would delete, together with the reason it would stop.
+    func preview() async throws -> MirrorPreview {
+        let (local, remote, _) = try await snapshot()
+        var refused: String?
+        let actions: [SyncAction]
+        do { actions = try TwoWayPlanner.plan(local: local, remote: remote, baseline: baseline, allowMassDeletion: allowMassDeletion, exclusions: exclusions) }
+        catch let error as MassDeletionRefused {
+            refused = error.localizedDescription
+            actions = try TwoWayPlanner.plan(local: local, remote: remote, baseline: baseline, allowMassDeletion: true, exclusions: exclusions)
+        }
+        return .twoWay(actions: actions, local: local, excluded: TwoWayPlanner.excludedItems(local: local, remote: remote, exclusions: exclusions), massDeletion: refused)
+    }
+
+    func run() async throws -> SyncReport {
+        report = SyncReport()
+        var (local, remote, folders) = try await snapshot()
         let plan = try TwoWayPlanner.plan(local: local, remote: remote, baseline: baseline, allowMassDeletion: allowMassDeletion, exclusions: exclusions)
+        lastPlan = plan
         var touchedRemote: Set<String> = []
         var stopped = false
         for action in plan {
