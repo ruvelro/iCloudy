@@ -25,6 +25,11 @@ final class CloudAPI {
         self.demo = demo
         provider = CloudProviderFactory.make(account: account, session: session, tokenProvider: tokenProvider, credentials: credentials)
     }
+    /// A client over a provider built elsewhere: the encryption layer wraps another account's provider in its own.
+    init(provider: any CloudProvider) {
+        self.demo = nil
+        self.provider = provider
+    }
     func canResumeWithoutSource(_ checkpoint: UploadCheckpoint?) -> Bool { demo == nil && provider.canResumeWithoutSource(checkpoint) }
     func dropCaches() { provider.dropCaches() }
     func invalidate() { provider.invalidate() }
