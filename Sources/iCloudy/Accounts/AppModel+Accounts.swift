@@ -204,7 +204,8 @@ extension AppModel {
         do {
             let result: (Account, Credential)
             switch cloud {
-            case .webdav: result = try await WebDAVAuthentication().signInWebDAV(server: server, username: username, password: password)
+            case .webdav: result = try await WebDAVAuthentication().signInWebDAV(server: server, username: username, password: password,
+                                                                                    existing: accounts)
             case .ftp: result = try await FTPAuthentication().signInFTP(server: server, username: username, password: password)
             case .sftp: result = try await SFTPAuthentication().signInSFTP(server: server, username: username, password: password)
             case .mega: result = try await MegaAuthentication().signInMega(email: username, password: password)

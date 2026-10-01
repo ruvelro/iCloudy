@@ -704,4 +704,73 @@ final class ProviderTests: XCTestCase {
         XCTAssertEqual(typed.serverURL, "https://dav.example.com/dav")
         XCTAssertEqual(typedCredential.accessToken, Data("ana:secreta".utf8).base64EncodedString())
     }
+
+    private func webdavSignIn() -> WebDAVAuthentication {
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        StubProtocol.handler = { _ in (207, [:], Data(#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"></d:multistatus>"#.utf8)) }
+        return WebDAVAuthentication(session: URLSession(configuration: config))
+    }
+
+    func testWebDAVServersThatDifferOnlyInPortOrSchemeAreDifferentAccounts() async throws {
+        // The id used to be host + path + user, so a NAS with two WebDAV services on different ports, or the same
+        // path over http and https, overwrote each other's credential and everything else keyed by the id.
+        let oauth = webdavSignIn()
+        var accounts: [Account] = []
+        for server in ["https://nas.local/dav", "https://nas.local:5006/dav", "http://nas.local/dav", "http://nas.local:5005/dav"] {
+            let (account, _) = try await oauth.signInWebDAV(server: server, username: "ana", password: "secreta", existing: accounts)
+            accounts.append(account)
+        }
+        XCTAssertEqual(accounts.map(\.id), ["webdav:nas.local/dav#ana", "webdav:https://nas.local:5006/dav#ana",
+                                            "webdav:http://nas.local/dav#ana", "webdav:http://nas.local:5005/dav#ana"])
+        // The default port written out, a capitalised host or a trailing slash are still the same server.
+        for same in ["https://nas.local:443/dav", "https://NAS.local/dav/", "nas.local/dav"] {
+            let (again, _) = try await oauth.signInWebDAV(server: same, username: "ana", password: "secreta", existing: accounts)
+            XCTAssertEqual(again.id, "webdav:nas.local/dav#ana", same)
+        }
+        let (http80, _) = try await oauth.signInWebDAV(server: "http://nas.local:80/dav", username: "ana", password: "secreta", existing: accounts)
+        XCTAssertEqual(http80.id, "webdav:http://nas.local/dav#ana")
+        // Another user, or another path, on the same origin is another account; the path keeps its case.
+        let (other, _) = try await oauth.signInWebDAV(server: "https://nas.local:5006/dav", username: "luis", password: "x", existing: accounts)
+        XCTAssertEqual(other.id, "webdav:https://nas.local:5006/dav#luis")
+        let (path, _) = try await oauth.signInWebDAV(server: "https://nas.local/DAV", username: "ana", password: "x", existing: accounts)
+        XCTAssertEqual(path.id, "webdav:nas.local/DAV#ana")
+        let (ipv6, _) = try await oauth.signInWebDAV(server: "http://[fe80::1]:8080/dav", username: "ana", password: "x")
+        XCTAssertEqual(ipv6.id, "webdav:http://[fe80::1]:8080/dav#ana", "Los dos puntos de IPv6 no se confunden con el puerto")
+    }
+
+    func testStoredWebDAVAccountsKeepTheirIDsWhenSignedInAgain() async throws {
+        // Accounts written by earlier versions, with ids from the old rule. Their Keychain entries, favourites,
+        // mirrors, transfers, caches and Spotlight entries are keyed by these exact strings.
+        let stored = Data(#"""
+        [{"id":"webdav:dav.example.com/remote.php/dav/files/ana#ana","cloud":"webdav","name":"dav.example.com","email":"ana@dav.example.com","clientID":"","serverURL":"https://dav.example.com/remote.php/dav/files/ana"},
+         {"id":"webdav:nas.local/dav#ana","cloud":"webdav","name":"nas.local","email":"ana@nas.local","clientID":"","serverURL":"http://nas.local:8080/dav"},
+         {"id":"webdav:Box.Example.com/dav#ana","cloud":"webdav","name":"Box.Example.com","email":"ana@Box.Example.com","clientID":"","serverURL":"https://Box.Example.com/dav"}]
+        """#.utf8)
+        let accounts = try JSONDecoder().decode([Account].self, from: stored)
+        let oauth = webdavSignIn()
+
+        // https on the default port: the id is the old one byte for byte, even with no account to match.
+        let (fresh, _) = try await oauth.signInWebDAV(server: "https://dav.example.com/remote.php/dav/files/ana", username: "ana", password: "s")
+        XCTAssertEqual(fresh.id, "webdav:dav.example.com/remote.php/dav/files/ana#ana")
+        let (common, _) = try await oauth.signInWebDAV(server: "https://dav.example.com/remote.php/dav/files/ana/", username: "ana", password: "s", existing: accounts)
+        XCTAssertEqual(common.id, accounts[0].id)
+
+        // An old account on a non-default port has an id without the port. Reconnecting to it, as the login form does
+        // with its stored address, finds it again instead of creating a second account next to it.
+        let (ported, _) = try await oauth.signInWebDAV(server: "http://nas.local:8080/dav", username: "ana", password: "s", existing: accounts)
+        XCTAssertEqual(ported.id, "webdav:nas.local/dav#ana")
+        // A capitalised host from before the host was lowercased is found again too.
+        let (cased, _) = try await oauth.signInWebDAV(server: "https://box.example.com/dav", username: "ana", password: "s", existing: accounts)
+        XCTAssertEqual(cased.id, "webdav:Box.Example.com/dav#ana")
+
+        // That old id now belongs to http on 8080. The https default-port server on the same host and path must not
+        // overwrite it, so it takes the spelled-out form, and keeps it when it signs in again.
+        let (https, _) = try await oauth.signInWebDAV(server: "https://nas.local/dav", username: "ana", password: "s", existing: accounts)
+        XCTAssertEqual(https.id, "webdav:https://nas.local/dav#ana")
+        let (again, _) = try await oauth.signInWebDAV(server: "https://nas.local/dav", username: "ana", password: "s", existing: accounts + [https])
+        XCTAssertEqual(again.id, https.id)
+        // Another user on that old account's origin is not that account.
+        let (luis, _) = try await oauth.signInWebDAV(server: "http://nas.local:8080/dav", username: "luis", password: "s", existing: accounts)
+        XCTAssertEqual(luis.id, "webdav:http://nas.local:8080/dav#luis")
+    }
 }
