@@ -249,7 +249,7 @@ extension ExplorerView {
                                 else { Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.connecting) }
                             }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
                         }
-                        if pane == model.workspace.focusedPane { CryptomatorBanner(model: model) }
+                        CryptomatorBanner(model: model, pane: pane)
                         tabFileBrowser(pane)
                     }
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)

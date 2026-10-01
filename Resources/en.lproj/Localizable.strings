@@ -1729,3 +1729,7 @@
 "«%@» ha cambiado desde que empezó a subirse, o han cambiado sus permisos o su propietario. Lo ya enviado es de la versión anterior y no se mezcla con la nueva: usa «Empezar de cero» para subirlo entero." = "“%@” has changed since its upload began, or its permissions or owner have changed. What was already sent belongs to the earlier version and is not mixed with the new one: use “Start over” to upload it whole.";
 "Empezar de cero" = "Start over";
 "Sube entero el archivo que cambió, tal como está ahora. Lo ya completado no se repite." = "Uploads the changed file whole, as it is now. Whatever was already completed is not repeated.";
+
+/* Reflejos en pausa y paneles */
+"Todas las carpetas reflejadas están en pausa; no se ha comprobado ninguna." = "All mirrored folders are paused; none was checked.";
+"Comprobando %lld carpetas reflejadas; %lld en pausa se quedan como están." = "Checking %lld mirrored folders; %lld paused ones are left as they are.";

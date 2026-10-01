@@ -20,6 +20,9 @@ final class CryptomatorVaults: ObservableObject {
         let id = UUID()
         let base: Account
         let folder: CloudFile
+        /// The tab the request came from. Unlocking takes seconds of key derivation, and with two panes the focus can
+        /// move meanwhile; the vault opens where it was asked for.
+        var tab: UUID?
     }
 
     nonisolated static let accountPrefix = "cryptomator:"

@@ -100,7 +100,7 @@ extension AppModel {
     /// The folder's name, or the collection's, or the account's at its root: what the Finder puts on a tab.
     func tabTitle(_ tab: BrowserState) -> String {
         if let folder = tab.path.last { return folder.name }
-        guard let account = accounts.first(where: { $0.id == tab.accountID }) else { return L("iCloudy") }
+        guard let account = browsable(tab.accountID) else { return L("iCloudy") }
         return tab.collection == .files ? accountTitle(account) : tab.collection.title
     }
 

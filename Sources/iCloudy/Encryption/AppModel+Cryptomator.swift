@@ -9,9 +9,13 @@ extension AppModel {
     var canHostVault: Bool { account.map { !$0.isDemo && !$0.isCryptomatorVault } ?? false }
 
     /// The folder on screen holds a vault that is still locked.
-    var currentFolderIsLockedVault: Bool {
-        guard canHostVault, let account, let folder = path.last, collection == .files else { return false }
-        return CryptomatorVault.isVault(files) && cryptomator.unlocked(base: account.id, folder: folder.id) == nil
+    var currentFolderIsLockedVault: Bool { folderIsLockedVault(in: workspace.current) }
+
+    /// The same for any tab, so each pane can say it about its own folder.
+    func folderIsLockedVault(in tab: BrowserState) -> Bool {
+        guard let account = account(of: tab), !account.isDemo, !account.isCryptomatorVault,
+              let folder = tab.path.last, tab.collection == .files else { return false }
+        return CryptomatorVault.isVault(tab.files) && cryptomator.unlocked(base: account.id, folder: folder.id) == nil
     }
 
     /// The account and the provider behind a vault, resolved again on every call so a reconnected account is used.
@@ -35,7 +39,7 @@ extension AppModel {
         guard canHostVault, let account else { return }
         wireVaults()
         if let open = cryptomator.unlocked(base: account.id, folder: folder.id) { select(open.id); return }
-        let request = CryptomatorVaults.Request(base: account, folder: folder)
+        let request = CryptomatorVaults.Request(base: account, folder: folder, tab: workspace.current.id)
         guard let remembered = cryptomator.rememberedPassphrase(base: account.id, folder: folder.id) else { cryptomator.unlocking = request; return }
         Task {
             if let problem = await unlockVault(request, passphrase: remembered, remember: false) {
@@ -59,11 +63,18 @@ extension AppModel {
         do {
             let entry = try await cryptomator.unlock(folder: request.folder, base: request.base, provider: vaultStorage(request.base),
                                                      passphrase: passphrase, remember: remember)
-            select(entry.id)
+            showVault(entry.id, in: request.tab)
             return nil
         } catch is CancellationError {
             return nil
         } catch { return error.localizedDescription }
+    }
+
+    /// Opens an unlocked vault in the tab that asked for it, or in the focused one when that tab has been closed.
+    private func showVault(_ id: String, in tab: UUID?) {
+        guard let tab, workspace.tab(tab) != nil else { select(id); return }
+        preview.close(); globalSearch.cancel(); showGlobalSearch = false
+        go(to: BrowserLocation(accountID: id), tab: tab)
     }
 
     /// "Crear bóveda cifrada…" on a folder, or on the folder on screen when `parent` is nil.
@@ -71,7 +82,7 @@ extension AppModel {
         guard canHostVault, let account, collection == .files else { return }
         let folder = parent ?? path.last ?? CloudFile(id: folderID, name: L("Mis archivos"), mime: CryptomatorProvider.folderMime,
                                                       size: nil, modified: nil, webURL: nil, isFolder: true)
-        cryptomator.creating = CryptomatorVaults.Request(base: account, folder: folder)
+        cryptomator.creating = CryptomatorVaults.Request(base: account, folder: folder, tab: workspace.current.id)
     }
 
     /// Creates the vault, then opens it. Returns what went wrong, or nil once the new vault is on screen.
@@ -86,8 +97,8 @@ extension AppModel {
             }
             let folder = try await CryptomatorVault.create(named: trimmed, in: request.folder.id, provider: api.provider, passphrase: passphrase)
             let vault = CloudFile(id: folder, name: trimmed, mime: CryptomatorProvider.folderMime, size: nil, modified: Date(), webURL: nil, isFolder: true)
-            if selectedAccountID == request.base.id { reload(fresh: true) }
-            return await unlockVault(CryptomatorVaults.Request(base: request.base, folder: vault), passphrase: passphrase, remember: remember)
+            reloadAfterWrite(to: request.base)
+            return await unlockVault(CryptomatorVaults.Request(base: request.base, folder: vault, tab: request.tab), passphrase: passphrase, remember: remember)
         } catch { return error.localizedDescription }
     }
 
@@ -104,6 +115,10 @@ extension AppModel {
     private func vaultDidLock(_ entry: CryptomatorVaults.Unlocked) {
         if preview.model.account?.id == entry.id { preview.close() }
         quotas.remove(entry.id)
-        if selectedAccountID == entry.id { select(entry.base.id) }
+        // Every tab inside the vault leaves it, in both panes, not only the focused one: the others were left on a
+        // place that can no longer be listed.
+        let moved = workspace.leave(entry.id, for: entry.base.id)
+        let visible = Set(workspace.visibleTabs.map(\.id))
+        for id in moved where visible.contains(id) { reload(tab: id) }
     }
 }

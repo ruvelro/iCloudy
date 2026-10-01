@@ -255,6 +255,18 @@ struct ExplorerWorkspace {
     mutating func updateAll(_ change: (inout BrowserState) -> Void) {
         for p in panes.indices { for t in panes[p].tabs.indices { change(&panes[p].tabs[t]) } }
     }
+
+    /// Takes every tab showing `accountID` to the root of `replacement`, in both panes. Returns the tabs it moved.
+    @discardableResult
+    mutating func leave(_ accountID: String, for replacement: String?) -> [BrowserState.ID] {
+        var moved: [BrowserState.ID] = []
+        updateAll { tab in
+            guard tab.accountID == accountID else { return }
+            tab.open(BrowserLocation(accountID: replacement), remember: false)
+            moved.append(tab.id)
+        }
+        return moved
+    }
 }
 
 extension ExplorerWorkspace {

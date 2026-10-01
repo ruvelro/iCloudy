@@ -83,7 +83,11 @@ extension AppModel {
         return localCopies.status(for: file, accountID: id)
     }
 
-    func account(of tab: BrowserState) -> Account? { accounts.first { $0.id == tab.accountID } }
+    /// Like `account`, for any tab: an unlocked vault is an account too, though it is not in `accounts`.
+    func account(of tab: BrowserState) -> Account? { browsable(tab.accountID) }
+    /// A stored account or an unlocked vault: anything a tab can show. Code written for one pane looked only in
+    /// `accounts`, so a vault opened in a tab drew the welcome screen and listed nothing.
+    func browsable(_ id: String?) -> Account? { accounts.first { $0.id == id } ?? cryptomator.account(id) }
 
     // MARK: - From one pane to the other
 

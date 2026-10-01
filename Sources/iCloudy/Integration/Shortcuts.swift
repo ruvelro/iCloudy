@@ -36,8 +36,17 @@ struct SyncMirrorsIntent: AppIntent {
 
     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
         let model = try await ColdStart.model()
+        let paused = model.mirrors.mirrors.filter(\.paused).count
         let count = model.syncAllMirrors()
-        return .result(dialog: IntentDialog(stringLiteral: count == 0 ? L("No hay carpetas reflejadas.") : L("Comprobando \(count) carpetas reflejadas.")))
+        return .result(dialog: IntentDialog(stringLiteral: Self.summary(started: count, paused: paused)))
+    }
+    static func summary(started: Int, paused: Int) -> String {
+        switch (started, paused) {
+        case (0, 0): return L("No hay carpetas reflejadas.")
+        case (0, _): return L("Todas las carpetas reflejadas están en pausa; no se ha comprobado ninguna.")
+        case (_, 0): return L("Comprobando \(started) carpetas reflejadas.")
+        default: return L("Comprobando \(started) carpetas reflejadas; \(paused) en pausa se quedan como están.")
+        }
     }
 }
 

@@ -329,9 +329,19 @@ final class TransferQueue: ObservableObject {
     func cancelBatch(_ batchID: UUID) {
         for id in items.filter({ $0.batchID == batchID && [.running, .queued].contains($0.state) }).map(\.id) { cancel(id) }
     }
-    /// Re-queues everything the user (or the network) left paused, plus what failed. Returns how many were revived.
+    /// Jobs another part of the app keeps paused on purpose: today, the upload of a mirror the person paused. The
+    /// mirror resumes it when it is resumed itself; "Reanudar todas" restarting it behind the mirror's back left the
+    /// sidebar saying "En pausa" while the folder uploaded.
+    var isHeldPaused: ((Transfer) -> Bool)?
+    private func resumable(_ transfer: Transfer) -> Bool {
+        [.paused, .failed].contains(transfer.state) && isHeldPaused?(transfer) != true
+    }
+    /// How many jobs "Reanudar todas" would bring back.
+    var resumableCount: Int { items.filter(resumable).count }
+    /// Re-queues everything the user (or the network) left paused, plus what failed, except what a paused mirror
+    /// holds. Returns how many were revived.
     @discardableResult func resumeAll() -> Int {
-        let ids = items.filter { [.paused, .failed].contains($0.state) }.map(\.id)
+        let ids = items.filter(resumable).map(\.id)
         for id in ids { retry(id) }
         return ids.count
     }

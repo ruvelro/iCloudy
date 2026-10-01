@@ -49,22 +49,26 @@ struct CryptomatorSidebarSection: View {
 }
 
 /// A strip above the files: inside a vault it says so and offers to lock it; on a folder that is a locked vault it
-/// offers to open it.
+/// offers to open it. Each pane shows its own: the strip used to follow the focus, so a vault open in the other pane
+/// had no "Bloquear" until it was clicked.
 struct CryptomatorBanner: View {
     @ObservedObject var model: AppModel
+    let pane: Int
     var body: some View {
-        if let account = model.account, account.isCryptomatorVault {
+        let tab = model.tab(inPane: pane)
+        if let account = model.account(of: tab), account.isCryptomatorVault {
             HStack {
                 Label("Bóveda cifrada. Los nombres y el contenido se cifran en este Mac antes de llegar a la nube.", systemImage: "lock.shield")
                     .font(.caption).fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 Button("Bloquear") { model.lockVault(account.id) }
             }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.green.opacity(0.12))
-        } else if model.currentFolderIsLockedVault {
+        } else if model.folderIsLockedVault(in: tab) {
             HStack {
                 Label("Esta carpeta es una bóveda de Cryptomator.", systemImage: "lock.fill").font(.caption)
                 Spacer()
-                Button("Desbloquear…") { model.unlockCurrentFolder() }
+                // The unlock works on the focused pane's folder, so this pane takes the focus first.
+                Button("Desbloquear…") { model.focusPane(pane); model.unlockCurrentFolder() }
             }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.accentColor.opacity(0.1))
         }
     }

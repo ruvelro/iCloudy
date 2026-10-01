@@ -28,9 +28,11 @@ extension AppModel {
         } catch { self.error = error.localizedDescription; return false }
     }
 
+    /// Paused mirrors are skipped, as "sincronizar ahora" skips them one by one, so they are not counted either.
     func syncAllMirrors() -> Int {
-        for mirror in mirrors.mirrors { mirrors.syncNow(mirror.id) }
-        return mirrors.mirrors.count
+        let active = mirrors.mirrors.filter { !$0.paused }
+        for mirror in active { mirrors.syncNow(mirror.id) }
+        return active.count
     }
 
     func storageSummary() -> String {

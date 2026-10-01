@@ -4,7 +4,12 @@ import Combine
 
 extension AppModel {
     func loadAccounts() {
+        // A model built by a test must not adopt the accounts stored on this Mac: the task below outlives the test
+        // that created it, and once the next asynchronous test gave it a turn it listed real accounts, started the
+        // real mirrors and renewed real sessions from inside the test run. The tab store opts out the same way. The
+        // model stays "loading", so nothing that waits for the accounts (the offline refresh) starts either.
         loadingAccounts = true
+        guard !Diagnostics.underTest else { return }
         Task { [favoritesKey = "accounts"] in
             let stored: [Account]
             do { stored = try await Task.detached { try Vault.read([Account].self, key: favoritesKey) ?? [] }.value }
@@ -214,7 +219,7 @@ extension AppModel {
             expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
             lastKeepAlive[account.id] = Date()
             if shouldSelect { select(account.id); showConnect = false }
-            else if selectedAccountID == account.id { reload() }
+            else { reloadVisible(accountID: account.id) }
         } catch {
             // A silent renewal has nobody watching the connection sheet, so its failure goes to the diagnostic
             // instead of to a field on a form that is not on screen.
