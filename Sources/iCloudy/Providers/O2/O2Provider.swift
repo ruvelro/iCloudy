@@ -473,9 +473,11 @@ extension O2Provider {
 final class O2UploadReporter: RedirectGuard, @unchecked Sendable {
     private let total: Int64
     private let progress: (Int64, Int64) -> Void
+    private let throttle = TaskThrottle(TransferThrottle.active?.upload)
     init(total: Int64, progress: @escaping (Int64, Int64) -> Void) { self.total = total; self.progress = progress }
     func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64,
                     totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        throttle?.pass(bytesSent, of: task)
         let sent = min(totalBytesSent, total)
         let report = progress
         Task { @MainActor in report(sent, max(self.total, sent)) }

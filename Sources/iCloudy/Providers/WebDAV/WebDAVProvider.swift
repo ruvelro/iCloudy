@@ -297,9 +297,11 @@ final class WebDAVParserDelegate: NSObject, XMLParserDelegate {
 /// Reports how many bytes of a streamed upload have left the Mac.
 final class UploadProgress: RedirectGuard, @unchecked Sendable {
     private let report: (Int64) -> Void
+    private let throttle = TaskThrottle(TransferThrottle.active?.upload)
     init(report: @escaping (Int64) -> Void) { self.report = report }
     func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
         report(totalBytesSent)
+        throttle?.pass(bytesSent, of: task)
     }
 }
 

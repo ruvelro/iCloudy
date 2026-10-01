@@ -384,6 +384,7 @@ extension MegaProvider {
             try Task.checkCancellation()
             try cursor.sourceStamp?.validate(local)
             let plain = try await blockingIO { try input.read(upToCount: Int(chunk.length)) ?? Data() }
+            try await TransferThrottle.upload(plain.count)
             try cursor.sourceStamp?.validate(local)
             guard plain.count == Int(chunk.length) else { throw CloudError.message(L("El tamaño del origen ha cambiado.")) }
             let offset = chunk.offset

@@ -399,7 +399,8 @@ actor FTPSession {
     }
 
     /// Runs a command whose payload arrives on a separate connection, e.g. LIST, MLSD or RETR.
-    private func receiveData(command line: String, into sink: (Data) throws -> Void) async throws {
+    /// `throttle` is the job's download lane for file contents; listings are never held back.
+    private func receiveData(command line: String, throttle: BandwidthLimiter.Lane? = nil, into sink: (Data) throws -> Void) async throws {
         let port = try await passivePort()
         let data = try await open(port: port)
         defer { receiveEOF.remove(ObjectIdentifier(data)); data.cancel() }
@@ -414,7 +415,10 @@ actor FTPSession {
             do { chunk = try await rawReceive(data) }
             catch NWError.posix(.ECONNRESET) { break }
             guard let chunk else { break }
-            if !chunk.isEmpty { try sink(chunk) }
+            if !chunk.isEmpty {
+                if let throttle, throttle.isLimited { try await throttle.acquire(chunk.count) }
+                try sink(chunk)
+            }
         }
         data.cancel()
         try Task.checkCancellation()
@@ -436,7 +440,7 @@ actor FTPSession {
         var written: Int64 = 0
         var complete = false
         defer { if !complete { try? FileManager.default.removeItem(at: destination) } }
-        try await receiveData(command: "RETR " + path) { chunk in
+        try await receiveData(command: "RETR " + path, throttle: TransferThrottle.active?.download) { chunk in
             try DownloadBudget.check(written + Int64(chunk.count), maximum: maxBytes)
             try handle.write(contentsOf: chunk)
             written += Int64(chunk.count)
@@ -466,6 +470,7 @@ actor FTPSession {
             let chunk = try handle.read(upToCount: 256 * 1024) ?? Data()
             try sourceStamp.validate(source)
             if chunk.isEmpty { break }
+            try await TransferThrottle.upload(chunk.count)
             try await rawSend(data, chunk)
             sent += Int64(chunk.count)
             progress(sent)

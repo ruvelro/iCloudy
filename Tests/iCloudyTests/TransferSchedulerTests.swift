@@ -425,6 +425,29 @@ final class TransferSchedulerTests: XCTestCase {
         XCTAssertNil(queue.uploadLimiter.bytesPerSecond)
     }
 
+    func testAQueueJobIsHeldToTheUploadLimitAndItsDownloadsAreNot() async throws {
+        let (demo, queue) = try fixture()
+        var policy = TransferPolicy(); policy.uploadLimit = 400_000
+        queue.policy = policy
+        let source = try file("slow.dat", size: 640 * 1024)
+        let started = Date()
+        try queue.add([upload(source)])
+        try await wait { !queue.isWorking }
+        let elapsed = Date().timeIntervalSince(started)
+        XCTAssertEqual(queue.items.first?.state, .completed)
+        // 640 KiB at 400 kB/s, less the first quarter second the bucket starts with.
+        XCTAssertGreaterThan(elapsed, Double(640 * 1024 - 100_000) / 400_000 * 0.9)
+        XCTAssertLessThan(elapsed, 6)
+
+        let remote = try XCTUnwrap(demo.list("root").first { $0.name == "slow.dat" })
+        let output = root.appendingPathComponent("out"); try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let quick = Date()
+        try queue.add([Transfer(name: remote.name, destination: output.path, accountID: Account.demo.id, direction: .download, localURL: output, file: remote)])
+        try await wait { !queue.isWorking }
+        XCTAssertEqual(queue.items.last?.state, .completed)
+        XCTAssertLessThan(Date().timeIntervalSince(quick), 1, "No download limit was set")
+    }
+
     func testActivityAddsUpEveryRunningJob() {
         var a = queued("a"); a.state = .running; a.bytes = 100; a.total = 400; a.bytesPerSecond = 1000
         var b = queued("b"); b.state = .running; b.bytes = 300; b.total = 400; b.bytesPerSecond = 500
