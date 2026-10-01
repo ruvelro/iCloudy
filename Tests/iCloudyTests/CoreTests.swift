@@ -219,12 +219,40 @@ final class CoreTests: XCTestCase {
         } catch { XCTAssertTrue(error.localizedDescription.contains("suma de verificación"), error.localizedDescription) }
         StubProtocol.handler = { request in
             if request.httpMethod == "POST" { return (200, [:], Data(#"{"uploadUrl":"https://upload.example/session"}"#.utf8)) }
-            return (201, [:], Data(#"{"id":"x","file":{"hashes":{"quickXorHash":"only-business-hash"}}}"#.utf8))
+            return (201, [:], Data(#"{"id":"x","file":{"hashes":{}}}"#.utf8))
         }
         let receipt = try await makeClient(.microsoft).resumableUpload(local: file, parent: "root", name: "payload.bin", replacing: nil, checkpoint: nil, save: { _ in }, progress: { _, _ in })
-        XCTAssertEqual(receipt.verification, .unavailable, "quickXorHash alone is not verified")
+        XCTAssertEqual(receipt.verification, .unavailable, "No hash listed, nothing to compare")
         XCTAssertEqual(TransferQueue.completionSummary(verified: 2, unverified: 1), "Completada · 2 archivos verificados con la suma del proveedor · 1 sin verificar (reanudados o sin suma del proveedor)")
         XCTAssertEqual(TransferQueue.completionSummary(verified: 0, unverified: 0), "")
+    }
+
+    /// OneDrive for Business lists only `quickXorHash`. It is computed over the very blocks that are sent, across
+    /// more than one of them, and a business upload is verified instead of staying "sin verificar".
+    @MainActor func testBusinessUploadsAreVerifiedWithQuickXorHashOverTheSentBlocks() async throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let bytes = Data((0..<(6 * 1024 * 1024)).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ 7) })
+        try bytes.write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        var expected = QuickXorHash(); expected.update(bytes)
+        func serve(_ listed: String) {
+            StubProtocol.handler = { request in
+                if request.httpMethod == "POST" { return (200, [:], Data(#"{"uploadUrl":"https://upload.example/session"}"#.utf8)) }
+                let range = request.value(forHTTPHeaderField: "Content-Range") ?? ""
+                if range.hasPrefix("bytes 0-") { return (202, [:], Data(#"{"nextExpectedRanges":["5242880-"]}"#.utf8)) }
+                return (201, [:], Data(#"{"id":"x","file":{"hashes":{"quickXorHash":"\#(listed)"}}}"#.utf8))
+            }
+        }
+        serve(expected.finalize().base64EncodedString())
+        let receipt = try await makeClient(.microsoft).resumableUpload(local: file, parent: "root", name: "grande.bin", replacing: nil, checkpoint: nil, save: { _ in }, progress: { _, _ in })
+        XCTAssertEqual(receipt.verification, .verified)
+
+        var other = QuickXorHash(); other.update(Data("otra cosa".utf8))
+        serve(other.finalize().base64EncodedString())
+        do {
+            try await makeClient(.microsoft).resumableUpload(local: file, parent: "root", name: "grande.bin", replacing: nil, checkpoint: nil, save: { _ in }, progress: { _, _ in })
+            XCTFail("A QuickXorHash that disagrees must fail the upload")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("suma de verificación"), error.localizedDescription) }
     }
 
     @MainActor func testDownloadErrorBodyReachesTheUser() async throws {

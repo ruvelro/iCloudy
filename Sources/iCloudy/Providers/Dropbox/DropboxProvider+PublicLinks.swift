@@ -48,20 +48,6 @@ extension DropboxProvider {
         return .message(L("Dropbox rechazó la operación con el enlace: ") + summary)
     }
 
-    /// A write to the sharing API. Dropbox's 409 carries both `error_summary` and an `error` object, and the shared
-    /// parser reads the object first, which has no message, so the summary that says what went wrong was lost. It
-    /// is read here instead; writes are not repeated on a 429, the same as `dropboxRPC` does for them.
-    private func dropboxLinkRPC(_ endpoint: String, _ body: [String: Any]) async throws -> [String: Any] {
-        var request = try await request(URL(string: "https://api.dropboxapi.com/2/" + endpoint)!, method: "POST", body: body)
-        let (data, response) = try await send(&request)
-        if (response as? HTTPURLResponse)?.statusCode == 409 {
-            let summary = (try? HTTP.json(data))?["error_summary"] as? String
-            throw ServiceError(status: 409, detail: summary, code: summary)
-        }
-        try HTTP.validate(response, data: data)
-        return (try? HTTP.json(data)) ?? [:]
-    }
-
     private func dropboxLinkSettings(_ options: PublicLinkOptions) -> [String: Any] {
         var settings: [String: Any] = ["audience": "public", "access": options.access == .edit ? "editor" : "viewer"]
         if let expires = options.expires { settings["expires"] = LinkDates.iso(expires) }
@@ -89,7 +75,7 @@ extension DropboxProvider {
     func createPublicLink(for file: CloudFile, options: PublicLinkOptions) async throws -> PublicLink {
         let settings = dropboxLinkSettings(options)
         do {
-            let answer = try await dropboxLinkRPC("sharing/create_shared_link_with_settings", ["path": file.id, "settings": settings])
+            let answer = try await dropboxRPC("sharing/create_shared_link_with_settings", ["path": file.id, "settings": settings])
             guard let link = Self.dropboxLink(answer) else { throw CloudError.message(L("Dropbox no devolvió el enlace. La cuenta puede tener restringido compartir.")) }
             return link
         } catch let error as ServiceError where error.status == 409 && (error.code ?? "").contains("shared_link_already_exists") {
@@ -100,7 +86,7 @@ extension DropboxProvider {
             var body: [String: Any] = ["url": existing.handle, "settings": settings.filter { $0.key != "access" && $0.key != "audience" }]
             if options.expires == nil, existing.expires != nil { body["remove_expiration"] = true }
             do {
-                let answer = try await dropboxLinkRPC("sharing/modify_shared_link_settings", body)
+                let answer = try await dropboxRPC("sharing/modify_shared_link_settings", body)
                 return Self.dropboxLink(answer) ?? existing
             } catch let error as ServiceError where error.status == 409 { throw Self.dropboxLinkFailure(error) }
         } catch let error as ServiceError where error.status == 409 {
@@ -109,7 +95,7 @@ extension DropboxProvider {
     }
 
     func revokePublicLink(_ link: PublicLink) async throws {
-        do { _ = try await dropboxLinkRPC("sharing/revoke_shared_link", ["url": link.handle]) }
+        do { _ = try await dropboxRPC("sharing/revoke_shared_link", ["url": link.handle]) }
         catch let error as ServiceError where error.status == 409 { throw Self.dropboxLinkFailure(error) }
     }
 

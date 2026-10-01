@@ -2,6 +2,21 @@ import AppKit
 import SwiftUI
 import Combine
 
+/// What the offline hook compares: one tab's listing together with the place it is the listing of.
+struct OfflineObservation: Equatable {
+    let accountID: String?
+    /// The folder on screen and every folder above it, any of which may be a pinned folder.
+    let folders: [String]
+    let files: [CloudFile]
+    let cached: Bool
+    init(_ tab: BrowserState) {
+        accountID = tab.accountID
+        folders = [tab.folderID] + tab.path.map(\.id)
+        files = tab.files
+        cached = tab.showingCachedListing
+    }
+}
+
 /// "Disponible sin conexión": the model's side of the managed offline copies. The store and the refresher hold the
 /// logic; this wires them to the accounts, the network, the listings and the preview, and offers the actions.
 extension AppModel {
@@ -26,9 +41,10 @@ extension AppModel {
         $isOnline.removeDuplicates().dropFirst().filter { $0 }
             .sink { [weak self] _ in self?.offlineRefresher.refresh() }.store(in: &refresher.subscriptions)
         // A listing that shows a pinned file changed, or a new file inside a pinned folder, refreshes that pin.
-        // Files live in the focused tab of the workspace; only that listing is compared, like the rest of this hook.
-        $workspace.map(\.current.files).removeDuplicates().debounce(for: .milliseconds(500), scheduler: RunLoop.main)
-            .sink { [weak self] files in self?.offlineObserve(files) }.store(in: &refresher.subscriptions)
+        // Only the focused tab's listing is compared. Its account and folder travel with its files: read after the
+        // debounce, they could belong to the other pane if the focus moved in between.
+        $workspace.map { OfflineObservation($0.current) }.removeDuplicates().debounce(for: .milliseconds(500), scheduler: RunLoop.main)
+            .sink { [weak self] seen in self?.offlineObserve(seen) }.store(in: &refresher.subscriptions)
         refresher.timer = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
@@ -41,12 +57,12 @@ extension AppModel {
     }
 
     /// Compares what a fresh listing says with the copies kept, and refreshes the pins that are behind.
-    func offlineObserve(_ listed: [CloudFile]) {
-        guard isOnline, !showingCachedListing, let account, !offline.pins.isEmpty else { return }
+    func offlineObserve(_ seen: OfflineObservation) {
+        guard isOnline, !seen.cached, let account = seen.accountID.flatMap({ id in accounts.first { $0.id == id } }), !offline.pins.isEmpty else { return }
         var due: Set<String> = []
         // Inside a pinned folder, a file without a copy is a new child the pin has to pick up.
-        let enclosing = ([folderID] + path.map(\.id)).compactMap { offline.pin(for: $0, accountID: account.id) }.filter(\.file.isFolder)
-        for file in listed where !file.isFolder {
+        let enclosing = seen.folders.compactMap { offline.pin(for: $0, accountID: account.id) }.filter(\.file.isFolder)
+        for file in seen.files where !file.isFolder {
             let entry = offline.entries[OfflineStore.key(accountID: account.id, fileID: file.id)]
             if let entry, let folder = entry.pinFolder, OfflinePolicy.changed(entry, file) { due.insert(folder) }
             else if entry?.isPinned != true, !file.isGoogleDocument, let pin = enclosing.first { due.insert(pin.folder) }

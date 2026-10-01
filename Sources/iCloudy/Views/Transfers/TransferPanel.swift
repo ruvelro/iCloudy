@@ -218,6 +218,9 @@ struct TransferPanel: View {
 private struct RemoteCopyRows: View {
     @ObservedObject var copies: RemoteCopies
     var body: some View {
+        if let problem = copies.persistenceError {
+            Text(problem).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+        }
         if !copies.items.isEmpty {
             DisclosureGroup("Copias en OneDrive (\(copies.items.count))") {
                 ScrollView {

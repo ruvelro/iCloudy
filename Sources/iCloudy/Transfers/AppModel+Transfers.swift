@@ -33,7 +33,7 @@ extension AppModel {
     func save(_ file: CloudFile, export: (mime: String, ext: String)? = nil) async { await saveMany([file], export: export) }
 
     func saveMany(_ files: [CloudFile], export: (mime: String, ext: String)? = nil, targetAccount: Account? = nil) async {
-        guard let account = targetAccount ?? account, accounts.contains(where: { $0.id == account.id }), !files.isEmpty else { return }
+        guard let account = targetAccount ?? account, browsable(account.id) != nil, !files.isEmpty else { return }
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true; panel.prompt = L("Guardar aquí")
         panel.message = L("Los documentos de Google dentro de carpetas se guardan como enlaces. Si hay nombres repetidos, podrás decidir qué hacer.")
         guard await panel.begin() == .OK, let folder = panel.url else { return }

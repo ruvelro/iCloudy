@@ -36,9 +36,10 @@ struct InventoryEntry: Identifiable, Hashable {
 }
 
 /// Where a comparison or a duplicate search reads its tree from. Every listing goes through here, so pacing and
-/// retries live in one place and tests can stand in a tree of their own.
+/// retries live in one place and tests can stand in a tree of their own. Sendable because every source is a
+/// main-actor class: the engine lists both sides at once with `async let`, which hands the source to a child task.
 @MainActor
-protocol InventorySource: AnyObject {
+protocol InventorySource: AnyObject, Sendable {
     /// Whether two names that differ only in case are two different items on this side.
     var caseSensitive: Bool { get }
     /// True when this side can hash its own bytes in any algorithm: a Mac folder, or a volume account.

@@ -20,6 +20,9 @@ final class CryptomatorVaults: ObservableObject {
         let id = UUID()
         let base: Account
         let folder: CloudFile
+        /// The tab the request came from. Unlocking takes seconds of key derivation, and with two panes the focus can
+        /// move meanwhile; the vault opens where it was asked for.
+        var tab: UUID?
     }
 
     nonisolated static let accountPrefix = "cryptomator:"
@@ -38,6 +41,9 @@ final class CryptomatorVaults: ObservableObject {
     var didLock: ((Unlocked) -> Void)?
     /// Whether a vault has transfers in flight. Those keep it unlocked when it would otherwise time out.
     var isBusy: ((String) -> Bool)?
+    /// Something about a remembered passphrase did not reach the Keychain. The vault itself is not affected, so this
+    /// is reported rather than thrown: the person still has to know the passphrase was not saved, or not forgotten.
+    var didFail: ((String) -> Void)?
     private var lastUse: [String: Date] = [:]
     private var idleCheck: Task<Void, Never>?
     private var quitObserver: NSObjectProtocol?
@@ -78,7 +84,10 @@ final class CryptomatorVaults: ObservableObject {
         let entry = Unlocked(account: account, base: base, folder: folder, client: CloudAPI(provider: vault), provider: vault)
         unlocked.append(entry)
         lastUse[id] = Date()
-        if remember { try? passphrases.save(passphrase, key: Self.passphraseKey(id)) }
+        if remember {
+            do { try passphrases.save(passphrase, key: Self.passphraseKey(id)) }
+            catch { didFail?(L("La bóveda está abierta, pero su contraseña no se pudo guardar en el Llavero: \(error.localizedDescription) La próxima vez habrá que escribirla.")) }
+        }
         startIdleCheck()
         return entry
     }
@@ -136,7 +145,10 @@ final class CryptomatorVaults: ObservableObject {
         try? passphrases.read(String.self, key: Self.passphraseKey(Self.accountID(base: base, folder: folder)))
     }
     func hasRememberedPassphrase(_ id: String) -> Bool { (try? passphrases.read(String.self, key: Self.passphraseKey(id))) != nil }
-    func forgetPassphrase(_ id: String) { try? passphrases.delete(key: Self.passphraseKey(id)) }
+    func forgetPassphrase(_ id: String) {
+        do { try passphrases.delete(key: Self.passphraseKey(id)) }
+        catch { didFail?(L("No se pudo borrar del Llavero la contraseña guardada de esta bóveda: \(error.localizedDescription) Sigue guardada; puedes quitarla desde Acceso a Llaveros.")) }
+    }
 }
 
 extension Account {

@@ -17,7 +17,7 @@ struct CollectionPicker: View {
     private var choosable: Bool { choices.count > 1 }
 
     var body: some View {
-        Picker("Vista", selection: Binding(get: { selection }, set: select)) {
+        Picker("Vista", selection: Binding(get: { selection }, set: { select($0) })) {
             ForEach(choices) { Label($0.title, systemImage: $0.icon).tag($0) }
         }
         .pickerStyle(.segmented).labelsHidden().controlSize(.large).frame(maxWidth: 420)

@@ -56,6 +56,9 @@ struct Transfer: Identifiable, Codable {
     /// Set when the queue paused this job by itself (no network, outside the schedule, a costly network), so it
     /// resumes on its own when the reason goes away. nil for everything the person paused by hand.
     var hold: TransferHold?
+    /// The last run stopped because a partly uploaded file is no longer the file it started from. Retrying cannot
+    /// help, so the panel offers to start that upload from zero instead.
+    var needsRestart = false
     var finished: Bool { [.completed, .cancelled, .failed].contains(state) }
     var failed: Bool { state == .failed }
     var progress: Double { state == .completed ? 1 : (total > 0 ? min(1, Double(bytes) / Double(total)) : 0) }
@@ -98,7 +101,7 @@ extension Transfer {
         case id, batchID, name, destination, accountID, direction, localURL, bookmark, parent, file, exportMime, exportExtension
         case state, detail, bytes, total, bytesPerSecond, attempts, batchChoice, completedPaths, folders, uncertainFolders, names, replacements, uploads
         case verifiedFiles, unverifiedFiles, exportedFiles, downloads, targetAccountID, mirrorEntries, report, planned
-        case hold
+        case hold, needsRestart
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -141,5 +144,6 @@ extension Transfer {
         // Like the checkpoints: a report the app cannot read is not worth losing the queue over.
         report = (try? values.decodeIfPresent([String: FileRecord].self, forKey: .report)) ?? [:]
         planned = try values.decodeIfPresent(Bool.self, forKey: .planned) ?? false
+        needsRestart = try values.decodeIfPresent(Bool.self, forKey: .needsRestart) ?? false
     }
 }

@@ -185,7 +185,10 @@ final class MirrorManager: ObservableObject {
     @Published private(set) var pending: Set<UUID> = []
     let storeURL: URL
     weak var queue: TransferQueue? {
-        didSet { queue?.uploadExclusions = { [weak self] transfer in self?.exclusions(forTransfer: transfer) } }
+        didSet {
+            queue?.uploadExclusions = { [weak self] transfer in self?.exclusions(forTransfer: transfer) }
+            queue?.isHeldPaused = { [weak self] transfer in self?.holdsPaused(transfer) ?? false }
+        }
     }
     var accountLookup: ((String) -> Account?)?
     /// Time to let a burst of file-system events settle before planning a sync.
@@ -270,6 +273,8 @@ final class MirrorManager: ObservableObject {
         if !paused { scheduleSync(id, immediate: true) }
     }
     func isPaused(_ id: UUID) -> Bool { mirrors.first { $0.id == id }?.paused == true }
+    /// Whether `transfer` is the upload of a mirror that is paused: it waits for the mirror, not for "Reanudar todas".
+    func holdsPaused(_ transfer: Transfer) -> Bool { mirrors.contains { $0.paused && $0.activeTransferID == transfer.id } }
     /// What FSEvents reported for a mirror. While paused the paths are only noted down, relative to the folder and
     /// without what the rules exclude, so .DS_Store churn does not show up as pending work.
     func noteChanges(_ paths: [String], for id: UUID) {

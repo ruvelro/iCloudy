@@ -69,7 +69,9 @@ extension AppModel {
         (try? client(account))?.dropCaches()
         if preview.model.account?.id == account.id, let shown = preview.model.file,
            shown.id == file.id || VersionedFile.reference(shown)?.file.id == file.id { preview.close() }
-        if selectedAccountID == account.id { reload(fresh: true) }
+        // Every pane showing the account lists again, not only the focused one: the sheet may have been opened from
+        // the other pane, or the focus moved while the restore was running.
+        reloadAfterWrite(to: account)
         refreshStorage(account, force: true)
     }
 

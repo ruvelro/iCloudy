@@ -44,7 +44,7 @@ struct MenuBarContent: View {
         Button("Buscar en todas las nubes") { activate(); model.preview.close(); model.showGlobalSearch = true }
         Divider()
         if queue.hasActive { Button("Pausar todas") { queue.pauseAll() } }
-        if paused + failed > 0 { Button("Reanudar todas") { _ = queue.resumeAll() } }
+        if queue.resumableCount > 0 { Button("Reanudar todas") { _ = queue.resumeAll() } }
         if !model.mirrors.mirrors.isEmpty {
             Button("Sincronizar reflejos") { _ = model.syncAllMirrors() }
         }

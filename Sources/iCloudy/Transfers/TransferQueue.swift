@@ -89,10 +89,7 @@ final class TransferQueue: ObservableObject {
     func discardSavedQueue() {
         guard !writable else { return }
         do {
-            if FileManager.default.fileExists(atPath: storeURL.path) {
-                let backup = storeURL.appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970))")
-                try FileManager.default.moveItem(at: storeURL, to: backup)
-            }
+            if FileManager.default.fileExists(atPath: storeURL.path) { try LocalStore.setAside(storeURL) }
             items = []; writable = true; persistenceError = nil
             stateChanges.send()
         } catch { persistenceError = L("No se pudo apartar la cola dañada: \(error.localizedDescription)") }
@@ -228,8 +225,19 @@ final class TransferQueue: ObservableObject {
     func retry(_ id: UUID) {
         guard let index = index(id), [.failed, .paused, .cancelled].contains(items[index].state) else { return }
         items[index].state = .queued; items[index].detail = ""; items[index].attempts = 0; items[index].hold = nil
+        items[index].needsRestart = false
         do { try persist(); kick() } catch { items[index].state = .failed }
         stateChanges.send()
+    }
+    /// "Empezar de cero": forgets the uploads that were under way, sessions included, and runs the job again. What
+    /// was completed stays completed; only the partly sent files go out whole, as they are now.
+    func restartFromZero(_ id: UUID) {
+        guard let index = index(id), [.failed, .paused].contains(items[index].state), tasks[id] == nil else { return }
+        var partial = items[index]
+        partial.uploads = partial.uploads.filter { !$0.value.complete }
+        abandonSessions(partial)
+        items[index].uploads = items[index].uploads.filter { $0.value.complete }
+        retry(id)
     }
     /// Puts a completed job back in the queue, after a check of the destination found part of it missing. The walk
     /// skips whatever is still marked complete.
@@ -321,9 +329,19 @@ final class TransferQueue: ObservableObject {
     func cancelBatch(_ batchID: UUID) {
         for id in items.filter({ $0.batchID == batchID && [.running, .queued].contains($0.state) }).map(\.id) { cancel(id) }
     }
-    /// Re-queues everything the user (or the network) left paused, plus what failed. Returns how many were revived.
+    /// Jobs another part of the app keeps paused on purpose: today, the upload of a mirror the person paused. The
+    /// mirror resumes it when it is resumed itself; "Reanudar todas" restarting it behind the mirror's back left the
+    /// sidebar saying "En pausa" while the folder uploaded.
+    var isHeldPaused: ((Transfer) -> Bool)?
+    private func resumable(_ transfer: Transfer) -> Bool {
+        [.paused, .failed].contains(transfer.state) && isHeldPaused?(transfer) != true
+    }
+    /// How many jobs "Reanudar todas" would bring back.
+    var resumableCount: Int { items.filter(resumable).count }
+    /// Re-queues everything the user (or the network) left paused, plus what failed, except what a paused mirror
+    /// holds. Returns how many were revived.
     @discardableResult func resumeAll() -> Int {
-        let ids = items.filter { [.paused, .failed].contains($0.state) }.map(\.id)
+        let ids = items.filter(resumable).map(\.id)
         for id in ids { retry(id) }
         return ids.count
     }
@@ -466,6 +484,7 @@ final class TransferQueue: ObservableObject {
                     if Task.isCancelled { items[index].state = .paused; items[index].detail = "" }
                     else {
                         items[index].state = .failed; items[index].detail = error.localizedDescription + " " + L("Los elementos ya completados se conservan.")
+                        items[index].needsRestart = error is UploadSourceChanged
                         if let cursor = inFlight[id] { items[index].recordFailure(at: cursor, error) }
                     }
                     if items[index].state == .failed { Diagnostics.transferFailed(items[index], context: diagnostics, error: error, since: started) }

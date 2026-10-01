@@ -23,6 +23,9 @@ enum HTTP {
     /// Drive and Graph nest the error as an object; the OAuth token endpoints follow RFC 6749 with `error` and `error_description` strings.
     static func errorDetails(_ data: Data) -> (code: String?, message: String?) {
         guard let object = try? json(data) else { return (nil, nil) }
+        // Dropbox describes the failure in a flat summary string alongside a tagged `error` object. It is read first:
+        // the object has no message of its own, so reading it first left every Dropbox refusal as a bare "HTTP 409".
+        if let summary = object["error_summary"] as? String { return (summary, DropboxErrors.message(summary)) }
         if let error = object["error"] as? [String: Any] {
             let code = (error["code"] as? String) ?? (error["status"] as? String)
             return (code, error["message"] as? String)
@@ -30,8 +33,6 @@ enum HTTP {
         if let code = object["error"] as? String {
             return (code, (object["error_description"] as? String) ?? code)
         }
-        // Dropbox describes the failure in a flat summary string alongside a tagged error object.
-        if let summary = object["error_summary"] as? String { return (summary, summary) }
         // Box uses `code` and `message` at the top level.
         if let code = object["code"] as? String { return (code, object["message"] as? String ?? code) }
         return (nil, nil)

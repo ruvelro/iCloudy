@@ -117,7 +117,7 @@ extension AppModel {
             let target = destinationPath.last?.name ?? L("Mis archivos")
             if !request.isMove, request.account.cloud == .microsoft, !request.account.isDemo {
                 info = L("Copia enviada a OneDrive. Su estado se muestra en Transferencias hasta que el servidor confirme el resultado.")
-                reload(fresh: true)
+                reloadAfterWrite(to: request.account)
                 return
             }
             // Whole sentences, so the participle agrees in each language instead of being spliced in Spanish.
@@ -129,7 +129,7 @@ extension AppModel {
         } catch {
             self.error = (done > 0 ? L("Se completaron \(done) de \(request.files.count). ") : L("")) + error.localizedDescription
         }
-        reload(fresh: true)
+        reloadAfterWrite(to: request.account)
     }
 
     /// What the Delete key does: bin from the tree, purge from the bin.
@@ -169,7 +169,7 @@ extension AppModel {
         } catch {
             self.error = (removed > 0 ? L("Se eliminaron \(removed) de \(files.count) elementos. ") : L("")) + error.localizedDescription
         }
-        reload(fresh: true)
+        reloadAfterWrite(to: account)
     }
 
     /// Puts binned items back. Where they land is the provider's memory, not iCloudy's, and the message says so.
@@ -187,18 +187,21 @@ extension AppModel {
             self.error = (restored > 0 ? L("Se restauraron \(restored) de \(files.count) elementos. ") : L("")) + error.localizedDescription
         }
         listings.removeAll(accountID: account.id)
-        reload(fresh: true)
+        reloadAfterWrite(to: account)
     }
 
     func emptyTrash() async {
         guard let account else { return }
+        // What the bin listed when it was emptied. Read after the wait, `files` is whatever the focused tab shows
+        // by then, which with two panes can be the other pane's folder.
+        let binned = files
         do {
             try await client(account).emptyTrash()
-            for file in files { forgetLocally(file, account: account) }
+            for file in binned { forgetLocally(file, account: account) }
             try LocalStore.save(favorites, to: favoritesURL)
             info = L("La papelera de \(account.cloud.title) se ha vaciado.")
         } catch { self.error = error.localizedDescription }
-        reload(fresh: true)
+        reloadAfterWrite(to: account)
         refreshStorage(account, force: true)
     }
 
@@ -235,7 +238,7 @@ extension AppModel {
         } catch {
             self.error = (moved > 0 ? L("Se enviaron \(moved) de \(files.count) elementos. ") : L("")) + error.localizedDescription
         }
-        reload(fresh: true)
+        reloadAfterWrite(to: account)
     }
 
     func promptName(_ file: CloudFile? = nil) {
@@ -280,7 +283,7 @@ extension AppModel {
                 try await api.rename(file: file, name: name)
                 try applyIdentityChange(api.identityChange(file: file, name: name), account: account)
             } else { _ = try await api.createFolder(name: name, parent: parent) }
-            showNameDialog = false; reload(fresh: true)
+            showNameDialog = false; reloadAfterWrite(to: account)
         } catch { self.error = error.localizedDescription }
     }
 }

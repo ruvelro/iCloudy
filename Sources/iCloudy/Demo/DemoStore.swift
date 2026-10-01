@@ -167,13 +167,15 @@ final class DemoStore {
 
     func upload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: (Int64, Int64) -> Void) async throws -> String? {
         try check()
-        let stamp = try UploadSourceStamp(local)
         let attributes = try local.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         let total = Int64(attributes.fileSize ?? 0)
-        var cursor = checkpoint ?? UploadCheckpoint(total: total, modified: attributes.contentModificationDate)
-        guard cursor.total == total, cursor.modified == attributes.contentModificationDate else { throw CloudError.message(L("El archivo de origen ha cambiado. Inicia otra subida.")) }
-        if let original = cursor.sourceStamp { try original.validate(local) }
-        cursor.sourceStamp = stamp
+        let previous = checkpoint
+        var cursor = try UploadCheckpoint.resuming(checkpoint, for: local, total: total, modified: attributes.contentModificationDate)
+        let stamp = cursor.sourceStamp!
+        // A fresh checkpoint drops the partial file of the one it replaces.
+        if let old = previous?.url, old != cursor.url, old.deletingLastPathComponent().standardizedFileURL.path == directory.standardizedFileURL.path {
+            try? FileManager.default.removeItem(at: old)
+        }
         if cursor.complete { progress(total, total); return cursor.remoteID }
         if cursor.url == nil { cursor.url = directory.appendingPathComponent(UUID().uuidString + ".part"); try save(cursor) }
         let temporary = cursor.url!

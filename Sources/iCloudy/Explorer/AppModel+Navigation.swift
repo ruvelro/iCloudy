@@ -128,11 +128,19 @@ extension AppModel {
     func reloadVisible(accountID: String? = nil, fresh: Bool = false) {
         var listed: Set<BrowserState.ID> = []
         for tab in workspace.visibleTabs where !listed.contains(tab.id) {
-            guard let id = tab.accountID, accountID == nil || id == accountID, accounts.contains(where: { $0.id == id }) else { continue }
+            guard let id = tab.accountID, accountID == nil || id == accountID, browsable(id) != nil else { continue }
             reload(tab: tab.id, fresh: fresh)
             // A fresh listing already brought the other pane along when it shows the same account.
             listed.formUnion(fresh ? workspace.visibleTabs.filter { $0.accountID == id }.map(\.id) : [tab.id])
         }
+    }
+
+    /// After a write to `account` that took a while: lists again every tab on screen that shows it, wherever the focus
+    /// has gone meanwhile, and marks the rest to list again when they come back. `reload(fresh:)` lists the focused
+    /// tab, which with two panes could be the other one by the time the write finished.
+    func reloadAfterWrite(to account: Account) {
+        if workspace.visibleTabs.contains(where: { $0.accountID == account.id }) { reloadVisible(accountID: account.id, fresh: true) }
+        else { workspace.updateAll { tab in if tab.accountID == account.id { tab.stale = true } } }
     }
 
     /// Lists one tab's folder. The answer is written into that tab, wherever it is by then, and only if it is still
@@ -141,7 +149,7 @@ extension AppModel {
         navigationTasks[id]?.cancel()
         let requestID = UUID()
         workspace.update(id) { $0.navigationID = requestID; $0.stale = false }
-        guard let state = workspace.tab(id), let account = accounts.first(where: { $0.id == state.accountID }) else {
+        guard let state = workspace.tab(id), let account = browsable(state.accountID) else {
             workspace.update(id) { $0.files = []; $0.loading = false; $0.showingCachedListing = false }
             return
         }

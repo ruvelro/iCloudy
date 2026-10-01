@@ -31,7 +31,7 @@ extension DropboxProvider {
         for attempt in 0..<4 {
             try Task.checkCancellation()
             let (data, response) = try await send(&request)
-            if attempt < 3, let delay = CloudSession.retryDelay(response, method: "POST", attempt: attempt, repeatable: repeatable) {
+            if attempt < 3, let delay = CloudSession.retryDelay(response, method: "POST", attempt: attempt, repeatable: repeatable) ?? Self.dropboxBusyDelay(response, data, attempt: attempt) {
                 try await Task.sleep(for: .seconds(delay))
                 continue
             }
@@ -39,6 +39,16 @@ extension DropboxProvider {
             return (try? HTTP.json(data)) ?? [:]
         }
         throw CloudError.message(L("El servicio no responde."))
+    }
+
+    /// How long to wait before sending a write again that Dropbox turned away for lock contention, or nil when that
+    /// was not the reason. Unlike an ordinary 429 this one is documented as not applied, so even a move or a create
+    /// can be repeated safely.
+    static func dropboxBusyDelay(_ response: URLResponse, _ data: Data, attempt: Int) -> Double? {
+        guard let http = response as? HTTPURLResponse, [409, 429].contains(http.statusCode),
+              let summary = (try? HTTP.json(data))?["error_summary"] as? String, DropboxErrors.isBusy(summary) else { return nil }
+        let announced = Double(http.value(forHTTPHeaderField: "Retry-After") ?? "")
+        return min(max(1, announced ?? pow(2, Double(attempt))), 30)
     }
 
     static func dropboxFile(_ value: [String: Any]) -> CloudFile? {

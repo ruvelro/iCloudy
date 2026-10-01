@@ -390,7 +390,7 @@ final class CompareCenter: NSObject, ObservableObject, NSWindowDelegate {
         }
         for id in touched {
             if let account = account(id) { model.refreshStorage(account, force: true) }
-            if model.selectedAccountID == id { model.reload(fresh: true) }
+            if let account = account(id) { model.reloadAfterWrite(to: account) }
         }
     }
 }

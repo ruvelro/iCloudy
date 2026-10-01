@@ -76,6 +76,19 @@ final class OfflineTests: XCTestCase {
         XCTAssertTrue(again.pins.isEmpty && again.entries.isEmpty)
     }
 
+    func testAnUnreadableIndexIsKeptAsideAndReportedRatherThanOverwritten() throws {
+        let root = temporaryRoot()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let index = root.appendingPathComponent("offline.json")
+        try Data("{ not json".utf8).write(to: index)
+        let store = makeStore(root)
+        XCTAssertTrue(store.pins.isEmpty)
+        XCTAssertEqual(store.notices.count, 1)
+        let kept = try FileManager.default.contentsOfDirectory(atPath: root.path).filter { $0.hasPrefix("offline.json.corrupt-") }
+        XCTAssertEqual(kept.count, 1)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent(kept[0])), Data("{ not json".utf8))
+    }
+
     func testGoogleDocumentsAreRefusedBecauseThereAreNoBytesToKeep() throws {
         let store = makeStore(temporaryRoot())
         let document = CloudFile(id: "d", name: "Doc", mime: "application/vnd.google-apps.document", size: nil, modified: nil, webURL: nil, isFolder: false)

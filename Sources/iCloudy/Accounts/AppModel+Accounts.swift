@@ -4,7 +4,12 @@ import Combine
 
 extension AppModel {
     func loadAccounts() {
+        // A model built by a test must not adopt the accounts stored on this Mac: the task below outlives the test
+        // that created it, and once the next asynchronous test gave it a turn it listed real accounts, started the
+        // real mirrors and renewed real sessions from inside the test run. The tab store opts out the same way. The
+        // model stays "loading", so nothing that waits for the accounts (the offline refresh) starts either.
         loadingAccounts = true
+        guard !Diagnostics.underTest else { return }
         Task { [favoritesKey = "accounts"] in
             let stored: [Account]
             do { stored = try await Task.detached { try Vault.read([Account].self, key: favoritesKey) ?? [] }.value }
@@ -53,7 +58,9 @@ extension AppModel {
     func storeRenewedBookmark(_ bookmark: Data, for account: Account) {
         guard let index = accounts.firstIndex(where: { $0.id == account.id }), accounts[index].bookmark != bookmark else { return }
         accounts[index].bookmark = bookmark
-        try? Vault.save(accounts.filter { !$0.isDemo }, key: "accounts")
+        // The renewed bookmark works for this run either way; unsaved, the account breaks again on the next launch.
+        do { try Vault.save(accounts.filter { !$0.isDemo }, key: "accounts") }
+        catch { self.error = L("No se pudo guardar el acceso renovado a «\(account.name)»: \(error.localizedDescription) Funciona ahora, pero puede que haya que volver a añadir la carpeta al abrir iCloudy de nuevo.") }
     }
 
     func isExpired(_ account: Account) -> Bool { expiredAccountIDs.contains(account.id) }
@@ -212,7 +219,7 @@ extension AppModel {
             expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
             lastKeepAlive[account.id] = Date()
             if shouldSelect { select(account.id); showConnect = false }
-            else if selectedAccountID == account.id { reload() }
+            else { reloadVisible(accountID: account.id) }
         } catch {
             // A silent renewal has nobody watching the connection sheet, so its failure goes to the diagnostic
             // instead of to a field on a form that is not on screen.

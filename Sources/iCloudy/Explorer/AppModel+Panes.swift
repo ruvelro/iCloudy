@@ -83,7 +83,11 @@ extension AppModel {
         return localCopies.status(for: file, accountID: id)
     }
 
-    func account(of tab: BrowserState) -> Account? { accounts.first { $0.id == tab.accountID } }
+    /// Like `account`, for any tab: an unlocked vault is an account too, though it is not in `accounts`.
+    func account(of tab: BrowserState) -> Account? { browsable(tab.accountID) }
+    /// A stored account or an unlocked vault: anything a tab can show. Code written for one pane looked only in
+    /// `accounts`, so a vault opened in a tab drew the welcome screen and listed nothing.
+    func browsable(_ id: String?) -> Account? { accounts.first { $0.id == id } ?? cryptomator.account(id) }
 
     // MARK: - From one pane to the other
 
@@ -178,8 +182,9 @@ extension AppModel {
                 try await client(source).trash(file: move.file)
                 spotlight.forget(accountID: source.id, fileID: move.file.id)
                 favorites.removeAll { $0.accountID == source.id && ($0.file.id == move.file.id || $0.path.contains { $0.id == move.file.id }) }
-                try? LocalStore.save(favorites, to: favoritesURL)
                 reloadVisible(accountID: source.id, fresh: true)
+                do { try LocalStore.save(favorites, to: favoritesURL) }
+                catch { self.error = L("No se pudieron guardar los favoritos: \(error.localizedDescription)") }
             } catch {
                 self.error = L("«\(move.file.name)» se ha copiado a \(move.targetTitle), pero el original no se pudo quitar: \(error.localizedDescription)")
             }

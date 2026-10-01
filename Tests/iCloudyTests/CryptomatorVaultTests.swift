@@ -439,4 +439,24 @@ final class CryptomatorVaultTests: XCTestCase {
         let moved = try await client.list(parent: top[0].id)
         XCTAssertEqual(Set(moved.map(\.name)), ["dentro.txt", String(repeating: "y", count: 200)])
     }
+
+    func testAKeychainThatRefusesAPassphraseIsReportedInsteadOfIgnored() async throws {
+        let storage = MemoryProvider()
+        let folder = try await CryptomatorVault.create(named: "Privado", in: "root", provider: storage, passphrase: "contraseña larga", costParam: 16)
+        let refusing = KeychainOperations(update: { _, _ in errSecAuthFailed }, add: { _, _ in errSecAuthFailed },
+                                          copy: { _, _ in errSecItemNotFound }, delete: { _ in errSecAuthFailed })
+        let vaults = CryptomatorVaults(passphrases: KeychainStorage(operations: refusing))
+        var problems: [String] = []
+        vaults.didFail = { problems.append($0) }
+        let base = Account(id: "memory", cloud: .google, name: "M", email: "m@example.com", clientID: "", clientSecret: nil)
+        let vaultFolder = CloudFile(id: folder, name: "Privado", mime: CryptomatorProvider.folderMime, size: nil, modified: nil, webURL: nil, isFolder: true)
+
+        // The vault opens all the same; only the remembering failed, and that is said.
+        let entry = try await vaults.unlock(folder: vaultFolder, base: base, provider: { storage }, passphrase: "contraseña larga", remember: true)
+        XCTAssertNotNil(vaults.client(for: entry.id))
+        XCTAssertEqual(problems.count, 1)
+        vaults.forgetPassphrase(entry.id)
+        XCTAssertEqual(problems.count, 2, "A passphrase that stays in the Keychain must not look forgotten")
+        vaults.lockAll()
+    }
 }
