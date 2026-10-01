@@ -102,6 +102,10 @@ extension GoogleDriveProvider {
         return try await request(parts.url!)
     }
 
+    func currentMetadata(of file: CloudFile) async throws -> CloudFile? {
+        Self.googleFile(try await json(googleURL("https://www.googleapis.com/drive/v3/files/\(Self.segment(file.id))?fields=\(Self.googleFileFields)")))
+    }
+
     func rename(file: CloudFile, name: String) async throws {
         _ = try await json(googleURL("https://www.googleapis.com/drive/v3/files/" + Self.segment(file.id)), method: "PATCH", body: ["name": name])
     }

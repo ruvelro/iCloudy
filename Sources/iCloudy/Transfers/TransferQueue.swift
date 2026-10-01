@@ -320,8 +320,9 @@ final class TransferQueue: ObservableObject {
                 // If the user cancelled just after the server committed, preserve the completed checkpoint but keep their state.
                 if try job(id).state == .running {
                     try edit(id) {
-                        $0.state = .completed; $0.bytes = max($0.bytes, $0.total); $0.bytesPerSecond = 0; $0.uploads = [:]
-                        $0.detail = Self.completionSummary(verified: $0.verifiedFiles, unverified: $0.unverifiedFiles)
+                        $0.state = .completed; $0.bytes = max($0.bytes, $0.total); $0.bytesPerSecond = 0; $0.uploads = [:]; $0.downloads = [:]
+                        $0.detail = Self.completionSummary(verified: $0.verifiedFiles, unverified: $0.unverifiedFiles,
+                                                           exported: $0.exportedFiles, download: $0.direction == .download)
                     }
                 }
                 if let finished = items.first(where: { $0.id == id && $0.state == .completed }) { didFinish?(finished) }
@@ -356,7 +357,8 @@ final class TransferQueue: ObservableObject {
     /// to wake it up again.
     static func outcome(for error: Error, attempts: Int, online: Bool) -> Outcome {
         guard online else { return .waitForNetwork }
-        let transient = (error as? ServiceError)?.retryable == true
+        // A file that changed while it was downloading is fetched again with its new description.
+        let transient = (error as? ServiceError)?.retryable == true || (error as? DownloadIntegrityError)?.retryable == true
             || [.timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost].contains((error as? URLError)?.code)
         return transient && attempts < 3 ? .retry : .fail
     }
@@ -367,12 +369,28 @@ final class TransferQueue: ObservableObject {
         if let announced = (error as? ServiceError)?.retryAfter { return min(max(1, announced), 60) }
         return base * pow(2, Double(attempt))
     }
-    static func completionSummary(verified: Int, unverified: Int) -> String {
-        guard verified + unverified > 0 else { return "" }
+    /// `download` words the unverified part for downloads, where nothing is resumed and only the size was compared.
+    static func completionSummary(verified: Int, unverified: Int, exported: Int = 0, download: Bool = false) -> String {
+        guard verified + unverified + exported > 0 else { return "" }
         var parts = ["Completada"]
         if verified > 0 { parts.append(L("\(verified) \(verified == 1 ? L("archivo verificado") : L("archivos verificados")) con la suma del proveedor")) }
-        if unverified > 0 { parts.append(L("\(unverified) sin verificar (reanudados o sin suma del proveedor)")) }
+        if unverified > 0 {
+            parts.append(download ? L("\(unverified) sin suma del proveedor (solo se comprobó el tamaño)")
+                                  : L("\(unverified) sin verificar (reanudados o sin suma del proveedor)"))
+        }
+        if exported > 0 { parts.append(L("\(exported) exportados de Google, sin suma que comparar")) }
         return parts.joined(separator: " · ")
+    }
+    /// Keeps a failed check on the job. A file that changed remotely also leaves its new description behind when it
+    /// is the job's own item, so the retry downloads, and checks, the version that exists now.
+    private func recordFailedCheck(_ id: UUID, key: String, _ error: DownloadIntegrityError) throws {
+        try edit(id) {
+            $0.recordDownload(key, .failed)
+            if key == ".", case .changedRemotely(_, let current?) = error {
+                $0.file = current
+                if !current.isFolder { $0.total = current.size ?? 0 }
+            }
+        }
     }
     private func choose(_ id: UUID, name: String, replace: Bool, folder: Bool) async throws -> ConflictChoice {
         try Task.checkCancellation()
@@ -517,18 +535,17 @@ final class TransferQueue: ObservableObject {
                 try? FileManager.default.removeItem(at: partial)
                 // Half the work of a cross-cloud transfer is this download, and the bar did not move for any of it.
                 let downloaded = done
-                try await source.download(file: file, to: partial, exportMime: export?.mime) { bytes, total in
-                    self.report(id, base: downloaded, bytes: bytes, total: total)
-                }
-                try Task.checkCancellation()
-                if let expected = file.size, export == nil {
-                    let actual = Int64((try? partial.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
-                    guard actual == expected else {
-                        try? FileManager.default.removeItem(at: partial)
-                        throw CloudError.message(L("«\(file.name)» llegó incompleto de \(source.account.cloud.title): \(actual) de \(expected) bytes."))
+                // The download checks itself against the listed size and checksum, and deletes what fails, so only
+                // a copy that passed is ever renamed into place.
+                let verification: DownloadVerification
+                do {
+                    verification = try await source.download(file: file, to: partial, exportMime: export?.mime) { bytes, total in
+                        self.report(id, base: downloaded, bytes: bytes, total: total)
                     }
-                }
+                } catch let error as DownloadIntegrityError { try recordFailedCheck(id, key: key, error); throw error }
+                try Task.checkCancellation()
                 try FileManager.default.moveItem(at: partial, to: staged)
+                try edit(id, coalesce: true) { $0.recordDownload(key, DownloadIntegrity(verification)) }
             }
             let base = done
             try edit(id, coalesce: true) { $0.detail = L("Subiendo «\(name)» a \(target.account.cloud.title)…") }
@@ -707,13 +724,17 @@ final class TransferQueue: ObservableObject {
         } else {
             let temporary = folder.appendingPathComponent(".icloudy-" + UUID().uuidString + ".part")
             defer { try? FileManager.default.removeItem(at: temporary) }
+            var verification: DownloadVerification?
             if file.isGoogleDocument && !exporting {
                 guard let url = file.webURL else { throw CloudError.message(L("No hay enlace web para este documento.")) }
                 let link = try PropertyListSerialization.data(fromPropertyList: ["URL": url.absoluteString], format: .xml, options: 0)
                 try await blockingIO { try link.write(to: temporary) }
             } else {
                 let base = done
-                try await api.download(file: file, to: temporary, exportMime: exporting ? current.exportMime : nil) { bytes, total in self.report(id, base: base, bytes: bytes, total: total) }
+                // A copy that fails its check is deleted inside `download`; the destination is never touched.
+                do {
+                    verification = try await api.download(file: file, to: temporary, exportMime: exporting ? current.exportMime : nil) { bytes, total in self.report(id, base: base, bytes: bytes, total: total) }
+                } catch let error as DownloadIntegrityError { try recordFailedCheck(id, key: key, error); throw error }
             }
             try Task.checkCancellation()
             let destination = target, replacing = replace
@@ -721,6 +742,7 @@ final class TransferQueue: ObservableObject {
                 if replacing && FileManager.default.fileExists(atPath: destination.path) { _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary) }
                 else { try FileManager.default.moveItem(at: temporary, to: destination) }
             }
+            if let verification { try edit(id, coalesce: true) { $0.recordDownload(key, DownloadIntegrity(verification)) } }
             done += file.size ?? 0
             mark(id, done: done)
             // Only real content counts as a local copy: a .webloc is a link and an export is a different document.

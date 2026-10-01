@@ -283,6 +283,10 @@ extension BoxProvider {
         return try await request(URL(string: "https://api.box.com/2.0/files/\(Self.segment(file.id))/content")!)
     }
 
+    func currentMetadata(of file: CloudFile) async throws -> CloudFile? {
+        Self.boxFile(try await json(URL(string: "https://api.box.com/2.0/\(Self.boxRoute(file))/\(Self.segment(file.id))?fields=\(Self.boxListFields)")!))
+    }
+
     func rename(file: CloudFile, name: String) async throws {
         _ = try await boxUpdate(file, body: ["name": name])
     }

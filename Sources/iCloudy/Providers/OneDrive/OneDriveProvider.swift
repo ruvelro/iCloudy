@@ -24,6 +24,12 @@ extension OneDriveProvider {
         if let sha = hashes?["sha1Hash"] as? String, !sha.isEmpty { return ContentHash(algorithm: .sha1, value: sha) }
         return nil
     }
+    /// SharePoint libraries rewrite Office documents after storing them, adding their own metadata, and keep listing
+    /// the size and hashes of the upload. Checking those would fail every such download, so they are left unverified.
+    static func sharePointRewrites(_ file: CloudFile, driveID: String?) -> Bool {
+        guard driveID != nil else { return false }
+        return ["doc", "docx", "docm", "xls", "xlsx", "xlsm", "ppt", "pptx", "pptm", "vsdx", "one"].contains((file.name as NSString).pathExtension.lowercased())
+    }
 
     var graphDrive: String {
         account.driveID.map { "https://graph.microsoft.com/v1.0/drives/" + Self.segment($0) } ?? "https://graph.microsoft.com/v1.0/me/drive"
@@ -68,6 +74,11 @@ extension OneDriveProvider {
     func contentRequest(for file: CloudFile, exportMime: String?) async throws -> URLRequest {
         return try await request(URL(string: "\(graphDrive)/items/\(Self.segment(file.id))/content")!)
     }
+
+    func currentMetadata(of file: CloudFile) async throws -> CloudFile? {
+        Self.microsoftFile(try await json(URL(string: "\(graphDrive)/items/\(Self.segment(file.id))?$select=id,name,size,folder,file,remoteItem,webUrl,lastModifiedDateTime")!))
+    }
+    func canVerifyDownload(of file: CloudFile) -> Bool { !Self.sharePointRewrites(file, driveID: account.driveID) }
 
     func rename(file: CloudFile, name: String) async throws {
         _ = try await json(URL(string: "\(graphDrive)/items/" + Self.segment(file.id))!, method: "PATCH", body: ["name": name])

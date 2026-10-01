@@ -209,6 +209,8 @@ final class DemoStore {
         cursor.complete = true; cursor.remoteID = id; try save(cursor); progress(total, total)
         return id
     }
+    /// The entry as it stands now, for the check that tells a changed file from a damaged download.
+    func file(_ id: String) -> CloudFile? { entries[id]?.file }
     func download(_ file: CloudFile, to target: URL, maxBytes: Int64? = nil, progress: (Int64, Int64) -> Void) async throws {
         try check()
         let source = directory.appendingPathComponent(file.id)

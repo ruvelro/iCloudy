@@ -683,7 +683,6 @@
 "«%@»" = "“%@”";
 "«%@» es un nombre reservado por OneDrive." = "“%@” is a name reserved by OneDrive.";
 "«%@» está en la papelera de %@. Puedes restaurarlo desde su web." = "“%@” is in the %@ trash. You can restore it from its website.";
-"«%@» llegó incompleto de %@: %lld de %lld bytes." = "“%@” arrived incomplete from %@: %lld of %lld bytes.";
 "«%@» se refleja en «%@». La primera sincronización está en cola." = "“%@” is now mirrored to “%@”. The first sync is queued.";
 "«%@» ya no está en %@." = "“%@” is no longer in %@.";
 "«%@» ya no está en %@. Se ha quitado de la lista de copias locales." = "“%@” is no longer at %@. It has been removed from the list of local copies.";
@@ -891,3 +890,11 @@
 "Mostrar las nubes en el Finder (experimental)" = "Show the clouds in the Finder (experimental)";
 "Cada cuenta aparece como una ubicación en la barra lateral del Finder, con sus archivos bajo demanda. Requiere la extensión de archivos, que solo lleva la versión firmada con un identificador de equipo." = "Each account appears as a location in the Finder's sidebar, with its files on demand. It needs the file extension, which only the build signed with a Team ID carries.";
 "Esta versión no lleva la extensión del Finder: necesita una firma con identificador de equipo de Apple. Los archivos siguen disponibles desde la ventana de iCloudy." = "This build does not carry the Finder extension: it needs a signature with an Apple Team ID. The files remain available from iCloudy's window.";
+
+/* Verificación de descargas. */
+"«%@» llegó con %lld bytes, pero el proveedor anuncia %lld. La copia descargada se ha descartado." = "“%@” arrived with %lld bytes, but the provider lists %lld. The downloaded copy has been discarded.";
+"La suma de verificación de «%@» no coincide con la que informa el proveedor. La copia descargada se ha descartado." = "The checksum of “%@” does not match the one reported by the provider. The downloaded copy has been discarded.";
+"«%@» se borró o se movió mientras se descargaba." = "“%@” was deleted or moved while it was downloading.";
+"«%@» cambió en la nube mientras se descargaba. Se volverá a descargar la versión nueva." = "“%@” changed in the cloud while it was downloading. The new version will be downloaded again.";
+"%lld sin suma del proveedor (solo se comprobó el tamaño)" = "%lld without a provider checksum (only the size was checked)";
+"%lld exportados de Google, sin suma que comparar" = "%lld exported from Google, with no checksum to compare";

@@ -33,6 +33,11 @@ protocol CloudProvider: CloudSession {
     var requiresVerifiedLegacyCheckpoint: Bool { get }
     func canResumeWithoutSource(_ checkpoint: UploadCheckpoint?) -> Bool
     func download(file: CloudFile, to destination: URL, exportMime: String?, maxBytes: Int64?, progress: @escaping (Int64, Int64) -> Void) async throws
+    /// The item as the provider describes it now, asked for after a download fails its check. nil when the provider
+    /// has no cheap way to describe a single item, and the mismatch is then reported as it is.
+    func currentMetadata(of file: CloudFile) async throws -> CloudFile?
+    /// False for items whose listed size and checksum are known not to describe the bytes a download returns.
+    func canVerifyDownload(of file: CloudFile) -> Bool
     func uploadFile(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt
     func resumeCommittedUpload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt?
 }
@@ -56,6 +61,8 @@ extension CloudProvider {
         try await downloadHTTP(contentRequest(for: file, exportMime: exportMime), to: destination, maxBytes: maxBytes, progress: progress)
     }
     func resumeCommittedUpload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt? { nil }
+    func currentMetadata(of file: CloudFile) async throws -> CloudFile? { nil }
+    func canVerifyDownload(of file: CloudFile) -> Bool { true }
     func abandonUploadSessions(urls: [URL], boxSessions: [String]) async {
         for url in urls where url.scheme == "https" {
             var request = URLRequest(url: url)

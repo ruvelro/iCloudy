@@ -297,6 +297,10 @@ extension DropboxProvider {
                     return request
     }
 
+    func currentMetadata(of file: CloudFile) async throws -> CloudFile? {
+        Self.dropboxFile(try await dropboxRPC("files/get_metadata", ["path": dropboxPath(file.id)], repeatable: true))
+    }
+
     func rename(file: CloudFile, name: String) async throws {
         try await dropboxRename(file: file, name: name)
     }
