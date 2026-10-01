@@ -11,6 +11,9 @@ struct TransferReportView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var filter: FileOutcome?
     @State private var exportMessage: String?
+    @State private var checking: Task<Void, Never>?
+    @State private var checked = (done: 0, total: 0)
+    @State private var recoveryMessage: String?
 
     private var jobs: [Transfer] { queue.items.filter { $0.batchID == batchID } }
     private var report: TransferReport { TransferReport(jobs: jobs) }
@@ -55,6 +58,7 @@ struct TransferReportView: View {
                         .font(.caption).monospacedDigit().foregroundStyle(.tertiary).frame(width: 70, alignment: .trailing)
                 }.textSelection(.enabled)
             }.frame(minHeight: 240)
+            recovery(report)
             HStack {
                 Button("Exportar CSV…") { export(report, csv: true) }
                 Button("Exportar JSON…") { export(report, csv: false) }
@@ -62,7 +66,54 @@ struct TransferReportView: View {
                 Spacer()
                 Button("Cerrar") { dismiss() }.keyboardShortcut(.cancelAction)
             }
-        }.padding(20).frame(width: 680, height: 560)
+        }.padding(20).frame(width: 680, height: 600)
+            .onDisappear { checking?.cancel() }
+    }
+
+    /// The two ways out of a transfer that did not end well, with what each of them will and will not touch.
+    @ViewBuilder private func recovery(_ report: TransferReport) -> some View {
+        let busy = jobs.contains { [.queued, .running].contains($0.state) }
+        let checkable = report.copied + report.count(.uncertain) > 0
+        let recoverable = !queue.recoverable(batchID).isEmpty
+        if recoverable || checkable {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    if recoverable {
+                        Button("Reintentar solo lo pendiente") {
+                            let count = queue.retryPending(batchID)
+                            recoveryMessage = L("\(count) en cola de nuevo. Lo que ya está en el destino no se vuelve a copiar.")
+                        }.disabled(checking != nil || busy)
+                    }
+                    if checkable {
+                        if checking == nil {
+                            Button("Verificar lo copiado") { verify() }.disabled(busy)
+                        } else {
+                            ProgressView(value: Double(checked.done), total: Double(max(1, checked.total))).frame(width: 120)
+                            Text("Comprobando \(checked.done) de \(checked.total)…").font(.caption).monospacedDigit()
+                            Button("Detener") { checking?.cancel() }
+                        }
+                    }
+                    Spacer()
+                }
+                Text(recoveryMessage ?? L("Reintentar solo vuelve a transferir lo fallido y lo pendiente; lo copiado y lo omitido no se repiten. Verificar pregunta al destino por cada archivo copiado y compara su tamaño y, si el proveedor la da, su suma; lo que falte o no coincida vuelve a quedar pendiente."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+    private func verify() {
+        recoveryMessage = nil
+        checked = (0, 0)
+        checking = Task {
+            do {
+                let summary = try await queue.verifyCopied(batchID) { done, total in checked = (done, total) }
+                recoveryMessage = summary.text
+            } catch is CancellationError {
+                recoveryMessage = L("Comprobación detenida. Lo ya comprobado queda anotado en el informe.")
+            } catch {
+                recoveryMessage = Task.isCancelled ? L("Comprobación detenida. Lo ya comprobado queda anotado en el informe.") : error.localizedDescription
+            }
+            checking = nil
+        }
     }
 
     /// What is already at the destination, said first: it is what decides whether repeating anything is needed.

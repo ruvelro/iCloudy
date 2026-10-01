@@ -169,6 +169,25 @@ final class TransferQueue: ObservableObject {
         do { try persist(); kick() } catch { items[index].state = .failed }
         stateChanges.send()
     }
+    /// Puts a completed job back in the queue, after a check of the destination found part of it missing. The walk
+    /// skips whatever is still marked complete.
+    func requeue(_ id: UUID) {
+        guard let index = index(id), items[index].state == .completed else { return }
+        items[index].state = .paused
+        retry(id)
+    }
+    /// Updates one line of a job's report from outside a run. A file the destination no longer has goes back to
+    /// pending, and so do the folders above it, so that the next run walks down to it again.
+    func applyCheck(_ id: UUID, key: String, _ outcome: FileOutcome, reason: String?) {
+        guard let index = index(id) else { return }
+        items[index].record(key, outcome, reason: reason)
+        if outcome == .pending {
+            var current: String? = key
+            while let path = current { items[index].completedPaths.remove(path); current = Transfer.parentKey(path) }
+        }
+        do { try persist(coalesce: true) } catch { persistenceError = error.localizedDescription }
+        stateChanges.send()
+    }
     func cancel(_ id: UUID, pause: Bool = false) {
         guard let index = index(id), !items[index].finished else { return }
         items[index].state = pause ? .paused : .cancelled; items[index].bytesPerSecond = 0; items[index].detail = ""
