@@ -93,6 +93,25 @@ extension AppModel {
         preview.close(); go(to: BrowserLocation(accountID: account.id, collection: collection, path: path + [file]))
     }
 
+    var canGoBack: Bool { !workspace.current.back.isEmpty }
+    var canGoForward: Bool { !workspace.current.forward.isEmpty }
+
+    /// The previous place of the focused tab, like a browser's back button. Places of accounts that are no longer
+    /// connected are skipped instead of opening an empty list.
+    func goBack() { retrace { $0.goBack(where: $1) } }
+    func goForward() { retrace { $0.goForward(where: $1) } }
+
+    private func retrace(_ step: (inout BrowserState, (BrowserLocation) -> Bool) -> Bool) {
+        let connected = Set(accounts.map(\.id))
+        var moved = false
+        workspace.update(workspace.current.id) { tab in
+            moved = step(&tab) { place in place.accountID.map(connected.contains) ?? false }
+        }
+        guard moved else { return }
+        preview.close(); globalSearch.cancel(); showGlobalSearch = false
+        reload()
+    }
+
     func back(to count: Int) { preview.close(); go(to: BrowserLocation(accountID: selectedAccountID, collection: collection, path: Array(path.prefix(count)))) }
 
     /// What the "Actualizar" button does: forget what the provider handed out earlier and ask again. `reload(fresh:)`

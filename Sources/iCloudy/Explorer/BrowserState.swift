@@ -28,6 +28,12 @@ struct BrowserState: Identifiable {
     var showingCachedListing = false
     /// The listing request this tab is waiting for; an answer to any other one arrived too late and is dropped.
     var navigationID = UUID()
+    /// Places visited before this one, the most recent last, and those left by going back. Each tab has its own,
+    /// so each pane does too.
+    var back: [BrowserLocation] = []
+    var forward: [BrowserLocation] = []
+    /// Enough to retrace a session; a tab is not a log of everything ever opened in it.
+    static let historyLimit = 50
 
     init(id: UUID = UUID(), accountID: String? = nil, collection: Collection = .files, path: [CloudFile] = [],
          sortMode: String = "name", viewMode: String = "list") {
@@ -45,8 +51,53 @@ struct BrowserState: Identifiable {
     }
 
     /// Moves to another place and drops what belonged to the old one: its listing, its filter and its selection.
-    mutating func open(_ target: BrowserLocation) {
+    /// The old place goes into the history unless `remember` is false, which is how going back and forward move.
+    mutating func open(_ target: BrowserLocation, remember: Bool = true) {
+        if remember, target != location, accountID != nil {
+            back.append(location)
+            if back.count > Self.historyLimit { back.removeFirst(back.count - Self.historyLimit) }
+            forward = []
+        }
         location = target; search = ""; files = []; selection = []
+    }
+
+    /// The place before this one, skipping those `usable` rejects (an account disconnected since, for instance).
+    /// Returns false when there is nowhere to go back to.
+    mutating func goBack(where usable: (BrowserLocation) -> Bool = { _ in true }) -> Bool {
+        while let previous = back.popLast() {
+            guard usable(previous) else { continue }
+            forward.append(location)
+            open(previous, remember: false)
+            return true
+        }
+        return false
+    }
+
+    mutating func goForward(where usable: (BrowserLocation) -> Bool = { _ in true }) -> Bool {
+        while let next = forward.popLast() {
+            guard usable(next) else { continue }
+            back.append(location)
+            open(next, remember: false)
+            return true
+        }
+        return false
+    }
+
+    /// Forgets every place of the accounts that left, so going back never lands on one that cannot be listed.
+    mutating func forgetHistory(of accountIDs: Set<String>) {
+        back.removeAll { $0.accountID.map(accountIDs.contains) ?? true }
+        forward.removeAll { $0.accountID.map(accountIDs.contains) ?? true }
+    }
+
+    /// Follows a rename or a move of an item of `accountID` in the place shown, the listing and the history.
+    mutating func remap(_ change: RemoteIdentityChange, accountID: String) {
+        func follow(_ location: BrowserLocation) -> BrowserLocation {
+            guard location.accountID == accountID else { return location }
+            var moved = location; moved.path = location.path.map(change.file); return moved
+        }
+        back = back.map(follow); forward = forward.map(follow)
+        guard self.accountID == accountID else { return }
+        path = path.map(change.file); files = files.map(change.file)
     }
 
     mutating func updateVisibleFiles() { visibleFiles = Self.visible(files, search: search, sortMode: sortMode) }

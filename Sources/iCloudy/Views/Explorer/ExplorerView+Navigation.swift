@@ -242,6 +242,16 @@ extension ExplorerView {
             }
             CollectionPicker(choices: collectionChoices, selection: model.collection) { model.show($0) }
             HStack {
+                // Back and forward retrace the places this tab has shown, across accounts and collections; the
+                // chevron beside them climbs to the enclosing folder, as it always did.
+                ControlGroup {
+                    Button { model.goBack() } label: { Image(systemName: "arrow.left") }
+                        .accessibilityLabel("Atrás").help("Atrás (⌘[)")
+                        .keyboardShortcut("[", modifiers: .command).disabled(!model.canGoBack)
+                    Button { model.goForward() } label: { Image(systemName: "arrow.right") }
+                        .accessibilityLabel("Adelante").help("Adelante (⌘])")
+                        .keyboardShortcut("]", modifiers: .command).disabled(!model.canGoForward)
+                }.fixedSize()
                 Button { model.back(to: max(0, model.path.count - 1)) } label: { Image(systemName: "chevron.left") }
                     .accessibilityLabel("Volver a la carpeta anterior").help("Volver a la carpeta anterior")
                     .keyboardShortcut(.upArrow, modifiers: .command).disabled(model.path.isEmpty)

@@ -243,7 +243,8 @@ extension AppModel {
             }
         }
         try LocalStore.save(favorites, to: favoritesURL)
-        if selectedAccountID == account.id { path = path.map(change.file); files = files.map(change.file) }
+        // Every tab showing the item, or with it in its history, follows it; not only the one with the focus.
+        workspace.updateAll { $0.remap(change, accountID: account.id) }
         listings.removeAll(accountID: account.id)
         localCopies.remap(change, accountID: account.id)
         spotlight.remap(change, accountID: account.id, accountLabel: accountTitle(account), oldParent: previousParent, newParent: destinationPath?.map(\.name))
