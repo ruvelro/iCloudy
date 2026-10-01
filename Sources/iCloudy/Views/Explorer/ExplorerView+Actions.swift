@@ -127,6 +127,12 @@ extension ExplorerView {
         ForEach(file.exportOptions, id: \.ext) { option in
             Button("Exportar como \(option.title)…") { Task { await model.save(file, export: (option.mime, option.ext)) } }
         }
+        // Offered for every file; where the provider keeps no history its help says why instead of hiding the action.
+        if !file.isFolder {
+            Button("Versiones…") { model.requestVersions(file) }
+                .disabled(model.versionsLimitation(file) != nil)
+                .help(model.versionsLimitation(file) ?? "")
+        }
         if let copy = model.localStatus(file).copy {
             Divider()
             Button("Mostrar la copia de este Mac en el Finder") { model.revealLocalCopy(file) }

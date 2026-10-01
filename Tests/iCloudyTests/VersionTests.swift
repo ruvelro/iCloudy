@@ -105,6 +105,7 @@ final class VersionTests: XCTestCase {
 
         let doc = item("g", name: "Informe", mime: "application/vnd.google-apps.document")
         XCTAssertEqual(VersionedFile.make(doc, version: version).name, "Informe (versión 2026-09-12 10.31)", "La exportación añade la extensión")
+        XCTAssertEqual(AppModel.versionTarget(FileVersion(id: "c", modified: nil, size: 5, isCurrent: true), of: file), file, "La actual es el archivo")
     }
 
     // MARK: - Google Drive
@@ -339,5 +340,42 @@ final class VersionTests: XCTestCase {
         XCTAssertEqual(paths, ["PROPFIND /nube/remote.php/dav/", "PROPFIND /nube/remote.php/webdav/docs/informe.pdf", "PROPFIND /nube/remote.php/dav/versions/ana/versions/123"])
         XCTAssertTrue(seen[0].body.contains("current-user-principal"))
         XCTAssertEqual(versions.count, 3)
+    }
+
+    // MARK: - After a restore
+
+    func testARestoreForgetsTheOldContentAndLeavesANoteInTheHistory() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("versions-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let saved = Date(timeIntervalSince1970: 1_757_000_000)
+        let file = item("f1", modified: saved)
+        let listings = ListingCache(directory: root.appendingPathComponent("listings"))
+        listings.store([file], accountID: "a", parent: "root")
+        XCTAssertNotNil(listings.cached(accountID: "a", parent: "root"))
+        let copies = LocalCopyIndex(storeURL: root.appendingPathComponent("copies.json"))
+        let local = root.appendingPathComponent("informe.pdf")
+        try abc.write(to: local)
+        copies.record(LocalCopy(accountID: "a", fileID: "f1", name: "informe.pdf", path: local.path, bookmark: nil, size: 3,
+                                remoteModified: saved, savedAt: Date(), origin: .download))
+        guard case .downloaded = copies.status(for: file, accountID: "a") else { return XCTFail("Copia al día antes de restaurar") }
+
+        AppModel.forgetContent(of: file, accountID: "a", listings: listings, localCopies: copies)
+        await listings.settle()
+        XCTAssertNil(listings.cached(accountID: "a", parent: "root"), "El listado guardado lleva la suma del contenido anterior")
+        guard case .outdated(let copy) = copies.status(for: file, accountID: "a") else { return XCTFail("La copia local ya no es lo que hay en la nube") }
+        XCTAssertEqual(copy.path, local.path, "Se marca, no se olvida: el archivo sigue en el Mac")
+
+        let account = client(.google).account
+        let version = FileVersion(id: "1", modified: saved, size: 3)
+        let note = AppModel.restoreNote(version, of: VersionsRequest(file: file, account: account, parent: "carpeta", location: "ana@example.com / Docs"))
+        let history = TransferHistory(storeURL: root.appendingPathComponent("history.json"))
+        history.record(note)
+        let entry = try XCTUnwrap(history.entries.first)
+        XCTAssertEqual(entry.name, "informe.pdf")
+        XCTAssertEqual(entry.direction, .upload)
+        XCTAssertEqual(entry.parent, "carpeta", "«Ir a la carpeta» lleva a donde está el archivo")
+        XCTAssertEqual(entry.bytes, 3)
+        XCTAssertTrue(entry.summary.hasPrefix("Restaurada la versión del "), entry.summary)
     }
 }

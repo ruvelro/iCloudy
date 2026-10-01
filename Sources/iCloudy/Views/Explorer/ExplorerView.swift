@@ -38,6 +38,7 @@ struct ExplorerView: View {
         .sheet(item: $model.relocation) { request in FolderPickerView(model: model, request: request) }
         .sheet(item: $model.crossCloud) { request in CloudTargetPicker(model: model, request: request) }
         .sheet(item: $model.sharing) { request in SharingView(model: model, request: request) }
+        .sheet(item: $model.versionHistory) { request in VersionsView(model: model, request: request) }
         .sheet(item: Binding(get: { model.queue.conflict }, set: { _ in })) { request in
             ConflictView(queue: model.queue, request: request)
         }
