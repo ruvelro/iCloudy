@@ -10,10 +10,16 @@ import WebKit
 ///
 /// It is also the better arrangement for the person using it. The password, or the code, is typed on O2's pages and
 /// iCloudy never sees it. What iCloudy keeps afterwards is the session the server handed out, nothing more.
-/// Which server to sign in to, in the shape a sheet can present.
+/// Which server to sign in to, and the WebKit store the sign-in happens in, in the shape a sheet can present.
+///
+/// Every window gets a store of its own. The account does not exist yet while it is open (its identifier comes from
+/// what the server says once the session works), so the store is born with the window and handed to the account
+/// that comes out of it. A window that ends without one has its store removed.
 struct O2LoginRequest: Identifiable, Hashable {
-    let id: String
-    var host: String { id }
+    let host: String
+    let store: UUID
+    var id: UUID { store }
+    init(host: String, store: UUID = UUID()) { self.host = host; self.store = store }
 }
 
 @MainActor
@@ -25,11 +31,16 @@ final class O2WebLoginModel: ObservableObject {
     @Published var failed: String?
     /// Receives the session once O2 has granted one.
     var onSuccess: (@MainActor (String, [HTTPCookie], String?, [HTTPCookie]) -> Void)?
-    /// The persistent store, on purpose. O2's server ends a session after about an hour of silence, so a Mac that
+    /// Identifies the persistent store this sign-in happens in, which becomes the account's own.
+    let store: UUID
+    /// A persistent store, on purpose. O2's server ends a session after about an hour of silence, so a Mac that
     /// spends the night switched off always comes back to a dead one. What survives that is the sign-in at
     /// Telefónica, and it only survives if its cookies are kept, exactly as a browser keeps them. With them, renewing
     /// the session needs no typing, and usually no window at all.
-    let store = WKWebsiteDataStore.default()
+    ///
+    /// And one per account rather than the shared default: two O2 accounts in one store shared Telefónica's
+    /// cookies, so signing in to the second could quietly come back as the first.
+    private(set) lazy var dataStore = WKWebsiteDataStore(forIdentifier: store)
     private var watcher: Task<Void, Never>?
     private var done = false
     private weak var webView: WKWebView?
@@ -37,7 +48,7 @@ final class O2WebLoginModel: ObservableObject {
     /// makes sense.
     @Published var canFinishByHand = false
 
-    init(host: String) { self.host = host }
+    init(host: String, store: UUID = UUID()) { self.host = host; self.store = store }
 
     /// The address O2's own client uses to start the flow.
     var start: URL { O2WebSession.start(host: host) }
@@ -143,7 +154,7 @@ struct O2WebView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = model.store
+        configuration.websiteDataStore = model.dataStore
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.load(URLRequest(url: model.start))
@@ -173,9 +184,9 @@ struct O2WebLoginView: View {
     @State private var showServer = false
     @State private var server = ""
 
-    init(model: AppModel, host: String) {
+    init(model: AppModel, request: O2LoginRequest) {
         self.model = model
-        _login = StateObject(wrappedValue: O2WebLoginModel(host: host))
+        _login = StateObject(wrappedValue: O2WebLoginModel(host: request.host, store: request.store))
     }
 
     var body: some View {
@@ -219,12 +230,16 @@ struct O2WebLoginView: View {
             login.onSuccess = { key, cookies, agent, sso in
                 Task {
                     await model.completeO2(host: login.host, validationKey: key, cookies: cookies,
-                                           userAgent: agent, sso: sso)
+                                           userAgent: agent, sso: sso, webStore: login.store)
                     finish()
                 }
             }
         }
-        .onDisappear { login.stop() }
+        .onDisappear {
+            login.stop()
+            // The store goes with the window unless an account came out of it.
+            model.o2LoginEnded(store: login.store)
+        }
     }
     private func finish() {
         login.stop()
@@ -292,6 +307,85 @@ enum O2WebSession {
     static func isSignInCookie(_ cookie: HTTPCookie, host: String) -> Bool {
         signInDomains.contains { domain($0, covers: cookie.domain) } && !isServerCookie(cookie, host: host)
     }
+
+    // MARK: One store per account
+
+    /// The account option holding the identifier of its own WebKit store.
+    static let storeOption = "webStore"
+    static func storeID(of account: Account) -> UUID? { account.options[storeOption].flatMap(UUID.init(uuidString:)) }
+    /// The options of the O2 account a sign-in produces. A renewal keeps the account's own, its store included; a
+    /// sign-in in the window hands over the store that window used.
+    static func options(keeping renewing: Account?, host: String, store: UUID?) -> [String: String] {
+        var options = renewing?.options ?? [:]
+        options["host"] = host
+        if let store { options[storeOption] = store.uuidString }
+        return options
+    }
+    /// The store a renewal of this account runs in. An account signed in before stores were kept apart, and not yet
+    /// moved to one of its own, keeps the shared default store it has always used: that is where its sign-in is, and
+    /// leaving it there is better than signing anybody out.
+    @MainActor
+    static func dataStore(_ id: UUID?) -> WKWebsiteDataStore {
+        id.map { WKWebsiteDataStore(forIdentifier: $0) } ?? .default()
+    }
+
+    /// Removes an account's store with everything in it, while `unused` says no account has claimed it.
+    @MainActor
+    static func discard(_ id: UUID, while unused: @escaping @MainActor () -> Bool = { true }) async {
+        guard unused() else { return }
+        do {
+            let store = WKWebsiteDataStore(forIdentifier: id)
+            await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
+        }
+        // A web view that has just closed, or a renewal just cancelled, may hold the store a moment longer, and
+        // removing a store in use fails. What it held is already gone; this is only the empty shell.
+        for _ in 0..<10 {
+            guard unused() else { return }
+            do {
+                try await WKWebsiteDataStore.remove(forIdentifier: id)
+                O2Log.record("almacén web eliminado")
+                return
+            } catch {
+                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+            }
+        }
+        O2Log.record("almacén web vaciado, pero no se pudo eliminar")
+    }
+
+    /// Gives accounts signed in before stores were kept apart a store of their own, carrying over what each one kept
+    /// in the shared default store: O2's cookies and the sign-in's. Returns the new store of each account.
+    ///
+    /// Several such accounts all used the one shared store, so each gets a copy of it, which is exactly what it had.
+    /// The shared store is not emptied here: that waits until the accounts have been saved pointing at their new
+    /// stores, so a failure in between leaves everything where it was.
+    @MainActor
+    static func moveToOwnStores(_ accounts: [(id: String, host: String)]) async -> [String: UUID] {
+        await moveToOwnStores(accounts, from: WKWebsiteDataStore.default().httpCookieStore,
+                              makeStore: { WKWebsiteDataStore(forIdentifier: $0).httpCookieStore })
+    }
+    @MainActor
+    static func moveToOwnStores(_ accounts: [(id: String, host: String)], from source: O2CookieJar,
+                                makeStore: (UUID) -> O2CookieJar) async -> [String: UUID] {
+        guard !accounts.isEmpty else { return [:] }
+        let shared = await source.allCookies()
+        var moved: [String: UUID] = [:]
+        for account in accounts {
+            let id = UUID()
+            let wanted = shared.filter { isServerCookie($0, host: account.host) || isSignInCookie($0, host: account.host) }
+            let target = makeStore(id)
+            for cookie in wanted { await target.setCookie(cookie) }
+            // WebKit refuses a cookie it considers malformed without saying so; reading back is the only way to know.
+            let kept = Set(await target.allCookies().map { $0.name + "@" + $0.domain })
+            let refused = wanted.filter { !kept.contains($0.name + "@" + $0.domain) }.count
+            O2Log.record("almacén web propio · \(wanted.count - refused) cookies llevadas"
+                         + (refused == 0 ? "" : " · \(refused) rechazadas"))
+            moved[account.id] = id
+        }
+        return moved
+    }
+
+    /// Clears this server's sign-in from the shared default store. An account with a store of its own simply has
+    /// that store removed; this is for the ones still in the shared store, and for emptying it once they leave it.
     @MainActor
     static func forget(host: String) async {
         let store = WKWebsiteDataStore.default()
@@ -304,6 +398,14 @@ enum O2WebSession {
         O2Log.record("sesión web olvidada · \(doomed.count) registros")
     }
 }
+
+/// Where cookies are read and written: a WebKit store, or a stand-in in the tests.
+@MainActor
+protocol O2CookieJar: AnyObject {
+    func allCookies() async -> [HTTPCookie]
+    func setCookie(_ cookie: HTTPCookie) async
+}
+extension WKHTTPCookieStore: O2CookieJar {}
 
 /// Renews an O2 session without asking the person anything.
 ///
@@ -321,12 +423,15 @@ final class O2SilentRenewal {
     /// Where the sign-in happens. Cookies from these are kept so it can be repeated without anyone taking part.
     /// The same list the sign-in window harvests from and disconnecting clears.
     static let signInDomains = O2WebSession.signInDomains
-    init(host: String) { self.host = host }
+    /// The account's own store, so renewing one account never reads, or clears, another one's sign-in.
+    private let store: UUID?
+    init(host: String, store: UUID?) { self.host = host; self.store = store }
 
+    typealias Renewed = (key: String, cookies: [HTTPCookie], userAgent: String?, sso: [HTTPCookie])
     /// Returns the new session, or nil when it could not be had without the person taking part.
-    func attempt(sso: [HTTPCookie] = [], timeout: TimeInterval = 25) async -> (key: String, cookies: [HTTPCookie], userAgent: String?, sso: [HTTPCookie])? {
+    func attempt(sso: [HTTPCookie] = [], timeout: TimeInterval = 25) async -> Renewed? {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = WKWebsiteDataStore.default()
+        configuration.websiteDataStore = O2WebSession.dataStore(store)
         let webView = WKWebView(frame: .init(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
         self.webView = webView
         defer { self.webView = nil }

@@ -983,6 +983,77 @@ final class O2CloudTests: XCTestCase {
         XCTAssertNil(login.failed, "Ni un aviso de que se agotó el tiempo")
     }
 
+    // MARK: - One WebKit store per account
+
+    func testEverySignInWindowGetsAStoreOfItsOwn() {
+        // Two O2 accounts in the one shared store shared Telefónica's cookies: signing in to the second could come
+        // back as the first, and renewing one cleared the other's key.
+        let first = O2LoginRequest(host: "cloud.o2online.es"), second = O2LoginRequest(host: "cloud.o2online.es")
+        XCTAssertNotEqual(first.store, second.store)
+        XCTAssertNotEqual(first.id, second.id, "Dos ventanas seguidas son dos hojas distintas")
+        XCTAssertEqual(O2WebLoginModel(host: first.host, store: first.store).store, first.store)
+    }
+
+    func testTheAccountKeepsTheStoreItSignedInWith() {
+        let store = UUID()
+        let signedIn = O2WebSession.options(keeping: nil, host: "cloud.o2online.es", store: store)
+        XCTAssertEqual(signedIn["host"], "cloud.o2online.es")
+        let account = Account(id: "o2:cloud.o2online.es:ana@ejemplo.com", cloud: .o2, name: "O2 Cloud",
+                              email: "ana@ejemplo.com", clientID: "", clientSecret: nil,
+                              serverURL: "https://cloud.o2online.es", bookmark: nil, options: signedIn)
+        XCTAssertEqual(O2WebSession.storeID(of: account), store, "La ventana entrega su almacén a la cuenta")
+
+        let renewed = O2WebSession.options(keeping: account, host: "cloud.o2online.es", store: nil)
+        XCTAssertEqual(renewed[O2WebSession.storeOption], store.uuidString, "Renovar conserva el almacén de la cuenta")
+
+        var legacy = account
+        legacy.options = ["host": "cloud.o2online.es"]
+        XCTAssertNil(O2WebSession.storeID(of: legacy), "Una cuenta de antes sigue en el almacén compartido")
+        legacy.options[O2WebSession.storeOption] = "no es un identificador"
+        XCTAssertNil(O2WebSession.storeID(of: legacy))
+    }
+
+    func testAccountsFromTheSharedStoreEachGetTheirOwnCopyOfWhatTheyHad() async {
+        // An update must not sign anybody out. Accounts from before keep what they had, moved to stores of their own.
+        let shared = MemoryJar([cookie("JSESSIONID", "es", on: "cloud.o2online.es"),
+                                cookie("SSOSESSION", "acceso", on: "t3.o2online.es"),
+                                cookie("JSESSIONID", "de", on: "cloud.o2.de"),
+                                cookie("NID", "ajena", on: ".google.com"),
+                                cookie("SSOSESSION", "robada", on: "evilo2online.es")])
+        var made: [UUID: MemoryJar] = [:]
+        let moved = await O2WebSession.moveToOwnStores([("o2:es", "cloud.o2online.es"), ("o2:de", "cloud.o2.de")],
+                                                       from: shared, makeStore: { id in
+            let jar = MemoryJar([]); made[id] = jar; return jar
+        })
+        XCTAssertEqual(Set(moved.keys), ["o2:es", "o2:de"])
+        XCTAssertNotEqual(moved["o2:es"], moved["o2:de"], "Cada cuenta, su almacén")
+        let spain = made[moved["o2:es"]!]!.cookies.map { "\($0.name)=\($0.value)" }
+        let germany = made[moved["o2:de"]!]!.cookies.map { "\($0.name)=\($0.value)" }
+        XCTAssertEqual(Set(spain), ["JSESSIONID=es", "SSOSESSION=acceso"])
+        XCTAssertTrue(Set(germany).isSuperset(of: ["JSESSIONID=de", "SSOSESSION=acceso"]),
+                      "Las dos usaban el mismo almacén, así que las dos se llevan el acceso que había en él")
+        XCTAssertTrue(Set(germany).isDisjoint(with: ["NID=ajena", "SSOSESSION=robada"]), germany.description)
+        XCTAssertEqual(shared.cookies.count, 5, "El compartido no se vacía hasta que las cuentas se han guardado")
+        let none = await O2WebSession.moveToOwnStores([], from: shared, makeStore: { _ in XCTFail(); return MemoryJar([]) })
+        XCTAssertTrue(none.isEmpty)
+    }
+
+    func testTwoAccountStoresDoNotShareCookies() async throws {
+        // The guarantee everything above relies on, checked against WebKit itself.
+        let one = UUID(), other = UUID()
+        do {
+            let first = O2WebSession.dataStore(one), second = O2WebSession.dataStore(other)
+            await first.httpCookieStore.setCookie(cookie("SSOSESSION", "de-una", on: "t3.o2online.es"))
+            let mine = await first.httpCookieStore.allCookies().map(\.value)
+            let theirs = await second.httpCookieStore.allCookies().map(\.value)
+            XCTAssertEqual(mine, ["de-una"])
+            XCTAssertEqual(theirs, [], "La otra cuenta no ve nada de esta")
+            XCTAssertFalse(O2WebSession.dataStore(nil).isEqual(first), "Y ninguna es el almacén compartido")
+        }
+        await O2WebSession.discard(one)
+        await O2WebSession.discard(other)
+    }
+
     func testDisconnectingTakesTheSignInThatSurvivesTheSession() {
         // What makes a silent renewal possible is the sign-in kept at Telefónica, which outlives the O2 session.
         // Leaving it behind would make "desconectar" mean rather less than it says.
@@ -1009,5 +1080,17 @@ final class O2CloudTests: XCTestCase {
         XCTAssertTrue(Cloud.o2.usesWebLogin)
         XCTAssertFalse(Cloud.mega.usesWebLogin)
         XCTAssertFalse(Cloud.o2.isSelfHosted, "El servidor es de O2, no del usuario, aunque se pueda cambiar")
+    }
+}
+
+/// A cookie store in memory, standing in for WebKit's.
+@MainActor
+final class MemoryJar: O2CookieJar {
+    private(set) var cookies: [HTTPCookie]
+    init(_ cookies: [HTTPCookie]) { self.cookies = cookies }
+    func allCookies() async -> [HTTPCookie] { cookies }
+    func setCookie(_ cookie: HTTPCookie) async {
+        cookies.removeAll { $0.name == cookie.name && $0.domain == cookie.domain }
+        cookies.append(cookie)
     }
 }
