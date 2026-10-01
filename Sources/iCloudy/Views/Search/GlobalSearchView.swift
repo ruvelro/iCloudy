@@ -122,6 +122,9 @@ struct GlobalSearchView: View {
             Button("Crear enlace público de solo lectura…") { model.requestPublicLink(hit.file, account: account) }
                 .disabled(account.limitation(.publicLink, for: [hit.file]) != nil)
                 .help(account.limitation(.publicLink, for: [hit.file]) ?? "")
+            if account.capabilities.links.manage {
+                Button("Enlaces públicos…") { model.requestPublicLinks(hit.file, account: account) }
+            }
         }
         ForEach(hit.file.exportOptions, id: \.ext) { option in
             if let account = model.accounts.first(where: { $0.id == hit.accountID }) {

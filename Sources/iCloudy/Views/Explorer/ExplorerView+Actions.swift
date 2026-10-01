@@ -144,6 +144,9 @@ extension ExplorerView {
             Button("Crear enlace público de solo lectura…") { model.requestPublicLink(file, account: account) }
                 .disabled(account.limitation(.publicLink, for: [file]) != nil)
                 .help(account.limitation(.publicLink, for: [file]) ?? "")
+            if account.capabilities.links.manage {
+                Button("Enlaces públicos…") { model.requestPublicLinks(file, account: account) }
+            }
         }
         Divider()
         Button(model.account?.capabilities.reversibleTrash == false ? "Eliminar del servidor…" : "Enviar a la papelera…", role: .destructive) { model.requestTrash([file]) }

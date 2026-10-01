@@ -53,6 +53,9 @@ extension ExplorerView {
                                     }
                                     Button("Personalizar nube…") { model.appearanceAccount = account }
                                     Button("Actualizar espacio") { model.refreshStorage(account, force: true) }
+                                    if account.capabilities.links.manage {
+                                        Button("Enlaces compartidos…") { model.requestLinkInventory(account) }
+                                    }
                                     Divider()
                                     Button("Desconectar cuenta…", role: .destructive) {
                                         disconnectTarget = account; confirmDisconnect = true

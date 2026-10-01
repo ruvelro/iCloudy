@@ -25,6 +25,9 @@ final class AppModel: ObservableObject {
     @Published var pendingTrash: [CloudFile]?
     /// The item whose sharing sheet is open.
     @Published var sharing: SharingRequest?
+    /// The item whose public links sheet is open, and the account whose list of every link is open.
+    @Published var publicLinkManager: PublicLinksRequest?
+    @Published var linkInventory: Account?
     /// Items awaiting confirmation before being deleted for good, from the trash or straight from the tree.
     @Published var pendingPurge: [CloudFile]?
     /// True while the confirmation to empty the whole trash is showing.

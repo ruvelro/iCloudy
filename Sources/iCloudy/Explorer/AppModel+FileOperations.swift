@@ -18,7 +18,9 @@ extension AppModel {
             let link = try await client(account).publicLink(for: file)
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(link.absoluteString, forType: .string)
-            info = L("Enlace público copiado. Cualquiera que lo tenga podrá ver «\(file.name)». Para revocarlo, usa la web del proveedor.")
+            info = account.capabilities.links.manage
+                ? L("Enlace público copiado. Cualquiera que lo tenga podrá ver «\(file.name)». Para revocarlo, abre «Enlaces públicos…» en su menú.")
+                : L("Enlace público copiado. Cualquiera que lo tenga podrá ver «\(file.name)». Para revocarlo, usa la web del proveedor.")
         } catch { self.error = error.localizedDescription }
     }
 

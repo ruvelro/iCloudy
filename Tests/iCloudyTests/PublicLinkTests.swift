@@ -73,6 +73,31 @@ final class PublicLinkTests: XCTestCase {
         XCTAssertNil(LinkFeatures.nextcloud.refusal(of: PublicLinkOptions(access: .edit, expires: expiry, password: "x", allowDownload: true), for: item("/a", folder: true), cloud: .webdav))
     }
 
+    func testTheSheetsOpenOnlyWhereLinksCanBeManagedAndRowsSayWhatLimitsALink() {
+        let model = AppModel()
+        let ftp = Account(id: "ftp:nas", cloud: .ftp, name: "nas", email: "ana@nas", clientID: "", clientSecret: nil, serverURL: "ftp://nas")
+        model.requestPublicLinks(item("/a"), account: ftp)
+        XCTAssertNil(model.publicLinkManager); XCTAssertNotNil(model.error)
+        model.error = nil
+        model.requestLinkInventory(ftp)
+        XCTAssertNil(model.linkInventory)
+        let onedrive = Account(id: "ms", cloud: .microsoft, name: "OneDrive", email: "ana@example.com", clientID: "", clientSecret: nil)
+        model.requestLinkInventory(onedrive)
+        XCTAssertEqual(model.linkInventory?.id, "ms", "OneDrive abre la lista para explicar por qué no la hay")
+        model.requestPublicLinks(item("X"), account: onedrive)
+        XCTAssertEqual(model.publicLinkManager?.file.id, "X")
+
+        let now = ISO8601DateFormatter().date(from: "2026-12-01T10:00:00Z")!
+        let link = PublicLink(handle: "h", file: item("X"), url: nil, access: .edit, expires: expiry, hasPassword: true,
+                              allowsDownload: false, audience: "Solo personas concretas", isInherited: true)
+        let details = PublicLinkRow.details(link, now: now)
+        for part in ["Ver y editar", "Caducó el", "Con contraseña", "Sin descarga", "Solo personas concretas", "Heredado"] {
+            XCTAssertTrue(details.contains(part), "\(part) en \(details)")
+        }
+        XCTAssertTrue(PublicLinkRow.expired(link, now: now))
+        XCTAssertTrue(PublicLinkRow.details(PublicLink(handle: "h", file: item("X"), url: nil), now: now).contains("Sin caducidad"))
+    }
+
     func testDatesAreWrittenTheWayEachAPIExpects() {
         XCTAssertEqual(LinkDates.iso(expiry), "2026-11-30T22:59:59Z", "Dropbox exige segundos enteros y Z")
         var madrid = Calendar(identifier: .gregorian); madrid.timeZone = TimeZone(identifier: "Europe/Madrid")!
