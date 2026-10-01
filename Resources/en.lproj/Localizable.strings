@@ -1011,3 +1011,21 @@
 "«%@» cambió en la nube mientras se descargaba. Se volverá a descargar la versión nueva." = "“%@” changed in the cloud while it was downloading. The new version will be downloaded again.";
 "%lld sin suma del proveedor (solo se comprobó el tamaño)" = "%lld without a provider checksum (only the size was checked)";
 "%lld exportados de Google, sin suma que comparar" = "%lld exported from Google, with no checksum to compare";
+/* Comparador de carpetas y buscador de duplicados. */
+"Esta cuenta no permite calcular el hash de sus archivos." = "This account cannot hash its files.";
+"Ese elemento no está en este Mac." = "That item is not on this Mac.";
+"Solo en A" = "Only in A";
+"Solo en B" = "Only in B";
+"Distintos" = "Different";
+"Sin confirmar" = "Unconfirmed";
+"Idénticos" = "Identical";
+"Idéntico · %@" = "Identical · %@";
+"Probablemente idéntico · mismo tamaño y fecha" = "Probably identical · same size and date";
+"Carpeta en un lado y archivo en el otro" = "Folder on one side, file on the other";
+"Tamaño distinto" = "Different size";
+"Contenido distinto" = "Different content";
+"más reciente en A" = "newer in A";
+"más reciente en B" = "newer in B";
+"Documento de Google: sin tamaño ni hash que comparar" = "Google document: no size or hash to compare";
+"Mismo tamaño y fecha distinta; sin hash que lo confirme" = "Same size, different date; no hash to confirm it";
+"El proveedor no informa del tamaño" = "The provider does not report the size";
