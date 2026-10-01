@@ -5,7 +5,12 @@ import UniformTypeIdentifiers
 
 struct ExplorerView: View {
     @ObservedObject var model: AppModel
-    @State var selected: Set<CloudFile.ID> = []
+    /// The focused tab's selection. It used to be state of this view, which every tab would have had to share; now
+    /// each tab keeps its own and moving to another folder clears it in the model.
+    var selected: Set<CloudFile.ID> {
+        get { model.selectedIDs }
+        nonmutating set { model.selectedIDs = newValue }
+    }
     @State var dropTarget = false
     /// The transfers drawer starts closed and opens itself when something is transferring.
     @State var showTransfers = false
@@ -41,8 +46,6 @@ struct ExplorerView: View {
         .sheet(item: Binding(get: { model.queue.conflict }, set: { _ in })) { request in
             ConflictView(queue: model.queue, request: request)
         }
-        .onChange(of: model.folderID) { selected.removeAll() }
-        .onChange(of: model.selectedAccountID) { selected.removeAll() }
         .onChange(of: selected) {
             guard model.preview.isVisible, Prefs.bool(Prefs.previewFollowsSelection, default: true) else { return }
             // Follow the selection like Quick Look, but wait for the arrow keys to settle: each preview is a download.

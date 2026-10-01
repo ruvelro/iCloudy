@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 
 extension ExplorerView {
     var fileList: some View {
-        Table(model.visibleFiles, selection: $selected) {
+        Table(model.visibleFiles, selection: $model.selectedIDs) {
             TableColumn("Nombre") { file in
                 HStack(spacing: 8) {
                     // Folders carry no badge: iCloudy cannot claim that everything inside is present and current.

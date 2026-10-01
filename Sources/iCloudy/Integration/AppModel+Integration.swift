@@ -187,6 +187,6 @@ extension AppModel {
         guard accounts.contains(where: { $0.id == favorite.accountID }) else { error = L("Conecta la cuenta de este favorito."); return }
         preview.close()
         showGlobalSearch = false; globalSearch.cancel()
-        selectedAccountID = favorite.accountID; collection = favorite.collection; path = favorite.path + (favorite.file.isFolder ? [favorite.file] : []); files = []; search = ""; reload()
+        go(to: BrowserLocation(accountID: favorite.accountID, collection: favorite.collection, path: favorite.path + (favorite.file.isFolder ? [favorite.file] : [])))
     }
 }
