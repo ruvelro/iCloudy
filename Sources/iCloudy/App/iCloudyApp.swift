@@ -40,7 +40,39 @@ struct iCloudyApp: App {
         .defaultSize(width: 1120, height: 740)
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
-            CommandGroup(replacing: .newItem) { }
+            // There is still one window; ⌘T opens a tab in it instead of a second one.
+            CommandGroup(replacing: .newItem) {
+                Button("Nueva pestaña") { model.newTab() }.keyboardShortcut("t", modifiers: .command)
+                Divider()
+                // F5 and F6, as in the two-pane file managers they come from.
+                Button("Copiar al otro panel") { model.sendSelectionToOtherPane(move: false) }
+                    .keyboardShortcut(KeyEquivalent.function(5), modifiers: []).disabled(!model.isSplit)
+                Button("Mover al otro panel") { model.sendSelectionToOtherPane(move: true) }
+                    .keyboardShortcut(KeyEquivalent.function(6), modifiers: []).disabled(!model.isSplit)
+            }
+            CommandGroup(replacing: .saveItem) {
+                // ⌘W closes a tab while there are others and the window with the last one. Any other window with
+                // the focus (Configuración, the preview) closes as it always did.
+                Button("Cerrar pestaña") {
+                    guard let window = NSApp.keyWindow else { return }
+                    if window === ExplorerWindowReader.window { model.closeTabOrWindow(window) } else { window.performClose(nil) }
+                }.keyboardShortcut("w", modifiers: .command)
+                Button("Cerrar ventana") { NSApp.keyWindow?.performClose(nil) }.keyboardShortcut("w", modifiers: [.command, .shift])
+            }
+            CommandGroup(after: .windowArrangement) {
+                Divider()
+                Button("Mostrar la pestaña anterior") { model.cycleTabs(forward: false) }
+                    .keyboardShortcut(.tab, modifiers: [.control, .shift]).disabled(model.tabCount < 2)
+                Button("Mostrar la pestaña siguiente") { model.cycleTabs(forward: true) }
+                    .keyboardShortcut(.tab, modifiers: .control).disabled(model.tabCount < 2)
+                Menu("Ir a la pestaña") {
+                    ForEach(1...8, id: \.self) { number in
+                        Button("Pestaña \(number)") { model.showTab(number: number) }
+                            .keyboardShortcut(KeyEquivalent(Character(String(number))), modifiers: .command)
+                    }
+                    Button("Última pestaña") { model.showTab(number: 9) }.keyboardShortcut("9", modifiers: .command)
+                }
+            }
             CommandGroup(after: .appInfo) {
                 Button("Añadir cuenta…") { model.showConnect = true }.keyboardShortcut("n", modifiers: [.command, .shift])
                 Button("Subir archivos…") { Task { await model.pickUpload() } }.disabled(!model.canWrite)
@@ -50,6 +82,8 @@ struct iCloudyApp: App {
                 Button("Buscar duplicados…") { model.openDuplicateFinder() }.disabled(model.accounts.isEmpty)
             }
             CommandGroup(after: .toolbar) {
+                Button(model.isSplit ? "Cerrar el segundo panel" : "Dividir en dos paneles") { model.toggleSplit() }
+                    .keyboardShortcut("d", modifiers: [.command, .shift])
                 Toggle("Mostrar iCloudy en la barra de menús", isOn: $menuBarEnabled)
             }
         }

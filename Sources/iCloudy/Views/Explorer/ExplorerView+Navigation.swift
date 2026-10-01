@@ -109,64 +109,27 @@ extension ExplorerView {
                 GlobalSearchView(model: model, search: model.globalSearch)
             } else {
             VStack(spacing: 0) {
-                header
-                Divider()
+                // With one pane its header spans the transfers drawer, as it always did; with two, each pane has
+                // its own tabs and header and they sit beside the drawer.
+                if !model.isSplit {
+                    if model.workspace.panes[0].tabs.count > 1 {
+                        BrowserTabBar(model: model, pane: 0)
+                        Divider()
+                    }
+                    header(0)
+                    Divider()
+                }
                 // The file area and the transfers drawer sit side by side, so opening the drawer narrows the
                 // listing instead of eating the height where the files are.
                 HStack(spacing: 0) {
-                    VStack(spacing: 0) {
-                    if model.account == nil {
-                        // Greedy, so the block above it stays anchored to the top instead of floating in the middle.
-                        ContentUnavailableView {
-                            Label("Tus archivos, en un solo lugar", systemImage: "cloud")
-                        } description: {
-                            Text("Conecta una nube para explorar tus carpetas y transferir archivos cuando lo necesites.")
-                        } actions: {
-                            Button("Conectar una cuenta") { model.showConnect = true }.buttonStyle(.borderedProminent)
-                            Button("Explorar demo sin cuenta") { model.enableDemo() }
-                        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    if model.isSplit {
+                        HSplitView {
+                            paneColumn(0)
+                            paneColumn(1)
+                        }
                     } else {
-                        if model.account?.isDemo == true {
-                            HStack {
-                                Label("DEMO LOCAL · Ningún archivo se envía a Internet", systemImage: "testtube.2").font(.caption)
-                                Spacer()
-                                Toggle("Sin conexión", isOn: $model.demoOffline).toggleStyle(.checkbox)
-                                Button("Simular corte") { model.failNextDemoTransfer() }.help("La siguiente operación fallará una vez para probar el reintento")
-                            }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
-                        }
-                        if !model.isOnline {
-                            HStack {
-                                Label("Sin conexión. Las transferencias se han pausado y se reanudarán solas al volver la red; los listados pueden no estar al día.", systemImage: "wifi.slash")
-                                    .font(.caption).fixedSize(horizontal: false, vertical: true)
-                                Spacer()
-                            }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
-                        }
-                        if let account = model.account, model.isExpired(account) {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    if model.isRenewing(account) {
-                                        Label("Renovando la sesión sin molestarte. Si no sale, aparecerá el botón para entrar a mano.", systemImage: "arrow.clockwise")
-                                            .font(.caption).fixedSize(horizontal: false, vertical: true)
-                                    } else {
-                                        Label("La sesión de esta cuenta ha caducado o se ha revocado. Los archivos no se pueden consultar hasta volver a conectarla.", systemImage: "exclamationmark.triangle.fill")
-                                            .font(.caption).fixedSize(horizontal: false, vertical: true)
-                                    }
-                                    // What the provider said, when it said anything. Without this, a provider that
-                                    // drops sessions for its own reasons is impossible to diagnose from a report.
-                                    if let reason = model.expiryReason(account) {
-                                        Text(reason).font(.caption2).foregroundStyle(.secondary)
-                                            .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                                    }
-                                }
-                                Spacer()
-                                if model.isRenewing(account) { ProgressView().controlSize(.small) }
-                                else { Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.connecting) }
-                            }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
-                        }
-                        CryptomatorBanner(model: model)
-                        fileBrowser
+                        paneBody(0)
                     }
-                    }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     if showTransfers {
                         Divider()
                         TransferPanel(model: model, queue: model.queue, history: model.history)
@@ -206,6 +169,7 @@ extension ExplorerView {
             .background(Color(nsColor: .windowBackgroundColor))
         }
         .background(ExplorerWindowChrome())
+        .background(ExplorerWindowReader())
         .toolbarBackground(.hidden, for: .windowToolbar)
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
@@ -232,42 +196,116 @@ extension ExplorerView {
         }
     }
 
-    var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    /// One pane's content below its header: the welcome, the banners about its account and its list.
+    func paneBody(_ pane: Int) -> some View {
+        let tab = model.tab(inPane: pane)
+        let paneAccount = model.account(of: tab)
+        return VStack(spacing: 0) {
+                    if paneAccount == nil {
+                        // Greedy, so the block above it stays anchored to the top instead of floating in the middle.
+                        ContentUnavailableView {
+                            Label("Tus archivos, en un solo lugar", systemImage: "cloud")
+                        } description: {
+                            Text("Conecta una nube para explorar tus carpetas y transferir archivos cuando lo necesites.")
+                        } actions: {
+                            Button("Conectar una cuenta") { model.showConnect = true }.buttonStyle(.borderedProminent)
+                            Button("Explorar demo sin cuenta") { model.enableDemo() }
+                        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        if paneAccount?.isDemo == true {
+                            HStack {
+                                Label("DEMO LOCAL · Ningún archivo se envía a Internet", systemImage: "testtube.2").font(.caption)
+                                Spacer()
+                                Toggle("Sin conexión", isOn: $model.demoOffline).toggleStyle(.checkbox)
+                                Button("Simular corte") { model.failNextDemoTransfer() }.help("La siguiente operación fallará una vez para probar el reintento")
+                            }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
+                        }
+                        if !model.isOnline {
+                            HStack {
+                                Label("Sin conexión. Las transferencias se han pausado y se reanudarán solas al volver la red; los listados pueden no estar al día.", systemImage: "wifi.slash")
+                                    .font(.caption).fixedSize(horizontal: false, vertical: true)
+                                Spacer()
+                            }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
+                        }
+                        if let account = paneAccount, model.isExpired(account) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    if model.isRenewing(account) {
+                                        Label("Renovando la sesión sin molestarte. Si no sale, aparecerá el botón para entrar a mano.", systemImage: "arrow.clockwise")
+                                            .font(.caption).fixedSize(horizontal: false, vertical: true)
+                                    } else {
+                                        Label("La sesión de esta cuenta ha caducado o se ha revocado. Los archivos no se pueden consultar hasta volver a conectarla.", systemImage: "exclamationmark.triangle.fill")
+                                            .font(.caption).fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    // What the provider said, when it said anything. Without this, a provider that
+                                    // drops sessions for its own reasons is impossible to diagnose from a report.
+                                    if let reason = model.expiryReason(account) {
+                                        Text(reason).font(.caption2).foregroundStyle(.secondary)
+                                            .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                                Spacer()
+                                if model.isRenewing(account) { ProgressView().controlSize(.small) }
+                                else { Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.connecting) }
+                            }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
+                        }
+                        if pane == model.workspace.focusedPane { CryptomatorBanner(model: model) }
+                        tabFileBrowser(pane)
+                    }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    /// The header of one pane. It reads that pane's tab; its buttons act on the focused pane, which is this one by
+    /// the time they are clicked. Only the focused pane's buttons answer to the keyboard.
+    func header(_ pane: Int) -> some View {
+        let tab = model.tab(inPane: pane)
+        let paneAccount = model.account(of: tab)
+        let keys = pane == model.workspace.focusedPane
+        return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(model.path.last?.name ?? model.collection.title).font(.system(size: 27, weight: .semibold))
-                    Text(model.account?.email ?? L("Un explorador sencillo para tus nubes")).foregroundStyle(.secondary)
+                    Text(tab.path.last?.name ?? tab.collection.title).font(.system(size: model.isSplit ? 21 : 27, weight: .semibold)).lineLimit(1)
+                    Text(paneAccount?.email ?? L("Un explorador sencillo para tus nubes")).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
-                if model.showingCachedListing {
-                    Label(model.loading ? L("Última copia conocida · actualizando…") : L("Última copia conocida · sin respuesta del proveedor"), systemImage: "clock.arrow.circlepath")
+                if tab.showingCachedListing {
+                    Label(tab.loading ? L("Última copia conocida · actualizando…") : L("Última copia conocida · sin respuesta del proveedor"), systemImage: "clock.arrow.circlepath")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                if model.loading { ProgressView().controlSize(.small) }
+                if tab.loading { ProgressView().controlSize(.small) }
             }
-            CollectionPicker(choices: collectionChoices, selection: model.collection) { model.show($0) }
+            CollectionPicker(choices: collectionChoices(paneAccount), selection: tab.collection) { model.show($0) }
             HStack {
+                // Back and forward retrace the places this tab has shown, across accounts and collections; the
+                // chevron beside them climbs to the enclosing folder, as it always did.
+                ControlGroup {
+                    Button { model.goBack() } label: { Image(systemName: "arrow.left") }
+                        .accessibilityLabel("Atrás").help("Atrás (⌘[)")
+                        .keyboardShortcut(keys ? KeyboardShortcut("[", modifiers: .command) : nil).disabled(tab.back.isEmpty)
+                    Button { model.goForward() } label: { Image(systemName: "arrow.right") }
+                        .accessibilityLabel("Adelante").help("Adelante (⌘])")
+                        .keyboardShortcut(keys ? KeyboardShortcut("]", modifiers: .command) : nil).disabled(tab.forward.isEmpty)
+                }.fixedSize()
                 Button { model.back(to: max(0, model.path.count - 1)) } label: { Image(systemName: "chevron.left") }
                     .accessibilityLabel("Volver a la carpeta anterior").help("Volver a la carpeta anterior")
-                    .keyboardShortcut(.upArrow, modifiers: .command).disabled(model.path.isEmpty)
+                    .keyboardShortcut(keys ? KeyboardShortcut(.upArrow, modifiers: .command) : nil).disabled(tab.path.isEmpty)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 5) {
-                        Crumb(title: model.collection == .files ? L("Inicio") : model.collection.title,
-                              symbol: model.collection.icon, current: model.path.isEmpty) { model.back(to: 0) }
-                        ForEach(Array(model.path.enumerated()), id: \.element.id) { index, folder in
+                        Crumb(title: tab.collection == .files ? L("Inicio") : tab.collection.title,
+                              symbol: tab.collection.icon, current: tab.path.isEmpty) { model.back(to: 0) }
+                        ForEach(Array(tab.path.enumerated()), id: \.element.id) { index, folder in
                             Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
-                            Crumb(title: folder.name, symbol: nil, current: index == model.path.count - 1) { model.back(to: index + 1) }
+                            Crumb(title: folder.name, symbol: nil, current: index == tab.path.count - 1) { model.back(to: index + 1) }
                         }
                     }.padding(.vertical, 1)
                 }
-                ChromeField("Filtrar esta carpeta", symbol: "line.3.horizontal.decrease", text: $model.search).frame(width: 210)
+                ChromeField("Filtrar esta carpeta", symbol: "line.3.horizontal.decrease", text: model.search(inPane: pane)).frame(width: model.isSplit ? 150 : 210)
             }
-        }.padding(.horizontal, Layout.margin).padding(.top, 20).padding(.bottom, 14)
+        }.padding(.horizontal, Layout.margin).padding(.top, model.isSplit ? 14 : 20).padding(.bottom, 14)
     }
 
     /// What the collection picker offers. Never empty, so the row it lives in always has the same height.
-    var collectionChoices: [Collection] {
-        model.account.map { AppModel.collections(for: $0) } ?? [.files]
+    func collectionChoices(_ account: Account?) -> [Collection] {
+        account.map { AppModel.collections(for: $0) } ?? [.files]
     }
 }

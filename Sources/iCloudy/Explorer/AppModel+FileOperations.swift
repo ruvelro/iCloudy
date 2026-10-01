@@ -64,7 +64,8 @@ extension AppModel {
             self?.enqueueCrossCloud(files, from: source, to: target, parent: parent, destinationPath: destinationPath, seeds: seeds)
         }
     }
-    func enqueueCrossCloud(_ files: [CloudFile], from source: Account, to target: Account, parent: String, destinationPath: [CloudFile], seeds: [[String: FileRecord]]?) {
+    /// Returns the jobs queued, none if the queue refused them.
+    @discardableResult func enqueueCrossCloud(_ files: [CloudFile], from source: Account, to target: Account, parent: String, destinationPath: [CloudFile], seeds: [[String: FileRecord]]?) -> [Transfer] {
         let label = ([target.email] + destinationPath.map(\.name)).joined(separator: " / ")
         let batch = UUID()
         let jobs = files.enumerated().map { index, file -> Transfer in
@@ -75,7 +76,8 @@ extension AppModel {
             return job
         }
         do { try queue.add(jobs); info = L("\(jobs.count == 1 ? L("«\(files[0].name)»") : L("\(jobs.count) elementos")) en cola hacia \(accountTitle(target)). Sigue el progreso en Transferencias.") }
-        catch { self.error = error.localizedDescription }
+        catch { self.error = error.localizedDescription; return [] }
+        return jobs
     }
 
     /// Checks cycles and name clashes first, then processes item by item and stops at the first failure.
@@ -255,7 +257,8 @@ extension AppModel {
             }
         }
         try LocalStore.save(favorites, to: favoritesURL)
-        if selectedAccountID == account.id { path = path.map(change.file); files = files.map(change.file) }
+        // Every tab showing the item, or with it in its history, follows it; not only the one with the focus.
+        workspace.updateAll { $0.remap(change, accountID: account.id) }
         listings.removeAll(accountID: account.id)
         localCopies.remap(change, accountID: account.id)
         offlineFollow(change, account: account, destinationPath: destinationPath)

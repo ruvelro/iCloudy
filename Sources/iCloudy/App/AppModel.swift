@@ -5,12 +5,39 @@ import Combine
 @MainActor
 final class AppModel: ObservableObject {
     @Published var accounts: [Account] = []
-    @Published var selectedAccountID: String?
-    @Published var files: [CloudFile] = [] { didSet { updateVisibleFiles() } }
-    @Published var path: [CloudFile] = []
+    /// Panes and tabs, each with its own place and listing. The properties below forward to the focused pane's
+    /// active tab, so everything that asks for "the open folder" keeps getting exactly that.
+    @Published var workspace = ExplorerWorkspace(panes: [ExplorerPane(tabs: [AppModel.newBrowser()])])
+    let workspaceStore = WorkspaceStore()
+    /// A move from one pane to another account, waiting for confirmation.
+    @Published var pendingPaneMove: PaneMoveRequest?
+    let paneTransfers = PaneTransfers()
+    var selectedAccountID: String? {
+        get { workspace.current.accountID }
+        set { workspace.current.accountID = newValue }
+    }
+    var files: [CloudFile] {
+        get { workspace.current.files }
+        set { workspace.current.files = newValue }
+    }
+    var path: [CloudFile] {
+        get { workspace.current.path }
+        set { workspace.current.path = newValue }
+    }
     /// Which top-level view of the selected account is showing. `path` hangs below it.
-    @Published var collection: Collection = .files
-    @Published var loading = false
+    var collection: Collection {
+        get { workspace.current.collection }
+        set { workspace.current.collection = newValue }
+    }
+    var loading: Bool {
+        get { workspace.current.loading }
+        set { workspace.current.loading = newValue }
+    }
+    /// What is selected in the focused tab. Each tab keeps its own, so switching back finds it as it was left.
+    var selectedIDs: Set<CloudFile.ID> {
+        get { workspace.current.selection }
+        set { workspace.current.selection = newValue }
+    }
     @Published var error: String?
     /// Non-error feedback, e.g. "link copied". Shown in a plain alert.
     @Published var info: String?
@@ -52,10 +79,13 @@ final class AppModel: ObservableObject {
     @Published var connecting = false
     @Published var connectionError: String?
     @Published var showConnect = false
-    @Published var search = "" { didSet { updateVisibleFiles() } }
+    var search: String {
+        get { workspace.current.search }
+        set { workspace.current.search = newValue }
+    }
     @Published var favorites: [Favorite] = [] { didSet { favoriteKeys = Set(favorites.map(\.id)) } }
     /// Filtered and sorted once per change of `files`, `search` or `sortMode`, not on every render.
-    @Published var visibleFiles: [CloudFile] = []
+    var visibleFiles: [CloudFile] { workspace.current.visibleFiles }
     @Published var showGlobalSearch = false
     @Published var appearanceAccount: Account?
     @Published var appearances: [String: AccountAppearance] = [:]
@@ -64,8 +94,15 @@ final class AppModel: ObservableObject {
     @Published var expiredAccountIDs: Set<String> = []
     /// Why each of them ended, when the provider said anything worth repeating.
     @Published var expiryReasons: [String: String] = [:]
-    @Published var viewMode = UserDefaults.standard.string(forKey: "viewMode") ?? "list" { didSet { UserDefaults.standard.set(viewMode, forKey: "viewMode") } }
-    @Published var sortMode = "name" { didSet { updateVisibleFiles() } }
+    /// The last one chosen is also what a brand-new tab starts with.
+    var viewMode: String {
+        get { workspace.current.viewMode }
+        set { workspace.current.viewMode = newValue; UserDefaults.standard.set(newValue, forKey: "viewMode") }
+    }
+    var sortMode: String {
+        get { workspace.current.sortMode }
+        set { workspace.current.sortMode = newValue }
+    }
     @Published var showNameDialog = false
     @Published var editName = ""
     @Published var editingFile: CloudFile?
@@ -88,7 +125,10 @@ final class AppModel: ObservableObject {
     let listings = ListingCache()
     @Published var isOnline = true
     /// True while the table shows the last known listing instead of a fresh answer from the provider.
-    @Published var showingCachedListing = false
+    var showingCachedListing: Bool {
+        get { workspace.current.showingCachedListing }
+        set { workspace.current.showingCachedListing = newValue }
+    }
     /// True until the stored accounts have been read from the Keychain, which happens after the window is on screen.
     @Published var loadingAccounts = true
     let oauth = OAuth()
@@ -100,8 +140,8 @@ final class AppModel: ObservableObject {
     let quotas = StorageQuotaController(refreshInterval: AppModel.quotaRefreshInterval)
     var quotaSubscription: AnyCancellable?
     var domainSubscription: AnyCancellable?
-    var navigationTask: Task<Void, Never>?
-    var navigationID = UUID()
+    /// The listing each tab is waiting for, so a new request for the same tab cancels the old one.
+    var navigationTasks: [BrowserState.ID: Task<Void, Never>] = [:]
     var favoriteKeys: Set<String> = []
     var subscription: AnyCancellable?
     var keepAlive: Task<Void, Never>?
@@ -132,20 +172,16 @@ final class AppModel: ObservableObject {
     var account: Account? { accounts.first { $0.id == selectedAccountID } ?? cryptomator.account(selectedAccountID) }
     var folderID: String { path.last?.id ?? collection.rootID }
     /// Recents and shared lists are not folders: nothing can be uploaded or created in them until a real folder is opened.
-    var canWrite: Bool { account != nil && (collection == .files || !path.isEmpty) }
+    var canWrite: Bool { account != nil && workspace.current.isWritableLocation }
     /// The trash shows what was binned; the only things to do with it are restoring it and deleting it for good.
     var inTrash: Bool { collection == .trash }
     var transfers: [Transfer] { queue.items }
     var hasActiveTransfers: Bool { queue.hasActive }
     var location: String { ([account?.email ?? ""] + (collection == .files ? [] : [collection.title]) + path.map(\.name)).joined(separator: " / ") }
-    func updateVisibleFiles() {
-        let term = search, mode = sortMode
-        visibleFiles = files.filter { term.isEmpty || $0.name.localizedCaseInsensitiveContains(term) }.sorted { a, b in
-            if a.isFolder != b.isFolder { return a.isFolder }
-            if mode == "size", a.size != b.size { return (a.size ?? 0) > (b.size ?? 0) }
-            if mode == "date", a.modified != b.modified { return (a.modified ?? .distantPast) > (b.modified ?? .distantPast) }
-            return a.name.localizedStandardCompare(b.name) == .orderedAscending
-        }
+    func updateVisibleFiles() { workspace.current.updateVisibleFiles() }
+    /// A tab as the explorer opens one from nothing: no account yet, and the list drawn the way it was drawn last.
+    static func newBrowser() -> BrowserState {
+        BrowserState(viewMode: UserDefaults.standard.string(forKey: "viewMode") ?? "list")
     }
     init() {
         do { let store = try AppearanceStore(); appearanceStore = store; appearances = store.values }
@@ -154,6 +190,9 @@ final class AppModel: ObservableObject {
         catch { self.error = error.localizedDescription }
         // Property observers do not run while an initializer sets its own properties.
         favoriteKeys = Set(favorites.map(\.id))
+        // The tabs of the last session, put right against the accounts once those have been read.
+        if let restored = workspaceStore.load() { workspace = restored }
+        workspaceStore.watch($workspace)
         if UserDefaults.standard.bool(forKey: "demoEnabled") { enableDemo(select: false) }
         queue.client = { [weak self] id in
             guard let self, let account = self.accounts.first(where: { $0.id == id }) ?? self.cryptomator.account(id) else {
@@ -161,7 +200,10 @@ final class AppModel: ObservableObject {
             }
             return try self.client(account)
         }
-        queue.didFinish = { [weak self] transfer in self?.history.record(transfer); self?.mirrors.handleFinished(transfer) }
+        queue.didFinish = { [weak self] transfer in
+            self?.history.record(transfer); self?.mirrors.handleFinished(transfer)
+            self?.finishPaneMove(transfer)
+        }
         queue.didStoreLocalCopy = { [weak self] copy in self?.localCopies.record(copy) }
         connectivity.onChange = { [weak self] online in
             guard let self else { return }
@@ -171,12 +213,12 @@ final class AppModel: ObservableObject {
             // network is away is one the provider may have given up on: the first thing to do is prove it is alive.
             if online {
                 touchIdleSessions(force: true, note: "ha vuelto la red")
-                if account != nil { reload() }
+                reloadVisible()
             }
         }
         queue.didComplete = { [weak self] id in
             guard let self else { return }
-            if self.selectedAccountID == id { self.reload(fresh: true) }
+            self.reloadVisible(accountID: id, fresh: true)
             if let account = self.accounts.first(where: { $0.id == id }) { self.refreshStorage(account, force: true) }
         }
         // Only structural queue changes reach the explorer; progress ticks re-render the transfer panel alone.

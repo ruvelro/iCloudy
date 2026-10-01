@@ -26,7 +26,8 @@ extension AppModel {
         $isOnline.removeDuplicates().dropFirst().filter { $0 }
             .sink { [weak self] _ in self?.offlineRefresher.refresh() }.store(in: &refresher.subscriptions)
         // A listing that shows a pinned file changed, or a new file inside a pinned folder, refreshes that pin.
-        $files.debounce(for: .milliseconds(500), scheduler: RunLoop.main)
+        // Files live in the focused tab of the workspace; only that listing is compared, like the rest of this hook.
+        $workspace.map(\.current.files).removeDuplicates().debounce(for: .milliseconds(500), scheduler: RunLoop.main)
             .sink { [weak self] files in self?.offlineObserve(files) }.store(in: &refresher.subscriptions)
         refresher.timer = Task { [weak self] in
             while !Task.isCancelled {
@@ -59,6 +60,11 @@ extension AppModel {
     func offlineStatus(_ file: CloudFile) -> OfflineStatus? {
         guard let account else { return nil }
         return offline.status(for: file, accountID: account.id)
+    }
+    /// The same, for a tab that need not be the focused one.
+    func offlineStatus(_ file: CloudFile, in tab: BrowserState) -> OfflineStatus? {
+        guard let id = tab.accountID else { return nil }
+        return offline.status(for: file, accountID: id)
     }
 
     /// The copy to show instead of downloading. Online, only one that matches the listing; offline, any.

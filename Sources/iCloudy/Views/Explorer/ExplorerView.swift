@@ -5,8 +5,14 @@ import UniformTypeIdentifiers
 
 struct ExplorerView: View {
     @ObservedObject var model: AppModel
-    @State var selected: Set<CloudFile.ID> = []
-    @State var dropTarget = false
+    /// The focused tab's selection. It used to be state of this view, which every tab would have had to share; now
+    /// each tab keeps its own and moving to another folder clears it in the model.
+    var selected: Set<CloudFile.ID> {
+        get { model.selectedIDs }
+        nonmutating set { model.selectedIDs = newValue }
+    }
+    /// The pane files from the Finder are being dragged over, if any.
+    @State var dropTarget: Int?
     /// The transfers drawer starts closed and opens itself when something is transferring.
     @State var showTransfers = false
     @State var confirmDisconnect = false
@@ -16,13 +22,23 @@ struct ExplorerView: View {
     /// Which half of the sidebar is showing. Favourites used to live under every account, so reaching them on a Mac
     /// with six clouds connected meant scrolling past all of them.
     @State var sidebarTab = SidebarTab.clouds
-    @FocusState var gridFocused: Bool
+    /// Which pane's list has the keyboard. Tab moves it to the other pane when there are two.
+    @FocusState var focusedList: Int?
     /// Where a run of files starts when one is taken with Shift held down.
     @State var anchor: CloudFile.ID?
 
     var body: some View {
         navigation
         .cryptomatorSheets(model: model)
+        .background(PaneKeyMonitor(enabled: model.isSplit) { model.focusOtherPane(); focusedList = model.workspace.focusedPane })
+        .confirmationDialog(paneMoveTitle, isPresented: Binding(get: { model.pendingPaneMove != nil }, set: { if !$0 { model.pendingPaneMove = nil } }), titleVisibility: .visible, presenting: model.pendingPaneMove) { request in
+            Button("Copiar y luego quitar el original", role: .destructive) { model.pendingPaneMove = nil; model.startPaneMove(request) }
+            Button("Solo copiar") {
+                model.pendingPaneMove = nil
+                model.enqueueCrossCloud(request.files, from: request.source, to: request.target, parent: request.parent, destinationPath: request.destinationPath)
+            }
+            Button("Cancelar", role: .cancel) { model.pendingPaneMove = nil }
+        } message: { request in Text(paneMoveMessage(request)) }
         .sheet(isPresented: $model.showConnect) { ConnectView(model: model) }
         .sheet(item: $model.appearanceAccount) { account in AccountAppearanceEditor(model: model, account: account) }
         .sheet(isPresented: $model.showNameDialog) {
@@ -46,8 +62,6 @@ struct ExplorerView: View {
             ConflictView(queue: model.queue, request: request)
         }
         .background(TransferPlanHost(planner: model.planner))
-        .onChange(of: model.folderID) { selected.removeAll() }
-        .onChange(of: model.selectedAccountID) { selected.removeAll() }
         .onChange(of: selected) {
             guard model.preview.isVisible, Prefs.bool(Prefs.previewFollowsSelection, default: true) else { return }
             // Follow the selection like Quick Look, but wait for the arrow keys to settle: each preview is a download.
