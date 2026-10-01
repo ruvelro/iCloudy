@@ -46,6 +46,8 @@ struct iCloudyApp: App {
                 Button("Subir archivos…") { Task { await model.pickUpload() } }.disabled(!model.canWrite)
                 Button("Subir el portapapeles") { model.uploadFromPasteboard() }.disabled(!model.canWrite)
                 Button("Buscar en todas las nubes") { model.preview.close(); model.showGlobalSearch = true }.keyboardShortcut("f", modifiers: [.command, .shift])
+                Button("Comparar carpetas…") { model.openComparator() }.disabled(model.accounts.isEmpty)
+                Button("Buscar duplicados…") { model.openDuplicateFinder() }.disabled(model.accounts.isEmpty)
             }
             CommandGroup(after: .toolbar) {
                 Toggle("Mostrar iCloudy en la barra de menús", isOn: $menuBarEnabled)
