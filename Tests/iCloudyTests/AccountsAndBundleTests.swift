@@ -35,6 +35,32 @@ final class AccountsAndBundleTests: XCTestCase {
         XCTAssertTrue(AppModel.dependents(of: parent, in: [parent]).isEmpty)
     }
 
+    func testTheCloudsKeepTheOrderTheyAreGiven() {
+        let ids = ["a", "b", "c", "d"]
+        let all = ids.map { Account(id: $0, cloud: .webdav, name: $0, email: $0, clientID: "", clientSecret: nil) }
+
+        // Dragging one onto another puts it there, from either direction.
+        XCTAssertEqual(AppModel.moving("a", to: "c", in: all).map(\.id), ["b", "c", "a", "d"])
+        XCTAssertEqual(AppModel.moving("d", to: "b", in: all).map(\.id), ["a", "d", "b", "c"])
+        XCTAssertEqual(AppModel.moving("a", to: "a", in: all).map(\.id), ids)
+        XCTAssertEqual(AppModel.moving("x", to: "a", in: all).map(\.id), ids)
+
+        // One place at a time, stopping at either end.
+        XCTAssertEqual(AppModel.moving("c", by: -1, in: all).map(\.id), ["a", "c", "b", "d"])
+        XCTAssertEqual(AppModel.moving("c", by: 1, in: all).map(\.id), ["a", "b", "d", "c"])
+        XCTAssertEqual(AppModel.moving("a", by: -1, in: all).map(\.id), ids)
+        XCTAssertEqual(AppModel.moving("d", by: 1, in: all).map(\.id), ids)
+
+        // Reconnecting or renewing an account keeps it where it was. O2 renews itself every hour or so, and taking
+        // the account out and appending it again sent it to the bottom each time.
+        var renewed = all[1]; renewed.options["flavor"] = "nextcloud"
+        let placed = AppModel.placing(renewed, in: all)
+        XCTAssertEqual(placed.map(\.id), ids)
+        XCTAssertEqual(placed[1].flavor, "nextcloud")
+        let new = Account(id: "e", cloud: .webdav, name: "e", email: "e", clientID: "", clientSecret: nil)
+        XCTAssertEqual(AppModel.placing(new, in: all).map(\.id), ids + ["e"])
+    }
+
     func testOnlyOneAlertAtATimeAndTheErrorGoesFirst() {
         // SwiftUI presents one alert at a time, so an error and a piece of good news arriving together meant the
         // second never appeared. Sending files to the bin and reloading right after did exactly that.

@@ -46,6 +46,12 @@ extension ExplorerView {
                                     .sidebarRow(selected: model.selectedAccountID == account.id && !model.showGlobalSearch,
                                                 tint: model.appearance(for: account).tint.color)
                             }.buttonStyle(.plain)
+                                // Dragging a cloud onto another puts it there, the same as with the tabs.
+                                .onDrag {
+                                    draggingAccount = account.id
+                                    return NSItemProvider(object: account.id as NSString)
+                                }
+                                .onDrop(of: [.text], delegate: AccountReorder(target: account.id, dragging: $draggingAccount, model: model))
                                 .contextMenu {
                                     if model.isExpired(account) {
                                         Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.connecting)
@@ -55,6 +61,13 @@ extension ExplorerView {
                                     Button("Actualizar espacio") { model.refreshStorage(account, force: true) }
                                     if account.capabilities.links.manage {
                                         Button("Enlaces compartidos…") { model.requestLinkInventory(account) }
+                                    }
+                                    if model.accounts.count > 1 {
+                                        Divider()
+                                        Button("Mover arriba") { withAnimation(.easeInOut(duration: 0.15)) { model.moveAccount(account, by: -1) } }
+                                            .disabled(!model.canMoveAccount(account, by: -1))
+                                        Button("Mover abajo") { withAnimation(.easeInOut(duration: 0.15)) { model.moveAccount(account, by: 1) } }
+                                            .disabled(!model.canMoveAccount(account, by: 1))
                                     }
                                     Divider()
                                     Button("Desconectar cuenta…", role: .destructive) {
@@ -308,4 +321,19 @@ extension ExplorerView {
     func collectionChoices(_ account: Account?) -> [Collection] {
         account.map { AppModel.collections(for: $0) } ?? [.files]
     }
+}
+
+/// Moves the dragged cloud as it passes over the others, so the sidebar shows where it will land before it is dropped.
+struct AccountReorder: DropDelegate {
+    let target: Account.ID
+    @Binding var dragging: Account.ID?
+    let model: AppModel
+
+    func dropEntered(info: DropInfo) {
+        guard let dragging, dragging != target else { return }
+        withAnimation(.easeInOut(duration: 0.15)) { model.moveAccount(dragging, to: target) }
+    }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+    func validateDrop(info: DropInfo) -> Bool { dragging != nil }
+    func performDrop(info: DropInfo) -> Bool { dragging = nil; return true }
 }

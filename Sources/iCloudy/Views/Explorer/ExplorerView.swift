@@ -22,6 +22,8 @@ struct ExplorerView: View {
     /// Which half of the sidebar is showing. Favourites used to live under every account, so reaching them on a Mac
     /// with six clouds connected meant scrolling past all of them.
     @State var sidebarTab = SidebarTab.clouds
+    /// The account being dragged to a new place in the sidebar, if any.
+    @State var draggingAccount: Account.ID?
     /// Which pane's list has the keyboard. Tab moves it to the other pane when there are two.
     @FocusState var focusedList: Int?
     /// Where a run of files starts when one is taken with Shift held down.

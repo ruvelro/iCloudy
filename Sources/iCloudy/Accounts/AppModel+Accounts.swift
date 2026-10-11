@@ -71,11 +71,57 @@ extension AppModel {
         accounts.filter { $0.id != account.id && $0.credentialKey == account.id }
     }
 
+    /// The list with this account in it: where it already was when it is being reconnected or renewed, at the end when
+    /// it is new. Taking it out and appending it sent an O2 account to the bottom on every silent renewal, undoing
+    /// whatever order the person had given the sidebar.
+    static func placing(_ account: Account, in accounts: [Account]) -> [Account] {
+        var updated = accounts
+        if let index = updated.firstIndex(where: { $0.id == account.id }) { updated[index] = account } else { updated.append(account) }
+        return updated
+    }
+
+    /// The list with one account moved to where another one is, as dragging it there in the sidebar does.
+    static func moving(_ id: Account.ID, to target: Account.ID, in accounts: [Account]) -> [Account] {
+        guard id != target, let from = accounts.firstIndex(where: { $0.id == id }),
+              let to = accounts.firstIndex(where: { $0.id == target }) else { return accounts }
+        var updated = accounts
+        updated.insert(updated.remove(at: from), at: to)
+        return updated
+    }
+
+    /// The list with one account moved a number of places up (negative) or down, stopping at either end.
+    static func moving(_ id: Account.ID, by offset: Int, in accounts: [Account]) -> [Account] {
+        guard let from = accounts.firstIndex(where: { $0.id == id }) else { return accounts }
+        let to = min(max(from + offset, 0), accounts.count - 1)
+        guard to != from else { return accounts }
+        var updated = accounts
+        updated.insert(updated.remove(at: from), at: to)
+        return updated
+    }
+
+    func canMoveAccount(_ account: Account, by offset: Int) -> Bool {
+        guard let index = accounts.firstIndex(where: { $0.id == account.id }) else { return false }
+        return accounts.indices.contains(index + offset)
+    }
+
+    func moveAccount(_ id: Account.ID, to target: Account.ID) { reorderAccounts(Self.moving(id, to: target, in: accounts)) }
+
+    func moveAccount(_ account: Account, by offset: Int) { reorderAccounts(Self.moving(account.id, by: offset, in: accounts)) }
+
+    /// The order lives in the same Keychain entry as the accounts, so it is the order they come back in on the next
+    /// launch. The demo account is not stored and goes back to the end then.
+    private func reorderAccounts(_ updated: [Account]) {
+        guard updated.map(\.id) != accounts.map(\.id) else { return }
+        accounts = updated
+        do { try Vault.save(updated.filter { !$0.isDemo }, key: "accounts") }
+        catch { self.error = L("No se pudo guardar el orden de las nubes: \(error.localizedDescription)") }
+    }
+
     /// Reconnecting replaces the client of the account itself; the dependants keep a client that still believes the
     /// old session is gone, so they are reset too. Without this a shared drive stayed "expired" until the next launch.
     func adopt(_ account: Account, credential: Credential?) throws {
         if let credential { try Vault.save(credential, key: account.id) }
-        var updated = accounts.filter { $0.id != account.id }; updated.append(account)
+        let updated = Self.placing(account, in: accounts)
         try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
         accounts = updated
         for member in [account] + Self.dependents(of: account, in: accounts) {
@@ -112,7 +158,7 @@ extension AppModel {
                                   email: values?.volumeName.map { $0 + " · " + standardized.path } ?? standardized.path,
                                   clientID: "", clientSecret: nil, serverURL: standardized.path,
                                   bookmark: try TransferQueue.bookmark(folder))
-            var updated = accounts.filter { $0.id != account.id }; updated.append(account)
+            let updated = Self.placing(account, in: accounts)
             try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
             accounts = updated; sessions.remove(account.id)
             expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
@@ -125,7 +171,7 @@ extension AppModel {
     func addScopedDrive(_ drive: RemoteDrive, from parent: Account) {
         let account = Account.scoped(to: drive.id, named: drive.name, from: parent)
         do {
-            var updated = accounts.filter { $0.id != account.id }; updated.append(account)
+            let updated = Self.placing(account, in: accounts)
             try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
             accounts = updated; sessions.remove(account.id)
             showAdvanced = false
@@ -209,7 +255,7 @@ extension AppModel {
                 }
             }
             try Vault.save(credential, key: account.id)
-            var updated = accounts.filter { $0.id != account.id }; updated.append(account)
+            let updated = Self.placing(account, in: accounts)
             try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
             accounts = updated; sessions.remove(account.id)
             // Signing in by hand makes any renewal still out for this account stale: its result would overwrite the
@@ -253,7 +299,7 @@ extension AppModel {
             var (account, credential) = result
             if let flavor { account.options["flavor"] = flavor }
             try Vault.save(credential, key: account.id)
-            var updated = accounts.filter { $0.id != account.id }; updated.append(account)
+            let updated = Self.placing(account, in: accounts)
             try Vault.save(updated.filter { !$0.isDemo }, key: "accounts")
             accounts = updated; sessions.remove(account.id)
             expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil

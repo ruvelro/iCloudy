@@ -224,8 +224,9 @@ final class AppModel: ObservableObject {
         // Only structural queue changes reach the explorer; progress ticks re-render the transfer panel alone.
         quotaSubscription = quotas.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         subscription = queue.stateChanges.sink { [weak self] _ in self?.objectWillChange.send() }
-        // The Finder's list of locations follows the list of accounts, for as long as the person wants it to.
-        domainSubscription = $accounts.dropFirst().removeDuplicates { $0.map(\.id) == $1.map(\.id) }.sink { [weak self] _ in self?.syncFinderDomains() }
+        // The Finder's list of locations follows the list of accounts, for as long as the person wants it to. Which
+        // accounts, not their order: reordering the sidebar has nothing to tell the Finder.
+        domainSubscription = $accounts.dropFirst().removeDuplicates { Set($0.map(\.id)) == Set($1.map(\.id)) }.sink { [weak self] _ in self?.syncFinderDomains() }
         if let message = queue.persistenceError { error = message }
         listings.enabled = Prefs.bool(Prefs.listingCache, default: true)
         queue.cleanScratch()
