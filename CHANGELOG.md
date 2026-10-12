@@ -3,7 +3,17 @@
 Las versiones siguen [SemVer](https://semver.org/lang/es/). Mientras el número mayor sea `0`, la app se considera
 en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y así se dirá aquí.
 
-## Sin publicar
+## 0.7.0 — 12 de octubre de 2026
+
+El Llavero deja de preguntar por cada nube, una tanda de mejoras para el uso diario y lo que le faltaba a cada
+proveedor. 835 pruebas, en verde también en GitHub Actions, y ningún aviso al compilar, tampoco con la comprobación
+estricta de concurrencia. Lo nuevo se ha probado con respuestas simuladas, no contra cuentas reales; las claves SSH,
+con claves reales de `ssh-keygen`.
+
+- **Las nubes de la barra lateral se pueden arrastrar** para ordenarlas. Cada fila era un botón, y en macOS un botón
+  se queda el ratón desde que se pulsa: el arrastre nunca empezaba y solo funcionaban «Mover arriba» y «Mover abajo».
+
+### Llavero
 
 - **El Llavero pregunta como mucho una vez por compilación**, no una por cada nube conectada. Todo lo que iCloudy
   guarda allí va ahora en un único elemento, que se lee una vez por ejecución. La causa estaba mal medida: el
