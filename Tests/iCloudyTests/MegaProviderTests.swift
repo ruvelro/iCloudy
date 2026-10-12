@@ -899,3 +899,78 @@ final class MegaProviderTests: XCTestCase {
         0x6A, 0x49, 0x50, 0xF1]))
     private static let publicExponent = MegaBigInt(17)
 }
+
+// MARK: - Resuming an upload
+
+extension MegaProviderTests {
+    func testAnInterruptedUploadCarriesOnFromItsCheckpoint() async throws {
+        var addresses = 0
+        serve { action, _ in
+            if action == "u" { addresses += 1 }
+            return nil
+        }
+        let base = try XCTUnwrap(StubProtocol.handler)
+        let payload = Data((0..<3_000_000).map { UInt8($0 % 251) })
+        var received: [Int64: Data] = [:]
+        var failAt: Int64? = MegaCrypto.chunks(of: Int64(payload.count))[4].offset
+        StubProtocol.handler = { request in
+            guard request.url?.host == "subida.ejemplo.com" else { return try base(request) }
+            let offset = Int64(request.url?.lastPathComponent ?? "") ?? -1
+            if offset == failAt { failAt = nil; throw URLError(.networkConnectionLost) }
+            let body = requestData(request)
+            received[offset] = body
+            // Like Mega's storage servers: nothing for a piece, the receipt once every byte has arrived.
+            let done = received.values.reduce(0) { $0 + $1.count } == payload.count
+            return (200, [:], Data((done ? "RECIBO" : "").utf8))
+        }
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try payload.write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let stamp = try source.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        var saved = UploadCheckpoint(total: Int64(payload.count), modified: stamp)
+        let api = client()
+
+        do {
+            _ = try await api.resumableUpload(local: source, parent: "root", name: "grande.bin", replacing: nil,
+                                              checkpoint: saved, save: { saved = $0 }, progress: { _, _ in })
+            XCTFail("La conexión se cortó a mitad")
+        } catch {}
+        XCTAssertGreaterThan(saved.offset, 0)
+        XCTAssertNotNil(MegaProvider.megaResumePoint(saved), "El punto de control basta para seguir")
+        let firstRun = received.count
+
+        let receipt = try await api.resumableUpload(local: source, parent: "root", name: "grande.bin", replacing: nil,
+                                                    checkpoint: saved, save: { saved = $0 }, progress: { _, _ in })
+        XCTAssertEqual(receipt.remoteID, "NUEVO")
+        XCTAssertEqual(addresses, 1, "No se pide otra dirección de subida")
+        XCTAssertEqual(received.count, MegaCrypto.chunks(of: Int64(payload.count)).count, "Cada trozo llega una vez")
+        XCTAssertEqual(firstRun, 4)
+        XCTAssertNil(saved.sessionID, "Con el archivo creado, su clave sale del punto de control")
+        XCTAssertTrue(saved.parts.isEmpty)
+
+        // The pieces from both runs decrypt with the one key the node was registered with, and so does its MAC.
+        let node = try XCTUnwrap(registered)
+        let parts = try XCTUnwrap(MegaCrypto.unpack(fileKey: try MegaCrypto.ecb(MegaCrypto.decode(try XCTUnwrap(node["k"] as? String)), key: masterKey)))
+        var plain = Data(), macs: [Data] = []
+        for chunk in MegaCrypto.chunks(of: Int64(payload.count)) {
+            let piece = try MegaCrypto.ctr(try XCTUnwrap(received[chunk.offset]), key: parts.key, nonce: parts.nonce, blockOffset: UInt64(chunk.offset / 16))
+            plain += piece
+            macs.append(try MegaCrypto.chunkMAC(piece, key: parts.key, nonce: parts.nonce))
+        }
+        XCTAssertEqual(plain, payload)
+        XCTAssertEqual(try MegaCrypto.metaMAC(chunks: macs, key: parts.key), parts.mac)
+    }
+
+    func testAResumePointThatDoesNotAddUpIsIgnored() {
+        var cursor = UploadCheckpoint(total: 1_000_000)
+        cursor.url = URL(string: "https://subida.ejemplo.com/x")
+        cursor.sessionID = Data(repeating: 1, count: 24).base64EncodedString()
+        cursor.offset = MegaCrypto.chunks(of: 1_000_000)[2].offset
+        cursor.parts = [Data(count: 16).base64EncodedString()]
+        XCTAssertNil(MegaProvider.megaResumePoint(cursor), "Faltan MAC de trozos ya enviados")
+        cursor.parts = Array(repeating: Data(count: 16).base64EncodedString(), count: 2)
+        XCTAssertNotNil(MegaProvider.megaResumePoint(cursor))
+        cursor.sessionID = "corto"
+        XCTAssertNil(MegaProvider.megaResumePoint(cursor))
+    }
+}

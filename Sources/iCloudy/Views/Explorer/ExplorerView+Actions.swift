@@ -82,6 +82,9 @@ extension ExplorerView {
     }
 
     func emptyDescription(_ tab: BrowserState) -> String {
+        if tab.collection == .trash, model.account(of: tab)?.cloud == .microsoft {
+            return L("OneDrive no deja a otras aplicaciones ver su papelera. Aquí aparece lo que elimines desde iCloudy durante 30 días; lo demás está en la web de OneDrive.")
+        }
         if tab.collection == .trash { return L("Lo que envíes a la papelera aparece aquí hasta que lo restaures o lo elimines definitivamente.") }
         return tab.isWritableLocation ? L("Arrastra archivos o carpetas para subirlos aquí.") : L("Esta lista la calcula el proveedor y no admite subidas.")
     }

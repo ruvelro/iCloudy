@@ -49,9 +49,13 @@ extension SFTPProvider {
             expireSession()
             throw CloudError.sessionExpired(nil)
         }
+        // A key, when the account was connected with one, lives in the same Keychain entry as the password.
+        let material = try credentials.read(account.credentialKey).flatMap { SFTPKeyMaterial.decode($0.secret) }
+        let privateKey = try await material?.open()
         let transport = SSHTransport(host: endpoint.host, port: endpoint.port,
                                      user: String(pair[pair.startIndex..<separator]),
                                      password: String(pair[pair.index(after: separator)...]),
+                                     privateKey: privateKey,
                                      expectedHostKey: Self.storedHostKey(account))
         let client = SFTPClient(transport: transport, account: account.id)
         sftpClient = client
@@ -192,7 +196,7 @@ extension SFTPProvider {
 @MainActor
 struct SFTPAuthentication {
     /// Connects once to prove the address and the credentials, and keeps the server's key for every later session.
-    func signInSFTP(server: String, username: String, password: String) async throws -> (Account, Credential) {
+    func signInSFTP(server: String, username: String, password: String, key: SFTPKeyMaterial? = nil) async throws -> (Account, Credential) {
         let trimmed = server.trimmingCharacters(in: .whitespacesAndNewlines)
         let withScheme = trimmed.contains("://") ? trimmed : "sftp://" + trimmed
         guard var components = URLComponents(string: withScheme), let host = components.host, !host.isEmpty,
@@ -206,7 +210,9 @@ struct SFTPAuthentication {
         guard let port = UInt16(exactly: components.port ?? 22), port > 0 else {
             throw CloudError.message(L("El puerto SFTP debe estar entre 1 y 65535."))
         }
-        let transport = SSHTransport(host: host, port: port, user: username, password: password, expectedHostKey: nil)
+        guard !password.isEmpty || key != nil else { throw CloudError.message(L("Escribe la contraseña o elige una clave privada.")) }
+        let privateKey = try await key?.open()
+        let transport = SSHTransport(host: host, port: port, user: username, password: password, privateKey: privateKey, expectedHostKey: nil)
         let client = SFTPClient(transport: transport)
         let hostKey: Data
         do {
@@ -230,7 +236,8 @@ struct SFTPAuthentication {
                               name: host, email: username + "@" + host, clientID: "", clientSecret: nil, serverURL: base)
         account.options["hostKey"] = hostKey.base64EncodedString()
         account.options["hostKeyFingerprint"] = SSHHostKey.fingerprint(hostKey)
+        if let privateKey { account.options["keyFingerprint"] = privateKey.fingerprint }
         return (account, Credential(accessToken: Data("\(username):\(password)".utf8).base64EncodedString(),
-                                    refreshToken: "", expires: .distantFuture))
+                                    refreshToken: "", expires: .distantFuture, secret: key?.encoded ?? ""))
     }
 }

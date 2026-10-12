@@ -91,9 +91,9 @@ Las descargas van a un servidor de contenido distinto con un enlace que pCloud f
 tiempo limitado. Ese enlace es la credencial, así que el token no se envía con él.
 
 pCloud crea un enlace nuevo cada vez que se le pide uno, y cada enlace se revoca por separado. Por eso, antes de
-crear uno, iCloudy busca entre los que ya existen y devuelve el del mismo elemento si lo hay. El proveedor sabe
-también listar y borrar enlaces (`listpublinks`, `deletepublink`), pero la interfaz todavía no tiene dónde
-ofrecerlo: por ahora se revocan desde la web de pCloud.
+crear uno, iCloudy busca entre los que ya existen y devuelve el del mismo elemento si lo hay. «Enlaces públicos…» los
+lista por elemento y para toda la cuenta (`listpublinks`) y los revoca (`deletepublink`). La caducidad es de los
+planes de pago y no se ofrece.
 
 ## Subidas
 
@@ -129,14 +129,14 @@ Unidos** (allí, además, MD5).
 
 ## Lo que no hay, y por qué
 
-- **Búsqueda**: la API documentada de pCloud no tiene un método de búsqueda para terceros, así que la capacidad está
-  apagada y la búsqueda global no incluye estas cuentas.
+- **Búsqueda propia**: la API documentada de pCloud no tiene un método de búsqueda para terceros. iCloudy pide el
+  árbol entero en un solo `listfolder` recursivo y busca los nombres en el Mac.
 - **«Recientes» y «Compartido conmigo»**: pCloud no los expone como listas. Las carpetas que otros comparten y ya
   se aceptaron aparecen dentro del árbol, como en la web.
 - **Compartir con personas**: pCloud solo comparte carpetas con otras cuentas, con su propio flujo de invitaciones.
   Queda para más adelante.
-- **Versiones**: pCloud guarda revisiones (`listrevisions`, `revertrevision`), pero iCloudy todavía no tiene un
-  contrato común para ellas. Queda para más adelante.
+- **Borrar una revisión suelta**: pCloud guarda revisiones y «Versiones…» las lista (`listrevisions`), las lee
+  (`getfilelink` con `revisionid`) y restaura una (`revertrevision`), pero no hay llamada para borrar solo una.
 
 ## Sin comprobar con una cuenta real
 

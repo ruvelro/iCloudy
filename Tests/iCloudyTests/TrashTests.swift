@@ -44,7 +44,9 @@ final class TrashTests: XCTestCase {
             XCTAssertFalse(AppModel.collections(for: account).contains(.trash), "\(cloud) no tiene papelera que listar")
             XCTAssertFalse(cloud.capabilities.permanentDelete, "Donde borrar ya es definitivo no hay nada más definitivo que ofrecer")
         }
-        XCTAssertFalse(Cloud.microsoft.capabilities.trashListing, "Graph no expone la papelera de reciclaje")
+        // Graph does not expose the recycle bin; the tab lists what iCloudy itself deleted, and nothing empties it.
+        XCTAssertTrue(Cloud.microsoft.capabilities.trashListing, "Lo eliminado desde iCloudy, restaurable por id")
+        XCTAssertFalse(Cloud.microsoft.capabilities.emptyTrash, "Graph no vacía la papelera")
         XCTAssertTrue(Cloud.microsoft.capabilities.permanentDelete, "Pero sí borra sin pasar por ella")
         XCTAssertFalse(Cloud.volume.capabilities.trashListing, "La papelera del Finder no se lee desde el sandbox")
         XCTAssertTrue(Cloud.volume.capabilities.permanentDelete)

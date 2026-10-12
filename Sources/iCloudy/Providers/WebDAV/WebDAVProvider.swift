@@ -307,7 +307,26 @@ final class UploadProgress: RedirectGuard, @unchecked Sendable {
 
 extension WebDAVProvider {
     func list(parent: String, onPage: (([CloudFile]) -> Void)? = nil) async throws -> [CloudFile] {
+        if parent == Collection.trash.rootID || Self.isTrashed(parent) {
+            guard hasNextcloudTrash else { throw CloudError.message(L("WebDAV no tiene papelera: borrar es definitivo.")) }
+            return try await nextcloudTrashList(parent: parent)
+        }
         return try await webdavList(parent: parent, onPage: onPage)
+    }
+
+    func restore(file: CloudFile) async throws {
+        guard hasNextcloudTrash else { throw CloudError.message(L("WebDAV no tiene papelera: borrar es definitivo.")) }
+        try await nextcloudRestore(file)
+    }
+
+    func deletePermanently(file: CloudFile) async throws {
+        guard hasNextcloudTrash else { try await webdavDelete(file: file); return }
+        try await nextcloudDeletePermanently(file)
+    }
+
+    func emptyTrash() async throws {
+        guard hasNextcloudTrash else { throw CloudError.message(L("WebDAV no tiene papelera: borrar es definitivo.")) }
+        try await nextcloudEmptyTrash()
     }
 
     func createFolder(name: String, parent: String) async throws -> String {
@@ -347,6 +366,15 @@ extension WebDAVProvider {
     }
 
     func folderTrail(id: String) async throws -> [CloudFile] {
+        // Inside the bin each step is a binned folder, named as Nextcloud shows it rather than with its suffix.
+        if Self.isTrashed(id) {
+            let parts = id.dropFirst(Self.trashPrefix.count).split(separator: "/").map(String.init)
+            return parts.indices.map { index in
+                let name = parts[index].replacingOccurrences(of: #"\.d\d+$"#, with: "", options: .regularExpression)
+                return CloudFile(id: Self.trashPrefix + parts[0...index].joined(separator: "/"), name: name, mime: "application/vnd.google-apps.folder",
+                                 size: nil, modified: nil, webURL: nil, isFolder: true)
+            }
+        }
         return webdavTrail(id: id)
     }
 

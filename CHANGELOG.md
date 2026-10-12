@@ -34,6 +34,23 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
 - **Atajos**: listar una carpeta, descargar un archivo, crear un enlace público y copiar entre nubes, nombrando cada
   cosa por su cuenta y su ruta.
 
+### Huecos por nube
+
+- **SFTP con clave privada**: Ed25519, ECDSA (P-256, P-384, P-521) y RSA en el formato de OpenSSH, con frase o sin
+  ella. La frase se descifra con `bcrypt_pbkdf` propio, comprobado contra el vector de OpenBSD y contra claves de
+  `ssh-keygen`. La clave vive en el Llavero y solo firma; si el servidor la rechaza y hay contraseña, se usa esta.
+- **pCloud**: versiones (listar, leer y restaurar revisiones) y gestión de enlaces públicos, por elemento y de toda
+  la cuenta.
+- **Nextcloud**: papelera navegable, con restaurar, eliminar definitivamente y vaciar. Borrar en Nextcloud ya no se
+  anuncia como definitivo.
+- **OneDrive**: papelera con lo eliminado desde iCloudy en los últimos 30 días, restaurable en cuentas personales.
+  Graph no deja a otras apps ver la papelera entera, y la pestaña lo dice.
+- **S3**: credenciales temporales con token de sesión (también en los enlaces prefirmados), importación de perfiles
+  de `~/.aws` y versiones de objetos en buckets con control de versiones: listar, leer, restaurar y borrar.
+- **Mega**: las subidas se reanudan desde el último trozo confirmado en lugar de empezar de cero.
+- **Proton Drive** sigue fuera: no tiene API pública, necesita OpenPGP y SRP propios, y no se añadirá sin poder
+  probarlo contra cuentas reales.
+
 ## 0.6.1 — 1 de octubre de 2026
 
 Correcciones que sacó a la luz la primera ejecución de la integración continua, en un Mac con otro idioma y otra

@@ -30,9 +30,16 @@ struct Account: Codable, Identifiable, Hashable {
         if cloud == .webdav, flavor == "nextcloud" { base.links = .nextcloud }
         // Nextcloud keeps earlier versions of every file behind its own WebDAV collection.
         if cloud == .webdav, flavor == "nextcloud" { base.versions = true; base.deletesVersions = true }
+        // And a bin: deleting moves things there, where they can be listed, restored and purged.
+        if cloud == .webdav, flavor == "nextcloud" {
+            base.reversibleTrash = true; base.trashListing = true; base.permanentDelete = true; base.emptyTrash = true
+        }
         // "Recientes" and "Compartido conmigo" list the person's own activity, not a drive's. A shared drive or a
         // document library has neither, and asking for them inside one returns nothing or a refusal.
         if driveID != nil { base.recents = false; base.sharedWithMe = false }
+        // The OneDrive bin iCloudy lists is its own record of what it deleted, and restoring by id is for personal
+        // drives: a SharePoint library has neither.
+        if cloud == .microsoft, driveID != nil { base.trashListing = false }
         return base
     }
     /// Why `action` cannot be applied to these items in this account, or nil when it can. The provider's own reason

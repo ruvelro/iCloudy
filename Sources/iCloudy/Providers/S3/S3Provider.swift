@@ -102,7 +102,13 @@ extension S3Provider {
             expireSession()
             throw CloudError.sessionExpired(nil)
         }
-        let keys = S3Keys(accessKey: credential.accessToken, secretKey: credential.secret)
+        // Temporary keys say when they end; past that, every request would only be refused.
+        if credential.sessionToken != nil, credential.expires < Date() {
+            let reason = L("Las credenciales temporales de S3 han caducado. Vuelve a conectar la cuenta con unas nuevas.")
+            expireSession(reason)
+            throw CloudError.sessionExpired(reason)
+        }
+        let keys = S3Keys(accessKey: credential.accessToken, secretKey: credential.secret, sessionToken: credential.sessionToken)
         cachedKeys = keys
         return keys
     }
@@ -126,6 +132,7 @@ extension S3Provider {
         var headers = call.headers
         headers["x-amz-date"] = S3Signer.timestamp(date)
         headers["x-amz-content-sha256"] = payload
+        if let token = keys.sessionToken, !token.isEmpty { headers["x-amz-security-token"] = token }
         var request = URLRequest(url: url)
         request.httpMethod = call.method
         request.timeoutInterval = call.body == nil ? 120 : 600
@@ -170,7 +177,7 @@ extension S3Provider {
             }
             if let delay { state.attempt += 1; return .again(delay) }
         }
-        if body?.code == "InvalidAccessKeyId" {
+        if let code = body?.code, ["InvalidAccessKeyId", "ExpiredToken", "InvalidToken", "TokenRefreshRequired"].contains(code) {
             let message = S3Failure.message(status: status, body: body, bucket: call.bucket)
             expireSession(message)
             return .fail(CloudError.sessionExpired(message))

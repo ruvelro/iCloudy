@@ -9,6 +9,9 @@ struct S3SignIn: Equatable {
     var endpoint = ""
     var accessKey = ""
     var secretKey = ""
+    /// Only for temporary keys (STS, SSO, an assumed role), with the moment they end when it is known.
+    var sessionToken = ""
+    var sessionExpires: Date?
     var bucket = ""
     var addressing: S3Addressing = .automatic
 }
@@ -70,7 +73,9 @@ struct S3Authentication {
         var region = form.region.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if region.isEmpty { region = form.service.defaultRegion }
         var endpoint = try Self.endpoint(for: form, region: region)
-        let credential = Credential(accessToken: accessKey, refreshToken: "", expires: .distantFuture, secret: secretKey)
+        let token = form.sessionToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let credential = Credential(accessToken: accessKey, refreshToken: "", expires: token.isEmpty ? .distantFuture : (form.sessionExpires ?? .distantFuture),
+                                    secret: secretKey, sessionToken: token.isEmpty ? nil : token)
 
         var account = Self.account(form.service, endpoint: endpoint, region: region, bucket: bucket, addressing: form.addressing, accessKey: accessKey)
         let probe = S3Provider(account: account, session: session, credentials: ProbeCredentials(credential))

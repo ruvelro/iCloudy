@@ -1,8 +1,8 @@
 import Foundation
 import CryptoKit
 
-/// An SSH-2 client connection carrying one channel: the transport of RFC 4253, the password and keyboard-interactive
-/// methods of RFC 4252 and the session channel of RFC 4254, with the `sftp` subsystem on it. Nothing more: no shell,
+/// An SSH-2 client connection carrying one channel: the transport of RFC 4253, the public key, password and
+/// keyboard-interactive methods of RFC 4252 and the session channel of RFC 4254, with the `sftp` subsystem on it. Nothing more: no shell,
 /// no forwarding, no agent. Everything runs off the main actor, and one operation at a time, because the protocol is
 /// one ordered stream in each direction.
 actor SSHTransport {
@@ -11,6 +11,8 @@ actor SSHTransport {
     let port: UInt16
     private let user: String
     private let password: String
+    /// Tried before the password when there is one. A server that refuses it still gets the password, if any.
+    private let privateKey: SSHPrivateKey?
     private var socket: RawSocket?
     private var encrypt = SSHPacketCipher()
     private var decrypt = SSHPacketCipher()
@@ -33,8 +35,8 @@ actor SSHTransport {
     static let localWindow = 1 << 22
     static let localMaxPacket = 32768
 
-    init(host: String, port: UInt16, user: String, password: String, expectedHostKey: Data?, timeout: TimeInterval = 45) {
-        self.host = host; self.port = port; self.user = user; self.password = password
+    init(host: String, port: UInt16, user: String, password: String, privateKey: SSHPrivateKey? = nil, expectedHostKey: Data?, timeout: TimeInterval = 45) {
+        self.host = host; self.port = port; self.user = user; self.password = password; self.privateKey = privateKey
         self.expectedHostKey = expectedHostKey; self.timeout = timeout
     }
 
@@ -290,6 +292,26 @@ actor SSHTransport {
         try await send(request.data)
         _ = try await expect([SSHMessage.serviceAccept])
 
+        if let privateKey {
+            // Signed straight away rather than asking first whether the key would do: one round trip fewer, and a
+            // server that does not know the key answers the same failure either way (RFC 4252 §7).
+            var signed = SSHWriter()
+            signed.string(sessionID ?? Data())
+            signed.byte(SSHMessage.userauthRequest); signed.string(user); signed.string("ssh-connection")
+            signed.string("publickey"); signed.bool(true); signed.string(privateKey.algorithm); signed.string(privateKey.publicBlob)
+            var request = SSHWriter()
+            request.byte(SSHMessage.userauthRequest); request.string(user); request.string("ssh-connection")
+            request.string("publickey"); request.bool(true); request.string(privateKey.algorithm); request.string(privateKey.publicBlob)
+            request.string(try privateKey.sign(signed.data))
+            try await send(request.data)
+            var answer = try await expect([SSHMessage.userauthSuccess, SSHMessage.userauthFailure])
+            if answer.type == SSHMessage.userauthSuccess { return }
+            let offered = try answer.reader.nameList()
+            guard !password.isEmpty, offered.contains("password") || offered.contains("keyboard-interactive") else {
+                throw CloudError.message(L("El servidor SSH no aceptó la clave \(privateKey.fingerprint) para este usuario. Comprueba que su parte pública está en «~/.ssh/authorized_keys» del servidor."))
+            }
+        }
+
         var auth = SSHWriter()
         auth.byte(SSHMessage.userauthRequest); auth.string(user); auth.string("ssh-connection")
         auth.string("password"); auth.bool(false); auth.string(password)
@@ -299,7 +321,7 @@ actor SSHTransport {
         let offered = try outcome.reader.nameList()
         guard offered.contains("keyboard-interactive") else {
             if offered.contains("password") { throw CloudError.message(L("El servidor SSH rechazó el usuario o la contraseña.")) }
-            throw CloudError.message(L("El servidor SSH no acepta contraseñas para este usuario (admite: \(offered.joined(separator: ", "))). iCloudy todavía no inicia sesión con claves."))
+            throw CloudError.message(L("El servidor SSH no acepta contraseñas para este usuario (admite: \(offered.joined(separator: ", "))). Conecta la cuenta con una clave privada."))
         }
         // Servers that only take the password through PAM offer this instead of "password": each prompt is
         // answered with the same password, and a server that wants a second factor gets it too and refuses.
