@@ -142,16 +142,18 @@ enum MirrorPlanner {
 final class FolderWatcher {
     /// What the FSEvents callback is handed. The stream keeps this alive and this keeps nothing alive, so an event
     /// already on its way when the watcher goes finds an empty box instead of freed memory.
+    /// The callback runs on the FSEvents queue, never on the main thread, so it is `@Sendable`: a closure written in
+    /// main-actor code would otherwise belong to the main actor, and Swift 6 stops the app when one runs elsewhere.
     private final class Callback {
-        var onChange: (([String]) -> Void)?
-        init(_ onChange: @escaping ([String]) -> Void) { self.onChange = onChange }
+        var onChange: (@Sendable ([String]) -> Void)?
+        init(_ onChange: @escaping @Sendable ([String]) -> Void) { self.onChange = onChange }
     }
     private var stream: FSEventStreamRef?
     private let callback: Callback
-    convenience init(url: URL, latency: TimeInterval = 2, onChange: @escaping () -> Void) {
+    convenience init(url: URL, latency: TimeInterval = 2, onChange: @escaping @Sendable () -> Void) {
         self.init(url: url, latency: latency, onPaths: { _ in onChange() })
     }
-    init(url: URL, latency: TimeInterval = 2, onPaths: @escaping ([String]) -> Void) {
+    init(url: URL, latency: TimeInterval = 2, onPaths: @escaping @Sendable ([String]) -> Void) {
         callback = Callback(onPaths)
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passRetained(callback).toOpaque(), retain: nil,
                                            release: { info in Unmanaged<Callback>.fromOpaque(info!).release() },
