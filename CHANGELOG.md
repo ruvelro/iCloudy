@@ -3,6 +3,24 @@
 Las versiones siguen [SemVer](https://semver.org/lang/es/). Mientras el número mayor sea `0`, la app se considera
 en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y así se dirá aquí.
 
+## Sin publicar
+
+### Robustez
+
+- **La ventana ya no se traba guardando ni leyendo.** La cola, los reflejos, las copias sin conexión y locales, el
+  índice de Spotlight y el historial se escriben en segundo plano, en orden y sin escrituras repetidas. Las
+  respuestas grandes (una página de mil archivos, el árbol de pCloud o de Mega) se leen fuera del hilo principal.
+- **El archivo de la cola deja de crecer sin límite**: el panel conserva las 300 transferencias terminadas más
+  recientes, y el historial, todas. Antes guardaba cada pasada de cada reflejo con su informe completo.
+- **Cada vista se redibuja solo por lo que muestra.** El modelo de la app pasa a Observation: antes, cualquier cambio
+  (una cuota que llega, una transferencia que avanza) redibujaba las 24 vistas que lo miraban. De paso, olvidar una
+  copia local ya quita su marca al momento.
+- **Swift 6**: la app, la librería y la extensión del Finder compilan en el modo de lenguaje Swift 6, con la
+  comprobación completa de carreras de datos.
+- **Singular y plural** en castellano y en inglés para los recuentos que pueden ser uno: «1 seleccionado», «1
+  conflicto», «Queda 1 por transferir», en lugar de «1 seleccionados». Las reglas viven en `.stringsdict`, generados
+  con `scripts/make-plurals.py`.
+
 ## 0.7.0 — 12 de octubre de 2026
 
 El Llavero deja de preguntar por cada nube, una tanda de mejoras para el uso diario y lo que le faltaba a cada
