@@ -1,9 +1,10 @@
 #!/bin/bash
 # Creates the local code-signing certificate that keeps iCloudy's Keychain items reachable across rebuilds.
 #
-# Why this exists: an ad hoc signature ("-") changes on every build, so macOS treats each build as a different
-# application and asks again for permission to read the stored accounts. Signing with one stable certificate makes the
-# designated requirement constant, so the permission granted once keeps working.
+# Why this exists: an ad hoc signature ("-") changes on every build, so the designated requirement (which the sandbox
+# container and the Keychain access list check) changes with it. One stable certificate keeps it constant. It does not
+# stop the login keychain from asking once per new build: without a Team ID, an item's partition list names the exact
+# build that created it. Only an Apple-issued certificate avoids that (docs/OAUTH.md, «Firma local para desarrollo»).
 #
 # The certificate is self-signed and stays untrusted by the system, which is fine: codesign only needs the private key.
 # Nothing is added to the system trust store, so no other software becomes more trusted because of this.
@@ -38,4 +39,4 @@ openssl pkcs12 -export -legacy -out "$work/identity.p12" \
 security import "$work/identity.p12" -k "$keychain" -P "$password" -T /usr/bin/codesign
 
 echo "Identidad «$name» creada. Compila con: bash scripts/build-app.sh"
-echo "La primera vez que abras la app, macOS pedirá una vez acceso al Llavero: elige «Permitir siempre»."
+echo "Cada compilación nueva pedirá una vez acceso al Llavero: elige «Permitir siempre». Para que no pregunte nunca, usa un certificado Apple Development (docs/OAUTH.md)."

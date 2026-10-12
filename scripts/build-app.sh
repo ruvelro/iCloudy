@@ -12,9 +12,9 @@ if [[ ! -f "$oauth_config" ]]; then
 fi
 swift scripts/configure-oauth.swift --validate "$oauth_config" "${1:-}"
 
-# Keychain items are bound to the signing identity. An ad hoc signature ("-") changes with every build, so macOS
-# asks for Keychain access or refuses the stored accounts after each rebuild. Prefer any stable code-signing
-# identity found in the Keychain; docs/OAUTH.md explains how to create a local one.
+# The login keychain ties each item to the build that created it: to its Team ID when the signature has one, and to its
+# code-directory hash otherwise, which changes with every build. An Apple-issued identity (a free Apple Development
+# certificate is enough) therefore never asks again; any other identity asks once per new build. docs/OAUTH.md has both.
 identity="${ICLOUDY_SIGNING_IDENTITY:-}"
 if [[ -z "$identity" ]]; then
     # First choice: an identity Apple itself validates.
@@ -29,7 +29,7 @@ if [[ -z "$identity" ]]; then
 fi
 if [[ -z "$identity" ]]; then
     identity="-"
-    echo "Aviso: no hay identidad de firma; se usa firma ad hoc. Tras cada compilación macOS pedirá acceso al Llavero para las cuentas guardadas." >&2
+    echo "Aviso: no hay identidad de firma; se usa firma ad hoc. Tras cada compilación macOS pedirá una vez acceso al Llavero." >&2
     echo "       Define ICLOUDY_SIGNING_IDENTITY o crea un certificado local de firma de código (docs/OAUTH.md, sección Firma local)." >&2
 fi
 

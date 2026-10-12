@@ -3,6 +3,15 @@
 Las versiones siguen [SemVer](https://semver.org/lang/es/). Mientras el número mayor sea `0`, la app se considera
 en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y así se dirá aquí.
 
+## Sin publicar
+
+- **El Llavero pregunta como mucho una vez por compilación**, no una por cada nube conectada. Todo lo que iCloudy
+  guarda allí va ahora en un único elemento, que se lee una vez por ejecución. La causa estaba mal medida: el
+  certificado local no basta, porque sin Team ID el llavero ata cada elemento al `cdhash` exacto de la compilación
+  que lo creó. Con un certificado Apple Development (gratis con un Apple ID) no pregunta nunca —
+  [OAUTH.md](docs/OAUTH.md#firma-local-para-desarrollo).
+- Los elementos antiguos se mueven solos la primera vez que se leen: esa vez preguntan cada uno, por última vez.
+
 ## 0.6.1 — 1 de octubre de 2026
 
 Correcciones que sacó a la luz la primera ejecución de la integración continua, en un Mac con otro idioma y otra
