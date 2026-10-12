@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { true }
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        DockIcon.apply()
         NSApp.activate(ignoringOtherApps: true)
         // "Subir a iCloudy" in any app's Services menu, declared in Info.plist and handled in this process.
         NSApp.servicesProvider = services

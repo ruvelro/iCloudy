@@ -205,7 +205,55 @@ extension AppModel {
         provider.registerDataRepresentation(forTypeIdentifier: UTType.iCloudyPaneItems.identifier, visibility: .ownProcess) { completion in
             completion(Data(token.utf8), nil); return nil
         }
+        // Dropped on the Finder, the Desktop or another app, a file is downloaded when the drop happens, not when the
+        // drag starts: a drag that ends back in iCloudy, or nowhere, costs nothing. Folders stay inside the app.
+        if files.count == 1, let file = files.first, !file.isFolder, let account = account(of: tab) {
+            let name = Self.dragName(file)
+            provider.suggestedName = name
+            let type = UTType(filenameExtension: (name as NSString).pathExtension) ?? .data
+            provider.registerFileRepresentation(forTypeIdentifier: type.identifier, fileOptions: [], visibility: .all) { [weak self] completion in
+                let progress = Progress(totalUnitCount: max(file.size ?? 1, 1))
+                let work = Task { @MainActor in
+                    guard let self else { completion(nil, false, CancellationError()); return }
+                    do { completion(try await self.downloadForDrag(file, account: account, name: name, progress: progress), false, nil) }
+                    catch { completion(nil, false, error) }
+                }
+                progress.cancellationHandler = { work.cancel() }
+                return progress
+            }
+        }
         return provider
+    }
+
+    /// Where dragged files are put while the receiving app copies them. Each drag gets a folder of its own, and
+    /// folders older than a day are removed when the next drag starts.
+    nonisolated static var dragDirectory: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("iCloudy/Drag", isDirectory: true)
+    }
+
+    /// A Google document leaves Drive as the Office file it round-trips to, with that extension.
+    static func dragName(_ file: CloudFile) -> String {
+        guard let export = file.crossCloudExport else { return file.name }
+        return (file.name as NSString).pathExtension.lowercased() == export.ext ? file.name : file.name + "." + export.ext
+    }
+
+    func downloadForDrag(_ file: CloudFile, account: Account, name: String, progress: Progress) async throws -> URL {
+        let root = Self.dragDirectory
+        try await blockingIO {
+            let fileManager = FileManager.default
+            let old = Date().addingTimeInterval(-86_400)
+            for folder in (try? fileManager.contentsOfDirectory(at: root, includingPropertiesForKeys: [.creationDateKey])) ?? [] {
+                if let created = try? folder.resourceValues(forKeys: [.creationDateKey]).creationDate, created < old { try? fileManager.removeItem(at: folder) }
+            }
+        }
+        let folder = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let destination = folder.appendingPathComponent(FileNames.safe(name))
+        try await client(account).download(file: file, to: destination, exportMime: file.crossCloudExport?.mime) { done, total in
+            if total > 0 { progress.totalUnitCount = total }
+            progress.completedUnitCount = done
+        }
+        return destination
     }
 
     /// A drop on a pane. Within one account it moves, as the Finder does on one disk, and ⌥ copies; between accounts

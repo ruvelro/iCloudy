@@ -42,6 +42,11 @@ struct MenuBarContent: View {
         Button("Subir el portapapeles…") { activate(); model.uploadFromPasteboard() }
             .disabled(!model.canWrite)
         Button("Buscar en todas las nubes") { activate(); model.preview.close(); model.showGlobalSearch = true }
+        if !model.savedSearches.items.isEmpty {
+            Menu("Búsquedas guardadas") {
+                ForEach(model.savedSearches.items) { item in Button(item.name) { activate(); model.runSavedSearch(item) } }
+            }
+        }
         Divider()
         if queue.hasActive { Button("Pausar todas") { queue.pauseAll() } }
         if queue.resumableCount > 0 { Button("Reanudar todas") { _ = queue.resumeAll() } }

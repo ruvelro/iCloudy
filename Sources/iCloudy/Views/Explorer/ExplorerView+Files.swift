@@ -21,7 +21,7 @@ extension ExplorerView {
                     if model.isFavorite(file, in: tab) { Image(systemName: "star.fill").font(.caption).foregroundStyle(.yellow) }
                 }.padding(.vertical, 5)
                     .overlay { if file.isFolder { MiddleClick { model.openInNewTab(file) } } }
-                    .paneDragSource(model.isSplit) { model.paneDragProvider(for: file, pane: pane) }
+                    .paneDragSource { model.paneDragProvider(for: file, pane: pane) }
             }.width(min: 200, ideal: 320)
             TableColumn("Modificado") { file in
                 Text(file.modified?.formatted(date: .abbreviated, time: .omitted) ?? "—").foregroundStyle(.secondary)
@@ -43,6 +43,7 @@ extension ExplorerView {
                     .help(model.limitation(.permanentDelete, for: model.selection(ids)) ?? "")
             } else if ids.count > 1 {
                 Button("Descargar \(ids.count) elementos…") { Task { await model.saveMany(model.selection(ids)) } }
+                Button("Renombrar \(ids.count) elementos…") { model.requestBatchRename(model.selection(ids)) }.disabled(!model.canWrite)
                 Button("Mover \(ids.count) elementos a…") { model.requestRelocation(model.selection(ids), copy: false) }
                 Button("Copiar \(ids.count) elementos a…") { model.requestRelocation(model.selection(ids), copy: true) }
                     .disabled(!model.canCopy(model.selection(ids)))
@@ -72,11 +73,12 @@ extension ExplorerView {
         let tab = model.tab(inPane: pane)
         return Group {
             if tab.viewMode == "grid" {
+                ScrollViewReader { scroller in
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 16)], spacing: 18) {
                         ForEach(tab.visibleFiles) { file in
                             VStack(spacing: 10) {
-                                FileIcon(file: file, size: 42)
+                                ThumbnailIcon(file: file, account: model.account(of: tab), store: model.thumbnails, size: 42)
                                     .overlay(alignment: .bottomTrailing) {
                                         if !file.isFolder || model.offlineStatus(file, in: tab) != nil {
                                             FileStateBadge(file: file, local: model.localStatus(file, in: tab), offline: model.offlineStatus(file, in: tab), size: 14)
@@ -86,7 +88,7 @@ extension ExplorerView {
                                     }
                                 Text(file.name).font(.callout).lineLimit(2).multilineTextAlignment(.center)
                                 if model.isFavorite(file, in: tab) { Image(systemName: "star.fill").foregroundStyle(.yellow).font(.caption) }
-                            }.frame(maxWidth: .infinity).frame(height: 112).padding(8)
+                            }.frame(maxWidth: .infinity).frame(height: 130).padding(8)
                                 .background(tab.selection.contains(file.id) ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 10))
                                 .contentShape(Rectangle())
                                 .onTapGesture(count: 2) {
@@ -106,18 +108,45 @@ extension ExplorerView {
                                     } else {
                                         selected = [file.id]; anchor = file.id
                                     }
+                                    cursor = file.id
                                 }
                                 .contextMenu { fileActions(file) }
                                 .overlay { if file.isFolder { MiddleClick { model.openInNewTab(file) } } }
-                                .paneDragSource(model.isSplit) { model.paneDragProvider(for: file, pane: pane) }
+                                .paneDragSource { model.paneDragProvider(for: file, pane: pane) }
                                 .accessibilityLabel(file.name)
                                 .accessibilityAddTraits(tab.selection.contains(file.id) ? [.isSelected, .isButton] : .isButton)
+                                .id(file.id)
                         }
                     }.padding(.horizontal, Layout.margin).padding(.vertical, 18)
                 }.focusable().focusEffectDisabled().focused($focusedList, equals: pane)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { gridWidths[pane] = $0 }
                     // The grid had no keyboard at all: no Delete, and no way to take a run of files without
-                    // clicking each one with Command held down.
+                    // clicking each one with Command held down. The arrows move as they do in the Finder's icon
+                    // view, Shift extends the selection and Return opens.
                     .onDeleteCommand { model.requestDelete(model.selection(selected)) }
+                    .onMoveCommand { direction in
+                        let files = tab.visibleFiles
+                        let (dx, dy): (Int, Int) = switch direction {
+                        case .left: (-1, 0)
+                        case .right: (1, 0)
+                        case .up: (0, -1)
+                        case .down: (0, 1)
+                        @unknown default: (0, 0)
+                        }
+                        let from = (cursor ?? anchor).flatMap { id in files.firstIndex { $0.id == id } }
+                        guard let index = Self.gridStep(from: from, dx: dx, dy: dy, columns: Self.gridColumns(width: gridWidths[pane] ?? 0), count: files.count) else { return }
+                        let target = files[index].id
+                        if NSEvent.modifierFlags.contains(.shift), let start = anchor { selected = Self.range(from: start, to: target, in: files) }
+                        else { selected = [target]; anchor = target }
+                        cursor = target
+                        withAnimation(.easeOut(duration: 0.12)) { scroller.scrollTo(target) }
+                    }
+                    .onKeyPress(.return) {
+                        guard selected.count == 1, let file = model.selection(selected).first else { return .ignored }
+                        if file.isFolder { model.navigate(file) } else { previewSelection() }
+                        return .handled
+                    }
+                }
             } else { fileList(pane) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

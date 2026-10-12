@@ -10,6 +10,9 @@ enum Prefs {
     static let storageStyle = "storageStyle"
     static let finderIntegration = "finderIntegrationEnabled"
     static let transferPlan = "transferPlanEnabled"
+    static let thumbnails = "thumbnailsEnabled"
+    static let notifyTransfers = "notifyTransfersEnabled"
+    static let dockIcon = "dockIconVisible"
 
     static func bool(_ key: String, default value: Bool) -> Bool {
         UserDefaults.standard.object(forKey: key) as? Bool ?? value
@@ -24,12 +27,13 @@ enum Prefs {
 /// Only iCloudy's own directories are ever touched; the user's files and the accounts are never involved.
 enum Maintenance {
     enum Kind: String, CaseIterable, Identifiable {
-        case previews, scratch, pasteboard, listings, localCopies, history, spotlight, demo
+        case previews, thumbnails, scratch, pasteboard, listings, localCopies, history, spotlight, demo
         var id: String { rawValue }
 
         var title: String {
             switch self {
             case .previews: return L("Temporales de vista previa")
+            case .thumbnails: return L("Miniaturas")
             case .scratch: return L("Temporales de transferencias entre nubes")
             case .pasteboard: return L("Temporales del portapapeles")
             case .listings: return L("Caché de listados de carpetas")
@@ -42,6 +46,7 @@ enum Maintenance {
         var detail: String {
             switch self {
             case .previews: return L("Copias descargadas para ver archivos sin guardarlos. Se limpian solas al cerrar el visor y al arrancar.")
+            case .thumbnails: return L("Imágenes pequeñas de fotos, vídeos y PDF para la vista de iconos. Se vuelven a pedir al proveedor cuando hacen falta.")
             case .scratch: return L("Bloques a medio camino entre dos nubes. Vaciarlos obliga a repetir las transferencias en pausa que los usaban.")
             case .pasteboard: return L("Archivos .txt creados al subir texto del portapapeles.")
             case .listings: return L("Nombres y tamaños del último listado de cada carpeta, para abrirlas al instante. No contiene contenidos.")
@@ -58,6 +63,7 @@ enum Maintenance {
             let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             switch self {
             case .previews: return caches.appendingPathComponent("iCloudy/Previews-v1", isDirectory: true)
+            case .thumbnails: return ThumbnailStore.directory
             case .scratch: return caches.appendingPathComponent("iCloudy/Transfers", isDirectory: true)
             case .pasteboard: return caches.appendingPathComponent("iCloudy/Pasteboard", isDirectory: true)
             case .listings: return LocalStore.directory.appendingPathComponent("Listings", isDirectory: true)

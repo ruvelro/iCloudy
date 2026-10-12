@@ -32,6 +32,7 @@ struct iCloudyApp: App {
             ExplorerView(model: model)
                 .frame(minWidth: 900, minHeight: 600)
                 .onAppear { delegate.model = model }
+                .onChange(of: menuBarEnabled) { DockIcon.apply() }
                 // Opening a Spotlight result brings the app forward on the indexed item.
                 .onContinueUserActivity(CSSearchableItemActionType) { activity in
                     guard let id = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String else { return }

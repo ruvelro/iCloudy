@@ -342,7 +342,8 @@ extension WebDAVProvider {
     }
 
     func searchPage(term: String, cursor: String? = nil, filters: SearchFilters = SearchFilters(), referenceDate: Date = Date()) async throws -> SearchPage {
-        throw CloudError.message(L("WebDAV no ofrece búsqueda. Navega por las carpetas o usa el filtro de la carpeta actual."))
+        // No search of its own: the tree is walked and names are matched here.
+        try await walkSearch(term: term, cursor: cursor)
     }
 
     func folderTrail(id: String) async throws -> [CloudFile] {

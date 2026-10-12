@@ -3,7 +3,10 @@ import SwiftUI
 struct GlobalSearchView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var search: GlobalSearch
+    @ObservedObject var saved: SavedSearches
     @State private var selected: Set<SearchHit.ID> = []
+    @State private var naming = false
+    @State private var newName = ""
     private var selectedHit: SearchHit? { selected.count == 1 ? search.visibleHits.first { selected.contains($0.id) } : nil }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -16,6 +19,22 @@ struct GlobalSearchView: View {
                     ChromeField("Nombre o texto que buscar…", text: $search.query) { run() }
                     Button("Buscar") { run() }.buttonStyle(.borderedProminent).disabled(search.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.accounts.isEmpty)
                     if !search.loadingIDs.isEmpty { Button("Cancelar") { search.cancel() } }
+                    Menu {
+                        Button("Guardar esta búsqueda…") { newName = search.query; naming = true }
+                            .disabled(search.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        if !saved.items.isEmpty {
+                            Divider()
+                            ForEach(saved.items) { item in
+                                Button(item.name) { selected = []; model.runSavedSearch(item) }
+                            }
+                            Divider()
+                            Menu("Eliminar") {
+                                ForEach(saved.items) { item in Button(item.name) { saved.remove(item.id) } }
+                            }
+                        }
+                    } label: { Image(systemName: "bookmark") }
+                    .menuIndicator(.hidden).fixedSize()
+                    .help("Búsquedas guardadas").accessibilityLabel("Búsquedas guardadas")
                 }.controlSize(.large)
                 HStack {
                     Picker("Tipo", selection: $search.filters.type) { ForEach(SearchFileType.allCases) { Text(LocalizedStringKey($0.rawValue)).tag($0) } }
@@ -96,6 +115,11 @@ struct GlobalSearchView: View {
             Button { if let selectedHit { model.previewSearchHit(selectedHit) } } label: { Image(systemName: "eye") }.disabled(selectedHit == nil).help("Vista previa (Espacio)")
                 .accessibilityLabel("Vista previa")
         }
+        .alert("Guardar búsqueda", isPresented: $naming) {
+            TextField("Nombre", text: $newName)
+            Button("Guardar") { saved.save(name: newName, query: search.query, filters: search.filters) }
+            Button("Cancelar", role: .cancel) {}
+        } message: { Text("Se guardan el texto y los filtros. Los resultados se vuelven a pedir cada vez.") }
         .onDisappear { search.cancel() }
         .onChange(of: search.submittedQuery) { selected = []; model.preview.close() }
     }

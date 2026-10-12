@@ -66,7 +66,7 @@ final class PCloudTests: XCTestCase {
         let capabilities = Cloud.pcloud.capabilities
         XCTAssertEqual(Cloud.pcloud.title, "pCloud")
         XCTAssertTrue(capabilities.oauth)
-        XCTAssertFalse(capabilities.search, "pCloud documenta su API sin método de búsqueda")
+        XCTAssertTrue(capabilities.search, "Sin método de búsqueda, pero con un listado recursivo en una sola llamada")
         XCTAssertFalse(capabilities.recents)
         XCTAssertFalse(capabilities.sharedWithMe)
         XCTAssertTrue(capabilities.trashListing)
@@ -169,10 +169,20 @@ final class PCloudTests: XCTestCase {
         XCTAssertEqual(quota.total, 10_737_418_240)
     }
 
-    func testSearchIsDeclinedWithoutARequest() async {
-        serve { _, _, _ in XCTFail("No hay método de búsqueda que llamar"); return (500, Data()) }
-        do { _ = try await client().searchPage(term: "x"); XCTFail("pCloud no busca") }
-        catch { XCTAssertTrue(error.localizedDescription.contains("búsqueda"), error.localizedDescription) }
+    func testSearchMatchesNamesOverOneRecursiveListing() async throws {
+        var calls = 0
+        serve { method, parameters, _ in
+            calls += 1
+            XCTAssertEqual(method, "listfolder")
+            XCTAssertEqual(parameters["recursive"], "1")
+            XCTAssertEqual(parameters["folderid"], "0")
+            return (200, self.json(#"{"result":0,"metadata":{"id":"d0","isfolder":true,"folderid":0,"name":"/","contents":[{"id":"d5","isfolder":true,"folderid":5,"name":"Viajes","contents":[{"id":"f9","isfolder":false,"fileid":9,"name":"playa VIAJE.jpg","size":3}]},{"id":"f8","isfolder":false,"fileid":8,"name":"factura.pdf","size":2}]}}"#))
+        }
+        let page = try await client().searchPage(term: "viaje")
+        XCTAssertEqual(calls, 1, "Un solo listado, sin recorrer carpeta por carpeta")
+        XCTAssertEqual(Set(page.hits.map(\.file.name)), ["Viajes", "playa VIAJE.jpg"])
+        XCTAssertEqual(page.hits.first { $0.file.name == "playa VIAJE.jpg" }?.parentID, "d5")
+        XCTAssertNil(page.next)
     }
 
     func testAPublicLinkIsReusedBeforeAnotherIsMade() async throws {

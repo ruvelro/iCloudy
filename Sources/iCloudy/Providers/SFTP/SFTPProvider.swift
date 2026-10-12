@@ -164,7 +164,8 @@ extension SFTPProvider {
         throw CloudError.message(L("SFTP no tiene enlaces públicos."))
     }
     func searchPage(term: String, cursor: String? = nil, filters: SearchFilters = SearchFilters(), referenceDate: Date = Date()) async throws -> SearchPage {
-        throw CloudError.message(L("SFTP no ofrece búsqueda. Navega por las carpetas o usa el filtro de la carpeta actual."))
+        // No search of its own: the tree is walked and names are matched here.
+        try await walkSearch(term: term, cursor: cursor)
     }
     func folderTrail(id: String) async throws -> [CloudFile] { try sftpTrail(id: id) }
     func storageQuota() async throws -> StorageQuota {

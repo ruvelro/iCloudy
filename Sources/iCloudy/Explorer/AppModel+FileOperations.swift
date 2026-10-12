@@ -90,6 +90,7 @@ extension AppModel {
             error = L("Una carpeta no puede moverse ni copiarse dentro de sí misma."); return
         }
         var done = 0
+        var moves: [(file: CloudFile, moved: CloudFile, from: String, to: String)] = []
         do {
             let api = try client(request.account)
             let siblings = try await api.list(parent: destination)
@@ -102,7 +103,9 @@ extension AppModel {
             for file in request.files {
                 if request.isMove {
                     try await api.move(file: file, to: destination)
-                    try applyIdentityChange(api.identityChange(file: file, name: file.name, destination: destination), account: request.account, destinationPath: destinationPath)
+                    let change = try api.identityChange(file: file, name: file.name, destination: destination)
+                    try applyIdentityChange(change, account: request.account, destinationPath: destinationPath)
+                    if let origin = request.origin { moves.append((file, change.file(file), origin, destination)) }
                 } else if request.account.cloud == .microsoft && !request.account.isDemo {
                     try await remoteCopies.start(file: file, destination: destination, api: api)
                 } else { try await api.copy(file: file, to: destination) }
@@ -113,7 +116,10 @@ extension AppModel {
                     }
                 }
             }
-            if request.isMove { try LocalStore.save(favorites, to: favoritesURL) }
+            if request.isMove {
+                try LocalStore.save(favorites, to: favoritesURL)
+                if moves.count == request.files.count { registerMoveUndo(moves, account: request.account) }
+            }
             let target = destinationPath.last?.name ?? L("Mis archivos")
             if !request.isMove, request.account.cloud == .microsoft, !request.account.isDemo {
                 info = L("Copia enviada a OneDrive. Su estado se muestra en Transferencias hasta que el servidor confirme el resultado.")
@@ -226,6 +232,7 @@ extension AppModel {
                 favorites.removeAll { $0.accountID == account.id && ($0.file.id == file.id || $0.path.contains { $0.id == file.id }) }
             }
             try LocalStore.save(favorites, to: favoritesURL)
+            registerTrashUndo(files, account: account)
             if !account.capabilities.reversibleTrash, !account.isDemo {
                 info = L("\(moved) elementos eliminados del servidor de forma permanente.")
             } else if account.cloud == .volume {
@@ -281,7 +288,9 @@ extension AppModel {
             if let file {
                 guard !queue.hasActive(accountID: account.id) else { throw CloudError.message(L("Pausa las transferencias de esta cuenta antes de renombrar sus archivos.")) }
                 try await api.rename(file: file, name: name)
-                try applyIdentityChange(api.identityChange(file: file, name: name), account: account)
+                let change = try api.identityChange(file: file, name: name)
+                try applyIdentityChange(change, account: account)
+                registerRenameUndo(file, renamed: change.file(file), account: account)
             } else { _ = try await api.createFolder(name: name, parent: parent) }
             showNameDialog = false; reloadAfterWrite(to: account)
         } catch { self.error = error.localizedDescription }
