@@ -203,5 +203,8 @@ solo funciona con archivos, no con carpetas: Mega adjunta el mismo contenido cif
 bytes, y eso no se puede hacer con un árbol entero en una sola petición. Compartir carpetas tampoco, por lo dicho
 más arriba.
 
-Las subidas no se reanudan, y por eso tampoco se guarda un punto de control a mitad: hacerlo prometía una
-reanudación que no existe, porque un reintento empieza de cero de todos modos.
+Las subidas se reanudan. El servidor de almacenamiento guarda lo recibido para la dirección de subida, así que el
+punto de control lleva esa dirección, la clave y el nonce del archivo y el MAC de cada trozo enviado, y un reintento
+sigue desde el último trozo confirmado. Esa clave solo abre ese archivo, cuyo contenido en claro ya está en el Mac, y
+sale del punto de control en cuanto el nodo existe. Si el servidor ya no reconoce la dirección (caduca en horas), la
+subida empieza de cero, una vez.

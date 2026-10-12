@@ -282,7 +282,7 @@ extension AppModel {
 
     /// Connects a server the user hosts: WebDAV or FTP. The password goes straight to the Keychain and never leaves
     /// this Mac except to that server.
-    func connectServer(cloud: Cloud, server: String, username: String, password: String, flavor: String? = nil) async {
+    func connectServer(cloud: Cloud, server: String, username: String, password: String, flavor: String? = nil, key: SFTPKeyMaterial? = nil) async {
         guard !connecting else { return }
         connectionError = nil; connecting = true
         defer { connecting = false }
@@ -292,7 +292,7 @@ extension AppModel {
             case .webdav: result = try await WebDAVAuthentication().signInWebDAV(server: server, username: username, password: password,
                                                                                     existing: accounts)
             case .ftp: result = try await FTPAuthentication().signInFTP(server: server, username: username, password: password)
-            case .sftp: result = try await SFTPAuthentication().signInSFTP(server: server, username: username, password: password)
+            case .sftp: result = try await SFTPAuthentication().signInSFTP(server: server, username: username, password: password, key: key)
             case .mega: result = try await MegaAuthentication().signInMega(email: username, password: password)
             default: throw CloudError.message(L("\(cloud.title) no se conecta con usuario y contraseña."))
             }

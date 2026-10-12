@@ -6,9 +6,11 @@ struct UploadCheckpoint: Codable {
     var total: Int64 = 0
     var modified: Date?
     var complete = false
-    /// Dropbox and Box identify an upload session by an opaque id rather than by a URL.
+    /// Dropbox and Box identify an upload session by an opaque id rather than by a URL. Mega keeps here, in Base64,
+    /// the key and nonce of the one file being uploaded, until the node exists.
     var sessionID: String?
-    /// Box needs every part it has accepted when the session is committed, as JSON fragments.
+    /// Box needs every part it has accepted when the session is committed, as JSON fragments. Mega keeps the MAC of
+    /// every chunk sent, in Base64, which the file's final MAC is computed from.
     var parts: [String] = []
     /// Block size imposed by the provider; Box chooses it when the session starts.
     var chunkSize: Int64?

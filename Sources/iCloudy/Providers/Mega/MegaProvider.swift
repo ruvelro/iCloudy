@@ -370,24 +370,61 @@ extension MegaProvider {
             return try await megaFinishReplacement(state: state, cursor: &cursor, save: save)
         }
         let target = try megaHandle(parent, in: state)
-        let total = cursor.total
-        guard let answer = try await megaCall(["a": "u", "s": total, "ssl": MegaAPI.useTLS]) as? [String: Any],
-              let address = (answer["p"] as? String).flatMap(CloudSession.secureURL) else {
-            throw CloudError.message(L("Mega no aceptó la subida."))
+        // A checkpoint that carries the upload address, the file key and a MAC per chunk sent carries on from there.
+        // The storage server keeps what it received for that address; if it has let it go, the upload starts over once.
+        if Self.megaResumePoint(cursor) != nil {
+            do { return try await megaSend(local: local, target: target, name: name, replacing: replacing, state: state, cursor: &cursor, save: save, progress: progress) }
+            catch is CancellationError { throw CancellationError() }
+            catch let error as UploadSourceChanged { throw error }
+            // The file name stays out of the record: diagnostics never carry what is being uploaded.
+            catch { Diagnostics.mega("u", severity: .retry, error: error, note: "upload not resumable, restarting from zero") }
         }
-        // Mega has no resumable upload for third parties, so a restart begins again from zero.
-        cursor.offset = 0; cursor.url = nil; try save(cursor)
+        Self.megaForgetResume(&cursor)
+        return try await megaSend(local: local, target: target, name: name, replacing: replacing, state: state, cursor: &cursor, save: save, progress: progress)
+    }
 
-        let material = try MegaCrypto.randomKey(count: 24)
+    /// Where a stored upload can carry on: its address, key material and the MACs of every chunk up to its offset.
+    nonisolated static func megaResumePoint(_ cursor: UploadCheckpoint) -> (address: URL, material: Data, macs: [Data])? {
+        guard let address = cursor.url, let encoded = cursor.sessionID, let material = Data(base64Encoded: encoded), material.count == 24,
+              cursor.offset > 0, cursor.offset < cursor.total else { return nil }
+        let macs = cursor.parts.compactMap { Data(base64Encoded: $0) }
+        let reached = MegaCrypto.chunks(of: cursor.total).filter { $0.offset + $0.length <= cursor.offset }
+        guard macs.count == cursor.parts.count, macs.count == reached.count, reached.last.map({ $0.offset + $0.length }) == cursor.offset else { return nil }
+        return (address, material, macs)
+    }
+    nonisolated static func megaForgetResume(_ cursor: inout UploadCheckpoint) {
+        cursor.url = nil; cursor.sessionID = nil; cursor.parts = []; cursor.offset = 0
+    }
+
+    private func megaSend(local: URL, target: String, name: String, replacing: String?, state: MegaState, cursor: inout UploadCheckpoint,
+                          save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
+        let total = cursor.total
+        let address: URL, material: Data
+        var macs: [Data]
+        if let resume = Self.megaResumePoint(cursor) {
+            (address, material, macs) = resume
+        } else {
+            guard let answer = try await megaCall(["a": "u", "s": total, "ssl": MegaAPI.useTLS]) as? [String: Any],
+                  let fresh = (answer["p"] as? String).flatMap(CloudSession.secureURL) else {
+                throw CloudError.message(L("Mega no aceptó la subida."))
+            }
+            address = fresh; material = try MegaCrypto.randomKey(count: 24); macs = []
+            // The key of this one file, kept with its checkpoint until the upload ends so a restart can carry on.
+            // It opens only this file, whose plain bytes are on this Mac already.
+            cursor.url = address; cursor.sessionID = material.base64EncodedString(); cursor.parts = []; cursor.offset = 0
+            try save(cursor)
+        }
         let key = Data(material.prefix(16))
         let nonce = Data(material.suffix(8))
         let input = try FileHandle(forReadingFrom: local)
         defer { try? input.close() }
+        let start = cursor.offset
+        if start > 0 { try input.seek(toOffset: UInt64(start)) }
 
-        var macs: [Data] = []
         var token: String?
-        var sent: Int64 = 0
-        let pieces = MegaCrypto.chunks(of: total)
+        var sent = start
+        progress(sent, total)
+        let pieces = MegaCrypto.chunks(of: total).filter { $0.offset >= start }
         for chunk in (pieces.isEmpty ? [(offset: Int64(0), length: Int64(0))] : pieces) {
             try Task.checkCancellation()
             try cursor.sourceStamp?.validate(local)
@@ -397,7 +434,7 @@ extension MegaProvider {
             guard plain.count == Int(chunk.length) else { throw CloudError.message(L("El tamaño del origen ha cambiado.")) }
             let offset = chunk.offset
             let cipher = try await blockingIO { try MegaCrypto.ctr(plain, key: key, nonce: nonce, blockOffset: UInt64(offset / 16)) }
-            if !plain.isEmpty { macs.append(try await blockingIO { try MegaCrypto.chunkMAC(plain, key: key, nonce: nonce) }) }
+            let mac = plain.isEmpty ? nil : try await blockingIO { try MegaCrypto.chunkMAC(plain, key: key, nonce: nonce) }
 
             guard let url = URL(string: "\(address.absoluteString)/\(chunk.offset)") else {
                 throw CloudError.message(L("Mega no aceptó la subida."))
@@ -417,11 +454,14 @@ extension MegaProvider {
                 guard code == -3, attempt < 4 else { throw MegaAPI.failure(code) }
                 try await Task.sleep(nanoseconds: UInt64(attempt + 1) * 1_000_000_000)
             }
+            if let mac { macs.append(mac) }
+            sent += chunk.length
             // The last chunk answers with the token that turns the uploaded bytes into a node.
             if !text.isEmpty, !text.hasPrefix("-") { token = text }
-            sent += chunk.length
-            // No checkpoint in between: Mega has no resumable upload for third parties, so writing an offset here
-            // would promise a restart that begins again from zero anyway.
+            else if sent < total {
+                cursor.offset = sent; cursor.parts = macs.map { $0.base64EncodedString() }
+                try save(cursor)
+            }
             progress(sent, total)
         }
         guard let token else { throw CloudError.message(L("Mega no confirmó la subida.")) }
@@ -441,9 +481,10 @@ extension MegaProvider {
         cursor.remoteID = handle
         cursor.pendingRetirementID = replacing
         cursor.offset = total
+        // The node exists: the key now lives in it, encrypted under the master key, and not in the checkpoint.
+        cursor.url = nil; cursor.sessionID = nil; cursor.parts = []
         try save(cursor)
         return try await megaFinishReplacement(state: state, cursor: &cursor, save: save)
-
     }
     private func megaFinishReplacement(state: MegaState, cursor: inout UploadCheckpoint,
                                        save: (UploadCheckpoint) throws -> Void) async throws -> UploadReceipt {

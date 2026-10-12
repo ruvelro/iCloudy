@@ -355,8 +355,9 @@ extension S3Provider {
 
     /// Copies one object on the server. Above 5 GiB CopyObject refuses, and the copy is assembled from ranges of the
     /// source with UploadPartCopy.
-    func copyObject(_ source: S3Path, size: Int64, to target: S3Path) async throws {
-        let copySource = "/" + S3Signer.encode(source.bucket) + "/" + S3Signer.encode(source.key, slash: true)
+    func copyObject(_ source: S3Path, size: Int64, to target: S3Path, versionID: String? = nil) async throws {
+        var copySource = "/" + S3Signer.encode(source.bucket) + "/" + S3Signer.encode(source.key, slash: true)
+        if let versionID { copySource += "?versionId=" + S3Signer.encode(versionID) }
         guard size > Self.singleCopyLimit else {
             var call = S3Call(method: "PUT", bucket: target.bucket, key: target.key)
             call.headers["x-amz-copy-source"] = copySource

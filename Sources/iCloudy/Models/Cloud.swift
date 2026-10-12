@@ -125,9 +125,10 @@ struct CloudCapabilities {
             return CloudCapabilities(exportsDocuments: true, trashListing: true, permanentDelete: true, emptyTrash: true, memberSharing: true,
                                      copiesFolders: false, versions: true, deletesVersions: true)
         case .microsoft:
-            // Graph deletes for good with `permanentDelete`, but exposes no listing of the recycle bin to third parties.
+            // Graph deletes for good with `permanentDelete`, but exposes no listing of the recycle bin to third parties:
+            // the bin iCloudy shows is what it deleted itself, restored by id. Nothing empties it from here.
             // Its versions can be listed, read and restored, but not deleted one by one.
-            return CloudCapabilities(permanentDelete: true, memberSharing: true, versions: true)
+            return CloudCapabilities(trashListing: true, permanentDelete: true, memberSharing: true, versions: true)
         case .dropbox:
             // No "recent" or "shared with me" listing in this version; both need APIs beyond plain file browsing.
             // Deleted entries are listed alongside the live ones and files come back through their revisions.
@@ -181,13 +182,15 @@ struct CloudCapabilities {
             // It has no "recent" or "shared with me" listing.
             // Deleting goes to its trash, which is listed, restored from and cleared item by item or as a whole.
             // Files list no content hash, but `checksumfile` answers one per file for uploads and downloads.
+            // Revisions are listed, read and reverted to; pCloud has no call that deletes a single one.
             return CloudCapabilities(recents: false, sharedWithMe: false,
-                                     trashListing: true, permanentDelete: true, emptyTrash: true)
+                                     trashListing: true, permanentDelete: true, emptyTrash: true, versions: true)
         case .s3:
             // S3 has no bin, no quota and no activity feeds. Search is by key prefix only. Uploads are checked against
             // the ETag, and a link is a presigned URL: temporary by nature, and only for an object, not a prefix.
+            // Versions exist on buckets with versioning on; the sheet explains how to switch it on otherwise.
             return CloudCapabilities(oauth: false, recents: false, sharedWithMe: false, quota: false,
-                                     reversibleTrash: false, linksFolders: false)
+                                     reversibleTrash: false, linksFolders: false, versions: true, deletesVersions: true)
         }
     }
 }
@@ -211,6 +214,9 @@ extension LinkFeatures {
         case .box:
             // One shared link per item. `can_edit` is accepted on files only, and Box has no listing of all of them.
             return LinkFeatures(manage: true, expiration: true, password: true, edit: true, downloadToggle: true)
+        case .pcloud:
+            // One account-wide list of links: listed, made and revoked. Expiry is for paid plans and not offered.
+            return LinkFeatures(manage: true, inventory: true)
         case .mega:
             // Links are listed from the tree and revoked by removing the export. Expiry and password-protected links
             // are Pro features with their own cryptography, and neither is attempted.

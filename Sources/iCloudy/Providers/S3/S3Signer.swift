@@ -5,6 +5,8 @@ import CryptoKit
 struct S3Keys: Equatable, Sendable {
     let accessKey: String
     let secretKey: String
+    /// Temporary keys come with a token that has to travel, signed, with every request.
+    var sessionToken: String? = nil
 }
 
 /// AWS Signature Version 4, written against the specification rather than an SDK, with S3's own rules: paths are
@@ -143,6 +145,8 @@ enum S3Signer {
                   URLQueryItem(name: "X-Amz-Date", value: timestamp(date)),
                   URLQueryItem(name: "X-Amz-Expires", value: String(lifetime)),
                   URLQueryItem(name: "X-Amz-SignedHeaders", value: "host")]
+        // With temporary keys the token is part of the signed query, so the link stops working when the keys do.
+        if let token = keys.sessionToken, !token.isEmpty { items.append(URLQueryItem(name: "X-Amz-Security-Token", value: encode(token))) }
         components.percentEncodedQueryItems = items
         guard let unsigned = components.url else { return nil }
         // The query that goes out is the canonical one, so what the server rebuilds is what was signed.

@@ -113,8 +113,11 @@ extension PCloudProvider {
 
     /// The content lives on a separate storage host, behind a link pCloud signs for this address and for a limited
     /// time. The link is the credential, so the token is not sent along with it.
-    func pcloudContentRequest(for file: CloudFile) async throws -> URLRequest {
-        let body = try await pcloud("getfilelink", ["fileid": Self.numericID(file.id)])
+    /// `revision` reads an earlier version instead of the current one.
+    func pcloudContentRequest(for file: CloudFile, revision: String? = nil) async throws -> URLRequest {
+        var parameters = ["fileid": Self.numericID(file.id)]
+        if let revision { parameters["revisionid"] = revision }
+        let body = try await pcloud("getfilelink", parameters)
         guard let host = (body["hosts"] as? [String])?.first(where: { !$0.isEmpty }), let path = body["path"] as? String else {
             throw CloudError.message(L("pCloud no devolvió el enlace de descarga."))
         }

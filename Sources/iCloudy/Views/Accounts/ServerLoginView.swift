@@ -23,6 +23,10 @@ struct ServerLoginView: View {
             self = stored.hasPrefix("ftpes://") ? .explicitTLS : stored.hasPrefix("ftps://") ? .implicitTLS : .plain
         }
     }
+    /// The private key chosen for SFTP, read when it was picked, and its passphrase.
+    @State private var keyText: String?
+    @State private var keyName = ""
+    @State private var passphrase = ""
     @State private var nextcloud = false
     @State private var showAdvanced = false
 
@@ -77,6 +81,25 @@ struct ServerLoginView: View {
         return account.email.split(separator: "@").dropLast().joined(separator: "@")
     }
 
+    /// Opens the person's ~/.ssh, hidden as it is. Under the sandbox the home folder is the container's, so the real
+    /// one is asked of the system. The file is read right away; nothing keeps a path to it.
+    private func pickKey() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true
+        panel.message = L("Elige la clave privada (el archivo sin «.pub»).")
+        if let home = getpwuid(getuid())?.pointee.pw_dir { panel.directoryURL = URL(fileURLWithPath: String(cString: home)).appendingPathComponent(".ssh") }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) < 64_000 else { throw SSHPrivateKey.Problem.notOpenSSH }
+            let text = try String(contentsOf: url, encoding: .utf8)
+            // Checked now for its shape, so a public key or a certificate is refused before connecting.
+            if let problem = Result(catching: { try SSHPrivateKey.parse(text, passphrase: "") }).failure as? SSHPrivateKey.Problem,
+               [.notOpenSSH, .legacyPEM, .damaged].contains(problem) { throw problem }
+            keyText = text; keyName = url.lastPathComponent; model.connectionError = nil
+        } catch { model.connectionError = error.localizedDescription }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
@@ -109,7 +132,21 @@ struct ServerLoginView: View {
             if needsServer { TextField(placeholder, text: $server).textFieldStyle(.roundedBorder) }
             TextField(needsServer ? "Usuario" : "Correo de la cuenta", text: $username).textFieldStyle(.roundedBorder)
                 .onAppear(perform: prefillForReconnect)
-            SecureField(needsServer ? "Contraseña o contraseña de aplicación" : "Contraseña", text: $password).textFieldStyle(.roundedBorder)
+            SecureField(cloud == .sftp ? (keyText == nil ? "Contraseña" : "Contraseña (si el servidor la pide además)") : needsServer ? "Contraseña o contraseña de aplicación" : "Contraseña", text: $password).textFieldStyle(.roundedBorder)
+            if cloud == .sftp {
+                HStack {
+                    Button(keyText == nil ? "Usar una clave privada…" : "Cambiar de clave…") { pickKey() }
+                    if keyText != nil {
+                        Label(keyName, systemImage: "key.fill").lineLimit(1).font(.callout)
+                        Button("Quitar") { keyText = nil; keyName = ""; passphrase = "" }.buttonStyle(.link)
+                    }
+                }
+                if keyText != nil {
+                    SecureField("Frase de la clave, si tiene", text: $passphrase).textFieldStyle(.roundedBorder)
+                    Text("Ed25519, ECDSA o RSA en el formato de OpenSSH. La clave y su frase se guardan en el Llavero de este Mac y solo sirven para firmar el inicio de sesión: nunca se envían al servidor.")
+                        .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
             Text(needsServer
                  ? "Si tu servidor usa verificación en dos pasos, crea una contraseña de aplicación en su configuración."
                  : "Si la cuenta tiene verificación en dos pasos, escribe la contraseña, un espacio y el código de seis dígitos.")
@@ -133,13 +170,14 @@ struct ServerLoginView: View {
                 Button("Conectar") {
                     Task {
                         await model.connectServer(cloud: cloud, server: address, username: username, password: password,
-                                                  flavor: cloud == .webdav && nextcloud ? "nextcloud" : nil)
-                        password = ""
+                                                  flavor: cloud == .webdav && nextcloud ? "nextcloud" : nil,
+                                                  key: cloud == .sftp ? keyText.map { SFTPKeyMaterial(key: $0, passphrase: passphrase) } : nil)
+                        password = ""; passphrase = ""
                         if model.connectionError == nil { dismiss() }
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(model.connecting || (needsServer && server.isEmpty) || username.isEmpty || password.isEmpty)
+                .disabled(model.connecting || (needsServer && server.isEmpty) || username.isEmpty || (password.isEmpty && keyText == nil))
             }
         }.padding(24).frame(width: 470)
     }

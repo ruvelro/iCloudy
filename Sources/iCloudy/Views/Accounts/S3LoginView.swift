@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Keys and place of an S3 account: the service (or an endpoint for anything else that speaks S3), its region, the
 /// access key and its secret, and optionally one bucket. The secret goes to the Keychain and only ever signs requests.
@@ -7,6 +8,8 @@ struct S3LoginView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var form = S3SignIn(service: .aws, region: S3Service.aws.defaultRegion)
     @State private var showAdvanced = false
+    /// Profiles read from an AWS credentials file, while the person picks one.
+    @State private var profiles: [AWSProfile] = []
 
     private var explanation: LocalizedStringKey {
         switch form.service {
@@ -43,6 +46,30 @@ struct S3LoginView: View {
         showAdvanced = location.addressing != .automatic
     }
 
+    /// Reads `~/.aws/credentials` or `~/.aws/config`, chosen by the person: under the sandbox only a file picked in the
+    /// panel can be read. The keys go into the form and from there to the Keychain, never anywhere else.
+    private func importProfiles() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.showsHiddenFiles = true
+        panel.message = L("Elige el archivo credentials (o config) de tu carpeta .aws.")
+        if let home = getpwuid(getuid())?.pointee.pw_dir { panel.directoryURL = URL(fileURLWithPath: String(cString: home)).appendingPathComponent(".aws") }
+        guard panel.runModal() == .OK, let url = panel.url, let text = try? String(contentsOf: url, encoding: .utf8) else { return }
+        let found = AWSProfiles.parse(text)
+        model.connectionError = nil
+        guard !found.isEmpty else { model.connectionError = L("Ese archivo no tiene perfiles de AWS."); return }
+        profiles = found
+        use(found.first { $0.name == "default" && $0.hasKeys } ?? found.first(where: \.hasKeys) ?? found[0])
+    }
+    private func use(_ profile: AWSProfile) {
+        if let why = profile.indirection, !profile.hasKeys {
+            model.connectionError = L("El perfil «\(profile.name)» \(why). iCloudy necesita las claves escritas en el archivo.")
+            return
+        }
+        guard profile.hasKeys else { model.connectionError = L("El perfil «\(profile.name)» no tiene claves de acceso."); return }
+        form.adopt(profile)
+        model.connectionError = nil
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Label("S3", systemImage: "cylinder.split.1x2").font(.title2)
@@ -67,9 +94,25 @@ struct S3LoginView: View {
                     ForEach(form.service.regions, id: \.self) { region in Text(verbatim: region).tag(region) }
                 }
             }
+            HStack {
+                Button("Importar de ~/.aws…") { importProfiles() }
+                if profiles.count > 1 {
+                    Menu("Perfil") {
+                        ForEach(profiles) { profile in
+                            Button(profile.name) { use(profile) }.disabled(!profile.hasKeys)
+                        }
+                    }.fixedSize()
+                }
+                Spacer()
+            }
             TextField("ID de clave de acceso", text: $form.accessKey).textFieldStyle(.roundedBorder)
                 .onAppear(perform: prefillForReconnect)
             SecureField("Clave secreta", text: $form.secretKey).textFieldStyle(.roundedBorder)
+            SecureField("Token de sesión (solo con credenciales temporales)", text: $form.sessionToken).textFieldStyle(.roundedBorder)
+            if let expires = form.sessionExpires, !form.sessionToken.isEmpty {
+                Text("Estas credenciales caducan el \(expires.formatted(date: .abbreviated, time: .shortened)); después habrá que volver a conectar la cuenta.")
+                    .font(.caption2).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            }
             TextField("Bucket (opcional)", text: $form.bucket).textFieldStyle(.roundedBorder)
             Text("Si lo dejas vacío, se muestran todos los buckets que la clave puede listar. Escríbelo si la clave solo tiene acceso a uno.")
                 .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -94,7 +137,7 @@ struct S3LoginView: View {
                 Button("Conectar") {
                     Task {
                         await model.connectS3(form)
-                        form.secretKey = ""
+                        form.secretKey = ""; form.sessionToken = ""
                         if model.connectionError == nil { dismiss() }
                     }
                 }

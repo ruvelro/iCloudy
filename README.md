@@ -42,26 +42,27 @@ terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga 
 | Nube | Acceso | Buscar | Enlaces | Personas | Papelera | Verificación | Estado |
 |---|---|:-:|:-:|:-:|:-:|:-:|---|
 | **Google Drive** | OAuth + PKCE | ✅ | ✅ | ✅ | ✅⁵ | MD5 | Estable |
-| **OneDrive** | OAuth + PKCE | ✅ | ✅ | ✅ | ✅ | SHA-256 / SHA-1 | Estable |
+| **OneDrive** | OAuth + PKCE | ✅ | ✅ | ✅ | ✅⁵ | SHA-256 / SHA-1 | Estable |
 | **Dropbox** | OAuth + PKCE | ✅ | ✅ | ✅ | ✅⁵ | `content_hash` | Estable |
 | **Box** | OAuth + PKCE | ✅ | ✅ | ✅ | ✅⁵ | SHA-1 | Estable |
-| **WebDAV** | Usuario y contraseña | ✅⁸ | ✅¹ | ✅¹ | — | — | Estable |
+| **WebDAV** | Usuario y contraseña | ✅⁸ | ✅¹ | ✅¹ | ✅⁹ | — | Estable |
 | **Volúmenes y carpetas** | Carpeta del Mac | ✅ | — | — | ✅² | — | Estable |
-| **SFTP** | Usuario y contraseña | ✅⁸ | — | — | — | — | Estable |
+| **SFTP** | Contraseña o clave SSH | ✅⁸ | — | — | — | — | Estable |
 | **FTP / FTPS** | Usuario y contraseña | ✅⁸ | — | — | — | — | Estable |
 | **Mega** | Correo y contraseña | ✅ | ✅⁴ | — | ✅⁵ | MAC propio³ | 🧪 Experimental |
 | **O2 Cloud** | Sesión de Mi O2 | ✅⁸ | — | — | ✅ | — | 🧪 Experimental |
 | **pCloud** | OAuth | ✅⁸ | ✅ | — | ✅ | SHA-256 / SHA-1 | 🆕 Nuevo |
-| **S3 y compatibles**⁶ | Clave de acceso | Prefijo | Temporales⁷ | — | — | MD5 (ETag) | 🆕 Nuevo |
+| **S3 y compatibles**⁶ | Clave de acceso, STS o perfil de `~/.aws` | Prefijo | Temporales⁷ | — | — | MD5 (ETag) | 🆕 Nuevo |
 
 <sub>
 ¹ Enlaces públicos y compartir con personas en Nextcloud y ownCloud, activando la API OCS al conectar.
 ² Papelera real y reversible del sistema, vía <code>trashItem</code>.
 ³ Cifrado de extremo a extremo: cada descarga se verifica contra el resumen que lleva dentro la clave del archivo.
 <br>⁴ En Mega, enlaces de archivo. Una carpeta se comparte con una clave aparte que iCloudy todavía no sabe crear, y lo dice.
-<br>⁵ Papelera navegable (restaurar, eliminar definitivamente, vaciar) en Drive, Box y Mega; en Dropbox se listan y restauran archivos, y el vaciado depende de la cuenta. OneDrive, O2 y los volúmenes borran definitivamente sin listar su papelera. pCloud lista, restaura y vacía la suya.
+<br>⁵ Papelera navegable (restaurar, eliminar definitivamente, vaciar) en Drive, Box y Mega; en Dropbox se listan y restauran archivos, y el vaciado depende de la cuenta. En OneDrive se lista lo eliminado desde iCloudy en los últimos 30 días y se restaura (cuentas personales): Graph no deja ver la papelera entera. O2 y los volúmenes borran sin listar su papelera. pCloud lista, restaura y vacía la suya.
 <br>⁶ Amazon S3, Backblaze B2, Wasabi, Cloudflare R2, MinIO, Scaleway y DigitalOcean Spaces, con firma SigV4 propia y subidas multiparte reanudables — [guía](docs/S3.md).
 <br>⁷ URL prefirmadas de una hora, un día o siete días, solo de archivos.
+<br>⁹ En Nextcloud: la papelera se lista, se restaura, se purga y se vacía. WebDAV a secas no tiene.
 <br>⁸ Por nombre. El proveedor no tiene búsqueda propia: iCloudy recorre las carpetas (pCloud, con un solo listado recursivo).
 </sub>
 
@@ -130,7 +131,7 @@ cancelable y limpieza al cerrar.
 | **Plan e informe** | Antes de una transferencia grande, cuántos archivos y bytes son, el espacio que hace falta y los conflictos que ya existen. Al acabar, un informe archivo por archivo, exportable a CSV o JSON, con «Reintentar solo lo pendiente» y «Verificar lo copiado». |
 | **Descargas verificadas** | Cada descarga se comprueba contra el tamaño y la suma del proveedor (MD5, QuickXorHash, `content_hash`, SHA-1) antes de dejarla en su sitio. Si el archivo cambió mientras bajaba, se vuelve a pedir; si llegó dañado, no queda nada. |
 | **Disponible sin conexión** | Archivos y carpetas marcados se guardan en el Mac y se mantienen al día, dentro del espacio que elijas. |
-| **Versiones** | Historial de versiones en Drive, OneDrive, Dropbox, Box y Nextcloud: ver, descargar, restaurar y borrar. |
+| **Versiones** | Historial de versiones en Drive, OneDrive, Dropbox, Box, Nextcloud, pCloud y S3: ver, descargar, restaurar y borrar. |
 | **Enlaces públicos** | Ver, crear con caducidad o contraseña y revocar enlaces, por elemento o para toda la cuenta. |
 | **Comparar y duplicados** | Compara dos carpetas de cualquier nube o del Mac por nombre, tamaño y suma, y busca archivos repetidos entre cuentas para liberar espacio. Nunca borra solo. |
 | **Bóvedas cifradas** | Cifrado en el Mac compatible con Cryptomator (formato 8): nombres y contenidos cifrados en cualquier nube — [cómo funciona](docs/CIFRADO.md). |
@@ -214,6 +215,8 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 - [x] Descargas verificadas, copias sin conexión, versiones, gestión de enlaces, comparador y buscador de duplicados
 - [x] Bóvedas cifradas compatibles con Cryptomator, exclusiones en reflejos y diagnóstico exportable
 - [x] Integración continua en GitHub Actions
+- [x] Miniaturas, arrastrar al Finder, deshacer, renombrado en lote, búsquedas guardadas y búsqueda en todas las nubes
+- [x] Claves SSH, versiones en pCloud y S3, papeleras de Nextcloud y OneDrive, credenciales temporales y perfiles en S3, subidas reanudables en Mega
 
 **En camino**
 

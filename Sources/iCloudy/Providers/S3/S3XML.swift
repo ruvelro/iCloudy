@@ -179,6 +179,10 @@ enum S3Failure {
             return L("S3 ha denegado el acceso. Comprueba que la clave tiene permiso para esta operación en este bucket.")
         case "InvalidAccessKeyId":
             return L("El servicio no reconoce el ID de clave de acceso. Puede que se haya borrado o desactivado: crea otra y vuelve a conectar la cuenta.")
+        case "ExpiredToken", "TokenRefreshRequired":
+            return L("Las credenciales temporales de S3 han caducado. Vuelve a conectar la cuenta con unas nuevas.")
+        case "InvalidToken":
+            return L("El servicio no acepta el token de sesión. Comprueba que corresponde a esa clave de acceso.")
         case "SignatureDoesNotMatch":
             return L("La firma de la petición no coincide. Revisa la clave secreta; si es correcta, comprueba que la fecha y la hora del Mac sean las buenas, porque S3 solo admite unos minutos de desfase.")
         case "RequestTimeTooSkewed":
