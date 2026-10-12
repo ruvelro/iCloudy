@@ -211,5 +211,6 @@ final class SpotlightIndex {
             try? await operation(index)
         }
     }
-    private func persist() { try? LocalStore.save(items, to: storeURL) }
+    /// Off the main thread: the index is rewritten whenever a folder is listed.
+    private func persist() { StoreWriter.shared.later(items, to: storeURL) }
 }

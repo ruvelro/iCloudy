@@ -34,16 +34,16 @@ extension AppModel {
         // Badges live in rows the explorer draws from the model, so the store's changes have to reach it.
         // Throttled: a folder refresh records one copy per file, and each change redraws the whole explorer.
         offline.objectWillChange.throttle(for: .milliseconds(250), scheduler: RunLoop.main, latest: true)
-            .sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &refresher.subscriptions)
+            .sink { [weak self] _ in self?.subsystemsChanged() }.store(in: &refresher.subscriptions)
         // On launch, once the accounts are read from the Keychain; and whenever the network comes back.
-        $loadingAccounts.removeDuplicates().filter { !$0 }.first()
+        accountsLoaded.first()
             .sink { [weak self] _ in self?.offlineRefresher.refresh() }.store(in: &refresher.subscriptions)
-        $isOnline.removeDuplicates().dropFirst().filter { $0 }
+        onlineChanges.removeDuplicates().filter { $0 }
             .sink { [weak self] _ in self?.offlineRefresher.refresh() }.store(in: &refresher.subscriptions)
         // A listing that shows a pinned file changed, or a new file inside a pinned folder, refreshes that pin.
         // Only the focused tab's listing is compared. Its account and folder travel with its files: read after the
         // debounce, they could belong to the other pane if the focus moved in between.
-        $workspace.map { OfflineObservation($0.current) }.removeDuplicates().debounce(for: .milliseconds(500), scheduler: RunLoop.main)
+        workspaceChanges.map { OfflineObservation($0.current) }.removeDuplicates().debounce(for: .milliseconds(500), scheduler: RunLoop.main)
             .sink { [weak self] seen in self?.offlineObserve(seen) }.store(in: &refresher.subscriptions)
         refresher.timer = Task { [weak self] in
             while !Task.isCancelled {
@@ -74,11 +74,13 @@ extension AppModel {
 
     /// The badge of a file of the selected account, or nil when it is not kept offline.
     func offlineStatus(_ file: CloudFile) -> OfflineStatus? {
+        _ = subsystems
         guard let account else { return nil }
         return offline.status(for: file, accountID: account.id)
     }
     /// The same, for a tab that need not be the focused one.
     func offlineStatus(_ file: CloudFile, in tab: BrowserState) -> OfflineStatus? {
+        _ = subsystems
         guard let id = tab.accountID else { return nil }
         return offline.status(for: file, accountID: id)
     }

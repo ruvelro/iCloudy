@@ -44,5 +44,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         current?.offline.flush() // and the copies kept for offline use
         if let model = current { model.workspaceStore.save(model.workspace) } // tabs changed in the last second
         current?.preview.close()
+        StoreWriter.shared.flush() // everything handed to the background writer reaches the disk before exiting
     }
 }

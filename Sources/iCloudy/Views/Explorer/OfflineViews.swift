@@ -145,7 +145,7 @@ struct OfflineList: View {
 
 /// The "Sin conexión" tab of the settings window.
 struct OfflineSettingsView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     @ObservedObject var store: OfflineStore
     @AppStorage(OfflineSettings.budgetKey) private var budgetGB = 10
     @AppStorage(OfflineSettings.refreshKey) private var refreshMinutes = 60

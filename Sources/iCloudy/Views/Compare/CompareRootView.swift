@@ -5,7 +5,7 @@ import AppKit
 /// account or of this Mac, so they share one window and switch with a control at the top.
 struct CompareRootView: View {
     @ObservedObject var center: CompareCenter
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     var body: some View {
         VStack(spacing: 0) {
             Picker("Herramienta", selection: $center.mode) {
@@ -25,7 +25,7 @@ struct CompareRootView: View {
 
 /// Chooses a folder: one of a connected account, browsed in a sheet, or one of this Mac, in an open panel.
 struct FolderLocationMenu: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let title: LocalizedStringKey
     let onPick: (FolderLocation) -> Void
     @State private var browsing: Account?
@@ -48,7 +48,7 @@ struct FolderLocationMenu: View {
 
 /// The icon of where a folder lives: the account's own, or a Mac.
 struct FolderLocationIcon: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let location: FolderLocation
     var size: CGFloat = 20
     var body: some View {
@@ -64,7 +64,7 @@ struct FolderLocationIcon: View {
 /// Browses the folders of one account to pick one to compare or search. Unlike the move and copy picker it has no
 /// selection to protect: any folder, the top of the account included, is a valid answer.
 struct CompareFolderBrowser: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let account: Account
     let onPick: (FolderLocation) -> Void
     @Environment(\.dismiss) private var dismiss

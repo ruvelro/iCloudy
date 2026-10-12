@@ -9,7 +9,7 @@ import UniformTypeIdentifiers
 /// said by existing. What it never said is which cloud the item lives in, and that is exactly what you need when six
 /// of them are connected, so the star gives way to the account's own icon.
 struct FavoritesList: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
 
     private var empty: some View {
         VStack(spacing: 6) {

@@ -11,6 +11,26 @@ enum HTTP {
         guard let result = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw CloudError.message(L("Respuesta no válida del servicio.")) }
         return result
     }
+
+    /// Above this size an answer is parsed off the main thread: a page of a thousand items from Drive or Graph, a
+    /// recursive pCloud listing or Mega's whole tree took long enough there to stall the window.
+    static let backgroundParseThreshold = 32 * 1024
+
+    /// What `JSONSerialization` returns is not `Sendable`; this carries it back from the background once, untouched.
+    private struct Parsed: @unchecked Sendable { let value: Any }
+
+    /// `JSONSerialization` on a large answer, off the main thread; small answers are parsed in place.
+    static func parse(_ data: Data, fragments: Bool = false) async throws -> Any {
+        let options: JSONSerialization.ReadingOptions = fragments ? [.fragmentsAllowed] : []
+        guard data.count >= backgroundParseThreshold else { return try JSONSerialization.jsonObject(with: data, options: options) }
+        return try await blockingIO { Parsed(value: try JSONSerialization.jsonObject(with: data, options: options)) }.value
+    }
+
+    /// `json(_:)`, off the main thread when the answer is large.
+    static func object(_ data: Data) async throws -> [String: Any] {
+        guard let result = try await parse(data) as? [String: Any] else { throw CloudError.message(L("Respuesta no válida del servicio.")) }
+        return result
+    }
     static func validate(_ response: URLResponse, data: Data = Data()) throws {
         guard let response = response as? HTTPURLResponse else { throw CloudError.message(L("Respuesta HTTP no válida.")) }
         guard (200..<300).contains(response.statusCode) else {

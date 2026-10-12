@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 /// The tabs of one pane, the way the Finder draws them: only once there is more than one, each as wide as the others,
 /// with its close button showing on hover. Dragging a tab onto another puts it there.
 struct BrowserTabBar: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let pane: Int
     @State private var dragging: BrowserState.ID?
 
@@ -33,7 +33,7 @@ struct BrowserTabBar: View {
 }
 
 private struct BrowserTabChip: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let tab: BrowserState
     let active: Bool
     @State private var hovering = false

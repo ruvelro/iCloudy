@@ -22,7 +22,7 @@ final class WorkspaceStore {
     }
 
     /// Writes a second after the last change: a listing arriving page by page is not worth a write per page.
-    func watch(_ changes: Published<ExplorerWorkspace>.Publisher) {
+    func watch(_ changes: AnyPublisher<ExplorerWorkspace, Never>) {
         subscription = changes.dropFirst().debounce(for: .seconds(1), scheduler: RunLoop.main).sink { [weak self] in self?.save($0) }
     }
 

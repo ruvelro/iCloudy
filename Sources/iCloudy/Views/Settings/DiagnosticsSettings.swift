@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 /// Settings → Diagnóstico: how much the log keeps, what it has kept lately, and a way to hand it over that shows what
 /// will leave the Mac before it does.
 struct DiagnosticsSettings: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     @State private var level = Diagnostics.shared.level
     @State private var events: [DiagnosticEvent] = []
     @State private var accountFilter = ""

@@ -1,4 +1,4 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.0
 import PackageDescription
 
 let package = Package(
@@ -22,6 +22,9 @@ let package = Package(
         // The Finder extension. An app extension has no main of its own: the system enters through NSExtensionMain.
         .executableTarget(name: "iCloudyFileProvider", dependencies: ["iCloudy"],
                           linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain"])]),
-        .testTarget(name: "iCloudyTests", dependencies: ["iCloudy"])
+        // The app, the library and the extension build in the Swift 6 language mode, with complete data-race
+        // checking. The tests stay in Swift 5 mode: their stand-in servers share state with network callbacks on
+        // purpose, and rewriting them would change no line of what ships.
+        .testTarget(name: "iCloudyTests", dependencies: ["iCloudy"], swiftSettings: [.swiftLanguageMode(.v5)])
     ]
 )

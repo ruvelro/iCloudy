@@ -74,6 +74,42 @@ final class LocalizationTests: XCTestCase {
         XCTAssertTrue(missing.isEmpty, "Sin traducir: \(missing)")
     }
 
+    /// The plural tables, read the way the app reads them: the singular for one, the plural for the rest.
+    func testCountsAgreeWithTheirNumberInBothLanguages() throws {
+        func format(_ language: String, _ key: String, _ arguments: CVarArg...) throws -> String {
+            let bundle = try XCTUnwrap(Bundle(path: "Resources/\(language).lproj"))
+            return String(format: bundle.localizedString(forKey: key, value: nil, table: nil), locale: Locale(identifier: language), arguments: arguments)
+        }
+        XCTAssertEqual(try format("es", "%lld seleccionados", 1), "1 seleccionado")
+        XCTAssertEqual(try format("es", "%lld seleccionados", 3), "3 seleccionados")
+        XCTAssertEqual(try format("en", "%lld conflictos", 1), "1 conflict")
+        XCTAssertEqual(try format("en", "%lld conflictos", 2), "2 conflicts")
+        XCTAssertEqual(try format("es", "Quedan %lld por transferir o por comprobar.", 1), "Queda 1 por transferir o por comprobar.")
+        XCTAssertEqual(try format("es", "%lld archivos en cola hacia %@.", 1, "Drive"), "1 archivo en cola hacia Drive.")
+        XCTAssertEqual(try format("en", "%lld archivos en %lld carpetas", 1, 4), "1 file in 4 folders")
+        XCTAssertEqual(try format("es", "%lld carpetas · %lld archivos", 2, 1), "2 carpetas · 1 archivo")
+    }
+
+    /// Every plural entry keeps the arguments of its key, in both languages, so no count or name goes missing.
+    func testPluralEntriesKeepTheirKeysArguments() throws {
+        for language in ["es", "en"] {
+            let url = URL(fileURLWithPath: "Resources/\(language).lproj/Localizable.stringsdict")
+            let table = try XCTUnwrap(try PropertyListSerialization.propertyList(from: Data(contentsOf: url), format: nil) as? [String: [String: Any]])
+            XCTAssertGreaterThan(table.count, 20)
+            for (key, entry) in table {
+                let format = try XCTUnwrap(entry["NSStringLocalizedFormatKey"] as? String, key)
+                let variables = format.components(separatedBy: "%#@").count - 1
+                let counts = key.components(separatedBy: "%lld").count - 1, objects = key.components(separatedBy: "%@").count - 1
+                XCTAssertEqual(variables, counts, "\(language): \(key)")
+                XCTAssertEqual(format.components(separatedBy: "%@").count - 1, objects, "\(language): \(key)")
+                for (name, value) in entry where name != "NSStringLocalizedFormatKey" {
+                    let rule = try XCTUnwrap(value as? [String: String], key)
+                    XCTAssertTrue(rule["one"]?.contains("%lld") == true && rule["other"]?.contains("%lld") == true, "\(language): \(key) · \(name)")
+                }
+            }
+        }
+    }
+
     /// Index of the quote that closes a key at the start of a line, skipping escaped ones.
     private static func closingQuote(of line: String) -> String.Index? {
         var index = line.index(after: line.startIndex)

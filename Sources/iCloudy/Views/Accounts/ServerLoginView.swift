@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 /// Address and credentials for a server the user runs: WebDAV or FTP. Both store the password in the Keychain and
 /// send it only to that host.
 struct ServerLoginView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let cloud: Cloud
     @Environment(\.dismiss) private var dismiss
     @State private var server = ""

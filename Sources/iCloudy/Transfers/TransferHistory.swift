@@ -77,8 +77,11 @@ final class TransferHistory: ObservableObject {
         entries.removeAll { $0.finishedAt >= start }
         persist()
     }
+    /// Written off the main thread; a failure is reported when it happens.
     private func persist() {
-        do { try LocalStore.save(entries, to: storeURL); persistenceError = nil }
-        catch { persistenceError = L("No se pudo guardar el historial: \(error.localizedDescription)") }
+        persistenceError = nil
+        StoreWriter.shared.later(entries, to: storeURL) { [weak self] error in
+            self?.persistenceError = L("No se pudo guardar el historial: \(error.localizedDescription)")
+        }
     }
 }

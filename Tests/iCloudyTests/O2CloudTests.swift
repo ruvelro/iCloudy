@@ -1027,13 +1027,13 @@ final class O2CloudTests: XCTestCase {
         })
         XCTAssertEqual(Set(moved.keys), ["o2:es", "o2:de"])
         XCTAssertNotEqual(moved["o2:es"], moved["o2:de"], "Cada cuenta, su almacén")
-        let spain = made[moved["o2:es"]!]!.cookies.map { "\($0.name)=\($0.value)" }
-        let germany = made[moved["o2:de"]!]!.cookies.map { "\($0.name)=\($0.value)" }
+        let spain = made[moved["o2:es"]!]!.held.map { "\($0.name)=\($0.value)" }
+        let germany = made[moved["o2:de"]!]!.held.map { "\($0.name)=\($0.value)" }
         XCTAssertEqual(Set(spain), ["JSESSIONID=es", "SSOSESSION=acceso"])
         XCTAssertTrue(Set(germany).isSuperset(of: ["JSESSIONID=de", "SSOSESSION=acceso"]),
                       "Las dos usaban el mismo almacén, así que las dos se llevan el acceso que había en él")
         XCTAssertTrue(Set(germany).isDisjoint(with: ["NID=ajena", "SSOSESSION=robada"]), germany.description)
-        XCTAssertEqual(shared.cookies.count, 5, "El compartido no se vacía hasta que las cuentas se han guardado")
+        XCTAssertEqual(shared.held.count, 5, "El compartido no se vacía hasta que las cuentas se han guardado")
         let none = await O2WebSession.moveToOwnStores([], from: shared, makeStore: { _ in XCTFail(); return MemoryJar([]) })
         XCTAssertTrue(none.isEmpty)
     }
@@ -1043,9 +1043,9 @@ final class O2CloudTests: XCTestCase {
         let one = UUID(), other = UUID()
         do {
             let first = O2WebSession.dataStore(one), second = O2WebSession.dataStore(other)
-            await first.httpCookieStore.setCookie(cookie("SSOSESSION", "de-una", on: "t3.o2online.es"))
-            let mine = await first.httpCookieStore.allCookies().map(\.value)
-            let theirs = await second.httpCookieStore.allCookies().map(\.value)
+            await first.httpCookieStore.store(cookie("SSOSESSION", "de-una", on: "t3.o2online.es"))
+            let mine = await first.httpCookieStore.cookies().map(\.value)
+            let theirs = await second.httpCookieStore.cookies().map(\.value)
             XCTAssertEqual(mine, ["de-una"])
             XCTAssertEqual(theirs, [], "La otra cuenta no ve nada de esta")
             XCTAssertFalse(O2WebSession.dataStore(nil).isEqual(first), "Y ninguna es el almacén compartido")
@@ -1086,11 +1086,11 @@ final class O2CloudTests: XCTestCase {
 /// A cookie store in memory, standing in for WebKit's.
 @MainActor
 final class MemoryJar: O2CookieJar {
-    private(set) var cookies: [HTTPCookie]
-    init(_ cookies: [HTTPCookie]) { self.cookies = cookies }
-    func allCookies() async -> [HTTPCookie] { cookies }
-    func setCookie(_ cookie: HTTPCookie) async {
-        cookies.removeAll { $0.name == cookie.name && $0.domain == cookie.domain }
-        cookies.append(cookie)
+    private(set) var held: [HTTPCookie]
+    init(_ cookies: [HTTPCookie]) { held = cookies }
+    func cookies() async -> [HTTPCookie] { held }
+    func store(_ cookie: HTTPCookie) async {
+        held.removeAll { $0.name == cookie.name && $0.domain == cookie.domain }
+        held.append(cookie)
     }
 }

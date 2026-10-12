@@ -1,0 +1,492 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>%lld archivos en %lld carpetas</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@files@ in %#@folders@</string>
+		<key>files</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld file</string>
+			<key>other</key>
+			<string>%lld files</string>
+		</dict>
+		<key>folders</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld folder</string>
+			<key>other</key>
+			<string>%lld folders</string>
+		</dict>
+	</dict>
+	<key>%lld archivos en cola hacia %@.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@ queued to %@.</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld file</string>
+			<key>other</key>
+			<string>%lld files</string>
+		</dict>
+	</dict>
+	<key>%lld archivos enviados a la papelera.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@ to the trash.</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld file moved</string>
+			<key>other</key>
+			<string>%lld files moved</string>
+		</dict>
+	</dict>
+	<key>%lld archivos ya están en el destino (%@).</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@ already at the destination (%@).</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld file is</string>
+			<key>other</key>
+			<string>%lld files are</string>
+		</dict>
+	</dict>
+	<key>%lld bajados</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld downloaded</string>
+			<key>other</key>
+			<string>%lld downloaded</string>
+		</dict>
+	</dict>
+	<key>%lld borrados en la nube</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@ in the cloud</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld deleted</string>
+			<key>other</key>
+			<string>%lld deleted</string>
+		</dict>
+	</dict>
+	<key>%lld carpetas · %lld archivos</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@folders@ · %#@files@</string>
+		<key>files</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld file</string>
+			<key>other</key>
+			<string>%lld files</string>
+		</dict>
+		<key>folders</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld folder</string>
+			<key>other</key>
+			<string>%lld folders</string>
+		</dict>
+	</dict>
+	<key>%lld coinciden con la suma del proveedor.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@ the provider's checksum.</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld matches</string>
+			<key>other</key>
+			<string>%lld match</string>
+		</dict>
+	</dict>
+	<key>%lld coinciden en tamaño; no hay suma con la que compararlos.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@ in size; there is no checksum to compare them with.</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld matches</string>
+			<key>other</key>
+			<string>%lld match</string>
+		</dict>
+	</dict>
+	<key>%lld completadas, %@. Ábrelas en el panel de transferencias para reintentarlas.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@ completed, %@. Open the transfers panel to retry them.</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld</string>
+			<key>other</key>
+			<string>%lld</string>
+		</dict>
+	</dict>
+	<key>%lld conflictos</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld conflict</string>
+			<key>other</key>
+			<string>%lld conflicts</string>
+		</dict>
+	</dict>
+	<key>%lld elementos</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld item</string>
+			<key>other</key>
+			<string>%lld items</string>
+		</dict>
+	</dict>
+	<key>%lld elementos.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@.</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld item</string>
+			<key>other</key>
+			<string>%lld items</string>
+		</dict>
+	</dict>
+	<key>%lld enlaces</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld link</string>
+			<key>other</key>
+			<string>%lld links</string>
+		</dict>
+	</dict>
+	<key>%lld enviados a la papelera del Mac</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@ to the Mac's Trash</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld sent</string>
+			<key>other</key>
+			<string>%lld sent</string>
+		</dict>
+	</dict>
+	<key>%lld finalizadas</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld finished</string>
+			<key>other</key>
+			<string>%lld finished</string>
+		</dict>
+	</dict>
+	<key>%lld no están en el destino o no coinciden: quedan pendientes.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@.</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld is not at the destination or does not match: it is pending again</string>
+			<key>other</key>
+			<string>%lld are not at the destination or do not match: they are pending again</string>
+		</dict>
+	</dict>
+	<key>%lld no se pudieron comprobar.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@ be checked.</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld could not</string>
+			<key>other</key>
+			<string>%lld could not</string>
+		</dict>
+	</dict>
+	<key>%lld se dejaron fuera a propósito.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@ left out on purpose.</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld was</string>
+			<key>other</key>
+			<string>%lld were</string>
+		</dict>
+	</dict>
+	<key>%lld seleccionados</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld selected</string>
+			<key>other</key>
+			<string>%lld selected</string>
+		</dict>
+	</dict>
+	<key>%lld subidos</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld uploaded</string>
+			<key>other</key>
+			<string>%lld uploaded</string>
+		</dict>
+	</dict>
+	<key>%lld transferencias en curso</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@ in progress</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld transfer</string>
+			<key>other</key>
+			<string>%lld transfers</string>
+		</dict>
+	</dict>
+	<key>%lld transferencias en espera</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@ waiting</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld transfer</string>
+			<key>other</key>
+			<string>%lld transfers</string>
+		</dict>
+	</dict>
+	<key>%lld transferencias en pausa.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@ paused.</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld transfer</string>
+			<key>other</key>
+			<string>%lld transfers</string>
+		</dict>
+	</dict>
+	<key>%lld transferencias reanudadas.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@ resumed.</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld transfer</string>
+			<key>other</key>
+			<string>%lld transfers</string>
+		</dict>
+	</dict>
+	<key>Comprobados %lld archivos.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@ checked.</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld file</string>
+			<key>other</key>
+			<string>%lld files</string>
+		</dict>
+	</dict>
+	<key>Comprobando %lld carpetas reflejadas.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Checking %#@n@.</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld mirrored folder</string>
+			<key>other</key>
+			<string>%lld mirrored folders</string>
+		</dict>
+	</dict>
+	<key>En pausa · %lld cambios esperando</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Paused · %#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld change waiting</string>
+			<key>other</key>
+			<string>%lld changes waiting</string>
+		</dict>
+	</dict>
+	<key>Quedan %lld por transferir o por comprobar.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@ still to be transferred or checked.</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld is</string>
+			<key>other</key>
+			<string>%lld are</string>
+		</dict>
+	</dict>
+</dict>
+</plist>

@@ -79,7 +79,7 @@ final class O2WebLoginModel: ObservableObject {
     func watch(_ webView: WKWebView) {
         self.webView = webView
         let jar = webView.configuration.websiteDataStore.httpCookieStore
-        watch { await jar.allCookies() }
+        watch { await jar.cookies() }
     }
     func watch(reading cookies: @escaping @MainActor () async -> [HTTPCookie]) {
         readCookies = cookies
@@ -178,7 +178,7 @@ struct O2WebView: NSViewRepresentable {
 }
 
 struct O2WebLoginView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     @StateObject private var login: O2WebLoginModel
     @Environment(\.dismiss) private var dismiss
     @State private var showServer = false
@@ -335,14 +335,14 @@ enum O2WebSession {
         guard unused() else { return }
         do {
             let store = WKWebsiteDataStore(forIdentifier: id)
-            await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
+            await store.erase(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
         }
         // A web view that has just closed, or a renewal just cancelled, may hold the store a moment longer, and
         // removing a store in use fails. What it held is already gone; this is only the empty shell.
         for _ in 0..<10 {
             guard unused() else { return }
             do {
-                try await WKWebsiteDataStore.remove(forIdentifier: id)
+                try await WKWebsiteDataStore.removeStore(forIdentifier: id)
                 O2Log.record("almacén web eliminado")
                 return
             } catch {
@@ -367,15 +367,15 @@ enum O2WebSession {
     static func moveToOwnStores(_ accounts: [(id: String, host: String)], from source: O2CookieJar,
                                 makeStore: (UUID) -> O2CookieJar) async -> [String: UUID] {
         guard !accounts.isEmpty else { return [:] }
-        let shared = await source.allCookies()
+        let shared = await source.cookies()
         var moved: [String: UUID] = [:]
         for account in accounts {
             let id = UUID()
             let wanted = shared.filter { isServerCookie($0, host: account.host) || isSignInCookie($0, host: account.host) }
             let target = makeStore(id)
-            for cookie in wanted { await target.setCookie(cookie) }
+            for cookie in wanted { await target.store(cookie) }
             // WebKit refuses a cookie it considers malformed without saying so; reading back is the only way to know.
-            let kept = Set(await target.allCookies().map { $0.name + "@" + $0.domain })
+            let kept = Set(await target.cookies().map { $0.name + "@" + $0.domain })
             let refused = wanted.filter { !kept.contains($0.name + "@" + $0.domain) }.count
             O2Log.record("almacén web propio · \(wanted.count - refused) cookies llevadas"
                          + (refused == 0 ? "" : " · \(refused) rechazadas"))
@@ -391,19 +391,21 @@ enum O2WebSession {
         let store = WKWebsiteDataStore.default()
         let types: Set<String> = [WKWebsiteDataTypeCookies, WKWebsiteDataTypeLocalStorage,
                                   WKWebsiteDataTypeSessionStorage, WKWebsiteDataTypeIndexedDBDatabases]
-        let records = await store.dataRecords(ofTypes: types)
+        let records = await store.records(ofTypes: types)
         let doomed = records.filter { belongs($0.displayName, host: host) }
         guard !doomed.isEmpty else { return }
-        await store.removeData(ofTypes: types, for: doomed)
+        await store.erase(ofTypes: types, for: doomed)
         O2Log.record("sesión web olvidada · \(doomed.count) registros")
     }
 }
 
 /// Where cookies are read and written: a WebKit store, or a stand-in in the tests.
 @MainActor
+/// WebKit's store meets it through the wrappers of `WebKitCalls.swift`, not through the `async` versions Swift
+/// generates, which crashed in the Swift 6 language mode.
 protocol O2CookieJar: AnyObject {
-    func allCookies() async -> [HTTPCookie]
-    func setCookie(_ cookie: HTTPCookie) async
+    func cookies() async -> [HTTPCookie]
+    func store(_ cookie: HTTPCookie) async
 }
 extension WKHTTPCookieStore: O2CookieJar {}
 
@@ -440,15 +442,15 @@ final class O2SilentRenewal {
         // The key from the dead session is still in the store. Clearing it first means that seeing one again can
         // only mean the server has just handed out a new one, rather than this reading its own leftovers.
         let jar = configuration.websiteDataStore.httpCookieStore
-        for cookie in await jar.allCookies() where cookie.name == "validationKey" {
-            await jar.deleteCookie(cookie)
+        for cookie in await jar.cookies() where cookie.name == "validationKey" {
+            await jar.remove(cookie)
         }
         // Put the sign-in back the way it was. Without this the web view arrives as a stranger and Telefónica shows
         // its login page, which is exactly what a real record showed happening three times in a row.
-        for cookie in sso { await jar.setCookie(cookie) }
+        for cookie in sso { await jar.store(cookie) }
         // Counting what was handed over says nothing about what was accepted. WebKit refuses a cookie it considers
         // malformed, and a rejected one looks exactly like one that was never kept. So the jar is read back.
-        let present = Set(await jar.allCookies().map(\.name))
+        let present = Set(await jar.cookies().map(\.name))
         let accepted = sso.filter { present.contains($0.name) }.map(\.name)
         let refused = sso.filter { !present.contains($0.name) }.map(\.name)
         O2Log.record("renovación silenciosa · acceso restaurado: \(accepted.count) de \(sso.count)"
@@ -462,7 +464,7 @@ final class O2SilentRenewal {
             // Cancelled means the account was disconnected or signed in to again: the web view stops here rather
             // than carrying on to a session nobody will adopt.
             do { try await Task.sleep(nanoseconds: 700_000_000) } catch { break }
-            let cookies = await configuration.websiteDataStore.httpCookieStore.allCookies()
+            let cookies = await configuration.websiteDataStore.httpCookieStore.cookies()
             guard !Task.isCancelled else { break }
             let mine = cookies.filter { O2WebSession.isServerCookie($0, host: host) }
             if let key = mine.first(where: { $0.name == "validationKey" })?.value, !key.isEmpty {

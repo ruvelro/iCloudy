@@ -3,7 +3,7 @@ import AppKit
 
 /// The two actions a folder offers for vaults: open the one it is, or make a new one inside it.
 struct CryptomatorFolderActions: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let folder: CloudFile
     var body: some View {
         if model.canHostVault {
@@ -16,7 +16,7 @@ struct CryptomatorFolderActions: View {
 
 /// The unlocked vaults, under the accounts in the sidebar.
 struct CryptomatorSidebarSection: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     @ObservedObject var vaults: CryptomatorVaults
     var body: some View {
         if !vaults.unlocked.isEmpty {
@@ -52,7 +52,7 @@ struct CryptomatorSidebarSection: View {
 /// offers to open it. Each pane shows its own: the strip used to follow the focus, so a vault open in the other pane
 /// had no "Bloquear" until it was clicked.
 struct CryptomatorBanner: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let pane: Int
     var body: some View {
         let tab = model.tab(inPane: pane)
@@ -80,7 +80,7 @@ extension View {
 }
 
 private struct CryptomatorSheets: ViewModifier {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     @ObservedObject var vaults: CryptomatorVaults
     func body(content: Content) -> some View {
         content
@@ -90,7 +90,7 @@ private struct CryptomatorSheets: ViewModifier {
 }
 
 private struct CryptomatorUnlockSheet: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let request: CryptomatorVaults.Request
     @Environment(\.dismiss) private var dismiss
     @State private var passphrase = ""
@@ -131,7 +131,7 @@ private struct CryptomatorUnlockSheet: View {
 }
 
 private struct CryptomatorCreateSheet: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let request: CryptomatorVaults.Request
     @Environment(\.dismiss) private var dismiss
     @State private var name = L("Bóveda")
@@ -186,7 +186,7 @@ private struct CryptomatorCreateSheet: View {
 
 /// The "Cifrado" tab of Configuración.
 struct CryptomatorSettings: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     @ObservedObject var vaults: CryptomatorVaults
     @AppStorage(CryptomatorVaults.idlePreference) private var idleMinutes = CryptomatorVaults.defaultIdleMinutes
 

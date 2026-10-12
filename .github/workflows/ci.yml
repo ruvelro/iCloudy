@@ -33,7 +33,18 @@ jobs:
         env:
           ICLOUDY_SFTP_URL: ${{ secrets.ICLOUDY_SFTP_URL }}
           ICLOUDY_FTPS_URL: ${{ secrets.ICLOUDY_FTPS_URL }}
+          # A crash prints its backtrace in the log instead of only "unexpected signal".
+          SWIFT_BACKTRACE: enable=yes,style=full,interactive=no
         run: swift test
+      - name: Crash reports
+        # A test process that crashes leaves only "unexpected signal" in the log; the system's report says where.
+        if: failure()
+        run: |
+          sleep 20
+          ls -lt ~/Library/Logs/DiagnosticReports /Library/Logs/DiagnosticReports 2>/dev/null | head -20
+          for report in $(ls -t ~/Library/Logs/DiagnosticReports/*.ips /Library/Logs/DiagnosticReports/*.ips 2>/dev/null | head -2); do
+            echo "== $report"; head -c 60000 "$report"; echo
+          done
       - name: Strict concurrency
         run: swift build -c release -Xswiftc -strict-concurrency=complete
       - name: Bundle

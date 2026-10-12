@@ -28,7 +28,7 @@ extension AppModel {
 /// The public links of one item, and the form to make another. Revoking always goes through a confirmation, and every
 /// change is read back from the provider rather than assumed.
 struct PublicLinksView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let request: PublicLinksRequest
     @Environment(\.dismiss) private var dismiss
     @State private var links: [PublicLink] = []

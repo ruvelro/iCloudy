@@ -201,7 +201,7 @@ class CloudSession {
                 continue
             }
             try HTTP.validate(response, data: data)
-            return try HTTP.json(data)
+            return try await HTTP.object(data)
         }
         throw CloudError.message(L("El servicio no responde."))
     }

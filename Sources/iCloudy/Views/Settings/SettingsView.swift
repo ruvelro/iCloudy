@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 struct SettingsView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     var body: some View {
         TabView {
             GeneralSettings(model: model).tabItem { Label("General", systemImage: "gearshape") }
@@ -16,7 +16,7 @@ struct SettingsView: View {
 }
 
 private struct GeneralSettings: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     @AppStorage(Prefs.menuBar) private var menuBar = true
     @AppStorage(Prefs.previewFollowsSelection) private var previewFollows = true
     @AppStorage(Prefs.previewConsentMB) private var previewConsent = 100
@@ -105,7 +105,7 @@ private struct GeneralSettings: View {
 }
 
 private struct TransferSettings: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     @AppStorage(Prefs.historyLimit) private var historyLimit = 200
     @AppStorage(Prefs.transferPlan) private var transferPlan = true
     @AppStorage(Prefs.notifyTransfers) private var notify = true
@@ -155,7 +155,7 @@ private struct TransferSettings: View {
 }
 
 private struct StorageSettings: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     @State private var sizes: [Maintenance.Kind: Int64] = [:]
     @State private var measuring = true
     @State private var confirming: Maintenance.Kind?
