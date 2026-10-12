@@ -178,7 +178,7 @@ struct O2WebView: NSViewRepresentable {
 }
 
 struct O2WebLoginView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     @StateObject private var login: O2WebLoginModel
     @Environment(\.dismiss) private var dismiss
     @State private var showServer = false

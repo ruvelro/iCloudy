@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The sheet for renaming a selection: a rule, and every name as it will end up before anything is sent.
 struct BatchRenameView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let request: BatchRenameRequest
     @Environment(\.dismiss) private var dismiss
     @State private var rule = BatchRename()

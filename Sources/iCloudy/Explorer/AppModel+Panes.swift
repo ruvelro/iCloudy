@@ -79,6 +79,7 @@ extension AppModel {
     func isFavorite(_ file: CloudFile, in tab: BrowserState) -> Bool { favoriteKeys.contains((tab.accountID ?? "") + ":" + file.id) }
 
     func localStatus(_ file: CloudFile, in tab: BrowserState) -> LocalCopyStatus {
+        _ = subsystems
         guard let id = tab.accountID else { return .cloudOnly }
         return localCopies.status(for: file, accountID: id)
     }

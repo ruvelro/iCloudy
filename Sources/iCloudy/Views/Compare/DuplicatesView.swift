@@ -5,7 +5,7 @@ import AppKit
 /// marked for deletion until the person marks it, and every group has to keep at least one copy.
 struct DuplicatesView: View {
     @ObservedObject var center: CompareCenter
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     /// Past this many groups the list shows the largest ones only; the totals still cover them all.
     private static let groupLimit = 1_000
 

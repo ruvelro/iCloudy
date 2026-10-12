@@ -4,7 +4,7 @@ import AppKit
 /// Two folders, side by side: what is only in one, what is the same, what differs, and what could not be told.
 struct CompareView: View {
     @ObservedObject var center: CompareCenter
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     @State private var selection: Set<ComparisonRow.ID> = []
     private var selectedRows: [ComparisonRow] { rows(selection) }
 

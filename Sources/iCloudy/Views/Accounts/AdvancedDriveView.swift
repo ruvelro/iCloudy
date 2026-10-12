@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 /// Picks a shared drive or a document library from an account that is already connected. Kept out of the main list
 /// because most people never need one, and it needs an existing sign-in rather than a new one.
 struct AdvancedDriveView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var host: Account?
     @State private var drives: [RemoteDrive] = []

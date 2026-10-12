@@ -25,7 +25,7 @@ struct CrossCloudRequest: Identifiable {
 
 /// First step of a cross-cloud transfer: which connected account receives the copies.
 struct CloudTargetPicker: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let request: CrossCloudRequest
     @Environment(\.dismiss) private var dismiss
     private var candidates: [Account] { model.accounts.filter { $0.id != request.source.id } }
@@ -56,7 +56,7 @@ struct CloudTargetPicker: View {
 
 /// Browses the folders of one account so the user can pick a destination for a move or a copy.
 struct FolderPickerView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let request: Relocation
     @Environment(\.dismiss) private var dismiss
     @State private var path: [CloudFile] = []

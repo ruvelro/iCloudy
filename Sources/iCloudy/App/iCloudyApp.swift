@@ -22,7 +22,7 @@ public enum AppLauncher {
 
 struct iCloudyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
-    @StateObject private var model = AppModel()
+    @State private var model = AppModel()
     @AppStorage("menuBarEnabled") private var menuBarEnabled = true
     var body: some Scene {
         // A WindowGroup always restores a window at launch and when the Dock icon is clicked; a `Window` scene that

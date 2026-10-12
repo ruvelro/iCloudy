@@ -21,7 +21,7 @@ extension AppModel {
 /// Who can open an item, and the form to add somebody. Every change goes straight to the provider: there is no
 /// local state to fall out of step, only the list read back after each step.
 struct SharingView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let request: SharingRequest
     @Environment(\.dismiss) private var dismiss
     @State private var permissions: [SharePermission] = []

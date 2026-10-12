@@ -4,7 +4,7 @@ import CoreSpotlight
 import UniformTypeIdentifiers
 
 struct ExplorerView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     /// The focused tab's selection. It used to be state of this view, which every tab would have had to share; now
     /// each tab keeps its own and moving to another folder clears it in the model.
     var selected: Set<CloudFile.ID> {

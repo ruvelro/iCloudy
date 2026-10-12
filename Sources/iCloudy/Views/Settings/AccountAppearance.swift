@@ -126,7 +126,7 @@ struct AccountIcon: View {
 }
 
 struct AccountAppearanceEditor: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let account: Account
     @Environment(\.dismiss) private var dismiss
     @State private var draft: AccountAppearance

@@ -3,7 +3,7 @@ import SwiftUI
 /// Every public link an account has made, where the provider can list them, with copy and revoke. Where it cannot
 /// (OneDrive, Box) the sheet says so and points to the item's own sheet instead of showing an empty list.
 struct LinkInventoryView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let account: Account
     @Environment(\.dismiss) private var dismiss
     @State private var links: [PublicLink] = []

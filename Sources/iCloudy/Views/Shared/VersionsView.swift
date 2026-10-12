@@ -4,7 +4,7 @@ import SwiftUI
 /// current again or delete it. Every change goes to the provider and the list is read back afterwards, as in the
 /// sharing sheet; nothing here is kept locally.
 struct VersionsView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let request: VersionsRequest
     @Environment(\.dismiss) private var dismiss
     @State private var versions: [FileVersion] = []

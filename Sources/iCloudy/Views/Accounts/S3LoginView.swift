@@ -4,7 +4,7 @@ import AppKit
 /// Keys and place of an S3 account: the service (or an endpoint for anything else that speaks S3), its region, the
 /// access key and its secret, and optionally one bucket. The secret goes to the Keychain and only ever signs requests.
 struct S3LoginView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var form = S3SignIn(service: .aws, region: S3Service.aws.defaultRegion)
     @State private var showAdvanced = false
@@ -151,7 +151,7 @@ struct S3LoginView: View {
 /// The confirmation for an S3 link, which is a presigned URL: it lives as long as is chosen here, at most a week, and
 /// cannot be withdrawn before then without retiring the access key that signed it.
 struct TemporaryLinkDialog: ViewModifier {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     func body(content: Content) -> some View {
         content.confirmationDialog("¿Crear un enlace temporal?", isPresented: Binding(get: { model.pendingTemporaryLink != nil },
                                                                                         set: { if !$0 { model.pendingTemporaryLink = nil } }),

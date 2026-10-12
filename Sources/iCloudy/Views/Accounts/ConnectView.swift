@@ -4,7 +4,7 @@ import CoreSpotlight
 import UniformTypeIdentifiers
 
 struct ConnectView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
 
     var body: some View {
         ScrollView {

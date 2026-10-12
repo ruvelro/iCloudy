@@ -71,4 +71,22 @@ final class RobustnessTests: XCTestCase {
         XCTAssertEqual(fragment as? Int, -3, "Mega contesta números sueltos")
         do { _ = try await HTTP.object(Data("[1,2]".utf8)); XCTFail("Una lista no es un objeto") } catch {}
     }
+
+    // MARK: - Observation
+
+    func testAViewRedrawsForWhatItReadsAndNothingElse() {
+        let model = AppModel()
+        var transfersChanged = false, accountsChanged = false
+        withObservationTracking { _ = model.transfers } onChange: { transfersChanged = true }
+        withObservationTracking { _ = model.accounts } onChange: { accountsChanged = true }
+        model.queue.stateChanges.send()
+        XCTAssertTrue(transfersChanged, "Lo que lee la cola se entera de sus cambios")
+        XCTAssertFalse(accountsChanged, "Lo que solo lee las cuentas, no")
+
+        var statusChanged = false
+        let file = CloudFile(id: "a", name: "a.txt", mime: "text/plain", size: 1, modified: nil, webURL: nil, isFolder: false)
+        withObservationTracking { _ = model.localStatus(file) } onChange: { statusChanged = true }
+        model.localCopies.objectWillChange.send()
+        XCTAssertTrue(statusChanged, "Olvidar una copia local redibuja su marca")
+    }
 }
