@@ -23,11 +23,36 @@ private struct GeneralSettings: View {
     @AppStorage(Prefs.listingCache) private var listingCache = true
     @AppStorage(Prefs.storageStyle) private var storageStyle = StorageStyle.pie.rawValue
     @AppStorage(Prefs.finderIntegration) private var finderIntegration = false
+    @AppStorage(Prefs.thumbnails) private var thumbnails = true
+    @AppStorage(Prefs.dockIcon) private var dockIcon = true
+    @State private var openAtLogin = LoginItem.isEnabled
+    @State private var loginProblem: String?
 
     var body: some View {
         Form {
             Section {
+                Toggle("Abrir iCloudy al iniciar sesión", isOn: $openAtLogin)
+                    .onChange(of: openAtLogin) { _, on in
+                        loginProblem = nil
+                        do { try LoginItem.set(on) } catch { loginProblem = error.localizedDescription }
+                        openAtLogin = LoginItem.isEnabled || LoginItem.needsApproval
+                    }
+                if LoginItem.needsApproval {
+                    HStack {
+                        Text("macOS espera tu aprobación en Ajustes del Sistema.").font(.caption).foregroundStyle(.orange)
+                        Button("Abrir Ítems de inicio") { LoginItem.openSettings() }.controlSize(.small)
+                    }
+                }
+                if let loginProblem { Text(loginProblem).font(.caption).foregroundStyle(.red) }
+                Toggle("Mostrar el icono en el Dock", isOn: $dockIcon)
+                    .disabled(!menuBar)
+                    .onChange(of: dockIcon) { DockIcon.apply() }
+                Text(menuBar ? "Sin icono en el Dock, iCloudy sigue en la barra de menús: desde ahí se abre la ventana y se ven las transferencias." : "Para quitar el icono del Dock, activa antes el icono de la barra de menús.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Section {
                 Toggle("Mostrar iCloudy en la barra de menús", isOn: $menuBar)
+                    .onChange(of: menuBar) { DockIcon.apply() }
                 Toggle("Seguir la selección con la vista previa abierta", isOn: $previewFollows)
                 Text("Con esto activado, recorrer la lista con la vista previa abierta descarga cada archivo por el que pasas, tras una pausa corta.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -64,6 +89,12 @@ private struct GeneralSettings: View {
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Section {
+                Toggle("Mostrar miniaturas en la vista de iconos", isOn: $thumbnails)
+                    .onChange(of: thumbnails) { model.thumbnails.clearMemory() }
+                Text("Fotos, vídeos y PDF de Google Drive, OneDrive, Dropbox, Box, pCloud y los volúmenes. Cada miniatura es una petición pequeña al proveedor y se guarda en este Mac.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Section {
                 Toggle("Recordar el último listado de cada carpeta", isOn: $listingCache)
                     .onChange(of: listingCache) { _, value in model.listings.enabled = value }
                 Text("Muestra al instante lo que había la última vez mientras el proveedor responde, y deja navegar sin conexión. Solo nombres y metadatos.")
@@ -77,6 +108,7 @@ private struct TransferSettings: View {
     @ObservedObject var model: AppModel
     @AppStorage(Prefs.historyLimit) private var historyLimit = 200
     @AppStorage(Prefs.transferPlan) private var transferPlan = true
+    @AppStorage(Prefs.notifyTransfers) private var notify = true
 
     var body: some View {
         Form {
@@ -104,6 +136,12 @@ private struct TransferSettings: View {
                     }
                 }
                 Text("Las transferencias se reanudan solas al recuperar la red y al abrir la app quedan en pausa, nunca se pierden.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Section {
+                Toggle("Avisar cuando terminen las transferencias", isOn: $notify)
+                    .onChange(of: notify) { _, on in if on { TransferNotifier.requestPermission() } }
+                Text("Una notificación al acabar cada tanda, con cuántas han ido bien y cuántas no, solo si iCloudy no está en primer plano. Los reflejos de carpetas no avisan.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Section {

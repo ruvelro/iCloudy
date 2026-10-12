@@ -420,12 +420,10 @@ final class ProviderTests: XCTestCase {
         XCTAssertEqual((api.provider as! WebDAVProvider).webdavTrail(id: "/uno/dos").map(\.id), ["/uno", "/uno/dos"])
     }
 
-    func testWebDAVRejectsSearchAndPublicLinksInsteadOfPretending() async throws {
+    func testWebDAVRejectsPublicLinksInsteadOfPretending() async throws {
         let api = client(.webdav)
         let file = CloudFile(id: "/a.txt", name: "a.txt", mime: "text/plain", size: 1, modified: nil, webURL: nil, isFolder: false)
         StubProtocol.handler = { _ in XCTFail("Unsupported features must not reach the network"); return (500, [:], Data()) }
-        do { _ = try await api.searchPage(term: "x"); XCTFail("Expected an explicit refusal") }
-        catch { XCTAssertTrue(error.localizedDescription.contains("búsqueda"), error.localizedDescription) }
         do { _ = try await api.publicLink(for: file); XCTFail("Expected an explicit refusal") }
         catch { XCTAssertTrue(error.localizedDescription.contains("enlaces públicos"), error.localizedDescription) }
     }
@@ -622,7 +620,7 @@ final class ProviderTests: XCTestCase {
         XCTAssertFalse(Cloud.dropbox.capabilities.exportsDocuments)
         XCTAssertTrue(Cloud.dropbox.capabilities.reversibleTrash, "Dropbox keeps deleted files recoverable")
         XCTAssertFalse(Cloud.webdav.capabilities.reversibleTrash, "Plain WebDAV deletes for good")
-        XCTAssertFalse(Cloud.webdav.capabilities.search)
+        XCTAssertTrue(Cloud.webdav.capabilities.search, "iCloudy recorre el árbol")
         XCTAssertFalse(Cloud.webdav.capabilities.oauth)
         XCTAssertFalse(Cloud.box.capabilities.recents)
         XCTAssertTrue(Cloud.microsoft.capabilities.sharedWithMe)

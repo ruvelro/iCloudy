@@ -166,7 +166,7 @@ final class SFTPTests: XCTestCase {
     @MainActor func testTheSFTPCloudDeclaresWhatSSHGivesAndWhatItDoesNot() throws {
         let capabilities = Cloud.sftp.capabilities
         XCTAssertTrue(capabilities.quota, "OpenSSH informa del espacio con statvfs")
-        XCTAssertFalse(capabilities.copy); XCTAssertFalse(capabilities.search); XCTAssertFalse(capabilities.reversibleTrash)
+        XCTAssertFalse(capabilities.copy); XCTAssertTrue(capabilities.search, "iCloudy recorre el árbol"); XCTAssertFalse(capabilities.reversibleTrash)
         XCTAssertFalse(capabilities.permanentDelete, "Borrar ya es definitivo")
         XCTAssertTrue(Cloud.sftp.isSelfHosted); XCTAssertTrue(Cloud.sftp.usesPasswordLogin)
         let endpoint = try SFTPProvider.sftpEndpoint("sftp://nas.local/volume1/ana/")

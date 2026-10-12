@@ -21,6 +21,8 @@ class CloudSession {
     var credentialSaveDidFail: ((String) -> Void)?
     /// Keychain reads are synchronous and comparatively slow; the credential is read once per client and kept current here.
     private var cachedCredential: Credential?
+    /// Searches by walking the tree that are waiting for their next page, by the cursor handed out with the last one.
+    var treeWalks: [String: TreeWalk] = [:]
     func dropCaches() {}
     func invalidate() { invalidated = true }
     init(account: Account, session: URLSession = .shared, tokenProvider: (() async throws -> String)? = nil, credentials: CredentialStore = KeychainCredentialStore()) {

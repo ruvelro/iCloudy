@@ -12,6 +12,28 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
   [OAUTH.md](docs/OAUTH.md#firma-local-para-desarrollo).
 - Los elementos antiguos se mueven solos la primera vez que se leen: esa vez preguntan cada uno, por última vez.
 
+### Uso diario
+
+- **Miniaturas** de fotos, vídeos y PDF en la vista de iconos, dibujadas por Google Drive, OneDrive, Dropbox, Box y
+  pCloud, y por Quick Look en los volúmenes. Se guardan en el Mac, se piden de cuatro en cuatro y se apagan en Ajustes.
+- **Arrastrar al Finder**: un archivo soltado en el Finder, el Escritorio u otra app se descarga en ese momento, no al
+  empezar a arrastrar. Los documentos de Google salen como Word, Excel o PowerPoint. Arrastrar al otro panel ya no
+  exige tener la ventana partida.
+- **Notificaciones** al terminar cada tanda de transferencias, con cuántas han ido bien y cuántas no, solo si iCloudy
+  no está delante. Los reflejos no avisan.
+- **Deshacer y rehacer** (⌘Z, ⇧⌘Z) renombrar, mover dentro de una cuenta y enviar a la papelera en Drive, Box,
+  pCloud y Mega, donde la papelera devuelve el elemento por su id.
+- **Renombrar en lote**: reemplazar texto, añadir antes o después, o numerar, con vista previa de cada nombre y la
+  extensión intacta. Comprueba choques antes de enviar nada y resuelve los intercambios de nombre en dos pasos.
+- **Ordenar por tipo**, y **flechas en la vista de iconos**: se mueven como en el Finder, ⇧ amplía la selección e
+  Intro abre.
+- **Abrir al iniciar sesión** y **sin icono en el Dock**, quedándose en la barra de menús.
+- **Búsquedas guardadas**, con su texto y sus filtros, también en el menú de la barra de menús. Y **búsqueda en
+  WebDAV, Nextcloud, FTP, SFTP y O2**, que no tienen la suya: iCloudy recorre las carpetas de cuarenta en cuarenta y
+  «Cargar más» sigue por donde iba. En pCloud basta un listado recursivo.
+- **Atajos**: listar una carpeta, descargar un archivo, crear un enlace público y copiar entre nubes, nombrando cada
+  cosa por su cuenta y su ruta.
+
 ## 0.6.1 — 1 de octubre de 2026
 
 Correcciones que sacó a la luz la primera ejecución de la integración continua, en un Mac con otro idioma y otra

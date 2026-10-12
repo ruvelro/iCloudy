@@ -109,6 +109,11 @@ struct BrowserState: Identifiable {
             if a.isFolder != b.isFolder { return a.isFolder }
             if mode == "size", a.size != b.size { return (a.size ?? 0) > (b.size ?? 0) }
             if mode == "date", a.modified != b.modified { return (a.modified ?? .distantPast) > (b.modified ?? .distantPast) }
+            if mode == "kind" {
+                if a.kind != b.kind { return a.kind.rank < b.kind.rank }
+                let extensions = ((a.name as NSString).pathExtension.lowercased(), (b.name as NSString).pathExtension.lowercased())
+                if extensions.0 != extensions.1 { return extensions.0 < extensions.1 }
+            }
             return a.name.localizedStandardCompare(b.name) == .orderedAscending
         }
     }

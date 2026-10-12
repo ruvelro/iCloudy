@@ -124,6 +124,9 @@ extension AppModel {
         case .previews:
             // The viewer owns its active directory; old directories can be removed without interrupting it.
             try Maintenance.clear(kind, preserving: preview.model.protectedDirectories)
+        case .thumbnails:
+            thumbnails.clearMemory()
+            try Maintenance.clear(kind)
         case .localCopies: localCopies.clear()
         case .history: history.clear()
         case .spotlight: spotlight.clear()

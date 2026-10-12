@@ -54,6 +54,10 @@ final class CloudAPI {
     func contentRequest(for file: CloudFile, exportMime: String?) async throws -> URLRequest {
         return try await provider.contentRequest(for: file, exportMime: exportMime)
     }
+    func thumbnail(of file: CloudFile, side: Int) async throws -> Data? {
+        if demo != nil { return nil }
+        return try await provider.thumbnail(of: file, side: side)
+    }
     func rename(file: CloudFile, name: String) async throws {
         if let demo {
             try demo.rename(file.id, name: name)

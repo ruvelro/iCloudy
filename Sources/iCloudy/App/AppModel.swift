@@ -63,6 +63,8 @@ final class AppModel: ObservableObject {
     @Published var pendingPurge: [CloudFile]?
     /// True while the confirmation to empty the whole trash is showing.
     @Published var pendingEmptyTrash = false
+    /// A selection whose new names are being chosen.
+    @Published var batchRename: BatchRenameRequest?
     /// Move or copy in progress of being targeted; drives the folder picker sheet.
     @Published var relocation: Relocation?
     /// Cross-cloud transfer waiting for its destination account.
@@ -134,6 +136,11 @@ final class AppModel: ObservableObject {
     let oauth = OAuth()
     let preview = PreviewWindow()
     let globalSearch = GlobalSearch()
+    let thumbnails = ThumbnailStore()
+    let savedSearches = SavedSearches()
+    let notifier = TransferNotifier()
+    /// The explorer window's, so ⌘Z reaches what was done there. Set by the window when it appears.
+    weak var undoManager: UndoManager?
     var appearanceStore: AppearanceStore?
     var demo: DemoStore?
     let sessions = AccountClientRegistry()
@@ -202,7 +209,12 @@ final class AppModel: ObservableObject {
         }
         queue.didFinish = { [weak self] transfer in
             self?.history.record(transfer); self?.mirrors.handleFinished(transfer)
+            self?.notifier.finished(transfer)
             self?.finishPaneMove(transfer)
+        }
+        thumbnails.client = { [weak self] account in
+            guard let self else { throw CancellationError() }
+            return try self.client(account)
         }
         queue.didStoreLocalCopy = { [weak self] copy in self?.localCopies.record(copy) }
         connectivity.onChange = { [weak self] online in
@@ -223,7 +235,11 @@ final class AppModel: ObservableObject {
         }
         // Only structural queue changes reach the explorer; progress ticks re-render the transfer panel alone.
         quotaSubscription = quotas.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
-        subscription = queue.stateChanges.sink { [weak self] _ in self?.objectWillChange.send() }
+        subscription = queue.stateChanges.sink { [weak self] _ in
+            guard let self else { return }
+            objectWillChange.send()
+            notifier.queueChanged(active: queue.hasActive)
+        }
         // The Finder's list of locations follows the list of accounts, for as long as the person wants it to. Which
         // accounts, not their order: reordering the sidebar has nothing to tell the Finder.
         domainSubscription = $accounts.dropFirst().removeDuplicates { Set($0.map(\.id)) == Set($1.map(\.id)) }.sink { [weak self] _ in self?.syncFinderDomains() }

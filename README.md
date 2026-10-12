@@ -45,13 +45,13 @@ terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga 
 | **OneDrive** | OAuth + PKCE | ✅ | ✅ | ✅ | ✅ | SHA-256 / SHA-1 | Estable |
 | **Dropbox** | OAuth + PKCE | ✅ | ✅ | ✅ | ✅⁵ | `content_hash` | Estable |
 | **Box** | OAuth + PKCE | ✅ | ✅ | ✅ | ✅⁵ | SHA-1 | Estable |
-| **WebDAV** | Usuario y contraseña | — | ✅¹ | ✅¹ | — | — | Estable |
+| **WebDAV** | Usuario y contraseña | ✅⁸ | ✅¹ | ✅¹ | — | — | Estable |
 | **Volúmenes y carpetas** | Carpeta del Mac | ✅ | — | — | ✅² | — | Estable |
-| **SFTP** | Usuario y contraseña | — | — | — | — | — | Estable |
-| **FTP / FTPS** | Usuario y contraseña | — | — | — | — | — | Estable |
+| **SFTP** | Usuario y contraseña | ✅⁸ | — | — | — | — | Estable |
+| **FTP / FTPS** | Usuario y contraseña | ✅⁸ | — | — | — | — | Estable |
 | **Mega** | Correo y contraseña | ✅ | ✅⁴ | — | ✅⁵ | MAC propio³ | 🧪 Experimental |
-| **O2 Cloud** | Sesión de Mi O2 | — | — | — | ✅ | — | 🧪 Experimental |
-| **pCloud** | OAuth | — | ✅ | — | ✅ | SHA-256 / SHA-1 | 🆕 Nuevo |
+| **O2 Cloud** | Sesión de Mi O2 | ✅⁸ | — | — | ✅ | — | 🧪 Experimental |
+| **pCloud** | OAuth | ✅⁸ | ✅ | — | ✅ | SHA-256 / SHA-1 | 🆕 Nuevo |
 | **S3 y compatibles**⁶ | Clave de acceso | Prefijo | Temporales⁷ | — | — | MD5 (ETag) | 🆕 Nuevo |
 
 <sub>
@@ -62,6 +62,7 @@ terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga 
 <br>⁵ Papelera navegable (restaurar, eliminar definitivamente, vaciar) en Drive, Box y Mega; en Dropbox se listan y restauran archivos, y el vaciado depende de la cuenta. OneDrive, O2 y los volúmenes borran definitivamente sin listar su papelera. pCloud lista, restaura y vacía la suya.
 <br>⁶ Amazon S3, Backblaze B2, Wasabi, Cloudflare R2, MinIO, Scaleway y DigitalOcean Spaces, con firma SigV4 propia y subidas multiparte reanudables — [guía](docs/S3.md).
 <br>⁷ URL prefirmadas de una hora, un día o siete días, solo de archivos.
+<br>⁸ Por nombre. El proveedor no tiene búsqueda propia: iCloudy recorre las carpetas (pCloud, con un solo listado recursivo).
 </sub>
 
 **SFTP** cubre cualquier servidor SSH y la mayoría de NAS, cifrado y con la clave del servidor comprobada en cada sesión. **WebDAV** cubre Nextcloud, ownCloud, Synology y casi cualquier NAS. **Volúmenes** cubre SMB, AFP, NFS, discos
@@ -135,6 +136,18 @@ cancelable y limpieza al cerrar.
 | **Bóvedas cifradas** | Cifrado en el Mac compatible con Cryptomator (formato 8): nombres y contenidos cifrados en cualquier nube — [cómo funciona](docs/CIFRADO.md). |
 | **Exclusiones en reflejos** | Patrones al estilo de gitignore, ocultos, paquetes y basura del sistema fuera de los reflejos y la sincronización; pausa y vista previa de los cambios pendientes. |
 | **Diagnóstico** | Registro estructurado de todos los proveedores, sin secretos, con vista previa de lo que se exporta — [detalles](docs/DIAGNOSTICO.md). |
+
+### 🆕 Nuevo en el uso diario
+
+|  |  |
+|---|---|
+| **Miniaturas** | Fotos, vídeos y PDF con su imagen en la vista de iconos, en Drive, OneDrive, Dropbox, Box, pCloud y los volúmenes. |
+| **Arrastrar al Finder** | Suelta un archivo en el Finder o en cualquier app y se descarga al soltarlo. |
+| **Deshacer** | ⌘Z para renombrar, mover y enviar a la papelera, donde el proveedor lo permite. |
+| **Renombrar en lote** | Reemplazar, añadir o numerar, viendo cada nombre antes de aplicarlo. |
+| **Búsquedas guardadas** | Y búsqueda también en WebDAV, Nextcloud, FTP, SFTP, O2 y pCloud. |
+| **Notificaciones, inicio de sesión y Dock** | Aviso al acabar las transferencias, abrir al iniciar sesión y vivir solo en la barra de menús. |
+| **Más Atajos** | Listar, descargar, crear enlaces y copiar entre nubes desde la app Atajos. |
 
 <br>
 

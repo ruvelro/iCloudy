@@ -95,6 +95,8 @@ struct CloudCapabilities {
     var links = LinkFeatures()
     /// Earlier versions of a file can be listed, previewed, downloaded and restored from the app.
     var versions = false
+    /// The provider draws thumbnails of pictures, videos and PDFs, shown in the grid.
+    var thumbnails = false
     /// A single earlier version can also be deleted. Graph and Dropbox keep their history out of reach for that.
     var deletesVersions = false
 
@@ -111,6 +113,12 @@ struct CloudCapabilities {
     }
 
     static func of(_ cloud: Cloud) -> CloudCapabilities {
+        var capabilities = table(cloud)
+        capabilities.thumbnails = [.google, .microsoft, .dropbox, .box, .pcloud, .volume].contains(cloud)
+        return capabilities
+    }
+
+    private static func table(_ cloud: Cloud) -> CloudCapabilities {
         switch cloud {
         case .google:
             // Drive has no server-side copy of a folder; its files have to be copied one by one.
@@ -132,18 +140,18 @@ struct CloudCapabilities {
             return CloudCapabilities(recents: false, sharedWithMe: false, trashListing: true, permanentDelete: true, emptyTrash: true, memberSharing: true,
                                      versions: true, deletesVersions: true)
         case .webdav:
-            // Plain WebDAV has no search, no sharing links and no recycle bin.
-            return CloudCapabilities(oauth: false, search: false, recents: false, sharedWithMe: false,
+            // Plain WebDAV has no sharing links and no recycle bin. It has no search either; iCloudy walks the tree.
+            return CloudCapabilities(oauth: false, recents: false, sharedWithMe: false,
                                      publicLinks: false, reversibleTrash: false, checksum: false)
         case .ftp:
-            // FTP has no copy, no quota report and no checksum either; deleting is final.
-            return CloudCapabilities(oauth: false, search: false, recents: false, sharedWithMe: false,
+            // FTP has no copy, no quota report and no checksum either; deleting is final. Search walks the tree.
+            return CloudCapabilities(oauth: false, recents: false, sharedWithMe: false,
                                      publicLinks: false, copy: false, quota: false,
                                      reversibleTrash: false, checksum: false)
         case .sftp:
             // SSH gives the channel its privacy and the server its identity, but the file protocol is as bare as
-            // FTP's: no search, no links, no bin, no copy, no checksum. OpenSSH does report free space.
-            return CloudCapabilities(oauth: false, search: false, recents: false, sharedWithMe: false,
+            // FTP's: no search (iCloudy walks the tree), no links, no bin, no copy, no checksum. OpenSSH does report free space.
+            return CloudCapabilities(oauth: false, recents: false, sharedWithMe: false,
                                      publicLinks: false, copy: false, reversibleTrash: false, checksum: false)
         case .volume:
             // The file system gives search, free space and a real Trash; only sharing links are missing.
@@ -161,18 +169,19 @@ struct CloudCapabilities {
                                      trashListing: true, permanentDelete: true, emptyTrash: true,
                                      copiesFolders: false, linksFolders: false)
         case .o2:
-            // Funambol has no media search and no server-side copy for third parties, and reports no checksum.
+            // Funambol has no media search (iCloudy walks the tree) and no server-side copy for third parties, and reports no checksum.
             // Deleting is a soft delete, so the item stays recoverable from O2's own bin. The same call without the
             // soft-delete flag removes a file for good; its bin has no listing iCloudy has seen in use.
             // Links exist for folders only, and only files have a hard delete among the calls seen in use.
-            return CloudCapabilities(oauth: false, search: false, recents: false, sharedWithMe: false,
+            return CloudCapabilities(oauth: false, recents: false, sharedWithMe: false,
                                      copy: false, checksum: false, permanentDelete: true,
                                      linksFiles: false, purgesFolders: false)
         case .pcloud:
-            // pCloud documents no search method for third parties, and has no "recent" or "shared with me" listing.
+            // pCloud documents no search method for third parties; iCloudy matches names over one recursive listing.
+            // It has no "recent" or "shared with me" listing.
             // Deleting goes to its trash, which is listed, restored from and cleared item by item or as a whole.
             // Files list no content hash, but `checksumfile` answers one per file for uploads and downloads.
-            return CloudCapabilities(search: false, recents: false, sharedWithMe: false,
+            return CloudCapabilities(recents: false, sharedWithMe: false,
                                      trashListing: true, permanentDelete: true, emptyTrash: true)
         case .s3:
             // S3 has no bin, no quota and no activity feeds. Search is by key prefix only. Uploads are checked against

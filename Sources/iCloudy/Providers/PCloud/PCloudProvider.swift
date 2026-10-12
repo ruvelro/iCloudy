@@ -217,7 +217,18 @@ extension PCloudProvider {
     func publicLink(for file: CloudFile) async throws -> URL { try await pcloudPublicLink(for: file) }
 
     func searchPage(term: String, cursor: String? = nil, filters: SearchFilters = SearchFilters(), referenceDate: Date = Date()) async throws -> SearchPage {
-        throw CloudError.message(L("pCloud no ofrece búsqueda a otras aplicaciones. Navega por las carpetas o usa el filtro de la carpeta actual."))
+        // pCloud documents no search for third parties, but lists a whole tree in one answer: names are matched here.
+        let body = try await pcloud("listfolder", ["folderid": "0", "recursive": "1", "timeformat": "timestamp"])
+        var hits: [SearchHit] = []
+        func walk(_ folder: [String: Any], parent: String) {
+            for child in folder["contents"] as? [[String: Any]] ?? [] {
+                guard let file = Self.pcloudFile(child) else { continue }
+                if file.name.localizedCaseInsensitiveContains(term) { hits.append(SearchHit(accountID: account.id, file: file, parentID: parent)) }
+                if file.isFolder { walk(child, parent: file.id) }
+            }
+        }
+        walk(body["metadata"] as? [String: Any] ?? [:], parent: Cloud.pcloud.rootAlias)
+        return SearchPage(hits: hits, next: nil)
     }
 
     func folderTrail(id: String) async throws -> [CloudFile] { try await pcloudTrail(id: id) }

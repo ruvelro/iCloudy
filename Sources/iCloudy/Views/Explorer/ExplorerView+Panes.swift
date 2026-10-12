@@ -58,10 +58,10 @@ extension ExplorerView {
 }
 
 extension View {
-    /// Rows can be dragged to the other pane only while there is one. With a single pane they stay as they were, so
-    /// dragging across the list still picks a run of rows.
-    @ViewBuilder func paneDragSource(_ enabled: Bool, _ provider: @escaping () -> NSItemProvider) -> some View {
-        if enabled { onDrag(provider) } else { self }
+    /// Rows can be dragged to the other pane, and files to the Finder or any other app. Only the name starts a drag:
+    /// dragging across the date or size columns still picks a run of rows.
+    func paneDragSource(_ provider: @escaping () -> NSItemProvider) -> some View {
+        onDrag(provider)
     }
 }
 

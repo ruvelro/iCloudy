@@ -322,7 +322,7 @@ final class FTPTests: XCTestCase {
     func testCapabilitiesHideWhatFTPCannotDo() {
         let ftp = Cloud.ftp.capabilities
         XCTAssertFalse(ftp.oauth)
-        XCTAssertFalse(ftp.search)
+        XCTAssertTrue(ftp.search, "Sin búsqueda propia: iCloudy recorre el árbol")
         XCTAssertFalse(ftp.publicLinks)
         XCTAssertFalse(ftp.copy, "FTP no copia en el servidor")
         XCTAssertFalse(ftp.quota)

@@ -9,7 +9,7 @@ import SwiftUI
 /// The kind is worked out from the extension first and the media type second. The extension wins because providers
 /// disagree about media types — the same `.key` arrives as `application/octet-stream` from one and as
 /// `application/vnd.apple.keynote` from another — while the name is the same everywhere.
-enum FileKind: String {
+enum FileKind: String, CaseIterable {
     case folder, pdf, document, spreadsheet, presentation, image, video, audio, archive, code, text, font, disk, generic
 
     var symbol: String {
@@ -101,6 +101,11 @@ enum FileKind: String {
 
 extension CloudFile {
     var kind: FileKind { FileKind.of(name: name, mime: mime, isFolder: isFolder) }
+}
+
+extension FileKind {
+    /// Where the kind goes when a list is sorted by kind: in the order the cases are declared, documents first.
+    var rank: Int { Self.allCases.firstIndex(of: self) ?? Self.allCases.count }
 }
 
 /// One file's icon, sized so every row lines up whatever symbol it draws.

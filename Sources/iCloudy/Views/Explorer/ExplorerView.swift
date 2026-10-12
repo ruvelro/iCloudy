@@ -28,9 +28,16 @@ struct ExplorerView: View {
     @FocusState var focusedList: Int?
     /// Where a run of files starts when one is taken with Shift held down.
     @State var anchor: CloudFile.ID?
+    @Environment(\.undoManager) var undoManager
+    /// Width of each pane's grid, so the arrow keys know how many items a row holds.
+    @State var gridWidths: [Int: CGFloat] = [:]
+    /// The item the arrow keys move from: the last one reached with them, or the last one clicked.
+    @State var cursor: CloudFile.ID?
 
     var body: some View {
         navigation
+        .onAppear { model.undoManager = undoManager }
+        .onChange(of: undoManager) { model.undoManager = undoManager }
         .cryptomatorSheets(model: model)
         .background(PaneKeyMonitor(enabled: model.isSplit) { model.focusOtherPane(); focusedList = model.workspace.focusedPane })
         .confirmationDialog(paneMoveTitle, isPresented: Binding(get: { model.pendingPaneMove != nil }, set: { if !$0 { model.pendingPaneMove = nil } }), titleVisibility: .visible, presenting: model.pendingPaneMove) { request in
@@ -55,6 +62,7 @@ struct ExplorerView: View {
             }.padding(24).frame(width: 390)
         }
         .sheet(item: $model.relocation) { request in FolderPickerView(model: model, request: request) }
+        .sheet(item: $model.batchRename) { request in BatchRenameView(model: model, request: request) }
         .sheet(item: $model.crossCloud) { request in CloudTargetPicker(model: model, request: request) }
         .sheet(item: $model.sharing) { request in SharingView(model: model, request: request) }
         .sheet(item: $model.publicLinkManager) { request in PublicLinksView(model: model, request: request) }
@@ -132,6 +140,21 @@ struct ExplorerView: View {
 
     /// The files between two of them, in the order the list shows. Shift picking a run had no equivalent in the
     /// grid at all, so taking twenty files meant twenty Command-clicks.
+    /// Items per row of the icon grid at this width: adaptive cells of at least 140 points, 16 apart, inside the margins.
+    static func gridColumns(width: CGFloat) -> Int {
+        max(1, Int((width - 2 * Layout.margin + 16) / (140 + 16)))
+    }
+
+    /// Where an arrow key goes in a grid of `count` items laid out `columns` to a row. Nothing selected starts at the
+    /// first item; the edges stop the movement rather than wrapping round.
+    static func gridStep(from index: Int?, dx: Int, dy: Int, columns: Int, count: Int) -> Int? {
+        guard count > 0 else { return nil }
+        guard let index else { return 0 }
+        let target = index + dx + dy * max(columns, 1)
+        if dx != 0, target / max(columns, 1) != index / max(columns, 1) { return index }
+        return (0..<count).contains(target) ? target : index
+    }
+
     static func range(from: CloudFile.ID, to: CloudFile.ID, in files: [CloudFile]) -> Set<CloudFile.ID> {
         guard let first = files.firstIndex(where: { $0.id == from }), let last = files.firstIndex(where: { $0.id == to }) else { return [to] }
         return Set(files[min(first, last)...max(first, last)].map(\.id))

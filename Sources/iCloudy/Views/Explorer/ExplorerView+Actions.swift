@@ -34,6 +34,7 @@ extension ExplorerView {
                         Label("Nombre", systemImage: "textformat").tag("name")
                         Label("Más recientes", systemImage: "clock").tag("date")
                         Label("Mayor tamaño", systemImage: "arrow.up.arrow.down").tag("size")
+                        Label("Tipo", systemImage: "square.stack.3d.up").tag("kind")
                     }.pickerStyle(.inline).labelsHidden()
                 } label: { Image(systemName: "arrow.up.arrow.down") }
                 .accessibilityLabel("Ordenar la lista")

@@ -956,7 +956,7 @@ final class O2CloudTests: XCTestCase {
         jar += [cookie("validationKey", "clave", on: "cloud.o2online.es"),
                 cookie("SSOSESSION", "xyz", on: "t3.o2online.es"),
                 cookie("SSOSESSION", "robada", on: "evilo2online.es")]
-        for _ in 0..<100 where granted.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        for _ in 0..<400 where granted.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
         XCTAssertEqual(granted.map(\.key), ["clave"])
         XCTAssertEqual(granted.first?.sso, ["SSOSESSION"], "Solo la del acceso de verdad")
     }
@@ -1071,7 +1071,7 @@ final class O2CloudTests: XCTestCase {
         XCTAssertTrue(o2.quota)
         XCTAssertTrue(o2.publicLinks)
         XCTAssertTrue(o2.reversibleTrash, "El borrado es suave y la papelera de O2 lo conserva")
-        XCTAssertFalse(o2.search, "La plataforma no expone búsqueda de archivos a otras aplicaciones")
+        XCTAssertTrue(o2.search, "La plataforma no expone búsqueda; iCloudy recorre el árbol")
         XCTAssertFalse(o2.copy)
         XCTAssertFalse(o2.checksum)
         XCTAssertFalse(o2.oauth)

@@ -119,7 +119,7 @@ extension ExplorerView {
             .accessibilityHidden(!sidebarVisible).allowsHitTesting(sidebarVisible)
             Group {
             if model.showGlobalSearch {
-                GlobalSearchView(model: model, search: model.globalSearch)
+                GlobalSearchView(model: model, search: model.globalSearch, saved: model.savedSearches)
             } else {
             VStack(spacing: 0) {
                 // With one pane its header spans the transfers drawer, as it always did; with two, each pane has
