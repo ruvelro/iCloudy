@@ -24,7 +24,11 @@ extension PCloudProvider {
     /// with a 401 and the shared session code would not notice.
     func pcloudCheck(_ data: Data, _ response: URLResponse) throws -> [String: Any] {
         try HTTP.validate(response, data: data)
-        do { return try PCloudError.check(try HTTP.json(data)) }
+        return try pcloudCheck(parsed: try HTTP.json(data))
+    }
+    /// The same, for an answer already parsed; large listings are parsed off the main thread first.
+    func pcloudCheck(parsed body: [String: Any]) throws -> [String: Any] {
+        do { return try PCloudError.check(body) }
         catch let error as CloudError where error.isSessionExpired {
             if case .sessionExpired(let reason) = error { expireSession(reason) }
             throw error
@@ -49,7 +53,10 @@ extension PCloudProvider {
                 try await Task.sleep(for: .seconds(delay))
                 continue
             }
-            do { return try pcloudCheck(data, response) }
+            do {
+                try HTTP.validate(response, data: data)
+                return try pcloudCheck(parsed: try await HTTP.object(data))
+            }
             catch let error as ServiceError where !write && error.retryable && attempt < 3 {
                 try await Task.sleep(for: .seconds(min(max(1, error.retryAfter ?? pow(2, Double(attempt))), 30)))
             }

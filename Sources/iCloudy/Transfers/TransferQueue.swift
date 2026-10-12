@@ -80,6 +80,7 @@ final class TransferQueue: ObservableObject {
             // The queue comes back paused for the person to decide, as it always has, except for jobs waiting for the
             // schedule or for a cheaper network: those were already decided, and the policy releases them.
             for index in items.indices where items[index].hold == .offline { items[index].hold = nil; items[index].detail = "" }
+            trimFinished()
         } catch { writable = false; persistenceError = L("No se pudo recuperar la cola. Se conserva el archivo original: \(error.localizedDescription)") }
     }
     /// True when the saved queue could not be read: nothing can be added until the user sets that file aside.
@@ -138,13 +139,29 @@ final class TransferQueue: ObservableObject {
         }
     }
 
-    /// Coalesced writes batch the per-block checkpoints into one file write every `flushDelay`. The server is the
-    /// authority on resume anyway, so losing the last seconds of offsets only costs a probe request.
+    /// Finished jobs the panel keeps. Each mirror pass leaves one, and every one of them used to stay in the file the
+    /// queue rewrites, with its whole per-file report, until somebody pressed «Limpiar». The history keeps its own
+    /// record of all of them; the panel keeps the newest.
+    static let finishedLimit = 300
+
+    /// Drops the oldest finished jobs beyond the limit. Only called where no index into `items` is held: when the
+    /// queue is read and before jobs are added.
+    func trimFinished() {
+        let finished = items.filter { $0.finished && tasks[$0.id] == nil }
+        guard finished.count > Self.finishedLimit else { return }
+        let leaving = Set(finished.prefix(finished.count - Self.finishedLimit).map(\.id))
+        for job in items where leaving.contains(job.id) && job.direction == .transfer { try? FileManager.default.removeItem(at: job.localURL) }
+        items.removeAll { leaving.contains($0.id) }
+    }
+
+    /// Coalesced writes batch the per-block checkpoints into one file write every `flushDelay`, encoded and written
+    /// off the main thread. The server is the authority on resume anyway, so losing the last seconds of offsets only
+    /// costs a probe request. Every other change is written before this returns, after any coalesced write before it.
     private func persist(coalesce: Bool = false) throws {
         guard writable else { throw CloudError.message(persistenceError ?? L("La cola no se puede guardar.")) }
         if coalesce { dirty = true; scheduleFlush(); return }
         flushTask?.cancel(); flushTask = nil; dirty = false
-        do { try LocalStore.save(items, to: storeURL) }
+        do { try StoreWriter.shared.now(items, to: storeURL) }
         catch { persistenceError = L("No se pudo guardar la cola: \(error.localizedDescription)"); throw error }
     }
     private func scheduleFlush() {
@@ -154,13 +171,20 @@ final class TransferQueue: ObservableObject {
             try? await Task.sleep(for: delay)
             guard let self, !Task.isCancelled else { return }
             self.flushTask = nil
-            self.flush()
+            self.flush(waiting: false)
         }
     }
-    /// Writes pending coalesced changes now. Called before the process exits.
-    func flush() {
+    /// Writes pending coalesced changes. Before the process exits it waits for the write; the periodic flush does not.
+    func flush(waiting: Bool = true) {
         guard dirty, writable else { return }
-        do { try persist() } catch { persistenceError = error.localizedDescription }
+        guard !waiting else {
+            do { try persist() } catch { persistenceError = error.localizedDescription }
+            return
+        }
+        dirty = false
+        StoreWriter.shared.later(items, to: storeURL) { [weak self] error in
+            self?.persistenceError = L("No se pudo guardar la cola: \(error.localizedDescription)")
+        }
     }
 
     func setOnline(_ online: Bool) {
@@ -216,6 +240,7 @@ final class TransferQueue: ObservableObject {
         }
     }
     func add(_ jobs: [Transfer]) throws {
+        trimFinished()
         items += jobs
         do { try persist() } catch { items.removeAll { item in jobs.contains { $0.id == item.id } }; throw error }
         stateChanges.send()

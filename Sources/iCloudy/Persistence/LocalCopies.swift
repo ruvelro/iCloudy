@@ -272,7 +272,7 @@ private struct Snapshot: Codable {
                                          remoteModified: copy.remoteModified, savedAt: copy.savedAt,
                                          origin: copy.origin.rawValue))
         }
-        try? LocalStore.save(snapshot, to: url)
+        StoreWriter.shared.later(snapshot, to: url)
     }
 }
 

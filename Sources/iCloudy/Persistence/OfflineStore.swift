@@ -446,12 +446,12 @@ final class OfflineStore: ObservableObject {
         dirty = false
         write()
     }
+    /// Encoded and written off the main thread. A failure is reported when it happens.
     private func write() {
-        do { try LocalStore.save(Snapshot(pins: pins, entries: Array(entries.values)), to: indexURL); writeProblem = nil }
-        catch {
+        StoreWriter.shared.later(Snapshot(pins: pins, entries: Array(entries.values)), to: indexURL) { [weak self] error in
             // Said once per kind of failure: a full disk fails every write, and one notice is enough.
             let text = L("No se pudo guardar la lista de copias sin conexión: \(error.localizedDescription) Los cambios se perderán al cerrar iCloudy.")
-            guard text != writeProblem else { return }
+            guard let self, text != writeProblem else { return }
             writeProblem = text
             notices.append(OfflineNotice(text: text))
         }

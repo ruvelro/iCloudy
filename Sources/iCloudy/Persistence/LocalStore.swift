@@ -15,7 +15,10 @@ enum LocalStore {
         try FileManager.default.moveItem(at: url, to: backup)
         return backup
     }
+    /// Waits first for any write the background writer still holds, so what was saved in this process is what is
+    /// read back, whichever store wrote it.
     static func read<T: Decodable>(_ type: T.Type, from url: URL) throws -> T? {
+        StoreWriter.shared.flush()
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         return try JSONDecoder().decode(type, from: Data(contentsOf: url))
     }
