@@ -27,25 +27,30 @@ extension ExplorerView {
                   if sidebarTab == .clouds {
                     VStack(spacing: 5) {
                         ForEach(model.accounts) { account in
-                            Button { model.select(account.id) } label: {
-                                HStack(spacing: 10) {
-                                    AccountIcon(account: account, appearance: model.appearance(for: account))
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(model.accountTitle(account)).fontWeight(.medium).foregroundStyle(model.appearance(for: account).tint.color).lineLimit(1)
-                                        Text(account.email).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                                        if !model.appearance(for: account).alias.isEmpty { Text(account.cloud.title).font(.caption2).foregroundStyle(.secondary) }
-                                        StorageUsageView(account: account, state: model.storageQuotas[account.id]).padding(.top, 3)
-                                        if model.isRenewing(account) {
-                                            Label("Renovando la sesión…", systemImage: "arrow.clockwise").font(.caption2).foregroundStyle(.secondary)
-                                        } else if model.isExpired(account) {
-                                            Label("Sesión caducada · Vuelve a conectar", systemImage: "exclamationmark.triangle.fill").font(.caption2).foregroundStyle(.orange)
-                                        }
+                            // Not a Button: on macOS a button keeps the mouse from the moment it is pressed, so a drag that
+                            // starts on it never reaches `onDrag`, and the clouds could not be dragged into a new order.
+                            // A tap does the same as the button did and leaves the drag alone, as on the tabs.
+                            HStack(spacing: 10) {
+                                AccountIcon(account: account, appearance: model.appearance(for: account))
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(model.accountTitle(account)).fontWeight(.medium).foregroundStyle(model.appearance(for: account).tint.color).lineLimit(1)
+                                    Text(account.email).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                                    if !model.appearance(for: account).alias.isEmpty { Text(account.cloud.title).font(.caption2).foregroundStyle(.secondary) }
+                                    StorageUsageView(account: account, state: model.storageQuotas[account.id]).padding(.top, 3)
+                                    if model.isRenewing(account) {
+                                        Label("Renovando la sesión…", systemImage: "arrow.clockwise").font(.caption2).foregroundStyle(.secondary)
+                                    } else if model.isExpired(account) {
+                                        Label("Sesión caducada · Vuelve a conectar", systemImage: "exclamationmark.triangle.fill").font(.caption2).foregroundStyle(.orange)
                                     }
-                                    Spacer(minLength: 0)
-                                }.padding(Layout.sidebarInner).contentShape(Rectangle())
-                                    .sidebarRow(selected: model.selectedAccountID == account.id && !model.showGlobalSearch,
-                                                tint: model.appearance(for: account).tint.color)
-                            }.buttonStyle(.plain)
+                                }
+                                Spacer(minLength: 0)
+                            }.padding(Layout.sidebarInner).contentShape(Rectangle())
+                                .sidebarRow(selected: model.selectedAccountID == account.id && !model.showGlobalSearch,
+                                            tint: model.appearance(for: account).tint.color)
+                                .onTapGesture { model.select(account.id) }
+                                .accessibilityElement(children: .combine)
+                                .accessibilityAddTraits(model.selectedAccountID == account.id ? [.isSelected, .isButton] : .isButton)
+                                .accessibilityAction { model.select(account.id) }
                                 // Dragging a cloud onto another puts it there, the same as with the tabs.
                                 .onDrag {
                                     draggingAccount = account.id
