@@ -147,7 +147,7 @@ cancelable y limpieza al cerrar.
 ```bash
 git clone https://github.com/ruvelro/iCloudy.git
 cd iCloudy
-bash scripts/make-signing-cert.sh   # una sola vez: evita que el Llavero pregunte en cada compilación
+bash scripts/make-signing-cert.sh   # una sola vez, si no tienes certificado de Apple (docs/OAUTH.md, «Firma local»)
 bash scripts/build-app.sh
 open dist/iCloudy.app
 ```

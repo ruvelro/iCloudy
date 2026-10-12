@@ -49,7 +49,7 @@ final class CryptomatorVaults: ObservableObject {
     private var quitObserver: NSObjectProtocol?
     private let passphrases: KeychainStorage
 
-    init(passphrases: KeychainStorage = KeychainStorage()) {
+    init(passphrases: KeychainStorage = .shared) {
         self.passphrases = passphrases
         // Locking on quit is mostly symbolic, the process is about to end, but it also clears the keys from memory
         // before anything else in the shutdown gets a chance to run.

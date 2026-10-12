@@ -178,39 +178,64 @@ El archivo se copia a `Contents/Resources/OAuth.plist` antes de firmar. Se puede
 
 ## Firma local para desarrollo
 
-Los elementos del Llavero quedan ligados a la identidad que firmó la app. Una firma ad hoc (`-`) cambia en cada compilación, así que macOS trata cada compilación como una aplicación distinta y vuelve a pedir permiso para leer las cuentas guardadas, o directamente lo niega. Con una identidad estable el requisito designado no cambia y el permiso concedido una vez sigue valiendo.
+Medido en el llavero de inicio de sesión con dos binarios de prueba firmados con el mismo certificado, el mismo
+identificador y la misma *sandbox*, y el diálogo desactivado para que el sistema conteste con un código en vez de
+preguntar:
 
-Comprobado, no supuesto: firmando dos binarios **distintos** con el mismo certificado y el mismo identificador, el
-segundo lee un elemento escrito por el primero sin que aparezca ninguna petición. Es decir, recompilar no vuelve a
-preguntar.
+| Desde la otra compilación | Resultado |
+|---|---|
+| Leer el secreto | `-25293`: es el diálogo que pide la contraseña |
+| Leer solo los atributos | Permitido, sin diálogo |
+| Escribir (`SecItemUpdate`) | Permitido, sin diálogo |
+| Borrar | `-25244`, rechazado sin diálogo |
 
-### Si aun así pide la contraseña una y otra vez
+El motivo es la **lista de particiones** de cada elemento: macOS guarda en ella la firma de quien lo creó, y sin Team ID
+esa firma es el `cdhash` del binario, que cambia en cada compilación. Ni la nueva compilación puede añadirse a la lista
+sin la contraseña, ni la anterior puede dejarla preparada, porque no conoce el `cdhash` futuro. Un certificado
+estable mantiene el requisito designado, pero no evita esto. (Una prueba anterior decía lo contrario porque se hizo en
+un llavero creado con `security create-keychain`, que no aplica particiones.)
 
-El diálogo tiene tres botones y solo uno sirve. **«Permitir» autoriza ese acceso y nada más**, así que vuelve a
-aparecer a la siguiente. El que hay que pulsar es **«Permitir siempre»**, que añade la app a la lista de la entrada
-y ya no pregunta más, ni siquiera tras recompilar.
+### Qué hace iCloudy
 
-Los elementos creados por compilaciones anteriores a la existencia del certificado conservan la lista de entonces,
-así que preguntarán una vez cada uno hasta que se les diga «Permitir siempre». Con una cuenta por elemento, eso son
-varias preguntas seguidas la primera vez, y ninguna después.
+Desde 0.7 todo lo que iCloudy guarda en el Llavero (la lista de cuentas, las credenciales de cada nube y las
+contraseñas de bóveda recordadas) va en **un único elemento**, `dev.icloudy.vault`, que se lee una vez por ejecución.
+Así que una compilación nueva sin Team ID pregunta **una vez**, no una por nube. Pulsa **«Permitir siempre»**:
+«Permitir» autoriza ese acceso y nada más.
 
-Las escrituras de credenciales actualizan la entrada existente sin borrarla y conservan su lista de acceso. El arranque no reescribe credenciales para cambiar permisos: una migración de firma o ACL debe tratarse por separado, para no perder tokens ni competir con su renovación.
+Para que dos copias abiertas a la vez no se pisen, cada escritura guarda una revisión en los atributos del elemento
+(leerlos no pide permiso). Antes de usar lo que tiene en memoria, cada proceso la compara, y si ha cambiado vuelve a
+leer el secreto.
 
-### Por qué no se usa el Llavero moderno, que no pregunta nunca
+Los elementos antiguos, uno por clave en `dev.icloudy.credentials`, se mueven al nuevo la primera vez que se leen: esa
+vez preguntan cada uno, por última vez. Después se borran si el sistema lo permite, y si no (cuando se eligió
+«Permitir» en vez de «Permitir siempre»), se quedan sin uso. Una clave borrada después no vuelve desde esa copia.
 
-El llavero con protección de datos no tiene listas de acceso ni diálogos: el acceso se decide por el identificador
-de equipo de la firma. Sería mejor, pero exige una cuenta de desarrollador de Apple. Probado con el certificado
-local: `SecItemAdd` devuelve `-34018`, falta el derecho. Sin cuenta de Apple no es una opción, y por eso iCloudy
-sigue en el llavero clásico.
+### Para que no pregunte nunca: un certificado de Apple
+
+Con un certificado emitido por Apple, la firma lleva Team ID y la partición pasa a ser `teamid:…`, que no cambia
+entre compilaciones. No hace falta pagar el programa de desarrolladores:
+
+1. Abre Xcode → Ajustes → Cuentas, añade tu Apple ID y, en el equipo personal (*Personal Team*), pulsa
+   **Gestionar certificados → + → Apple Development**.
+2. Compila con `bash scripts/build-app.sh`. El script prefiere esa identidad a la local.
+3. La primera vez macOS preguntará una vez, porque el elemento lo creó otra firma. Pulsa «Permitir siempre».
+
+Eso no habilita el llavero moderno (el que no tiene diálogos): para usarlo hacen falta derechos que solo da un perfil
+de aprovisionamiento. Con el certificado local, `SecItemAdd` devuelve `-34018`, falta el derecho.
+
+### El certificado local
 
 ```sh
 bash scripts/make-signing-cert.sh
 bash scripts/build-app.sh
 ```
 
-El script crea un certificado autofirmado de firma de código llamado `iCloudy Development` en el llavero de inicio de sesión y autoriza a `codesign` a usar su clave. **No se añade nada al almacén de confianza del sistema**: el certificado sigue sin ser de confianza y `codesign` no lo necesita, solo necesita la clave privada. Por eso `build-app.sh` busca la identidad sin el filtro `-v`, que descarta precisamente las no validadas.
-
-La primera vez que abras la app firmada, macOS pedirá una vez acceso al Llavero porque los elementos se guardaron bajo la firma anterior. Elige **Permitir siempre** y no volverá a preguntar en las siguientes compilaciones.
+Sin cuenta de Apple, el script crea un certificado autofirmado de firma de código llamado `iCloudy Development` en el
+llavero de inicio de sesión y autoriza a `codesign` a usar su clave. Mantiene estable el requisito designado (la
+carpeta de la *sandbox* y la lista de acceso lo usan), pero cada compilación nueva sigue preguntando una vez, por lo
+explicado arriba. **No se añade nada al almacén de confianza del sistema**: el certificado sigue sin ser de confianza y
+`codesign` no lo necesita, solo necesita la clave privada. Por eso `build-app.sh` busca la identidad sin el filtro
+`-v`, que descarta precisamente las no validadas.
 
 Para quitarlo, abre Acceso a Llaveros, busca `iCloudy Development` y elimina el certificado y su clave. También puedes forzar otra identidad con `ICLOUDY_SIGNING_IDENTITY="Nombre exacto"` o volver a ad hoc con `ICLOUDY_SIGNING_IDENTITY=-`.
 

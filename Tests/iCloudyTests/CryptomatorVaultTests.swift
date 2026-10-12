@@ -294,37 +294,10 @@ final class CryptomatorVaultTests: XCTestCase {
         catch { XCTAssertEqual(error as? CryptomatorError, .locked) }
     }
 
-    /// Keychain operations kept in a dictionary, so a test can see what was stored without touching the real one.
-    private final class FakeKeychain {
-        var values: [String: Data] = [:]
-        var attributes: [String: [String: Any]] = [:]
-        var operations: KeychainOperations {
-            KeychainOperations(update: { query, changes in
-                let key = (query as NSDictionary)[kSecAttrAccount] as! String
-                guard self.values[key] != nil else { return errSecItemNotFound }
-                self.values[key] = (changes as NSDictionary)[kSecValueData] as? Data
-                return errSecSuccess
-            }, add: { item, _ in
-                let dictionary = item as NSDictionary as! [String: Any]
-                let key = dictionary[kSecAttrAccount as String] as! String
-                self.values[key] = dictionary[kSecValueData as String] as? Data
-                self.attributes[key] = dictionary
-                return errSecSuccess
-            }, copy: { query, result in
-                guard let value = self.values[(query as NSDictionary)[kSecAttrAccount] as! String] else { return errSecItemNotFound }
-                result?.pointee = value as CFData
-                return errSecSuccess
-            }, delete: { query in
-                self.values[(query as NSDictionary)[kSecAttrAccount] as! String] = nil
-                return errSecSuccess
-            })
-        }
-    }
-
     func testUnlockedVaultsAreAccountsThatLockOnDemandWhenIdleAndWithTheirStorage() async throws {
         let storage = MemoryProvider()
         let folder = try await CryptomatorVault.create(named: "Privado", in: "root", provider: storage, passphrase: "contraseña larga", costParam: 16)
-        let keychain = FakeKeychain()
+        let keychain = MemoryKeychain()
         let vaults = CryptomatorVaults(passphrases: KeychainStorage(operations: keychain.operations))
         let base = Account(id: "memory", cloud: .google, name: "M", email: "m@example.com", clientID: "", clientSecret: nil)
         let vaultFolder = CloudFile(id: folder, name: "Privado", mime: CryptomatorProvider.folderMime, size: nil, modified: nil, webURL: nil, isFolder: true)
@@ -335,7 +308,7 @@ final class CryptomatorVaultTests: XCTestCase {
             try await vaults.unlock(folder: vaultFolder, base: base, provider: { storage }, passphrase: "contraseña corta", remember: true)
             XCTFail("Contraseña equivocada")
         } catch { XCTAssertEqual(error as? CryptomatorError, .invalidPassphrase) }
-        XCTAssertTrue(keychain.values.isEmpty, "Una contraseña que no abre no se guarda")
+        XCTAssertTrue(keychain.items.isEmpty, "Una contraseña que no abre no se guarda")
 
         let entry = try await vaults.unlock(folder: vaultFolder, base: base, provider: { storage }, passphrase: "contraseña larga", remember: true)
         XCTAssertTrue(entry.account.isCryptomatorVault)
@@ -344,7 +317,7 @@ final class CryptomatorVaultTests: XCTestCase {
         XCTAssertFalse(entry.account.capabilities.search); XCTAssertFalse(entry.account.capabilities.publicLinks)
         XCTAssertFalse(entry.account.capabilities.copy); XCTAssertTrue(entry.account.capabilities.move)
         XCTAssertEqual(vaults.rememberedPassphrase(base: "memory", folder: folder), "contraseña larga")
-        let stored = try XCTUnwrap(keychain.attributes[CryptomatorVaults.passphraseKey(entry.id)])
+        let stored = try XCTUnwrap(keychain.item(service: KeychainStorage.service, account: KeychainStorage.account))
         XCTAssertEqual(stored[kSecAttrAccessible as String] as? String, kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String)
 
         // Idle: a busy vault stays open, an unused one locks.
@@ -443,8 +416,13 @@ final class CryptomatorVaultTests: XCTestCase {
     func testAKeychainThatRefusesAPassphraseIsReportedInsteadOfIgnored() async throws {
         let storage = MemoryProvider()
         let folder = try await CryptomatorVault.create(named: "Privado", in: "root", provider: storage, passphrase: "contraseña larga", costParam: 16)
+        // A passphrase remembered by an earlier version, in a Keychain that now refuses every change.
+        let memory = MemoryKeychain()
+        memory.insert([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: KeychainStorage.legacyService,
+                       kSecAttrAccount as String: CryptomatorVaults.passphraseKey(CryptomatorVaults.accountID(base: "memory", folder: folder)),
+                       kSecValueData as String: try JSONEncoder().encode("contraseña larga")])
         let refusing = KeychainOperations(update: { _, _ in errSecAuthFailed }, add: { _, _ in errSecAuthFailed },
-                                          copy: { _, _ in errSecItemNotFound }, delete: { _ in errSecAuthFailed })
+                                          copy: memory.operations.copy, delete: { _ in errSecAuthFailed })
         let vaults = CryptomatorVaults(passphrases: KeychainStorage(operations: refusing))
         var problems: [String] = []
         vaults.didFail = { problems.append($0) }
