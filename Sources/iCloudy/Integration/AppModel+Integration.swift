@@ -99,12 +99,9 @@ extension AppModel {
         localCopies.forget(accountID: account.id, fileID: file.id)
     }
 
-    /// Republishes the favorites of the accounts that are actually connected. Favorites are kept when an account is
-    /// disconnected, on purpose, but publishing them again put back in the system's search exactly what disconnecting
-    /// had just removed from it.
+    /// Republishes the favorites of the accounts that are actually connected.
     func refreshSpotlightFavorites() {
-        let connected = Set(accounts.map(\.id))
-        spotlight.refreshFavorites(favorites.filter { connected.contains($0.accountID) }) { [weak self] id in
+        favoriteStore.publish(to: spotlight, connected: Set(accounts.map(\.id))) { [weak self] id in
             self?.accounts.first { $0.id == id }.map { self?.accountTitle($0) ?? $0.email } ?? id
         }
     }
@@ -179,14 +176,11 @@ extension AppModel {
         NSWorkspace.shared.open(url)
     }
 
-    func isFavorite(_ file: CloudFile) -> Bool { favoriteKeys.contains((selectedAccountID ?? "") + ":" + file.id) }
+    func isFavorite(_ file: CloudFile) -> Bool { favoriteStore.contains(accountID: selectedAccountID ?? "", fileID: file.id) }
 
     func toggleFavorite(_ file: CloudFile) {
         guard let account else { return }
-        if isFavorite(file) { favorites.removeAll { $0.accountID == account.id && $0.file.id == file.id } }
-        else { favorites.append(Favorite(accountID: account.id, file: file, path: path, collection: collection)) }
-        do { try LocalStore.save(favorites, to: favoritesURL) } catch { self.error = error.localizedDescription }
-        refreshSpotlightFavorites()
+        favoriteStore.toggle(file, accountID: account.id, path: path, collection: collection)
     }
 
     func openFavorite(_ favorite: Favorite) {

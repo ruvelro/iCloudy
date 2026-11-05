@@ -76,7 +76,7 @@ extension AppModel {
                 set: { term in self.workspace.update(self.tab(inPane: pane).id) { $0.search = term } })
     }
 
-    func isFavorite(_ file: CloudFile, in tab: BrowserState) -> Bool { favoriteKeys.contains((tab.accountID ?? "") + ":" + file.id) }
+    func isFavorite(_ file: CloudFile, in tab: BrowserState) -> Bool { favoriteStore.contains(accountID: tab.accountID ?? "", fileID: file.id) }
 
     func localStatus(_ file: CloudFile, in tab: BrowserState) -> LocalCopyStatus {
         _ = subsystems
@@ -182,10 +182,8 @@ extension AppModel {
             do {
                 try await client(source).trash(file: move.file)
                 spotlight.forget(accountID: source.id, fileID: move.file.id)
-                favorites.removeAll { $0.accountID == source.id && ($0.file.id == move.file.id || $0.path.contains { $0.id == move.file.id }) }
+                favoriteStore.remove(accountID: source.id, fileID: move.file.id)
                 reloadVisible(accountID: source.id, fresh: true)
-                do { try LocalStore.save(favorites, to: favoritesURL) }
-                catch { self.error = L("No se pudieron guardar los favoritos: \(error.localizedDescription)") }
             } catch {
                 self.error = L("«\(move.file.name)» se ha copiado a \(move.targetTitle), pero el original no se pudo quitar: \(error.localizedDescription)")
             }

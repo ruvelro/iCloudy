@@ -110,16 +110,9 @@ extension AppModel {
                     try await remoteCopies.start(file: file, destination: destination, api: api)
                 } else { try await api.copy(file: file, to: destination) }
                 done += 1
-                if request.isMove {
-                    for i in favorites.indices where favorites[i].accountID == request.account.id && favorites[i].file.id == file.id {
-                        favorites[i].path = destinationPath; favorites[i].collection = .files
-                    }
-                }
+                if request.isMove { favoriteStore.moved(accountID: request.account.id, fileID: file.id, to: destinationPath) }
             }
-            if request.isMove {
-                try LocalStore.save(favorites, to: favoritesURL)
-                if moves.count == request.files.count { registerMoveUndo(moves, account: request.account) }
-            }
+            if request.isMove, moves.count == request.files.count { registerMoveUndo(moves, account: request.account) }
             let target = destinationPath.last?.name ?? L("Mis archivos")
             if !request.isMove, request.account.cloud == .microsoft, !request.account.isDemo {
                 info = L("Copia enviada a OneDrive. Su estado se muestra en Transferencias hasta que el servidor confirme el resultado.")
@@ -170,7 +163,6 @@ extension AppModel {
                 removed += 1
                 forgetLocally(file, account: account)
             }
-            try LocalStore.save(favorites, to: favoritesURL)
             info = removed == 1 ? L("«\(files[0].name)» se ha eliminado definitivamente de \(account.cloud.title).") : L("\(removed) elementos eliminados definitivamente de \(account.cloud.title).")
         } catch {
             self.error = (removed > 0 ? L("Se eliminaron \(removed) de \(files.count) elementos. ") : L("")) + error.localizedDescription
@@ -204,7 +196,6 @@ extension AppModel {
         do {
             try await client(account).emptyTrash()
             for file in binned { forgetLocally(file, account: account) }
-            try LocalStore.save(favorites, to: favoritesURL)
             info = L("La papelera de \(account.cloud.title) se ha vaciado.")
         } catch { self.error = error.localizedDescription }
         reloadAfterWrite(to: account)
@@ -214,7 +205,7 @@ extension AppModel {
     /// What the app itself knew about an item that no longer exists anywhere.
     private func forgetLocally(_ file: CloudFile, account: Account) {
         spotlight.forget(accountID: account.id, fileID: file.id)
-        favorites.removeAll { $0.accountID == account.id && ($0.file.id == file.id || $0.path.contains { $0.id == file.id }) }
+        favoriteStore.remove(accountID: account.id, fileID: file.id)
         offline.itemDeleted(file, accountID: account.id)
     }
 
@@ -229,9 +220,8 @@ extension AppModel {
                 moved += 1
                 spotlight.forget(accountID: account.id, fileID: file.id)
                 offline.itemDeleted(file, accountID: account.id)
-                favorites.removeAll { $0.accountID == account.id && ($0.file.id == file.id || $0.path.contains { $0.id == file.id }) }
+                favoriteStore.remove(accountID: account.id, fileID: file.id)
             }
-            try LocalStore.save(favorites, to: favoritesURL)
             registerTrashUndo(files, account: account)
             if !account.capabilities.reversibleTrash, !account.isDemo {
                 info = L("\(moved) elementos eliminados del servidor de forma permanente.")
@@ -255,18 +245,7 @@ extension AppModel {
 
     func applyIdentityChange(_ change: RemoteIdentityChange, account: Account, destinationPath: [CloudFile]? = nil) throws {
         let previousParent = path.map(\.name)
-        for i in favorites.indices where favorites[i].accountID == account.id {
-            let old = favorites[i].file.id
-            favorites[i].file = change.file(favorites[i].file)
-            favorites[i].path = favorites[i].path.map(change.file)
-            if let destinationPath {
-                if old == change.oldID { favorites[i].path = destinationPath }
-                else if let position = favorites[i].path.firstIndex(where: { $0.id == change.newID }) {
-                    favorites[i].path = destinationPath + favorites[i].path[position...]
-                }
-            }
-        }
-        try LocalStore.save(favorites, to: favoritesURL)
+        favoriteStore.apply(change, accountID: account.id, destinationPath: destinationPath)
         // Every tab showing the item, or with it in its history, follows it; not only the one with the focus.
         workspace.updateAll { $0.remap(change, accountID: account.id) }
         listings.removeAll(accountID: account.id)

@@ -23,3 +23,28 @@ enum LocalStore {
         return try JSONDecoder().decode(type, from: Data(contentsOf: url))
     }
 }
+
+/// A store's contents with the version of their layout, so a later version can tell an old file from a new one
+/// instead of guessing from which fields are missing. Files written before the field existed are the bare contents
+/// and read as version 1.
+struct StoreEnvelope<Items: Codable & Sendable>: Codable, Sendable {
+    static var currentVersion: Int { 1 }
+    var schemaVersion: Int
+    var items: Items
+
+    init(_ items: Items, schemaVersion: Int = StoreEnvelope.currentVersion) {
+        self.items = items; self.schemaVersion = schemaVersion
+    }
+
+    private enum CodingKeys: String, CodingKey { case schemaVersion, items }
+
+    init(from decoder: Decoder) throws {
+        if let container = try? decoder.container(keyedBy: CodingKeys.self), container.contains(.items) {
+            schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+            items = try container.decode(Items.self, forKey: .items)
+        } else {
+            schemaVersion = 1
+            items = try Items(from: decoder)
+        }
+    }
+}

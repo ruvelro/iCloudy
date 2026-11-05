@@ -97,7 +97,9 @@ final class AppModel {
         get { workspace.current.search }
         set { workspace.current.search = newValue }
     }
-    var favorites: [Favorite] = [] { didSet { favoriteKeys = Set(favorites.map(\.id)) } }
+    /// The favorites and their file. Read-only here: every change goes through the store, which saves it.
+    let favoriteStore = FavoritesStore()
+    var favorites: [Favorite] { favoriteStore.items }
     /// Filtered and sorted once per change of `files`, `search` or `sortMode`, not on every render.
     var visibleFiles: [CloudFile] { workspace.current.visibleFiles }
     var showGlobalSearch = false
@@ -165,7 +167,6 @@ final class AppModel {
     @ObservationIgnored var localCopySubscription: AnyCancellable?
     /// The listing each tab is waiting for, so a new request for the same tab cancels the old one.
     @ObservationIgnored var navigationTasks: [BrowserState.ID: Task<Void, Never>] = [:]
-    var favoriteKeys: Set<String> = []
     @ObservationIgnored var subscription: AnyCancellable?
     @ObservationIgnored var keepAlive: Task<Void, Never>?
     @ObservationIgnored var wakeObserver: NSObjectProtocol?
@@ -180,7 +181,6 @@ final class AppModel {
     /// it, so none runs in a store that is being emptied.
     @ObservationIgnored var o2StoreMigration: Task<Void, Never>?
     @ObservationIgnored var editContext: (Account, String)?
-    let favoritesURL = LocalStore.directory.appendingPathComponent("favorites.json")
     /// Opening folders refreshes the quota at most this often; explicit requests and finished transfers always do.
     static let quotaRefreshInterval: TimeInterval = 300
     /// How long a session may go untouched. Measured against O2's server, which let 68 minutes pass and refused at
@@ -213,10 +213,9 @@ final class AppModel {
     init() {
         do { let store = try AppearanceStore(); appearanceStore = store; appearances = store.values }
         catch { self.error = L("No se pudo cargar la personalización: \(error.localizedDescription)") }
-        do { favorites = try LocalStore.read([Favorite].self, from: favoritesURL) ?? [] }
-        catch { self.error = error.localizedDescription }
-        // Property observers do not run while an initializer sets its own properties.
-        favoriteKeys = Set(favorites.map(\.id))
+        if let problem = favoriteStore.loadError { self.error = problem }
+        favoriteStore.saveFailed = { [weak self] message in self?.error = message }
+        favoriteStore.didChange = { [weak self] in self?.refreshSpotlightFavorites() }
         // The tabs of the last session, put right against the accounts once those have been read.
         if let restored = workspaceStore.load() { workspace = restored }
         workspaceStore.watch(workspaceChanges.eraseToAnyPublisher())
