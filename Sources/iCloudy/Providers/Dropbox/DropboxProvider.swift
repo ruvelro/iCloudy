@@ -47,8 +47,7 @@ extension DropboxProvider {
     static func dropboxBusyDelay(_ response: URLResponse, _ data: Data, attempt: Int) -> Double? {
         guard let http = response as? HTTPURLResponse, [409, 429].contains(http.statusCode),
               let summary = (try? HTTP.json(data))?["error_summary"] as? String, DropboxErrors.isBusy(summary) else { return nil }
-        let announced = Double(http.value(forHTTPHeaderField: "Retry-After") ?? "")
-        return min(max(1, announced ?? pow(2, Double(attempt))), 30)
+        return RetryAfter.delay(announced: RetryAfter.seconds(http), attempt: attempt)
     }
 
     static func dropboxFile(_ value: [String: Any]) -> CloudFile? {

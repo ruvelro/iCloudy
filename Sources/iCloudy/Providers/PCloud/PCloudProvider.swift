@@ -58,7 +58,7 @@ extension PCloudProvider {
                 return try pcloudCheck(parsed: try await HTTP.object(data))
             }
             catch let error as ServiceError where !write && error.retryable && attempt < 3 {
-                try await Task.sleep(for: .seconds(min(max(1, error.retryAfter ?? pow(2, Double(attempt))), 30)))
+                try await Task.sleep(for: .seconds(RetryAfter.delay(announced: error.retryAfter, attempt: attempt)))
             }
         }
         throw CloudError.message(L("El servicio no responde."))

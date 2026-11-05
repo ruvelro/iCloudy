@@ -169,8 +169,24 @@ class CloudSession {
         guard let http = response as? HTTPURLResponse else { return nil }
         let idempotent = repeatable || ["GET", "HEAD", "PUT", "DELETE", "PATCH"].contains(method.uppercased())
         guard idempotent, http.statusCode == 429 || [500, 502, 503, 504].contains(http.statusCode) else { return nil }
-        let announced = Double(http.value(forHTTPHeaderField: "Retry-After") ?? "")
-        return min(max(1, announced ?? pow(2, Double(attempt))), 30)
+        return RetryAfter.delay(announced: RetryAfter.seconds(http), attempt: attempt)
+    }
+
+    /// `send` under the same retry policy as `json`, for callers that read the answer themselves (WebDAV's
+    /// multistatus, for instance). The last answer is returned as it came, so the caller still validates it.
+    func sendRetrying(_ request: inout URLRequest, repeatable: Bool = false) async throws -> (Data, URLResponse) {
+        let method = request.httpMethod ?? "GET"
+        var attempt = 0
+        while true {
+            try Task.checkCancellation()
+            let (data, response) = try await send(&request)
+            guard attempt < 3, let delay = Self.retryDelay(response, method: method, attempt: attempt, repeatable: repeatable) else {
+                return (data, response)
+            }
+            attempt += 1
+            Diagnostics.retrying(account, method: method, url: request.url, status: (response as? HTTPURLResponse)?.statusCode, attempt: attempt, delay: delay)
+            try await Task.sleep(for: .seconds(delay))
+        }
     }
 
     /// Tells the provider to forget upload sessions a cancelled transfer will never finish. Every failure here is

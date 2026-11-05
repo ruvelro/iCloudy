@@ -219,8 +219,7 @@ extension BoxProvider {
             committed = answer
             guard (answer.1 as? HTTPURLResponse)?.statusCode == 202 else { break }
             guard attempt < 5 else { throw CloudError.message(L("Box sigue ensamblando «\(name)» y no ha confirmado la subida. Compruébalo en su web antes de volver a subirlo.")) }
-            let announced = Double((answer.1 as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After") ?? "")
-            try await Task.sleep(for: .seconds(min(max(1, announced ?? pow(2, Double(attempt))), 30)))
+            try await Task.sleep(for: .seconds(RetryAfter.delay(announced: RetryAfter.seconds(answer.1), attempt: attempt)))
         }
         guard let (data, response) = committed else { throw CloudError.message(L("Box no confirmó la subida.")) }
         try HTTP.validate(response, data: data)
