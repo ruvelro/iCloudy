@@ -46,6 +46,8 @@ enum TestIsolation {
         installed = true
         lock.unlock()
         guard first else { return }
+        // Before anything of the app runs: it decides from this which stores and services are real.
+        AppEnvironment.isTesting = true
         isolateStorage(for: 0)
         XCTestObservationCenter.shared.addTestObserver(Observer())
     }

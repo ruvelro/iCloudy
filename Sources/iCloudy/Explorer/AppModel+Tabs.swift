@@ -5,12 +5,12 @@ import Combine
 /// Keeps the window's tabs and panes between launches.
 @MainActor
 final class WorkspaceStore {
-    /// Nil under XCTest, so a test never overwrites the tabs of whoever runs it.
+    /// Nil in the test suite, so a test never overwrites the tabs of whoever runs it.
     let url: URL?
     private var subscription: AnyCancellable?
     private var saved: Data?
 
-    init(url: URL? = NSClassFromString("XCTestCase") != nil ? nil : LocalStore.directory.appendingPathComponent("explorer-tabs.json")) {
+    init(url: URL? = AppEnvironment.isTesting ? nil : LocalStore.directory.appendingPathComponent("explorer-tabs.json")) {
         self.url = url
     }
 

@@ -21,7 +21,7 @@ enum Diagnostics {
 
     /// True while the test suite runs. The suite is not sandboxed, so without this the log would pile up in the real
     /// Application Support folder of whoever ran it, as O2's record once did.
-    static var underTest: Bool { NSClassFromString("XCTestCase") != nil }
+    static var underTest: Bool { AppEnvironment.isTesting }
 
     static let levelKey = "diagnosticsLevel"
     private static let saltKey = "diagnosticsSalt"
