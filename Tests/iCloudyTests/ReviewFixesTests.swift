@@ -165,7 +165,14 @@ final class ReviewFixesTests: XCTestCase {
         }, confirmAccount: { question in asked.set(asked.get() + [question]); return confirm })
         let watchdog = Task { try? await Task.sleep(for: .seconds(20)); oauth.cancel() }
         defer { watchdog.cancel() }
-        return try await oauth.signIn(cloud: .pcloud, clientID: "client", clientSecret: "secret")
+        // pCloud's port is fixed, and the previous listener (or another test run on this Mac) may still hold it.
+        for _ in 0..<50 {
+            do { return try await oauth.signIn(cloud: .pcloud, clientID: "client", clientSecret: "secret") }
+            catch where error.localizedDescription.contains("\(OAuthRequest.defaultPort)") || error.localizedDescription.contains("53.682") {
+                try await Task.sleep(for: .milliseconds(200))
+            }
+        }
+        throw XCTSkip("El puerto de pCloud sigue ocupado")
     }
 
     func testAPCloudCallbackWithoutStateConnectsOnlyAnAccountThePersonConfirms() async throws {
@@ -189,6 +196,20 @@ final class ReviewFixesTests: XCTestCase {
             XCTAssertEqual(OAuthProviderSettings.settings(for: cloud)?.toleratesMissingState, false, cloud.rawValue)
         }
         XCTAssertLessThanOrEqual(OAuth.statelessWindow, 300)
+    }
+
+    // MARK: - Explicit FTPS
+
+    func testEachExplicitFTPSConnectionCarriesItsOwnServerName() {
+        // Two sessions opening at once used to share one static table and could verify against each other's host.
+        let first = StartTLSFramer.options(serverName: "nas.example.com")
+        let second = StartTLSFramer.options(serverName: "192.168.1.20")
+        XCTAssertEqual(StartTLSFramer.serverName(in: first), "nas.example.com")
+        XCTAssertEqual(StartTLSFramer.serverName(in: second), "192.168.1.20")
+        XCTAssertNil(StartTLSFramer.serverName(in: NWProtocolFramer.Options(definition: StartTLSFramer.definition)), "Sin nombre, la verificación falla cerrada")
+        XCTAssertTrue(StartTLSFramer.isAddressLiteral("192.168.1.20"))
+        XCTAssertTrue(StartTLSFramer.isAddressLiteral("[fe80::1]"))
+        XCTAssertFalse(StartTLSFramer.isAddressLiteral("nas.example.com"))
     }
 
     // MARK: - Mega's second factor

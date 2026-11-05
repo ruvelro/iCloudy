@@ -58,8 +58,7 @@ actor FTPSession {
                 // The framer does the clear-text prologue and raises TLS before this connection reports ready, so
                 // the handshake below starts on an encrypted channel, exactly as with implicit TLS.
                 parameters = .tcp
-                parameters.defaultProtocolStack.applicationProtocols.insert(NWProtocolFramer.Options(definition: StartTLSFramer.definition), at: 0)
-                StartTLSFramer.serverName(for: parameters, host: host)
+                parameters.defaultProtocolStack.applicationProtocols.insert(StartTLSFramer.options(serverName: host), at: 0)
             } else { parameters = .tls }
         }
         if StartTLSFramer.trustAnyCertificateForTesting, let tls = parameters.defaultProtocolStack.applicationProtocols.compactMap({ $0 as? NWProtocolTLS.Options }).first {
