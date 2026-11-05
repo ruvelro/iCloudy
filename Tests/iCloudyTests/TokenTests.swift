@@ -124,7 +124,7 @@ final class TokenTests: XCTestCase {
         XCTAssertNil(CloudSession.retryDelay(nil, method: "GET", attempt: 0))
         // What the provider asks for wins over the backoff, within reason.
         XCTAssertEqual(CloudSession.retryDelay(response(429, retryAfter: "7"), method: "GET", attempt: 0), 7)
-        XCTAssertEqual(CloudSession.retryDelay(response(429, retryAfter: "9999"), method: "GET", attempt: 0), 30, "Con un tope")
+        XCTAssertEqual(CloudSession.retryDelay(response(429, retryAfter: "9999"), method: "GET", attempt: 0), 120, "Con un tope")
         XCTAssertEqual(CloudSession.retryDelay(response(429), method: "GET", attempt: 3), 8, "Sin cabecera, se duplica la espera")
     }
     private func response(_ status: Int, retryAfter: String? = nil) -> HTTPURLResponse {

@@ -169,8 +169,51 @@ class CloudSession {
         guard let http = response as? HTTPURLResponse else { return nil }
         let idempotent = repeatable || ["GET", "HEAD", "PUT", "DELETE", "PATCH"].contains(method.uppercased())
         guard idempotent, http.statusCode == 429 || [500, 502, 503, 504].contains(http.statusCode) else { return nil }
-        let announced = Double(http.value(forHTTPHeaderField: "Retry-After") ?? "")
-        return min(max(1, announced ?? pow(2, Double(attempt))), 30)
+        return RetryAfter.delay(announced: RetryAfter.seconds(http), attempt: attempt)
+    }
+
+    /// `send` under the same retry policy as `json`, for callers that read the answer themselves (WebDAV's
+    /// multistatus, for instance). The last answer is returned as it came, so the caller still validates it.
+    func sendRetrying(_ request: inout URLRequest, repeatable: Bool = false) async throws -> (Data, URLResponse) {
+        let method = request.httpMethod ?? "GET"
+        var attempt = 0
+        while true {
+            try Task.checkCancellation()
+            let (data, response) = try await send(&request)
+            guard attempt < 3, let delay = Self.retryDelay(response, method: method, attempt: attempt, repeatable: repeatable) else {
+                return (data, response)
+            }
+            attempt += 1
+            Diagnostics.retrying(account, method: method, url: request.url, status: (response as? HTTPURLResponse)?.statusCode, attempt: attempt, delay: delay)
+            try await Task.sleep(for: .seconds(delay))
+        }
+    }
+
+    /// The wait before sending a block again. Tests set it to nothing.
+    var blockRetryDelay: (_ attempt: Int, _ response: URLResponse?) -> Double = { attempt, response in
+        RetryAfter.delay(announced: RetryAfter.seconds(response), attempt: attempt)
+    }
+    /// Sends one block of a chunked upload, and again after a transient failure (a 5xx, a 429, a dropped
+    /// connection), up to `ResumableSessionUpload.attemptsPerBlock` times. Only for blocks that are safe to repeat as
+    /// they are: Dropbox's append at an explicit offset (a repeat of one that landed is answered with the right offset),
+    /// Box's part with its range, a chunk to Mega's storage at its offset. One transient failure used to fail the
+    /// session, and the queue then started the file again from its checkpoint.
+    func sendBlock(_ send: () async throws -> (Data, URLResponse)) async throws -> (Data, URLResponse) {
+        var attempt = 0
+        while true {
+            try Task.checkCancellation()
+            let last = attempt + 1 >= ResumableSessionUpload.attemptsPerBlock
+            var response: URLResponse?
+            do {
+                let answer = try await send()
+                guard !last, ResumableSessionUpload.isTransient(status: (answer.1 as? HTTPURLResponse)?.statusCode ?? 0) else { return answer }
+                response = answer.1
+            } catch where !last && ResumableSessionUpload.isTransient(error) {}
+            Diagnostics.retrying(account, method: "PUT", url: response?.url, status: (response as? HTTPURLResponse)?.statusCode,
+                                 attempt: attempt + 1, delay: blockRetryDelay(attempt, response))
+            try await Task.sleep(for: .seconds(blockRetryDelay(attempt, response)))
+            attempt += 1
+        }
     }
 
     /// Tells the provider to forget upload sessions a cancelled transfer will never finish. Every failure here is

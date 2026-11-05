@@ -41,9 +41,12 @@ extension WebDAVProvider {
             request.httpBody = Data(body.utf8)
             request.setValue("application/xml; charset=utf-8", forHTTPHeaderField: "Content-Type")
         }
-        let (data, response) = try await send(&request)
-        return (data, response)
+        // A Nextcloud in maintenance answers 503 with a Retry-After, and a busy one 429. The shared policy repeats
+        // only what is safe to repeat: the RFC 4918 reads are idempotent although CloudSession does not know them.
+        return try await sendRetrying(&request, repeatable: Self.webdavReads.contains(method.uppercased()))
     }
+    /// WebDAV methods that change nothing, or do the same thing twice as once.
+    nonisolated static let webdavReads: Set<String> = ["PROPFIND", "PROPPATCH", "REPORT", "SEARCH", "OPTIONS"]
 
     private static let propfindBody = """
     <?xml version="1.0" encoding="utf-8"?>

@@ -196,7 +196,7 @@ extension BoxProvider {
             upload.setValue("bytes \(cursor.offset)-\(cursor.offset + Int64(chunk.count) - 1)/\(total)", forHTTPHeaderField: "Content-Range")
             upload.setValue("sha=" + Data(Insecure.SHA1.hash(data: chunk)).base64EncodedString(), forHTTPHeaderField: "Digest")
             upload.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-            let (data, response) = try await self.upload(&upload, from: chunk)
+            let (data, response) = try await sendBlock { try await self.upload(&upload, from: chunk) }
             try HTTP.validate(response, data: data)
             guard let part = (try? HTTP.json(data))?["part"] as? [String: Any],
                   let encoded = try? JSONSerialization.data(withJSONObject: part), let text = String(data: encoded, encoding: .utf8) else {
@@ -219,8 +219,7 @@ extension BoxProvider {
             committed = answer
             guard (answer.1 as? HTTPURLResponse)?.statusCode == 202 else { break }
             guard attempt < 5 else { throw CloudError.message(L("Box sigue ensamblando «\(name)» y no ha confirmado la subida. Compruébalo en su web antes de volver a subirlo.")) }
-            let announced = Double((answer.1 as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After") ?? "")
-            try await Task.sleep(for: .seconds(min(max(1, announced ?? pow(2, Double(attempt))), 30)))
+            try await Task.sleep(for: .seconds(RetryAfter.delay(announced: RetryAfter.seconds(answer.1), attempt: attempt)))
         }
         guard let (data, response) = committed else { throw CloudError.message(L("Box no confirmó la subida.")) }
         try HTTP.validate(response, data: data)

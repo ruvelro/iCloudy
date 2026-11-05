@@ -17,18 +17,25 @@ extension GoogleDriveProvider {
     /// The fields every listing asks for. `md5Checksum` only exists for binary content, never for Google documents.
     static let googleFileFields = "id,name,mimeType,size,modifiedTime,webViewLink,md5Checksum"
 
-    var googleAllDrives: [URLQueryItem] {
-        account.driveID == nil ? [] : [URLQueryItem(name: "supportsAllDrives", value: "true")]
-    }
+    /// Sent on every file call, not only by shared-drive accounts: a folder of a shared drive that someone shares
+    /// with a personal account is still a shared-drive item, and without the flag Drive answers 404 when it is
+    /// opened. `about` and `drives` take no such parameter and are built without `googleURL`.
+    var googleAllDrives: [URLQueryItem] { [URLQueryItem(name: "supportsAllDrives", value: "true")] }
 
     func googleURL(_ string: String) -> URL {
-        guard account.driveID != nil, var components = URLComponents(string: string) else { return URL(string: string)! }
-        components.queryItems = (components.queryItems ?? []) + googleAllDrives
+        guard var components = URLComponents(string: string) else { return URL(string: string)! }
+        let items = components.queryItems ?? []
+        guard !items.contains(where: { $0.name == "supportsAllDrives" }) else { return components.url ?? URL(string: string)! }
+        components.queryItems = items + googleAllDrives
         return components.url ?? URL(string: string)!
     }
 
+    /// The scope of a listing or a search. A personal account still asks for shared-drive items, so "Shared with me"
+    /// and the folders reached from it show what lives in a shared drive too.
     var googleDriveScope: [URLQueryItem] {
-        guard let drive = account.driveID else { return [] }
+        guard let drive = account.driveID else {
+            return [URLQueryItem(name: "includeItemsFromAllDrives", value: "true"), URLQueryItem(name: "supportsAllDrives", value: "true")]
+        }
         return [
             URLQueryItem(name: "corpora", value: "drive"), URLQueryItem(name: "driveId", value: drive),
             URLQueryItem(name: "includeItemsFromAllDrives", value: "true"), URLQueryItem(name: "supportsAllDrives", value: "true"),
@@ -178,11 +185,11 @@ extension GoogleDriveProvider {
                 URLQueryItem(name: "fields", value: "nextPageToken,incompleteSearch,files(\(Self.googleFileFields),parents,driveId)"),
                 // A shared-drive account searches that drive; anything else searches the person's own corpus. Sending
                 // both values of `corpora` at once, as this once did, is a contradiction Drive answers with 400.
-            ] + (account.driveID == nil ? [URLQueryItem(name: "corpora", value: "user")] : googleDriveScope)
+            ] + (account.driveID == nil ? [URLQueryItem(name: "corpora", value: "user")] : []) + googleDriveScope
         let response = try await json(url.url!)
         let hits = (response["files"] as? [[String: Any]] ?? []).compactMap { value -> SearchHit? in
-            // A personal account cannot browse shared-drive items; a scoped account sees nothing else.
-            guard account.driveID != nil || value["driveId"] == nil, let file = Self.googleFile(value) else { return nil }
+            // With `supportsAllDrives` on every call, a shared-drive item found from a personal account opens too.
+            guard let file = Self.googleFile(value) else { return nil }
             return SearchHit(accountID: account.id, file: file, parentID: (value["parents"] as? [String])?.first)
         }
         return SearchPage(hits: hits, next: response["nextPageToken"] as? String, incomplete: response["incompleteSearch"] as? Bool ?? false)

@@ -12,17 +12,18 @@ final class StartTLSFramer: NWProtocolFramerImplementation {
     /// Set by tests that talk to a stand-in with a certificate of its own. Never set by the app: a NAS certificate
     /// is trusted by installing it in the Keychain, as `docs/FTP.md` explains.
     nonisolated(unsafe) static var trustAnyCertificateForTesting = false
-    /// The server name the certificate is checked against. The framer cannot see the endpoint it was opened to,
-    /// so the session registers it here before connecting, keyed by what the framer will see in the greeting.
-    nonisolated(unsafe) private static var pendingHosts: [ObjectIdentifier: String] = [:]
-    private static let lock = NSLock()
-    static func serverName(for parameters: NWParameters, host: String) {
-        lock.withLock { pendingHosts[ObjectIdentifier(parameters)] = host }
+    /// The server name the certificate is checked against travels in the framer's own options, one copy per
+    /// connection. It used to sit in a static table that was never emptied, from which any pending name was taken:
+    /// two sessions opening at once could each verify against the other's host.
+    static let serverNameKey = "serverName"
+    /// The framer's options for a connection to `host`.
+    static func options(serverName host: String) -> NWProtocolFramer.Options {
+        let options = NWProtocolFramer.Options(definition: definition)
+        options[serverNameKey] = host
+        return options
     }
-    /// Name registered for any pending connection. One at a time is the practical case; when several explicit
-    /// sessions open at once they all verify against the last registered name, and a mismatch fails closed.
-    private static func takeServerName() -> String? {
-        lock.withLock { let value = pendingHosts.values.first; return value }
+    static func serverName(in options: NWProtocolFramer.Options) -> String? {
+        (options[serverNameKey] as? String).flatMap { $0.isEmpty ? nil : $0 }
     }
 
     private enum Phase { case greeting, awaitingAuth, passthrough }
@@ -59,13 +60,20 @@ final class StartTLSFramer: NWProtocolFramerImplementation {
                 guard let code = Self.finalReply(in: pending) else { continue }
                 guard code == 234 else { framer.markFailed(error: NWError.posix(.EPROTONOSUPPORT)); return 0 }
                 let options = NWProtocolTLS.Options()
+                let host = Self.serverName(in: framer.options)
                 // SNI carries host names only (RFC 6066); an address literal is verified against the certificate's
                 // IP entries without being announced.
-                if let host = Self.takeServerName(), !Self.isAddressLiteral(host) {
+                if let host, !Self.isAddressLiteral(host) {
                     sec_protocol_options_set_tls_server_name(options.securityProtocolOptions, host)
                 }
                 if Self.trustAnyCertificateForTesting {
                     sec_protocol_options_set_verify_block(options.securityProtocolOptions, { _, _, complete in complete(true) }, .global())
+                } else {
+                    // The name, or the address, is checked here explicitly rather than left to whatever the TLS
+                    // stack infers: without SNI nothing else tells it which name an address literal must match.
+                    sec_protocol_options_set_verify_block(options.securityProtocolOptions, { _, trust, complete in
+                        complete(Self.verify(sec_trust_copy_ref(trust).takeRetainedValue(), host: host))
+                    }, .global())
                 }
                 do { try framer.prependApplicationProtocol(options: options) }
                 catch { framer.markFailed(error: NWError.posix(.EPROTO)); return 0 }
@@ -76,6 +84,14 @@ final class StartTLSFramer: NWProtocolFramerImplementation {
                 framer.markReady()
             }
         }
+    }
+    /// The system's evaluation with an SSL policy for exactly `host`, which matches a DNS name against the
+    /// certificate's names and an address against its IP entries. No name means no verification: fail closed.
+    static func verify(_ trust: SecTrust, host: String?) -> Bool {
+        guard let host, !host.isEmpty else { return false }
+        let name = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        guard SecTrustSetPolicies(trust, SecPolicyCreateSSL(true, name as CFString)) == errSecSuccess else { return false }
+        return SecTrustEvaluateWithError(trust, nil)
     }
     static func isAddressLiteral(_ host: String) -> Bool {
         let name = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))

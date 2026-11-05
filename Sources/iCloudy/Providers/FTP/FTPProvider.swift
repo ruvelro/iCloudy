@@ -111,14 +111,36 @@ extension FTPProvider {
         }
     }
     /// A plain STOR from start to finish: FTP has no session that survives a broken connection, so a retry starts over.
+    /// It goes to a hidden name and is renamed at the end, so a dropped connection never leaves a truncated file
+    /// under the real name.
     func ftpUpload(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint,
                    save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
         let total = cursor.total
         let path = try replacing ?? FTPListing.join(ftpPath(parent), name)
+        let temporary = FTPListing.partialName(for: path)
         cursor.offset = 0; try save(cursor)
         let relay: @MainActor @Sendable (Int64) -> Void = { sent in progress(min(sent, total), total) }
-        try await ftp().store(local, to: path) { sent in
-            Task { @MainActor in relay(sent) }
+        let session = try await ftp()
+        do {
+            try await session.store(local, to: temporary) { sent in
+                Task { @MainActor in relay(sent) }
+            }
+        } catch let uncertain as FTPSession.OutcomeUncertain {
+            // The bytes may all be there, under the hidden name; the real file is untouched either way.
+            throw uncertain
+        } catch {
+            _ = try? await session.require("DELE " + temporary, "")
+            throw error
+        }
+        do { try await session.rename(from: temporary, to: path) }
+        catch where replacing != nil {
+            // Some servers (IIS among them) refuse RNTO onto an existing file. The old one goes only now, when the
+            // new one is complete; if the second rename fails too, the new content is still under the hidden name.
+            _ = try? await session.require("DELE " + path, "")
+            try await session.rename(from: temporary, to: path)
+        } catch {
+            _ = try? await session.require("DELE " + temporary, "")
+            throw error
         }
         cursor.offset = total; cursor.complete = true; try save(cursor); progress(total, total)
         // Nothing to compare against: the protocol reports no checksum for the stored file.

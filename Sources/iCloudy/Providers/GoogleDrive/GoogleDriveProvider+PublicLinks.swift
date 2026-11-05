@@ -82,7 +82,7 @@ extension GoogleDriveProvider {
             url.queryItems = [URLQueryItem(name: "q", value: clauses.joined(separator: " and ")),
                               URLQueryItem(name: "pageSize", value: "100"),
                               URLQueryItem(name: "fields", value: "nextPageToken,files(\(Self.googleFileFields),permissions(\(Self.googleLinkFields)))")]
-                + (account.driveID == nil ? [URLQueryItem(name: "corpora", value: "user")] : googleDriveScope)
+                + (account.driveID == nil ? [URLQueryItem(name: "corpora", value: "user")] : []) + googleDriveScope
                 + (page.map { [URLQueryItem(name: "pageToken", value: $0)] } ?? [])
             let answer = try await json(url.url!)
             for value in answer["files"] as? [[String: Any]] ?? [] {

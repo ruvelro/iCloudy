@@ -88,7 +88,8 @@ extension AppModel {
     func navigate(_ file: CloudFile) {
         // A binned folder is restored or purged whole; what hangs below it is not browsed, the way the providers'
         // own bins work, so the list never shows a place nothing can be uploaded to or moved within.
-        guard file.isFolder, let account, !inTrash else { return }
+        // A folder the bin itself offers for browsing (Dropbox) is the exception.
+        guard file.isFolder, let account, !inTrash || file.id.hasPrefix(Collection.trashFolderPrefix) else { return }
         noteForSpotlight(file, account: account)
         preview.close(); go(to: BrowserLocation(accountID: account.id, collection: collection, path: path + [file]))
     }

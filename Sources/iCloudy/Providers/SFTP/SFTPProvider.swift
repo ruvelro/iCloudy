@@ -31,9 +31,23 @@ extension SFTPProvider {
         if base.hasSuffix("/"), base.count > 1 { base = String(base.dropLast()) }
         return SFTPEndpoint(host: host, port: port, base: base.isEmpty ? "/" : base)
     }
-    /// The key the server showed when the account was connected, which every later session must show again.
-    static func storedHostKey(_ account: Account) -> Data? {
+    /// Where accounts connected before 0.8 kept the server's key: `accounts.json`, which any process of this user
+    /// can rewrite. Read only to move it into the Keychain.
+    static func legacyHostKey(_ account: Account) -> Data? {
         account.options["hostKey"].flatMap { Data(base64Encoded: $0) }
+    }
+    /// The key the server showed when the account was connected, which every later session must show again. It is
+    /// read from the Keychain entry; an older account's copy in its options is moved there the first time, and from
+    /// then on the Keychain is what counts, whatever the options say.
+    func pinnedHostKey(_ credential: Credential?) -> Data? {
+        if let pinned = credential?.hostKey.flatMap({ Data(base64Encoded: $0) }) { return pinned }
+        guard let legacy = Self.legacyHostKey(account) else { return nil }
+        if var credential {
+            credential.hostKey = legacy.base64EncodedString()
+            // A failed write only means the move is tried again next time; the session can still use the pin.
+            try? credentials.save(credential, key: account.credentialKey)
+        }
+        return legacy
     }
 
     /// The live session for this account, created on first use and reused afterwards.
@@ -49,14 +63,17 @@ extension SFTPProvider {
             expireSession()
             throw CloudError.sessionExpired(nil)
         }
-        // A key, when the account was connected with one, lives in the same Keychain entry as the password.
-        let material = try credentials.read(account.credentialKey).flatMap { SFTPKeyMaterial.decode($0.secret) }
+        // A key, when the account was connected with one, lives in the same Keychain entry as the password, and so
+        // does the server's key.
+        let credential = try credentials.read(account.credentialKey)
+        let material = credential.flatMap { SFTPKeyMaterial.decode($0.secret) }
         let privateKey = try await material?.open()
+        // An account with no pin at all (it should not exist) is refused by the transport rather than trusted.
         let transport = SSHTransport(host: endpoint.host, port: endpoint.port,
                                      user: String(pair[pair.startIndex..<separator]),
                                      password: String(pair[pair.index(after: separator)...]),
                                      privateKey: privateKey,
-                                     expectedHostKey: Self.storedHostKey(account))
+                                     expectedHostKey: pinnedHostKey(credential))
         let client = SFTPClient(transport: transport, account: account.id)
         sftpClient = client
         return client
@@ -121,14 +138,27 @@ extension SFTPProvider {
                     save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
         let total = cursor.total
         let path = try replacing ?? FTPListing.join(sftpPath(parent), name)
+        // The bytes go to a hidden name beside the target and take its place only once they are all there: a
+        // dropped connection used to leave a truncated file under the final name, indistinguishable from a good one.
+        let temporary = FTPListing.partialName(for: path)
         cursor.offset = 0; try save(cursor)
         // The client reports from its own actor; the callback only ever runs back here, on the main actor.
         let relay: @MainActor @Sendable (Int64) -> Void = { sent in progress(min(sent, total), total) }
-        try await sftpTranslating { try await sftp().upload(local, to: path) { sent in Task { @MainActor in relay(sent) } } }
+        let client = try await sftp()
+        do {
+            try await sftpTranslating { try await client.upload(local, to: temporary) { sent in Task { @MainActor in relay(sent) } } }
+            try await sftpTranslating { try await client.replace(path, with: temporary) }
+        } catch {
+            // Best effort: after a cancellation or a dropped session this cannot reach the server, and the hidden
+            // name is what is left behind, never a damaged file under the real one.
+            try? await client.remove(temporary)
+            throw error
+        }
         cursor.offset = total; cursor.complete = true; try save(cursor); progress(total, total)
         // The protocol reports no checksum; the closing status is the only confirmation.
         return UploadReceipt(remoteID: path, verification: .unavailable)
     }
+
     func sftpTrail(id: String) throws -> [CloudFile] {
         guard id != "root" else { return [] }
         let base = try sftpPath("root")
@@ -196,7 +226,10 @@ extension SFTPProvider {
 @MainActor
 struct SFTPAuthentication {
     /// Connects once to prove the address and the credentials, and keeps the server's key for every later session.
-    func signInSFTP(server: String, username: String, password: String, key: SFTPKeyMaterial? = nil) async throws -> (Account, Credential) {
+    /// The key is shown to the person through `trustHostKey` before anything secret is sent; by default the login
+    /// form asks, through `LoginPrompts`.
+    func signInSFTP(server: String, username: String, password: String, key: SFTPKeyMaterial? = nil,
+                    trustHostKey: (@Sendable (LoginPrompts.HostKeyQuestion) async -> Bool)? = nil) async throws -> (Account, Credential) {
         let trimmed = server.trimmingCharacters(in: .whitespacesAndNewlines)
         let withScheme = trimmed.contains("://") ? trimmed : "sftp://" + trimmed
         guard var components = URLComponents(string: withScheme), let host = components.host, !host.isEmpty,
@@ -212,7 +245,9 @@ struct SFTPAuthentication {
         }
         guard !password.isEmpty || key != nil else { throw CloudError.message(L("Escribe la contraseña o elige una clave privada.")) }
         let privateKey = try await key?.open()
-        let transport = SSHTransport(host: host, port: port, user: username, password: password, privateKey: privateKey, expectedHostKey: nil)
+        let ask = trustHostKey ?? { question in await LoginPrompts.shared.trust(question) }
+        let transport = SSHTransport(host: host, port: port, user: username, password: password, privateKey: privateKey, expectedHostKey: nil,
+                                     approveHostKey: { blob in await ask(LoginPrompts.HostKeyQuestion(host: host, port: port, blob: blob)) })
         let client = SFTPClient(transport: transport)
         let hostKey: Data
         do {
@@ -234,10 +269,11 @@ struct SFTPAuthentication {
         }
         var account = Account(id: "sftp:" + host + ":" + String(port) + components.path + "#" + username, cloud: .sftp,
                               name: host, email: username + "@" + host, clientID: "", clientSecret: nil, serverURL: base)
-        account.options["hostKey"] = hostKey.base64EncodedString()
+        // Only the fingerprint, for showing, stays in the account; the pin itself goes to the Keychain.
         account.options["hostKeyFingerprint"] = SSHHostKey.fingerprint(hostKey)
         if let privateKey { account.options["keyFingerprint"] = privateKey.fingerprint }
         return (account, Credential(accessToken: Data("\(username):\(password)".utf8).base64EncodedString(),
-                                    refreshToken: "", expires: .distantFuture, secret: key?.encoded ?? ""))
+                                    refreshToken: "", expires: .distantFuture, secret: key?.encoded ?? "",
+                                    hostKey: hostKey.base64EncodedString()))
     }
 }
