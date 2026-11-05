@@ -1,0 +1,44 @@
+name: Informar de un fallo
+description: Algo no funciona como debería.
+labels: [fallo]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Gracias por avisar. Antes de enviar, revisa que no haya ya un aviso abierto sobre lo mismo.
+        **No pegues contraseñas, tokens ni direcciones con credenciales.** El diagnóstico que exporta la app
+        (Configuración → Diagnóstico) ya va redactado y es lo más útil que puedes adjuntar.
+  - type: textarea
+    id: que-pasa
+    attributes:
+      label: Qué pasa
+      description: Qué hiciste, qué esperabas y qué ocurrió en su lugar.
+    validations:
+      required: true
+  - type: textarea
+    id: pasos
+    attributes:
+      label: Cómo reproducirlo
+      placeholder: |
+        1. Conecta una cuenta de …
+        2. Abre la carpeta …
+        3. …
+  - type: dropdown
+    id: proveedor
+    attributes:
+      label: Proveedor
+      multiple: true
+      options: [Google Drive, OneDrive, Dropbox, Box, pCloud, Mega, S3, WebDAV / Nextcloud, FTP / FTPS, SFTP, O2 Cloud, Carpeta del Mac, Cryptomator, Demo, Ninguno en concreto]
+  - type: input
+    id: version
+    attributes:
+      label: Versión de iCloudy y de macOS
+      placeholder: "0.7.0 en macOS 15.5"
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostico
+    attributes:
+      label: Diagnóstico o registro
+      description: Adjunta el archivo exportado o pega las líneas relevantes.
+      render: text

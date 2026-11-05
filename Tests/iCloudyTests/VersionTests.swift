@@ -11,11 +11,9 @@ final class VersionTests: XCTestCase {
     override func tearDown() { StubProtocol.handler = nil }
 
     private func client(_ cloud: Cloud, server: String? = nil, nextcloud: Bool = false) -> CloudAPI {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        let account = Account(id: "test-\(cloud.rawValue)", cloud: cloud, name: "Test", email: "ana@example.com", clientID: "client", clientSecret: nil,
-                              serverURL: server ?? (cloud == .webdav ? "https://nube.example.com/remote.php/dav/files/ana" : nil), bookmark: nil,
-                              options: nextcloud ? ["flavor": "nextcloud"] : [:])
-        return CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "test-token" })
+        makeStubbedClient(stubbedAccount(cloud, id: "test-\(cloud.rawValue)", email: "ana@example.com",
+                                         server: server ?? (cloud == .webdav ? "https://nube.example.com/remote.php/dav/files/ana" : nil),
+                                         options: nextcloud ? ["flavor": "nextcloud"] : [:]))
     }
     private func item(_ id: String, name: String = "informe.pdf", mime: String = "application/pdf", modified: Date? = nil) -> CloudFile {
         CloudFile(id: id, name: name, mime: mime, size: 5, modified: modified, webURL: nil, isFolder: false)

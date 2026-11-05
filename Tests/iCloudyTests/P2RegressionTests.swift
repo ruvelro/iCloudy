@@ -14,13 +14,7 @@ final class P2RegressionTests: XCTestCase {
     func api(_ cloud: Cloud, credentials: MemoryCredentials = MemoryCredentials()) -> CloudAPI {
         let account = Account(id: cloud.rawValue + ":p2", cloud: cloud, name: "Test", email: "test@example.com", clientID: "client", clientSecret: nil)
         credentials.stored[account.id] = credentials.stored[account.id] ?? Credential(accessToken: "token", refreshToken: "refresh", expires: .distantFuture)
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
-        return CloudAPI(account: account, session: URLSession(configuration: configuration), credentials: credentials)
-    }
-    private func wait(_ condition: () -> Bool) async throws {
-        for _ in 0..<500 { if condition() { return }; try await Task.sleep(for: .milliseconds(10)) }
-        XCTFail("Timed out")
+        return makeStubbedClient(account, credentials: credentials)
     }
     func testO2RenewalPreservesSSOAndRetriesFailedPersistence() throws {
         let store = MemoryCredentials(), client = api(.o2)
@@ -212,7 +206,7 @@ final class P2RegressionTests: XCTestCase {
         let id = try XCTUnwrap(manager.mirrors.first?.id)
         queue.cancel(try XCTUnwrap(manager.mirrors.first?.activeTransferID), pause: true)
         manager.syncNow(id)
-        try await Task.sleep(for: .milliseconds(60))
+        try await wait { !manager.pending.contains(id) }
         XCTAssertEqual(queue.items.count, 1, "Sync now must reuse a paused job")
         manager.remove(id)
         XCTAssertEqual(queue.items.first?.state, .cancelled)

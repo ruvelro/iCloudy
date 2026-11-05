@@ -6,13 +6,13 @@ import XCTest
 /// real ones were missing and simply showed in Spanish.
 final class LocalizationTests: XCTestCase {
     private func table() throws -> [String: String] {
-        let url = URL(fileURLWithPath: "Resources/en.lproj/Localizable.strings")
+        let url = repositoryURL("Resources/en.lproj/Localizable.strings")
         let data = try Data(contentsOf: url)
         let plist = try PropertyListSerialization.propertyList(from: data, format: nil)
         return try XCTUnwrap(plist as? [String: String])
     }
     private func sources() throws -> [(path: String, text: String)] {
-        let root = URL(fileURLWithPath: "Sources/iCloudy")
+        let root = repositoryURL("Sources/iCloudy")
         let files = try XCTUnwrap(FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?
             .compactMap { ($0 as? URL) }.filter { $0.pathExtension == "swift" })
         return try files.map { (path: $0.lastPathComponent, text: try String(contentsOf: $0, encoding: .utf8)) }
@@ -24,7 +24,7 @@ final class LocalizationTests: XCTestCase {
 
         // A duplicated key is not an error for the parser: the last one silently wins, and the earlier translation
         // is dead weight that reads as if it were in use.
-        let raw = try String(contentsOf: URL(fileURLWithPath: "Resources/en.lproj/Localizable.strings"), encoding: .utf8)
+        let raw = try String(contentsOf: repositoryURL("Resources/en.lproj/Localizable.strings"), encoding: .utf8)
         var seen: Set<String> = [], duplicates: [String] = []
         for line in raw.split(separator: "\n") {
             let text = line.trimmingCharacters(in: .whitespaces)
@@ -77,7 +77,7 @@ final class LocalizationTests: XCTestCase {
     /// The plural tables, read the way the app reads them: the singular for one, the plural for the rest.
     func testCountsAgreeWithTheirNumberInBothLanguages() throws {
         func format(_ language: String, _ key: String, _ arguments: CVarArg...) throws -> String {
-            let bundle = try XCTUnwrap(Bundle(path: "Resources/\(language).lproj"))
+            let bundle = try XCTUnwrap(Bundle(url: repositoryURL("Resources/\(language).lproj")))
             return String(format: bundle.localizedString(forKey: key, value: nil, table: nil), locale: Locale(identifier: language), arguments: arguments)
         }
         XCTAssertEqual(try format("es", "%lld seleccionados", 1), "1 seleccionado")
@@ -93,7 +93,7 @@ final class LocalizationTests: XCTestCase {
     /// Every plural entry keeps the arguments of its key, in both languages, so no count or name goes missing.
     func testPluralEntriesKeepTheirKeysArguments() throws {
         for language in ["es", "en"] {
-            let url = URL(fileURLWithPath: "Resources/\(language).lproj/Localizable.stringsdict")
+            let url = repositoryURL("Resources/\(language).lproj/Localizable.stringsdict")
             let table = try XCTUnwrap(try PropertyListSerialization.propertyList(from: Data(contentsOf: url), format: nil) as? [String: [String: Any]])
             XCTAssertGreaterThan(table.count, 20)
             for (key, entry) in table {

@@ -7,10 +7,7 @@ import AppKit
 @MainActor
 final class DailyUseTests: XCTestCase {
     private func client(_ cloud: Cloud) -> CloudAPI {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        let account = Account(id: "test", cloud: cloud, name: "Test", email: "test@example.com", clientID: "client", clientSecret: nil,
-                              serverURL: nil, bookmark: nil, options: cloud == .pcloud ? ["apiHost": "eapi.pcloud.com"] : [:])
-        return CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "test-token" })
+        makeStubbedClient(cloud, options: cloud == .pcloud ? ["apiHost": "eapi.pcloud.com"] : [:])
     }
     private func file(_ name: String, id: String? = nil, folder: Bool = false, mime: String = "application/octet-stream", modified: Date? = nil) -> CloudFile {
         CloudFile(id: id ?? name, name: name, mime: folder ? "application/vnd.google-apps.folder" : mime, size: folder ? nil : 10,
@@ -132,7 +129,7 @@ final class DailyUseTests: XCTestCase {
     }
 
     func testOneNotificationSumsUpARunAndSkipsMirrors() {
-        UserDefaults.standard.removeObject(forKey: Prefs.notifyTransfers)
+        Prefs.defaults.removeObject(forKey: Prefs.notifyTransfers)
         let notifier = TransferNotifier()
         var posted: [(String, String)] = []
         notifier.post = { posted.append(($0, $1)) }

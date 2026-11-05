@@ -1,0 +1,20 @@
+name: Proponer una mejora
+description: Una función nueva o un cambio en una que ya existe.
+labels: [mejora]
+body:
+  - type: textarea
+    id: problema
+    attributes:
+      label: Qué problema resuelve
+      description: Cuéntalo desde el uso, no desde la solución. «Cada vez que…, tengo que…».
+    validations:
+      required: true
+  - type: textarea
+    id: propuesta
+    attributes:
+      label: Qué propones
+  - type: textarea
+    id: alternativas
+    attributes:
+      label: Alternativas que has considerado
+      description: Otras apps (Cyberduck, Transmit, ForkLift, rclone…) o formas de hacerlo hoy.

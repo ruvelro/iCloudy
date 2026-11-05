@@ -13,13 +13,13 @@ Revisión sobre el commit **14148fc**, versión declarada **0.5.0**. El árbol d
 - Compilación release con comprobación estricta de concurrencia: terminada correctamente. **58 emisiones de advertencia, 57 diagnósticos distintos**, muchos señalados por el compilador como errores en modo de lenguaje Swift 6.
 - Entorno: Apple Swift 6.4, arm64. No se ha validado ejecución en macOS 14, Intel, una aplicación firmada dentro del sandbox, VoiceOver ni cuentas reales. Tampoco se ha realizado una auditoría criptográfica independiente de Mega o una prueba de penetración de los servicios.
 
-Se conservan las [pruebas de reproducción](/Users/ruvelro/Documents/src/iCloudy/docs/auditoria-2026-09-19/AuditProbeTests.swift), su [salida](/Users/ruvelro/Documents/src/iCloudy/docs/auditoria-2026-09-19/reproducciones.log) y el [registro de compilación](/Users/ruvelro/Documents/src/iCloudy/docs/auditoria-2026-09-19/compilacion-concurrencia.log). Las pruebas están fuera de Tests para no incorporar a la batería habitual afirmaciones que esperan fallos. Para repetirlas, se pueden copiar temporalmente a Tests/iCloudyTests y ejecutar «swift test --filter AuditProbeTests»; después deben retirarse o convertirse en regresiones que exijan el comportamiento correcto.
+Las pruebas de reproducción (`AuditProbeTests.swift`), su salida y el registro de compilación estaban en `docs/auditoria-2026-09-19/`. Se retiraron en noviembre de 2026 porque ya no compilaban; siguen en el historial de git, y los casos que importaban son regresiones en `Tests/iCloudyTests/SafetyRegressionTests.swift`.
 
 **Prioridad alta — P1**
 
 **A01. Un reflejo puede sobrescribir el archivo que el usuario decidió conservar. Reproducido.**
 
-[FolderMirror.swift:258](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/FolderMirror.swift:258)
+[FolderMirror.swift:258](../../Sources/iCloudy/FolderMirror.swift:258)
 
 Escenario probado: el destino contiene «a.txt» de otra procedencia; en la primera sincronización se elige conservar ambas copias y se crea «a (2).txt». Tras editar el origen, la siguiente sincronización sustituye el «a.txt» original y deja «a (2).txt» desactualizado. El reflejo conserva tamaños y fechas, pero no la correspondencia entre archivo local y objeto remoto; además activa reemplazo para todo el lote desde la segunda ejecución. También afecta a archivos nuevos que coincidan con objetos ajenos del destino.
 
@@ -27,7 +27,7 @@ Escenario probado: el destino contiene «a.txt» de otra procedencia; en la prim
 
 **A02. Un error de integridad puede convertirse en éxito al reintentar. Reproducido en Box.**
 
-[Box.swift:232](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Box.swift:232), [Dropbox.swift:210](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Dropbox.swift:210), [ResumableUpload.swift:161](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/ResumableUpload.swift:161)
+[Box.swift:232](../../Sources/iCloudy/Providers/Box.swift:232), [Dropbox.swift:210](../../Sources/iCloudy/Providers/Dropbox.swift:210), [ResumableUpload.swift:161](../../Sources/iCloudy/ResumableUpload.swift:161)
 
 Box y Dropbox guardan el checkpoint como completo antes de comparar el hash. Si la comparación falla, el reintento encuentra ese checkpoint y devuelve éxito sin volver a verificar ni retransmitir. La reproducción de Box recibió un SHA-1 incorrecto y el segundo intento terminó sin ninguna petición adicional.
 
@@ -35,7 +35,7 @@ Box y Dropbox guardan el checkpoint como completo antes de comparar el hash. Si 
 
 **A03. Dropbox admite una mezcla de dos versiones del origen y la marca como verificada. Reproducido.**
 
-[Dropbox.swift:175](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Dropbox.swift:175)
+[Dropbox.swift:175](../../Sources/iCloudy/Providers/Dropbox.swift:175)
 
 Se cambió el archivo después del primer bloque de 4 MiB, manteniendo su tamaño. La subida terminó con el comienzo antiguo y el final nuevo; la suma del proveedor coincidió con esa mezcla y se declaró verificada. Faltan comprobaciones de modificación entre bloques. Mega también lee bloques sin comprobar la fecha entre ellos; FTP y la copia de volúmenes merecen la misma revisión.
 
@@ -43,7 +43,7 @@ Se cambió el archivo después del primer bloque de 4 MiB, manteniendo su tamañ
 
 **A04. Los tiempos de espera de FTP pueden quedarse bloqueados indefinidamente. Reproducido.**
 
-[FTPSession.swift:183](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/FTPSession.swift:183), [FTPSession.swift:163](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/FTPSession.swift:163)
+[FTPSession.swift:183](../../Sources/iCloudy/Providers/FTPSession.swift:183), [FTPSession.swift:163](../../Sources/iCloudy/Providers/FTPSession.swift:163)
 
 Con un servidor que acepta la conexión pero no envía saludo, un límite de 50 ms seguía bloqueado después de 400 ms y solo terminó al cerrar explícitamente la conexión. La tarea temporizadora cancela el grupo, pero la continuación de Network.framework sigue esperando. Los grupos de tareas esperan a sus hijos y la cancelación es cooperativa. [Documentación de concurrencia de Swift](https://docs.swift.org/swift-book/LanguageGuide/Concurrency.html).
 
@@ -51,7 +51,7 @@ Con un servidor que acepta la conexión pero no envía saludo, un límite de 50 
 
 **A05. La protección de rutas de volúmenes no controla enlaces simbólicos intermedios. Reproducido.**
 
-[Volume.swift:32](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Volume.swift:32)
+[Volume.swift:32](../../Sources/iCloudy/Providers/Volume.swift:32)
 
 Una ruta que empieza dentro de la carpeta conectada puede atravesar un enlace hacia fuera. La prueba accedió a «inside/link/private.txt», cuyo contenido estaba en «outside». La interfaz no permite navegar un enlace recién listado como carpeta, pero una ruta o favorito previamente válido puede quedar bajo un directorio sustituido por un enlace.
 
@@ -59,7 +59,7 @@ Una ruta que empieza dentro de la carpeta conectada puede atravesar un enlace ha
 
 **A06. La política de redirecciones no cubre todos los transportes ni el origen completo. Parcialmente reproducido.**
 
-[CloudAPI.swift:28](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/CloudAPI.swift:28), [CloudAPI.swift:173](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/CloudAPI.swift:173), [WebDAV.swift:200](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/WebDAV.swift:200)
+[CloudAPI.swift:28](../../Sources/iCloudy/CloudAPI.swift:28), [CloudAPI.swift:173](../../Sources/iCloudy/CloudAPI.swift:173), [WebDAV.swift:200](../../Sources/iCloudy/Providers/WebDAV.swift:200)
 
 RedirectGuard compara solo el hostname. La prueba confirmó que mantiene Authorization cuando cambia el puerto. Además, el reintento tras 401, las descargas con DownloadProgress, varias subidas y la conexión inicial WebDAV no usan esa protección común. Los comentarios prometen una política que no se aplica de forma uniforme.
 
@@ -67,7 +67,7 @@ RedirectGuard compara solo el hostname. La prueba confirmó que mantiene Authori
 
 **A07. Guardar en el Llavero elimina primero la única copia anterior. Riesgo confirmado por código.**
 
-[Models.swift:344](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Models.swift:344), [AppModel.swift:303](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/AppModel.swift:303)
+[Models.swift:344](../../Sources/iCloudy/Models.swift:344), [AppModel.swift:303](../../Sources/iCloudy/AppModel.swift:303)
 
 Vault.write ejecuta SecItemDelete antes de SecItemAdd. Si la segunda operación falla, desaparece el valor anterior, incluida la lista completa de cuentas cuando se guarda «accounts». La reparación de ACL lee y reescribe en segundo plano, por lo que también debe coordinarse con renovaciones o desconexiones.
 
@@ -77,7 +77,7 @@ Vault.write ejecuta SecItemDelete antes de SecItemAdd. Si la segunda operación 
 
 **A08. O2 pierde las cookies SSO guardadas al persistir una renovación. Reproducido.**
 
-[O2Cloud.swift:167](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/O2Cloud.swift:167)
+[O2Cloud.swift:167](../../Sources/iCloudy/Providers/O2Cloud.swift:167)
 
 o2Persist reconstruye el secreto sin pasar las cookies SSO; el parámetro por defecto las sustituye por una lista vacía. Se confirmó que desaparecen del almacenamiento después de actualizar la clave. Esto puede romper la renovación silenciosa tras reiniciar.
 
@@ -85,7 +85,7 @@ o2Persist reconstruye el secreto sin pasar las cookies SSO; el parámetro por de
 
 **A09. El límite de descarga autorizado para la vista previa no es uniforme. Reproducido en O2.**
 
-[CloudAPI.swift:413](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/CloudAPI.swift:413), [O2Cloud.swift:339](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/O2Cloud.swift:339)
+[CloudAPI.swift:413](../../Sources/iCloudy/CloudAPI.swift:413), [O2Cloud.swift:339](../../Sources/iCloudy/Providers/O2Cloud.swift:339)
 
 O2 y Mega ignoran maxBytes. Se pidió un máximo de un byte a O2 y se recibieron y aceptaron cien. FTP y volúmenes comprueban el límite después de copiar todo, por lo que tampoco limitan el consumo durante la operación.
 
@@ -93,7 +93,7 @@ O2 y Mega ignoran maxBytes. Se pidió un máximo de un byte a O2 y se recibieron
 
 **A10. Cancelar nube a nube utiliza la cuenta de origen para abandonar la subida. Reproducido.**
 
-[TransferQueue.swift:160](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/TransferQueue.swift:160), [AppModel.swift:144](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/AppModel.swift:144)
+[TransferQueue.swift:160](../../Sources/iCloudy/TransferQueue.swift:160), [AppModel.swift:144](../../Sources/iCloudy/AppModel.swift:144)
 
 Las sesiones pertenecen al destino, pero abandonSessions consulta transfer.accountID, que es el origen. En particular, la limpieza de sesiones Box puede omitirse o usar la credencial equivocada. La notificación de finalización también refresca únicamente el origen, dejando el listado y la cuota del destino sin actualizar.
 
@@ -101,7 +101,7 @@ Las sesiones pertenecen al destino, pero abandonSessions consulta transfer.accou
 
 **A11. Los reflejos arrancan antes de que las cuentas estén cargadas. Riesgo de carrera por código.**
 
-[AppModel.swift:159](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/AppModel.swift:159), [AppModel.swift:279](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/AppModel.swift:279)
+[AppModel.swift:159](../../Sources/iCloudy/AppModel.swift:159), [AppModel.swift:279](../../Sources/iCloudy/AppModel.swift:279)
 
 mirrors.start se invoca antes de la lectura asíncrona del Llavero. Si esta se demora y hay un reflejo pendiente o modificado, el trabajo puede solicitar una cuenta todavía ausente y fallar. La carga posterior no programa explícitamente otra sincronización.
 
@@ -109,7 +109,7 @@ mirrors.start se invoca antes de la lectura asíncrona del Llavero. Si esta se d
 
 **A12. Renombrar o mover rompe referencias en proveedores que usan rutas como ID. Confirmado por código.**
 
-[AppModel.swift:954](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/AppModel.swift:954), [AppModel.swift:828](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/AppModel.swift:828)
+[AppModel.swift:954](../../Sources/iCloudy/AppModel.swift:954), [AppModel.swift:828](../../Sources/iCloudy/AppModel.swift:828)
 
 Dropbox, WebDAV, FTP y volúmenes cambian de ID al cambiar de ruta. commitName conserva file.id; relocate actualiza parte de las migas pero no todas las identidades. Los favoritos, Spotlight, copias locales y destinos de reflejos pueden seguir apuntando a rutas antiguas. También hay que actualizar descendientes al mover una carpeta.
 
@@ -117,7 +117,7 @@ Dropbox, WebDAV, FTP y volúmenes cambian de ID al cambiar de ruta. commitName c
 
 **A13. El ciclo de vida del reflejo no coincide con sus controles. Confirmado por código.**
 
-[FolderMirror.swift:163](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/FolderMirror.swift:163), [FolderMirror.swift:220](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/FolderMirror.swift:220), [FolderMirror.swift:274](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/FolderMirror.swift:274)
+[FolderMirror.swift:163](../../Sources/iCloudy/FolderMirror.swift:163), [FolderMirror.swift:220](../../Sources/iCloudy/FolderMirror.swift:220), [FolderMirror.swift:274](../../Sources/iCloudy/FolderMirror.swift:274)
 
 «Dejar de reflejar» retira el observador y la configuración, pero no cancela el trabajo activo. Una sincronización manual sobre un trabajo pausado puede crear otro en vez de resolver el existente. Al completar un lote, se promueven todas las marcas previstas, incluidas las de archivos omitidos. El planificador solo representa archivos regulares y no detecta nuevas carpetas vacías.
 
@@ -125,7 +125,7 @@ Dropbox, WebDAV, FTP y volúmenes cambian de ID al cambiar de ruta. commitName c
 
 **A14. Un puerto FTP fuera de rango puede cerrar la aplicación. Verificado el parseo; conversión insegura en código.**
 
-[OAuth.swift:226](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/OAuth.swift:226), [FTP.swift:19](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/FTP.swift:19)
+[OAuth.swift:226](../../Sources/iCloudy/OAuth.swift:226), [FTP.swift:19](../../Sources/iCloudy/Providers/FTP.swift:19)
 
 URLComponents acepta «ftp://localhost:70000» y devuelve 70000 en este entorno. Convertirlo mediante UInt16 sin validación provoca un trap, en vez de un error de formulario.
 
@@ -133,7 +133,7 @@ URLComponents acepta «ftp://localhost:70000» y devuelve 70000 en este entorno.
 
 **A15. OneDrive anuncia una copia terminada cuando solo ha sido aceptada. Confirmado por código y contrato de la API.**
 
-[ResumableUpload.swift:73](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/ResumableUpload.swift:73), [AppModel.swift:851](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/AppModel.swift:851)
+[ResumableUpload.swift:73](../../Sources/iCloudy/ResumableUpload.swift:73), [AppModel.swift:851](../../Sources/iCloudy/AppModel.swift:851)
 
 Se acepta HTTP 202 y se muestra «copiado» sin conservar ni consultar Location. La operación puede fallar después, incluso por conflicto. Microsoft documenta expresamente la consulta de la URL de seguimiento hasta el estado final. [Microsoft Graph: copiar driveItem](https://learn.microsoft.com/en-us/graph/api/driveitem-copy?view=graph-rest-1.0).
 
@@ -141,7 +141,7 @@ Se acepta HTTP 202 y se muestra «copiado» sin conservar ni consultar Location.
 
 **A16. La limpieza puede borrar temporales en uso y no vacía toda la caché de listados. Confirmado por código.**
 
-[SettingsView.swift:183](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/SettingsView.swift:183), [Maintenance.swift:99](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Maintenance.swift:99), [ListingCache.swift:11](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/ListingCache.swift:11)
+[SettingsView.swift:183](../../Sources/iCloudy/SettingsView.swift:183), [Maintenance.swift:99](../../Sources/iCloudy/Maintenance.swift:99), [ListingCache.swift:11](../../Sources/iCloudy/ListingCache.swift:11)
 
 Vaciar no coordina las carpetas de vista previa, transferencias o portapapeles con sus consumidores. Puede retirar fuentes de una subida pendiente o contenidos de una transferencia activa. En listados borra disco, pero conserva la copia en memoria; escrituras pendientes pueden reconstruir la caché inmediatamente.
 
@@ -149,7 +149,7 @@ Vaciar no coordina las carpetas de vista previa, transferencias o portapapeles c
 
 **A17. La comprobación de copias locales ignora sus bookmarks. Riesgo funcional en sandbox.**
 
-[LocalCopies.swift:113](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/LocalCopies.swift:113)
+[LocalCopies.swift:113](../../Sources/iCloudy/LocalCopies.swift:113)
 
 verify comprueba rutas con fileExists sin resolver ni abrir su permiso persistente. Un archivo existente fuera del contenedor puede confundirse con uno borrado después de reiniciar. Tampoco sigue correctamente una ubicación trasladada antes de decidir si descarta la copia.
 
@@ -157,7 +157,7 @@ verify comprueba rutas con fileExists sin resolver ni abrir su permiso persisten
 
 **A18. Tras un borrado definitivo se afirma que el archivo está en la papelera. Confirmado por código.**
 
-[AppModel.swift:893](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/AppModel.swift:893)
+[AppModel.swift:893](../../Sources/iCloudy/AppModel.swift:893)
 
 FTP y WebDAV borran definitivamente, pero el mensaje de éxito usa siempre «papelera» y puede indicar que se restaure desde la web. La confirmación previa sí distingue el caso: el fallo está en el resultado comunicado. Para volúmenes, la recuperación corresponde al Finder.
 
@@ -165,7 +165,7 @@ FTP y WebDAV borran definitivamente, pero el mensaje de éxito usa siempre «pap
 
 **A19. Mega oculta el fallo al retirar la versión anterior de un reemplazo. Confirmado por código.**
 
-[Mega.swift:360](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/Providers/Mega.swift:360)
+[Mega.swift:360](../../Sources/iCloudy/Providers/Mega.swift:360)
 
 El traslado de la copia antigua a la papelera usa try?, y después el árbol local se modifica como si hubiera funcionado. Si falla, quedan dos archivos remotos y la app anuncia éxito con una vista local que no refleja el servidor.
 
@@ -173,7 +173,7 @@ El traslado de la copia antigua a la papelera usa try?, y después el árbol loc
 
 **A20. La paginación de búsqueda puede usar filtros diferentes de los de su primera página. Confirmado por código.**
 
-[AppModel.swift:220](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/AppModel.swift:220), [GlobalSearch.swift:104](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/GlobalSearch.swift:104)
+[AppModel.swift:220](../../Sources/iCloudy/AppModel.swift:220), [GlobalSearch.swift:104](../../Sources/iCloudy/GlobalSearch.swift:104)
 
 El texto se captura al empezar, pero la función de consulta lee los filtros actuales en cada petición. Cambiarlos mientras llegan páginas o antes de «Cargar más» envía el cursor anterior junto con otra consulta a Google. La interfaz dice que se envían al pulsar Buscar, pero no los congela.
 
@@ -181,7 +181,7 @@ El texto se captura al empezar, pero la función de consulta lee los filtros act
 
 **A21. Existe una ventana de duplicación tras completar una subida entre nubes. Riesgo por orden de persistencia.**
 
-[TransferQueue.swift:469](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/TransferQueue.swift:469), [TransferQueue.swift:495](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/TransferQueue.swift:495)
+[TransferQueue.swift:469](../../Sources/iCloudy/TransferQueue.swift:469), [TransferQueue.swift:495](../../Sources/iCloudy/TransferQueue.swift:495)
 
 El proveedor puede haber guardado un checkpoint completo y después se elimina el archivo temporal antes de persistir completedPaths. Si el proceso termina en esa ventana, al reiniciar se encuentra el temporal ausente y se descarta el checkpoint, incluso si decía «completo». La siguiente subida puede duplicar el archivo o terminar en conflicto.
 
@@ -189,7 +189,7 @@ El proveedor puede haber guardado un checkpoint completo y después se elimina e
 
 **A22. Desactivar la caché de listados no impide seguir guardando metadatos. Confirmado por código.**
 
-[AppModel.swift:753](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/AppModel.swift:753), [AppModel.swift:766](/Users/ruvelro/Documents/src/iCloudy/Sources/iCloudy/AppModel.swift:766)
+[AppModel.swift:753](../../Sources/iCloudy/AppModel.swift:753), [AppModel.swift:766](../../Sources/iCloudy/AppModel.swift:766)
 
 La preferencia se consulta al recuperar una copia, pero un listado exitoso siempre llama a listings.store. La opción para no recordar listados no evita su escritura. Además, el máximo de 5.000 se aplica por carpeta: no existe un presupuesto global o caducidad para todas las carpetas visitadas.
 
