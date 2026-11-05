@@ -27,11 +27,13 @@ final class AdvancedTests: XCTestCase {
         let scoped = CloudAPI(account: Account.scoped(to: "0ABCdrive", named: "Marketing", from: account(.google)))
         let base = "https://www.googleapis.com/drive/v3/files/abc?fields=id"
 
-        XCTAssertEqual((plain.provider as! GoogleDriveProvider).googleURL(base).absoluteString, base, "Una cuenta normal no cambia de dirección")
+        // A personal account opts in as well: a folder of a shared drive can be shared with it.
+        XCTAssertTrue((plain.provider as! GoogleDriveProvider).googleURL(base).absoluteString.contains("supportsAllDrives=true"))
         XCTAssertTrue((scoped.provider as! GoogleDriveProvider).googleURL(base).absoluteString.contains("supportsAllDrives=true"))
         XCTAssertTrue((scoped.provider as! GoogleDriveProvider).googleURL(base).absoluteString.contains("fields=id"), "Los parámetros originales se conservan")
 
-        XCTAssertTrue((plain.provider as! GoogleDriveProvider).googleDriveScope.isEmpty)
+        let plainScope = Dictionary(uniqueKeysWithValues: (plain.provider as! GoogleDriveProvider).googleDriveScope.map { ($0.name, $0.value) })
+        XCTAssertEqual(plainScope, ["includeItemsFromAllDrives": "true", "supportsAllDrives": "true"])
         let scope = Dictionary(uniqueKeysWithValues: (scoped.provider as! GoogleDriveProvider).googleDriveScope.map { ($0.name, $0.value) })
         XCTAssertEqual(scope["corpora"], "drive")
         XCTAssertEqual(scope["driveId"], "0ABCdrive")

@@ -89,7 +89,8 @@ final class SearchAppearanceTests: XCTestCase {
             return (200, [:], Data(#"{"incompleteSearch":true,"nextPageToken":"third","files":[{"id":"one","name":"Report","mimeType":"text/plain","parents":["folder"]},{"id":"shared","name":"Shared drive","driveId":"outside"}]}"#.utf8))
         }
         let page = try await client(.google).searchPage(term: "O'Brien", cursor: "second")
-        XCTAssertEqual(page.hits.count, 1); XCTAssertEqual(page.hits.first?.parentID, "folder")
+        // The shared-drive hit is kept: every Drive call now opts into shared drives, so it can be opened.
+        XCTAssertEqual(page.hits.map(\.file.id), ["one", "shared"]); XCTAssertEqual(page.hits.first?.parentID, "folder")
         XCTAssertTrue(page.incomplete); XCTAssertEqual(page.next, "third")
     }
     func testMicrosoftSearchEncodesQuotesAndRejectsForeignPageBeforeSendingToken() async throws {
