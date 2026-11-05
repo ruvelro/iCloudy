@@ -1,7 +1,12 @@
 import Foundation
 
 enum LocalStore {
-    static var directory: URL { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("iCloudy", isDirectory: true) }
+    /// Set by the test suite to a temporary folder per test, so nothing a test does reaches the real Application
+    /// Support folder. The app never sets it.
+    nonisolated(unsafe) static var directoryOverride: URL?
+    static var directory: URL {
+        directoryOverride ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("iCloudy", isDirectory: true)
+    }
     static func save<T: Encodable>(_ value: T, to url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try JSONEncoder().encode(value).write(to: url, options: .atomic)

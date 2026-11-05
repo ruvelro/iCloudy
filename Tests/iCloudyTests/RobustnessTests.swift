@@ -91,26 +91,26 @@ final class RobustnessTests: XCTestCase {
 
     func testAViewRedrawsForWhatItReadsAndNothingElse() {
         let model = AppModel()
-        var transfersChanged = false, accountsChanged = false
-        withObservationTracking { _ = model.transfers } onChange: { transfersChanged = true }
-        withObservationTracking { _ = model.accounts } onChange: { accountsChanged = true }
+        let transfersChanged = Flag(), accountsChanged = Flag()
+        withObservationTracking { _ = model.transfers } onChange: { transfersChanged.set() }
+        withObservationTracking { _ = model.accounts } onChange: { accountsChanged.set() }
         model.queue.stateChanges.send()
-        XCTAssertTrue(transfersChanged, "Lo que lee la cola se entera de sus cambios")
-        XCTAssertFalse(accountsChanged, "Lo que solo lee las cuentas, no")
+        XCTAssertTrue(transfersChanged.isSet, "Lo que lee la cola se entera de sus cambios")
+        XCTAssertFalse(accountsChanged.isSet, "Lo que solo lee las cuentas, no")
 
         // The quotas and the queue no longer move a counter every badge of every row reads.
-        var badgeChanged = false
+        let badgeChanged = Flag()
         let url = temporaryURL()
         defer { try? FileManager.default.removeItem(at: url) }
         let copies = LocalCopyIndex(storeURL: url)
         let file = CloudFile(id: "a", name: "a.txt", mime: "text/plain", size: 1, modified: nil, webURL: nil, isFolder: false)
         copies.record(LocalCopy(accountID: "x", fileID: "a", name: "a.txt", path: url.path, bookmark: nil, size: 1,
                                 remoteModified: nil, savedAt: Date(), origin: .download))
-        withObservationTracking { _ = copies.status(for: file, accountID: "x") } onChange: { badgeChanged = true }
+        withObservationTracking { _ = copies.status(for: file, accountID: "x") } onChange: { badgeChanged.set() }
         model.queue.stateChanges.send()
-        XCTAssertFalse(badgeChanged, "Una transición de la cola no redibuja la marca de una fila")
+        XCTAssertFalse(badgeChanged.isSet, "Una transición de la cola no redibuja la marca de una fila")
         copies.forget(accountID: "x", fileID: "a")
-        XCTAssertTrue(badgeChanged, "Olvidar una copia local redibuja su marca")
+        XCTAssertTrue(badgeChanged.isSet, "Olvidar una copia local redibuja su marca")
         copies.flush()
     }
 }

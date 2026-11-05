@@ -48,8 +48,7 @@ final class O2CloudTests: XCTestCase {
         store.stored["o2:cloud.o2online.es:ana@ejemplo.com"] = Credential(
             accessToken: "", refreshToken: "", expires: .distantFuture,
             secret: O2API.store(validationKey: "clave-1", cookies: [cookie]))
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         let account = Account(id: "o2:cloud.o2online.es:ana@ejemplo.com", cloud: .o2, name: "O2 Cloud",
                               email: "ana@ejemplo.com", clientID: "", clientSecret: nil,
                               serverURL: "https://cloud.o2online.es", bookmark: nil,
@@ -140,8 +139,7 @@ final class O2CloudTests: XCTestCase {
         let store = MemoryCredentials()
         store.stored["o2:cloud.o2online.es:ana@ejemplo.com"] = Credential(accessToken: "", refreshToken: "",
                                                                           expires: .distantFuture, secret: stored)
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         let account = Account(id: "o2:cloud.o2online.es:ana@ejemplo.com", cloud: .o2, name: "O2 Cloud",
                               email: "ana@ejemplo.com", clientID: "", clientSecret: nil,
                               serverURL: "https://cloud.o2online.es", bookmark: nil,
@@ -247,8 +245,7 @@ final class O2CloudTests: XCTestCase {
         store.stored["o2:cloud.o2online.es:ana@ejemplo.com"] = Credential(
             accessToken: "", refreshToken: "", expires: .distantFuture,
             secret: O2API.store(validationKey: "clave-1", cookies: [cookie]))
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         let account = Account(id: "o2:cloud.o2online.es:ana@ejemplo.com", cloud: .o2, name: "O2 Cloud",
                               email: "ana@ejemplo.com", clientID: "", clientSecret: nil,
                               serverURL: "https://cloud.o2online.es", bookmark: nil,
@@ -285,8 +282,7 @@ final class O2CloudTests: XCTestCase {
         let store = MemoryCredentials()
         store.stored["o2:cloud.o2online.es:ana@ejemplo.com"] = Credential(accessToken: "", refreshToken: "",
                                                                           expires: .distantFuture, secret: "")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         let account = Account(id: "o2:cloud.o2online.es:ana@ejemplo.com", cloud: .o2, name: "O2 Cloud",
                               email: "ana@ejemplo.com", clientID: "", clientSecret: nil,
                               serverURL: "https://cloud.o2online.es", bookmark: nil, options: ["host": "cloud.o2online.es"])
@@ -313,8 +309,7 @@ final class O2CloudTests: XCTestCase {
     }
 
     func testTheIdentityOfTheSessionNamesTheAccount() async throws {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         let session = URLSession(configuration: configuration)
         let state = O2Session(host: "cloud.o2online.es", validationKey: "clave")
 
@@ -844,8 +839,8 @@ final class O2CloudTests: XCTestCase {
         // Funambol keeps a list of devices per account, and some deployments cap it and start expelling the oldest.
         // A fresh identifier on every sign-in and every silent renewal filled it by itself.
         let key = "o2DeviceID.pruebas.ejemplo.com"
-        UserDefaults.standard.removeObject(forKey: key)
-        defer { UserDefaults.standard.removeObject(forKey: key) }
+        Prefs.defaults.removeObject(forKey: key)
+        defer { Prefs.defaults.removeObject(forKey: key) }
         let first = O2WebSession.deviceID(host: "pruebas.ejemplo.com")
         XCTAssertFalse(first.isEmpty)
         XCTAssertEqual(O2WebSession.deviceID(host: "pruebas.ejemplo.com"), first, "El mismo Mac, el mismo dispositivo")
@@ -893,7 +888,7 @@ final class O2CloudTests: XCTestCase {
         }, adopt: { _, _ in XCTFail("No hay nada que adoptar") })
         await settle()
         renewals.invalidate("o2:cuenta")
-        for _ in 0..<100 where !sawCancellation { try await Task.sleep(for: .milliseconds(5)) }
+        try await wait { sawCancellation }
         XCTAssertTrue(sawCancellation)
     }
 
@@ -945,18 +940,19 @@ final class O2CloudTests: XCTestCase {
     func testTheSignInWatcherHandsOverTheSessionOnceTheKeyAppears() async throws {
         let login = O2WebLoginModel(host: "cloud.o2online.es")
         login.pollInterval = .milliseconds(5)
-        var jar = [cookie("JSESSIONID", "abc", on: "cloud.o2online.es")]
+        let jar = Box([cookie("JSESSIONID", "abc", on: "cloud.o2online.es")])
         var granted: [(key: String, sso: [String])] = []
+        var reads = 0
         login.onSuccess = { key, _, _, sso in granted.append((key, sso.map(\.name))) }
-        login.watch { jar }
-        try await Task.sleep(for: .milliseconds(60))
+        login.watch { reads += 1; return jar.value }
+        try await wait { reads >= 3 }
         XCTAssertTrue(granted.isEmpty, "Sin clave no hay sesión")
         XCTAssertTrue(login.canFinishByHand)
 
-        jar += [cookie("validationKey", "clave", on: "cloud.o2online.es"),
+        jar.value += [cookie("validationKey", "clave", on: "cloud.o2online.es"),
                 cookie("SSOSESSION", "xyz", on: "t3.o2online.es"),
                 cookie("SSOSESSION", "robada", on: "evilo2online.es")]
-        for _ in 0..<400 where granted.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        try await wait { !granted.isEmpty }
         XCTAssertEqual(granted.map(\.key), ["clave"])
         XCTAssertEqual(granted.first?.sso, ["SSOSESSION"], "Solo la del acceso de verdad")
     }
@@ -967,18 +963,17 @@ final class O2CloudTests: XCTestCase {
         let login = O2WebLoginModel(host: "cloud.o2online.es")
         login.pollInterval = .milliseconds(5)
         var reads = 0
-        var jar: [HTTPCookie] = []
+        let jar = Box<[HTTPCookie]>([])
         var granted = 0
         login.onSuccess = { _, _, _, _ in granted += 1 }
-        login.watch { reads += 1; return jar }
-        for _ in 0..<100 where reads == 0 { try await Task.sleep(for: .milliseconds(5)) }
+        login.watch { reads += 1; return jar.value }
+        try await wait { reads > 0 }
         XCTAssertGreaterThan(reads, 0, "Mientras vigila, mira")
 
         login.stop()
         let atStop = reads
-        jar = [cookie("validationKey", "clave", on: "cloud.o2online.es")]
-        try await Task.sleep(for: .milliseconds(120))
-        XCTAssertLessThanOrEqual(reads, atStop + 1, "Como mucho termina la lectura que ya estaba en marcha")
+        jar.value = [cookie("validationKey", "clave", on: "cloud.o2online.es")]
+        try await assertStays({ reads <= atStop + 1 }, for: .milliseconds(120), "Como mucho termina la lectura que ya estaba en marcha")
         XCTAssertEqual(granted, 0, "Una ventana cerrada no recibe ninguna sesión")
         XCTAssertNil(login.failed, "Ni un aviso de que se agotó el tiempo")
     }

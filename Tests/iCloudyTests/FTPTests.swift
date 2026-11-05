@@ -71,6 +71,24 @@ final class FakeFTPServer: @unchecked Sendable {
     func uploaded() -> [String: Data] { lock.withLock { stored } }
     /// What a server does to an idle client: closes the control connection without a word.
     func dropControl() { control?.cancel(); control = nil; buffer = Data() }
+    /// The same, from a test: returns once the connection is closed on this side, so the client's next command meets
+    /// a socket that is already dead instead of racing the close.
+    func dropControlAndWait() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            queue.async {
+                guard let connection = self.control else { continuation.resume(); return }
+                self.control = nil; self.buffer = Data()
+                let closed = Ready()
+                connection.stateUpdateHandler = { state in
+                    switch state {
+                    case .cancelled, .failed: closed.once { continuation.resume() }
+                    default: break
+                    }
+                }
+                connection.cancel()
+            }
+        }
+    }
 
     private func accept(_ connection: NWConnection) {
         control = connection
@@ -389,8 +407,7 @@ final class FTPTests: XCTestCase {
         try await hurry(api)
         let before = try await api.list(parent: "root")
         XCTAssertEqual(before.map(\.name), ["a.txt"])
-        server.dropControl()
-        try await Task.sleep(for: .milliseconds(200))
+        await server.dropControlAndWait()
         let after = try await api.list(parent: "root")
         XCTAssertEqual(after.map(\.name), ["a.txt"], "Se vuelve a conectar sola")
         XCTAssertEqual(server.log().filter { $0 == "USER ana" }.count, 2, "Hubo una segunda sesión: \(server.log())")
@@ -438,8 +455,7 @@ final class FTPTests: XCTestCase {
 
         let file = CloudFile(id: "/a.txt", name: "a.txt", mime: "text/plain", size: 3, modified: nil, webURL: nil, isFolder: false)
         async let renamed: Void = api.rename(file: file, name: "b.txt")
-        try await Task.sleep(for: .milliseconds(150))
-        XCTAssertEqual(server.log().last, "RNFR /a.txt", "La otra orden tiene que llegar mientras RNFR espera: \(server.log())")
+        try await wait(until: { server.log().last == "RNFR /a.txt" }, "La otra orden tiene que llegar mientras RNFR espera: \(server.log())")
         let interloper = try await session.command("PWD")
         try await renamed
         XCTAssertEqual(interloper.code, 257)
@@ -541,8 +557,7 @@ final class FTPTests: XCTestCase {
         let session = try await (api.provider as! FTPProvider).ftp()
         await session.setIdleProbe(0)
         _ = try await api.list(parent: "root")
-        server.dropControl()
-        try await Task.sleep(for: .milliseconds(200))
+        await server.dropControlAndWait()
         let path = try await api.createFolder(name: "Nueva", parent: "root")
         XCTAssertEqual(path, "/Nueva")
         XCTAssertEqual(server.count("MKD"), 1, "\(server.log())")

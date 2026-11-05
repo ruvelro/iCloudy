@@ -5,10 +5,6 @@ import Network
 /// Regression coverage for the P1 findings in the September audit.
 @MainActor
 final class SafetyRegressionTests: XCTestCase {
-    private func wait(_ condition: () -> Bool) async throws {
-        for _ in 0..<500 { if condition() { return }; try await Task.sleep(for: .milliseconds(10)) }
-        throw CloudError.message("Audit probe timed out")
-    }
     private func root() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("icloudy-audit-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -62,8 +58,7 @@ final class SafetyRegressionTests: XCTestCase {
         await ftp.setTimeout(0.05)
         var finished = false
         let task = Task { _ = try? await ftp.connect(); finished = true }
-        try await Task.sleep(for: .milliseconds(400))
-        XCTAssertTrue(finished, "The 50 ms timeout must release the receive without an external close")
+        try await wait(until: { finished }, timeout: .seconds(5), "The 50 ms timeout must release the receive without an external close")
         await ftp.close()
         await task.value
     }
@@ -71,7 +66,9 @@ final class SafetyRegressionTests: XCTestCase {
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
         let listener = try NWListener(using: parameters)
+        let connected = Flag()
         listener.newConnectionHandler = { connection in
+            connected.set()
             connection.start(queue: .global())
             connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { _, _, _, _ in connection.cancel() }
         }
@@ -91,10 +88,9 @@ final class SafetyRegressionTests: XCTestCase {
             catch { XCTAssertTrue(error is CancellationError, "\(error)") }
             finished = true
         }
-        try await Task.sleep(for: .milliseconds(50))
+        try await wait(until: { connected.isSet }, "The client never reached the server")
         task.cancel()
-        try await Task.sleep(for: .milliseconds(400))
-        XCTAssertTrue(finished, "Cancellation must release the receive immediately, even with a 60 second timeout")
+        try await wait(until: { finished }, timeout: .seconds(5), "Cancellation must release the receive immediately, even with a 60 second timeout")
         await ftp.close()
         await task.value
     }
@@ -127,8 +123,7 @@ final class SafetyRegressionTests: XCTestCase {
         let root = try root(); defer { try? FileManager.default.removeItem(at: root); StubProtocol.handler = nil }
         let local = root.appendingPathComponent("a.txt"); try Data("correct".utf8).write(to: local)
         let account = Account(id: "audit-box", cloud: .box, name: "audit", email: "audit", clientID: "", clientSecret: nil)
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        let api = CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "fake" })
+        let api = makeStubbedClient(account, token: "fake")
         var calls = 0
         StubProtocol.handler = { _ in calls += 1; return (201, [:], Data(#"{"entries":[{"id":"123","sha1":"wrong"}]}"#.utf8)) }
         var checkpoint: UploadCheckpoint?
@@ -154,8 +149,7 @@ final class SafetyRegressionTests: XCTestCase {
         let count = Int(DropboxProvider.dropboxChunk)
         try Data(repeating: 65, count: count + 8).write(to: local)
         let account = Account(id: "audit-dropbox", cloud: .dropbox, name: "audit", email: "audit", clientID: "", clientSecret: nil)
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        let api = CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "fake" })
+        let api = makeStubbedClient(account, token: "fake")
         var blocks = 0, sent = Data()
         StubProtocol.handler = { request in
             if request.url!.path.hasSuffix("/start") { return (200, [:], Data(#"{"session_id":"fake"}"#.utf8)) }
@@ -181,7 +175,7 @@ final class SafetyRegressionTests: XCTestCase {
     func testDropboxFailedAndPendingIntegrityCannotBecomeSuccessOnRestart() async throws {
         let root = try root(); defer { try? FileManager.default.removeItem(at: root); StubProtocol.handler = nil }
         let local = root.appendingPathComponent("a.txt"); try Data("correct".utf8).write(to: local)
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let config = StubProtocol.configuration()
         let account = Account(id: "test", cloud: .dropbox, name: "test", email: "test", clientID: "", clientSecret: nil)
         let api = CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "fake" })
         var calls = 0
@@ -294,8 +288,7 @@ final class SafetyRegressionTests: XCTestCase {
             }
             try await wait { server.log().contains("RETR /a") }
             if cancel { task.cancel() }
-            try await Task.sleep(for: .milliseconds(350))
-            XCTAssertTrue(finished, "The data-channel operation must release without an external close")
+            try await wait(until: { finished }, timeout: .seconds(10), "The data-channel operation must release without an external close")
             await ftp.close(); await task.value
             XCTAssertFalse(FileManager.default.fileExists(atPath: output.path), "No partial file survives the failed receive")
         }

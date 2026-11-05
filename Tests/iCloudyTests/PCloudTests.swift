@@ -13,11 +13,8 @@ final class PCloudTests: XCTestCase {
     override func tearDown() { StubProtocol.handler = nil }
 
     private func client(host: String? = "eapi.pcloud.com", credentials: CredentialStore? = nil) -> CloudAPI {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        let account = Account(id: "pcloud:7", cloud: .pcloud, name: "Ana", email: "ana@example.com", clientID: "client", clientSecret: nil,
-                              serverURL: nil, bookmark: nil, options: host.map { ["apiHost": $0] } ?? [:])
-        if let credentials { return CloudAPI(account: account, session: URLSession(configuration: config), credentials: credentials) }
-        return CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "test-token" })
+        makeStubbedClient(stubbedAccount(.pcloud, id: "pcloud:7", name: "Ana", email: "ana@example.com", options: host.map { ["apiHost": $0] } ?? [:]),
+                          credentials: credentials)
     }
     private func temporaryFile(_ payload: Data) throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -523,11 +520,6 @@ final class PCloudTests: XCTestCase {
     }
 
     // MARK: - Sign-in
-
-    private func stubbedSession() -> URLSession {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        return URLSession(configuration: config)
-    }
 
     func testTheCodeIsTradedOnTheRegionTheCallbackNames() async throws {
         serve { method, parameters, _ in

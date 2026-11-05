@@ -262,9 +262,9 @@ enum O2WebSession {
     /// oldest — which is one more way for a session to die for no reason anybody can see from here.
     static func deviceID(host: String) -> String {
         let key = "o2DeviceID." + host
-        if let stored = UserDefaults.standard.string(forKey: key), !stored.isEmpty { return stored }
+        if let stored = Prefs.defaults.string(forKey: key), !stored.isEmpty { return stored }
         let fresh = "web-icloudy-" + UUID().uuidString.prefix(12)
-        UserDefaults.standard.set(fresh, forKey: key)
+        Prefs.defaults.set(fresh, forKey: key)
         return fresh
     }
     /// Where the sign-in starts. O2's own client does nothing but navigate here; the server takes it from there.

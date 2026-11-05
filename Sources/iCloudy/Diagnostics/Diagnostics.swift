@@ -28,23 +28,23 @@ enum Diagnostics {
 
     static let shared: DiagnosticsLog = {
         let test = underTest
-        let level = (UserDefaults.standard.string(forKey: levelKey)).flatMap(DiagnosticsLevel.init(rawValue:)) ?? .normal
+        let level = (Prefs.defaults.string(forKey: levelKey)).flatMap(DiagnosticsLevel.init(rawValue:)) ?? .normal
         return DiagnosticsLog(directory: test ? nil : directory, level: test ? .normal : level, salt: test ? nil : storedSalt())
     }()
     static var directory: URL { LocalStore.directory.appendingPathComponent("Diagnostics", isDirectory: true) }
 
     /// One salt per Mac, so the same account hashes the same way across runs and differently on anyone else's Mac.
     private static func storedSalt() -> Data {
-        if let stored = UserDefaults.standard.string(forKey: saltKey).flatMap({ Data(base64Encoded: $0) }), stored.count >= 16 { return stored }
+        if let stored = Prefs.defaults.string(forKey: saltKey).flatMap({ Data(base64Encoded: $0) }), stored.count >= 16 { return stored }
         let salt = DiagnosticsLog.randomSalt()
-        UserDefaults.standard.set(salt.base64EncodedString(), forKey: saltKey)
+        Prefs.defaults.set(salt.base64EncodedString(), forKey: saltKey)
         return salt
     }
 
     /// Changes the level and remembers it. Turning the log off also stops anything already queued from being kept.
     static func setLevel(_ level: DiagnosticsLevel) {
         shared.level = level
-        UserDefaults.standard.set(level.rawValue, forKey: levelKey)
+        Prefs.defaults.set(level.rawValue, forKey: levelKey)
     }
 
     /// Records an event, filling in whatever the surrounding task knows.

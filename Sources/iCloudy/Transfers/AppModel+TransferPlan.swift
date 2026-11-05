@@ -56,7 +56,7 @@ final class TransferPlanCoordinator {
         }
     }
     func confirm(dontAskAgain: Bool) {
-        if dontAskAgain { UserDefaults.standard.set(false, forKey: Prefs.transferPlan) }
+        if dontAskAgain { Prefs.defaults.set(false, forKey: Prefs.transferPlan) }
         finish(with: session?.plan)
     }
     /// After a failed enumeration: the transfer is still possible, just without a plan to seed its report.

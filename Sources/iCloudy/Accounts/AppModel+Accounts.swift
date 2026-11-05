@@ -212,7 +212,7 @@ extension AppModel {
         do {
             if demo == nil { demo = try DemoStore() }
             if !accounts.contains(where: \.isDemo) { directory.accounts.append(.demo) }
-            UserDefaults.standard.set(true, forKey: "demoEnabled")
+            Prefs.defaults.set(true, forKey: "demoEnabled")
             if shouldSelect { select(Account.demo.id); ui.showConnect = false }
         } catch { self.error = error.localizedDescription }
     }
@@ -277,7 +277,7 @@ extension AppModel {
         do {
             if let shown = preview.model.account, leaving.contains(where: { $0.id == shown.id }) { preview.close() }
             try directory.remove(account)
-            if account.isDemo { UserDefaults.standard.set(false, forKey: "demoEnabled") }
+            if account.isDemo { Prefs.defaults.set(false, forKey: "demoEnabled") }
             for member in leaving { forget(member) }
             if let selected = selectedAccountID, leaving.contains(where: { $0.id == selected }) { select(accounts.first?.id) }
             retargetTabs(leaving: Set(leaving.map(\.id)))

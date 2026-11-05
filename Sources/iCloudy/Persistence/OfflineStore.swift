@@ -73,9 +73,9 @@ enum OfflineSettings {
     static let budgetChoices = [5, 10, 20, 50, 0]
     static let refreshChoices = [0, 15, 60, 360, 1440]
     /// Unlike `Prefs.int`, zero is a real choice here: no limit, or no periodic refresh.
-    static var budgetGB: Int { UserDefaults.standard.object(forKey: budgetKey) as? Int ?? 10 }
+    static var budgetGB: Int { Prefs.defaults.object(forKey: budgetKey) as? Int ?? 10 }
     static var budget: Int64? { budgetGB > 0 ? Int64(budgetGB) * 1_000_000_000 : nil }
-    static var refreshMinutes: Int { UserDefaults.standard.object(forKey: refreshKey) as? Int ?? 60 }
+    static var refreshMinutes: Int { Prefs.defaults.object(forKey: refreshKey) as? Int ?? 60 }
     static var keepPreviews: Bool { Prefs.bool(keepPreviewsKey, default: true) }
 }
 

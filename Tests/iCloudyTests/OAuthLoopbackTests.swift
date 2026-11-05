@@ -43,11 +43,6 @@ private final class BrowserOutcome: @unchecked Sendable {
 
 @MainActor
 final class OAuthLoopbackTests: XCTestCase {
-    private func stubbedSession() -> URLSession {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        return URLSession(configuration: config)
-    }
-
     func testLoopbackFlowRejectsWrongStateThenExchangesTheCode() async throws {
         var tokenBody = ""
         StubProtocol.handler = { request in
@@ -100,10 +95,11 @@ final class OAuthLoopbackTests: XCTestCase {
 
     func testCancelUnblocksAWaitingSignIn() async throws {
         StubProtocol.handler = { _ in XCTFail("Nothing should be exchanged after cancel"); return (500, [:], Data()) }
-        let oauth = OAuth(session: stubbedSession()) { _ in true } // the "browser" never comes back
+        let opened = Flag()
+        let oauth = OAuth(session: stubbedSession()) { _ in opened.set(); return true } // the "browser" never comes back
         // Google: if the fixed port is still closing from the previous test, the ephemeral fallback keeps this deterministic.
         let attempt = Task { try await oauth.signIn(cloud: .google, clientID: "client-id", clientSecret: "") }
-        try await Task.sleep(for: .milliseconds(200))
+        try await wait { opened.isSet }
         oauth.cancel()
         let result = await attempt.result
         XCTAssertThrowsError(try result.get()) { XCTAssertTrue($0 is CancellationError, "\($0)") }
