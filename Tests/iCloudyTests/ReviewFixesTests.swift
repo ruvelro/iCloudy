@@ -218,6 +218,32 @@ final class ReviewFixesTests: XCTestCase {
         catch { XCTAssertTrue(error.localizedDescription.contains("no está borrada"), error.localizedDescription) }
     }
 
+    // MARK: - pCloud's search tree
+
+    func testPCloudKeepsTheSearchTreeForAWhileAndDropsItOnAChange() async throws {
+        var trees = 0
+        StubProtocol.handler = { request in
+            switch request.url!.lastPathComponent {
+            case "listfolder":
+                trees += 1
+                return (200, [:], Data(#"{"result":0,"metadata":{"id":"d0","folderid":0,"name":"/","isfolder":true,"contents":[{"id":"d5","folderid":5,"name":"Viaje","isfolder":true,"contents":[{"id":"f9","fileid":9,"name":"viaje.jpg","isfolder":false,"size":3,"modified":1700000000}]}]}}"#.utf8))
+            default: return (200, [:], Data(#"{"result":0,"metadata":{"id":"d6","folderid":6,"name":"Nueva","isfolder":true}}"#.utf8))
+            }
+        }
+        let api = client(.pcloud)
+        let now = Date()
+        let first = try await api.searchPage(term: "viaje", referenceDate: now)
+        XCTAssertEqual(first.hits.map(\.file.name), ["Viaje", "viaje.jpg"])
+        XCTAssertEqual(first.hits.last?.parentID, "d5")
+        _ = try await api.searchPage(term: "jpg", referenceDate: now.addingTimeInterval(60))
+        XCTAssertEqual(trees, 1, "Otra búsqueda al minuto usa el mismo árbol")
+        _ = try await api.searchPage(term: "jpg", referenceDate: now.addingTimeInterval(PCloudProvider.searchIndexMaxAge + 1))
+        XCTAssertEqual(trees, 2, "Pasado el plazo se vuelve a pedir")
+        _ = try await api.createFolder(name: "Nueva", parent: "root")
+        _ = try await api.searchPage(term: "jpg", referenceDate: now.addingTimeInterval(PCloudProvider.searchIndexMaxAge + 2))
+        XCTAssertEqual(trees, 3, "Un cambio hecho desde aquí invalida el árbol")
+    }
+
     // MARK: - Explicit FTPS
 
     func testEachExplicitFTPSConnectionCarriesItsOwnServerName() {

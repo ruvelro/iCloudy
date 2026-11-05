@@ -5,7 +5,9 @@ import Foundation
 /// Items are addressed by folderid and fileid, which stay the same across renames and moves.
 @MainActor
 final class PCloudProvider: CloudSession, CloudProvider {
-
+    /// Every item of the account with its parent, from the last search, and when it was fetched.
+    var searchIndex: (entries: [(file: CloudFile, parent: String)], fetched: Date)?
+    override func dropCaches() { searchIndex = nil }
 }
 
 extension PCloudProvider {
@@ -46,6 +48,8 @@ extension PCloudProvider {
         } else {
             request = try await self.request(pcloudURL(method, parameters))
         }
+        // Anything that changes the account makes the search index out of date.
+        if write { searchIndex = nil }
         for attempt in 0..<4 {
             try Task.checkCancellation()
             let (data, response) = try await send(&request)
@@ -226,19 +230,34 @@ extension PCloudProvider {
 
     func publicLink(for file: CloudFile) async throws -> URL { try await pcloudPublicLink(for: file) }
 
+    /// How long the whole tree fetched for a search is trusted, as with Mega's: changes made from iCloudy drop it at
+    /// once, and what other devices do shows up within this long.
+    static let searchIndexMaxAge: TimeInterval = 5 * 60
+
     func searchPage(term: String, cursor: String? = nil, filters: SearchFilters = SearchFilters(), referenceDate: Date = Date()) async throws -> SearchPage {
         // pCloud documents no search for third parties, but lists a whole tree in one answer: names are matched here.
+        // Fetching that tree for every keystroke of a search was the expensive part, so it is kept for a while.
+        let entries = try await pcloudSearchIndex(now: referenceDate)
+        let hits = entries.filter { $0.file.name.localizedCaseInsensitiveContains(term) }
+            .map { SearchHit(accountID: account.id, file: $0.file, parentID: $0.parent) }
+        return SearchPage(hits: hits, next: nil)
+    }
+    func pcloudSearchIndex(now: Date = Date()) async throws -> [(file: CloudFile, parent: String)] {
+        if let searchIndex, now.timeIntervalSince(searchIndex.fetched) < Self.searchIndexMaxAge, now >= searchIndex.fetched {
+            return searchIndex.entries
+        }
         let body = try await pcloud("listfolder", ["folderid": "0", "recursive": "1", "timeformat": "timestamp"])
-        var hits: [SearchHit] = []
+        var entries: [(file: CloudFile, parent: String)] = []
         func walk(_ folder: [String: Any], parent: String) {
             for child in folder["contents"] as? [[String: Any]] ?? [] {
                 guard let file = Self.pcloudFile(child) else { continue }
-                if file.name.localizedCaseInsensitiveContains(term) { hits.append(SearchHit(accountID: account.id, file: file, parentID: parent)) }
+                entries.append((file, parent))
                 if file.isFolder { walk(child, parent: file.id) }
             }
         }
         walk(body["metadata"] as? [String: Any] ?? [:], parent: Cloud.pcloud.rootAlias)
-        return SearchPage(hits: hits, next: nil)
+        searchIndex = (entries, now)
+        return entries
     }
 
     func folderTrail(id: String) async throws -> [CloudFile] { try await pcloudTrail(id: id) }
@@ -246,7 +265,8 @@ extension PCloudProvider {
     func storageQuota() async throws -> StorageQuota { try await pcloudQuota() }
 
     func uploadFile(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
-        try await pcloudUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+        searchIndex = nil
+        return try await pcloudUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
     }
 
     /// pCloud forgets an abandoned upload by itself after a while; deleting it frees the space it holds sooner.
