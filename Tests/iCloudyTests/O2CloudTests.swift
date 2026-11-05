@@ -940,16 +940,16 @@ final class O2CloudTests: XCTestCase {
     func testTheSignInWatcherHandsOverTheSessionOnceTheKeyAppears() async throws {
         let login = O2WebLoginModel(host: "cloud.o2online.es")
         login.pollInterval = .milliseconds(5)
-        var jar = [cookie("JSESSIONID", "abc", on: "cloud.o2online.es")]
+        let jar = Box([cookie("JSESSIONID", "abc", on: "cloud.o2online.es")])
         var granted: [(key: String, sso: [String])] = []
         var reads = 0
         login.onSuccess = { key, _, _, sso in granted.append((key, sso.map(\.name))) }
-        login.watch { reads += 1; return jar }
+        login.watch { reads += 1; return jar.value }
         try await wait { reads >= 3 }
         XCTAssertTrue(granted.isEmpty, "Sin clave no hay sesión")
         XCTAssertTrue(login.canFinishByHand)
 
-        jar += [cookie("validationKey", "clave", on: "cloud.o2online.es"),
+        jar.value += [cookie("validationKey", "clave", on: "cloud.o2online.es"),
                 cookie("SSOSESSION", "xyz", on: "t3.o2online.es"),
                 cookie("SSOSESSION", "robada", on: "evilo2online.es")]
         try await wait { !granted.isEmpty }
@@ -963,16 +963,16 @@ final class O2CloudTests: XCTestCase {
         let login = O2WebLoginModel(host: "cloud.o2online.es")
         login.pollInterval = .milliseconds(5)
         var reads = 0
-        var jar: [HTTPCookie] = []
+        let jar = Box<[HTTPCookie]>([])
         var granted = 0
         login.onSuccess = { _, _, _, _ in granted += 1 }
-        login.watch { reads += 1; return jar }
+        login.watch { reads += 1; return jar.value }
         try await wait { reads > 0 }
         XCTAssertGreaterThan(reads, 0, "Mientras vigila, mira")
 
         login.stop()
         let atStop = reads
-        jar = [cookie("validationKey", "clave", on: "cloud.o2online.es")]
+        jar.value = [cookie("validationKey", "clave", on: "cloud.o2online.es")]
         try await assertStays({ reads <= atStop + 1 }, for: .milliseconds(120), "Como mucho termina la lectura que ya estaba en marcha")
         XCTAssertEqual(granted, 0, "Una ventana cerrada no recibe ninguna sesión")
         XCTAssertNil(login.failed, "Ni un aviso de que se agotó el tiempo")

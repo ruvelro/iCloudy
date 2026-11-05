@@ -76,17 +76,17 @@ final class RobustnessTests: XCTestCase {
 
     func testAViewRedrawsForWhatItReadsAndNothingElse() {
         let model = AppModel()
-        var transfersChanged = false, accountsChanged = false
-        withObservationTracking { _ = model.transfers } onChange: { transfersChanged = true }
-        withObservationTracking { _ = model.accounts } onChange: { accountsChanged = true }
+        let transfersChanged = Flag(), accountsChanged = Flag()
+        withObservationTracking { _ = model.transfers } onChange: { transfersChanged.set() }
+        withObservationTracking { _ = model.accounts } onChange: { accountsChanged.set() }
         model.queue.stateChanges.send()
-        XCTAssertTrue(transfersChanged, "Lo que lee la cola se entera de sus cambios")
-        XCTAssertFalse(accountsChanged, "Lo que solo lee las cuentas, no")
+        XCTAssertTrue(transfersChanged.isSet, "Lo que lee la cola se entera de sus cambios")
+        XCTAssertFalse(accountsChanged.isSet, "Lo que solo lee las cuentas, no")
 
-        var statusChanged = false
+        let statusChanged = Flag()
         let file = CloudFile(id: "a", name: "a.txt", mime: "text/plain", size: 1, modified: nil, webURL: nil, isFolder: false)
-        withObservationTracking { _ = model.localStatus(file) } onChange: { statusChanged = true }
+        withObservationTracking { _ = model.localStatus(file) } onChange: { statusChanged.set() }
         model.localCopies.objectWillChange.send()
-        XCTAssertTrue(statusChanged, "Olvidar una copia local redibuja su marca")
+        XCTAssertTrue(statusChanged.isSet, "Olvidar una copia local redibuja su marca")
     }
 }

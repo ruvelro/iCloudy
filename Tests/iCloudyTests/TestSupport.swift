@@ -246,6 +246,17 @@ final class Flag: @unchecked Sendable {
     func set() { lock.withLock { value = true } }
 }
 
+/// A value a test changes after handing it to a closure the compiler treats as concurrent, guarded by a lock.
+final class Box<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Value
+    init(_ value: Value) { stored = value }
+    var value: Value {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+}
+
 struct TestTimeout: Error, CustomStringConvertible {
     let description: String
 }
