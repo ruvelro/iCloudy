@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         current?.queue.flush() // coalesced checkpoints still in memory
         current?.localCopies.flush() // and the index of what a finished transfer put on this Mac
         current?.offline.flush() // and the copies kept for offline use
+        current?.mirrors.flush() // and the baseline of a two-way sync that was running
         if let model = current { model.workspaceStore.save(model.workspace) } // tabs changed in the last second
         current?.preview.close()
         StoreWriter.shared.flush() // everything handed to the background writer reaches the disk before exiting
