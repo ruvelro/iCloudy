@@ -157,7 +157,8 @@ final class SSHPacketCipher {
                 body = plain
             }
         }
-        guard let paddingLength = body.first, body.count > Int(paddingLength) else { throw SSHReader.Malformed() }
+        // RFC 4253 §6: at least four bytes of padding. Less is no packet this client or any real server writes.
+        guard let paddingLength = body.first, paddingLength >= 4, body.count > Int(paddingLength) else { throw SSHReader.Malformed() }
         return Data(body.dropFirst().dropLast(Int(paddingLength)))
     }
     struct Tampered: LocalizedError {
@@ -246,6 +247,11 @@ enum SSHHostKey {
             default: return false
             }
             let e = try key.mpint(), n = try key.mpint()
+            // OpenSSH has refused RSA keys under 1024 bits since 8.8 and NIST under 2048 since 2014; a host key that
+            // small can be factored by anyone who wants to impersonate the server.
+            guard rsaBits(n) >= minimumRSABits else {
+                throw Unverifiable(reason: L("la clave RSA del servidor tiene \(rsaBits(n)) bits y iCloudy exige al menos \(minimumRSABits)"))
+            }
             let publicKey = try rsaKey(modulus: n, exponent: e)
             var error: Unmanaged<CFError>?
             let valid = SecKeyVerifySignature(publicKey, algorithm, message as CFData, sigBytes as CFData, &error)
@@ -257,6 +263,13 @@ enum SSHHostKey {
     }
     private static func pad(_ value: Data, to length: Int) -> Data {
         value.count >= length ? Data(value.suffix(length)) : Data(count: length - value.count) + value
+    }
+    static let minimumRSABits = 2048
+    /// The size of a modulus in bits, leading zero bytes and bits left out.
+    static func rsaBits(_ modulus: Data) -> Int {
+        let bytes = modulus.drop { $0 == 0 }
+        guard let first = bytes.first else { return 0 }
+        return bytes.count * 8 - first.leadingZeroBitCount
     }
     /// Security wants a PKCS#1 `RSAPublicKey`: SEQUENCE { INTEGER n, INTEGER e }.
     static func rsaKey(modulus: Data, exponent: Data) throws -> SecKey {
@@ -275,7 +288,7 @@ enum SSHHostKey {
         }
         return key
     }
-    private static func derLength(_ length: Int) -> Data {
+    static func derLength(_ length: Int) -> Data {
         if length < 0x80 { return Data([UInt8(length)]) }
         var bytes: [UInt8] = []
         var value = length

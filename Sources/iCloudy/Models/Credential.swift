@@ -9,6 +9,9 @@ struct Credential: Codable {
     var secret: String = ""
     /// The token that goes with temporary keys (AWS STS, SSO, an assumed role). Nil for long-lived keys.
     var sessionToken: String? = nil
+    /// The SSH host key an SFTP account trusts, in base64. It lives here, in the Keychain, because a pin kept in
+    /// `accounts.json` could be rewritten by any process running as this user.
+    var hostKey: String? = nil
     /// False for a token that comes without a refresh token. pCloud issues those: they never expire, and once the
     /// provider stops accepting one only a new sign-in brings the account back.
     var isRenewable: Bool { !refreshToken.isEmpty }
@@ -19,7 +22,7 @@ struct Credential: Codable {
 }
 
 extension Credential {
-    enum CodingKeys: String, CodingKey { case accessToken, refreshToken, expires, secret, sessionToken }
+    enum CodingKeys: String, CodingKey { case accessToken, refreshToken, expires, secret, sessionToken, hostKey }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         // A missing expiry forces a refresh on first use instead of trusting a stale token.
@@ -27,6 +30,7 @@ extension Credential {
                   refreshToken: try values.decode(String.self, forKey: .refreshToken),
                   expires: try values.decodeIfPresent(Date.self, forKey: .expires) ?? .distantPast,
                   secret: try values.decodeIfPresent(String.self, forKey: .secret) ?? "",
-                  sessionToken: try values.decodeIfPresent(String.self, forKey: .sessionToken))
+                  sessionToken: try values.decodeIfPresent(String.self, forKey: .sessionToken),
+                  hostKey: try values.decodeIfPresent(String.self, forKey: .hostKey))
     }
 }

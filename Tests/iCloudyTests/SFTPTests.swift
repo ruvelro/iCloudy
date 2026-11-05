@@ -184,7 +184,7 @@ final class SFTPTests: XCTestCase {
         guard let url = ProcessInfo.processInfo.environment["ICLOUDY_SFTP_URL"], !url.isEmpty else {
             throw XCTSkip("Sin servidor SFTP configurado (ICLOUDY_SFTP_URL)")
         }
-        let (account, credential) = try await SFTPAuthentication().signInSFTP(server: url, username: "", password: "")
+        let (account, credential) = try await SFTPAuthentication().signInSFTP(server: url, username: "", password: "", trustHostKey: { _ in true })
         XCTAssertTrue(account.options["hostKeyFingerprint"]?.hasPrefix("SHA256:") == true)
         let store = MemoryCredentials(); store.stored[account.id] = credential
         let api = CloudAPI(account: account, credentials: store)
@@ -238,9 +238,10 @@ final class SFTPTests: XCTestCase {
         XCTAssertFalse(rootAfterDelete.contains { $0.id == folderID || $0.name == "renombrado.bin" }, "Borrar es recursivo y definitivo")
 
         // The stored key is what every later session must see; a different one is refused before signing in.
-        var impostor = account
-        impostor.options["hostKey"] = Data(repeating: 1, count: 51).base64EncodedString()
-        let other = CloudAPI(account: impostor, credentials: store)
+        let impostorStore = MemoryCredentials()
+        var impostor = credential; impostor.hostKey = Data(repeating: 1, count: 51).base64EncodedString()
+        impostorStore.stored[account.id] = impostor
+        let other = CloudAPI(account: account, credentials: impostorStore)
         do {
             _ = try await other.list(parent: "root")
             XCTFail("Una clave distinta a la guardada tiene que rechazarse")
@@ -249,7 +250,8 @@ final class SFTPTests: XCTestCase {
         }
 
         do {
-            _ = try await SFTPAuthentication().signInSFTP(server: url.replacingOccurrences(of: "secreta", with: "mala"), username: "", password: "")
+            _ = try await SFTPAuthentication().signInSFTP(server: url.replacingOccurrences(of: "secreta", with: "mala"), username: "", password: "",
+                                                          trustHostKey: { _ in true })
             XCTFail("Una contraseña incorrecta no inicia sesión")
         } catch { XCTAssertTrue(error.localizedDescription.contains("usuario o la contraseña"), error.localizedDescription) }
     }

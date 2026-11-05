@@ -274,7 +274,6 @@
 "Esta cuenta de Mega no tiene papelera." = "This Mega account has no rubbish bin.";
 "Esta cuenta de volumen no tiene una carpeta válida. Vuelve a conectarla." = "This volume account has no valid folder. Connect it again.";
 "Esta cuenta FTP no tiene una dirección de servidor válida. Vuelve a conectarla." = "This FTP account has no valid server address. Connect it again.";
-"Esta cuenta tiene verificación en dos pasos. Escribe la contraseña, un espacio y el código de seis dígitos." = "This account has two-step verification. Type the password, a space, and the six-digit code.";
 "Esta cuenta WebDAV no tiene una dirección de servidor válida. Vuelve a conectarla." = "This WebDAV account has no valid server address. Connect it again.";
 "Esta lista la calcula el proveedor y no admite subidas." = "This list is computed by the provider and does not accept uploads.";
 "Esta versión aún no tiene habilitada la conexión de cuentas. Instala una versión configurada de iCloudy." = "This build does not have account sign-in enabled yet. Install a configured build of iCloudy.";
@@ -598,7 +597,6 @@
 "Sesión caducada · Vuelve a conectar" = "Session expired · Reconnect";
 "Sesión demo no válida." = "Invalid demo session.";
 "Sesión iniciada. Cerrando…" = "Signed in. Closing…";
-"Si la cuenta tiene verificación en dos pasos, escribe la contraseña, un espacio y el código de seis dígitos." = "If the account has two-step verification, type the password, a space and the six-digit code.";
 "Si tu servidor usa verificación en dos pasos, crea una contraseña de aplicación en su configuración." = "If your server uses two-step verification, create an app password in its settings.";
 "Simular corte" = "Simulate outage";
 "Sin cifrar: usa esta opción solo en tu red local." = "Unencrypted: use this only on your local network.";
@@ -821,7 +819,6 @@
 "No se pudo comprobar la clave del servidor SSH: %@" = "The SSH server's key could not be checked: %@";
 "El servidor SSH no ofrece ningún intercambio de claves que iCloudy conozca." = "The SSH server offers no key exchange iCloudy knows.";
 "SFTP" = "SFTP";
-"Para servidores SSH y NAS con SFTP, en el puerto 22 salvo que indiques otro. Todo va cifrado. La clave del servidor se guarda al conectar y se comprueba en cada sesión; si cambia, iCloudy lo dirá antes de enviar nada." = "For SSH servers and NAS with SFTP, on port 22 unless you say otherwise. Everything is encrypted. The server's key is stored when you connect and checked on every session; if it changes, iCloudy says so before sending anything.";
 "Conectar SFTP" = "Connect SFTP";
 "Servidores SSH y NAS, cifrado y con la clave del servidor comprobada" = "SSH servers and NAS, encrypted, with the server's key checked";
 "FTP, FTPS explícito e implícito, con usuario y contraseña" = "FTP, explicit and implicit FTPS, with a user name and password";
@@ -1868,3 +1865,19 @@
 "Estas credenciales caducan el %@; después habrá que volver a conectar la cuenta." = "These credentials expire on %@; after that the account will need connecting again.";
 "«%@» está en la papelera de OneDrive, pero iCloudy no pudo apuntarlo para restaurarlo desde aquí: " = "“%@” is in the OneDrive recycle bin, but iCloudy could not record it to restore it from here: ";
 " Puedes restaurarlo desde la web de OneDrive." = " You can restore it from the OneDrive website.";
+"Mega no ha aceptado el código de verificación en dos pasos. Comprueba la hora de este Mac y escribe el código que muestra ahora tu aplicación de autenticación." = "Mega did not accept the two-step verification code. Check this Mac's clock and type the code your authenticator app shows now.";
+"Esta cuenta de Mega tiene verificación en dos pasos: hace falta el código de seis dígitos de tu aplicación de autenticación para conectarla." = "This Mega account has two-step verification: connecting it needs the six-digit code from your authenticator app.";
+"la clave RSA del servidor tiene %lld bits y iCloudy exige al menos %lld" = "the server's RSA key has %lld bits and iCloudy requires at least %lld";
+"No se ha conectado: la clave del servidor (%@) no se ha aceptado. Compárala con la que muestra el servidor, por ejemplo con «ssh-keygen -lf» sobre su clave pública, antes de confiar en ella." = "Not connected: the server's key (%@) was not accepted. Compare it with the one the server shows, for example with “ssh-keygen -lf” on its public key, before trusting it.";
+"El servidor SSH envió un mensaje (%u) que el intercambio estricto de claves no permite. La conexión se corta por seguridad: alguien podría estar manipulándola." = "The SSH server sent a message (%u) that strict key exchange does not allow. The connection is closed for safety: someone could be tampering with it.";
+"El servidor SSH pide «%@» además de la contraseña, probablemente un segundo factor. iCloudy todavía no sabe responder a eso: conecta la cuenta con una clave privada o desactiva el segundo factor para SFTP." = "The SSH server asks for “%@” besides the password, probably a second factor. iCloudy cannot answer that yet: connect the account with a private key or turn off the second factor for SFTP.";
+"Para servidores SSH y NAS con SFTP, en el puerto 22 salvo que indiques otro. Todo va cifrado. Al conectar verás la huella de la clave del servidor para confirmarla; se guarda en el Llavero y se comprueba en cada sesión, y si cambia, iCloudy lo dirá antes de enviar nada." = "For SSH servers and NAS with SFTP, on port 22 unless you say otherwise. Everything is encrypted. When you connect you will see the fingerprint of the server's key to confirm it; it is kept in the Keychain and checked on every session, and if it changes, iCloudy says so before sending anything.";
+"¿Confías en este servidor?" = "Do you trust this server?";
+"Verificación en dos pasos" = "Two-step verification";
+"Si la cuenta tiene verificación en dos pasos, iCloudy te pedirá el código después de comprobar la contraseña." = "If the account has two-step verification, iCloudy will ask for the code after checking the password.";
+"Confiar y conectar" = "Trust and connect";
+"Es la primera vez que iCloudy se conecta a %@. El servidor se identifica con esta clave %@:\n\n%@\n\nCompárala con la huella que da el propio servidor (por ejemplo, «ssh-keygen -lf» sobre su clave pública) y confía solo si coincide. Hasta que no aceptes, no se envía la contraseña ni la clave." = "This is the first time iCloudy connects to %@. The server identifies itself with this %@ key:\n\n%@\n\nCompare it with the fingerprint the server itself gives (for example, “ssh-keygen -lf” on its public key) and trust it only if they match. Neither the password nor the key is sent until you accept.";
+"Código de seis dígitos" = "Six-digit code";
+"Continuar" = "Continue";
+"%@ no aceptó el código. Escribe el que muestra ahora tu aplicación de autenticación." = "%@ did not accept the code. Type the one your authenticator app shows now.";
+"Escribe el código que muestra tu aplicación de autenticación para %@." = "Type the code your authenticator app shows for %@.";
