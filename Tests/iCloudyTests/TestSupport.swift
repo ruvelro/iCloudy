@@ -238,6 +238,14 @@ let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 /// A path inside the repository, such as "Resources/Info.plist" or "Sources/iCloudy".
 func repositoryURL(_ relativePath: String) -> URL { repositoryRoot.appendingPathComponent(relativePath) }
 
+/// A thread-safe boolean, for "it has started" signals raised from callbacks that run off the test's actor.
+final class Flag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    var isSet: Bool { lock.withLock { value } }
+    func set() { lock.withLock { value = true } }
+}
+
 struct TestTimeout: Error, CustomStringConvertible {
     let description: String
 }

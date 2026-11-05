@@ -113,7 +113,7 @@ final class LocalCopyTests: XCTestCase {
         index.record(copy("f2", path: gone, remoteModified: nil))
 
         index.verify([file("aqui.txt", id: "f1"), file("borrado.txt", id: "f2")], accountID: "google:1")
-        for _ in 0..<100 where index.copies.count > 1 { try await Task.sleep(for: .milliseconds(10)) }
+        try await wait { !(index.copies.count > 1) }
         XCTAssertEqual(index.copies.values.map(\.fileID), ["f1"], "Only the entry whose file vanished is dropped")
         XCTAssertEqual(LocalCopyIndex(storeURL: index.storeURL).copies.count, 1, "The pruning is persisted")
     }

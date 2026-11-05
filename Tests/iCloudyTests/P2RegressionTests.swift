@@ -206,7 +206,7 @@ final class P2RegressionTests: XCTestCase {
         let id = try XCTUnwrap(manager.mirrors.first?.id)
         queue.cancel(try XCTUnwrap(manager.mirrors.first?.activeTransferID), pause: true)
         manager.syncNow(id)
-        try await Task.sleep(for: .milliseconds(60))
+        try await wait { !manager.pending.contains(id) }
         XCTAssertEqual(queue.items.count, 1, "Sync now must reuse a paused job")
         manager.remove(id)
         XCTAssertEqual(queue.items.first?.state, .cancelled)

@@ -62,15 +62,18 @@ final class SearchAppearanceTests: XCTestCase {
     }
     func testCancelledOlderSearchCannotRestoreResults() async throws {
         let model = GlobalSearch(); model.query = "old"
+        let olderReturned = Flag()
         model.start(accounts: [.demo]) { account, _, _ in
             try? await Task.sleep(for: .milliseconds(40))
+            defer { olderReturned.set() }
             return SearchPage(hits: [self.hit(account.id, name: "old.txt")])
         }
         await Task.yield()
         model.query = "new"
         model.start(accounts: [.demo]) { account, _, _ in SearchPage(hits: [self.hit(account.id, name: "new.txt")]) }
         try await settle(model)
-        try await Task.sleep(for: .milliseconds(50))
+        try await wait { olderReturned.isSet }
+        await drainMainActor()
         XCTAssertEqual(model.hits.map(\.file.name), ["new.txt"])
         XCTAssertEqual(model.submittedQuery, "new")
     }

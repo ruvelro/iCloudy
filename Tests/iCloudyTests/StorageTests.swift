@@ -199,7 +199,7 @@ final class StorageTests: XCTestCase {
         XCTAssertFalse(queue.hasActive(accountID: "other"))
         queue.cancel(transfer.id, pause: true)
         XCTAssertTrue(queue.hasActive(accountID: "busy"), "Cancellation must settle before disconnecting")
-        for _ in 0..<100 where queue.isWorking { try await Task.sleep(for: .milliseconds(10)) }
+        try await wait { !(queue.isWorking) }
         XCTAssertFalse(queue.isWorking)
         XCTAssertFalse(queue.hasActive(accountID: "busy"))
     }

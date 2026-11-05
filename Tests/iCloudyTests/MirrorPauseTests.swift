@@ -50,8 +50,7 @@ final class MirrorPauseTests: XCTestCase {
         XCTAssertEqual(restored.mirrors[0].changesWhilePaused, ["b.txt"])
         restored.start()
         restored.syncNow(id)
-        try await Task.sleep(for: .milliseconds(100))
-        XCTAssertEqual(s.queue.items.count, 1, "Ni el arranque ni «Sincronizar ahora» encolan nada")
+        try await assertStays({ s.queue.items.count == 1 }, for: .milliseconds(100), "Ni el arranque ni «Sincronizar ahora» encolan nada")
         // A change FSEvents never reported (the app was closed) is caught as well on resume.
         try write("cambiado", to: s.local.appendingPathComponent("a.txt"))
 
@@ -76,8 +75,7 @@ final class MirrorPauseTests: XCTestCase {
         XCTAssertEqual(s.queue.items.first { $0.id == job }?.state, .paused)
         // The network returning revives what it paused, not what the person paused.
         s.queue.setOnline(true)
-        try await Task.sleep(for: .milliseconds(80))
-        XCTAssertEqual(s.queue.items.first { $0.id == job }?.state, .paused)
+        try await assertStays({ s.queue.items.first { $0.id == job }?.state == .paused }, for: .milliseconds(80))
         XCTAssertNil(manager.mirrors[0].lastSync)
 
         manager.setPaused(false, for: id)

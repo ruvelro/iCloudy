@@ -208,8 +208,7 @@ final class TransferSchedulerTests: XCTestCase {
         XCTAssertEqual(queue.hold, .schedule)
         let job = upload(try file("night.dat", size: 2 * 1024 * 1024))
         try queue.add([job])
-        try await Task.sleep(for: .milliseconds(30))
-        XCTAssertFalse(queue.isWorking, "Nothing starts at noon")
+        try await assertStays({ !queue.isWorking }, for: .milliseconds(30), "Nothing starts at noon")
         XCTAssertEqual(queue.items.first?.state, .queued)
 
         clock = at(23, 30); queue.reevaluate()

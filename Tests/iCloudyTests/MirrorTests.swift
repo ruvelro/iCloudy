@@ -51,8 +51,7 @@ final class MirrorTests: XCTestCase {
         // Nothing changed: syncing again costs no transfer at all.
         let before = queue.items.count
         manager.syncNow(manager.mirrors[0].id)
-        try await Task.sleep(for: .milliseconds(150))
-        XCTAssertEqual(queue.items.count, before)
+        try await assertStays({ queue.items.count == before }, for: .milliseconds(150))
 
         // One file changed: only it is re-uploaded, replacing the remote copy rather than duplicating it.
         try Data("nuevo".utf8).write(to: local.appendingPathComponent("a.txt"))

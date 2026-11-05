@@ -58,8 +58,7 @@ final class SafetyRegressionTests: XCTestCase {
         await ftp.setTimeout(0.05)
         var finished = false
         let task = Task { _ = try? await ftp.connect(); finished = true }
-        try await Task.sleep(for: .milliseconds(400))
-        XCTAssertTrue(finished, "The 50 ms timeout must release the receive without an external close")
+        try await wait(until: { finished }, timeout: .seconds(5), "The 50 ms timeout must release the receive without an external close")
         await ftp.close()
         await task.value
     }
@@ -67,7 +66,9 @@ final class SafetyRegressionTests: XCTestCase {
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
         let listener = try NWListener(using: parameters)
+        let connected = Flag()
         listener.newConnectionHandler = { connection in
+            connected.set()
             connection.start(queue: .global())
             connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { _, _, _, _ in connection.cancel() }
         }
@@ -87,10 +88,9 @@ final class SafetyRegressionTests: XCTestCase {
             catch { XCTAssertTrue(error is CancellationError, "\(error)") }
             finished = true
         }
-        try await Task.sleep(for: .milliseconds(50))
+        try await wait(until: { connected.isSet }, "The client never reached the server")
         task.cancel()
-        try await Task.sleep(for: .milliseconds(400))
-        XCTAssertTrue(finished, "Cancellation must release the receive immediately, even with a 60 second timeout")
+        try await wait(until: { finished }, timeout: .seconds(5), "Cancellation must release the receive immediately, even with a 60 second timeout")
         await ftp.close()
         await task.value
     }
@@ -288,8 +288,7 @@ final class SafetyRegressionTests: XCTestCase {
             }
             try await wait { server.log().contains("RETR /a") }
             if cancel { task.cancel() }
-            try await Task.sleep(for: .milliseconds(350))
-            XCTAssertTrue(finished, "The data-channel operation must release without an external close")
+            try await wait(until: { finished }, timeout: .seconds(10), "The data-channel operation must release without an external close")
             await ftp.close(); await task.value
             XCTAssertFalse(FileManager.default.fileExists(atPath: output.path), "No partial file survives the failed receive")
         }

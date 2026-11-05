@@ -136,8 +136,7 @@ final class PreviewTests: XCTestCase {
         XCTAssertEqual(model.account?.id, other.id)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("cache").path).count, 1)
         model.close()
-        try await Task.sleep(for: .milliseconds(40))
-        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("cache").path).isEmpty)
+        try await wait { (try? FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("cache").path).isEmpty) == true }
         XCTAssertEqual(model.phase, .idle)
     }
     func testStartupCleanupOnlyRemovesOwnedDirectories() throws {
