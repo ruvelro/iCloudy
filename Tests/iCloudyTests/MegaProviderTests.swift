@@ -120,8 +120,7 @@ final class MegaProviderTests: XCTestCase {
         let store = MemoryCredentials()
         store.stored["mega:ana@ejemplo.com"] = Credential(accessToken: session, refreshToken: "", expires: .distantFuture,
                                                           secret: MegaCrypto.encode(masterKey))
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         let account = Account(id: "mega:ana@ejemplo.com", cloud: .mega, name: "Mega", email: "ana@ejemplo.com",
                               clientID: "", clientSecret: nil)
         return CloudAPI(account: account, session: URLSession(configuration: configuration), credentials: store)
@@ -144,8 +143,7 @@ final class MegaProviderTests: XCTestCase {
         var privateKey = Self.integer(p) + Self.integer(q) + Self.integer(privateExponent) + Self.integer(MegaBigInt(1))
         privateKey.append(Data(count: (16 - privateKey.count % 16) % 16))
 
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         var seen: [String] = []
         StubProtocol.handler = { [self] request in
             let command = try XCTUnwrap((try JSONSerialization.jsonObject(with: requestData(request)) as? [[String: Any]])?.first)
@@ -174,8 +172,7 @@ final class MegaProviderTests: XCTestCase {
     }
 
     func testAWrongPasswordIsReportedAsSuchAndTwoStepCodesAreSentAlong() async throws {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         var sentCode: String?
         StubProtocol.handler = { request in
             let command = try XCTUnwrap((try JSONSerialization.jsonObject(with: requestData(request)) as? [[String: Any]])?.first)
@@ -731,8 +728,7 @@ final class MegaProviderTests: XCTestCase {
         XCTAssertTrue(MegaAPI.failure(-9).localizedDescription.contains("ya no está"))
 
         StubProtocol.handler = { _ in (200, [:], Data("[-9]".utf8)) }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         do {
             _ = try await MegaAPI.signIn(email: "nadie@ejemplo.com", password: "x", code: nil,
                                           session: URLSession(configuration: configuration))

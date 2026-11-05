@@ -29,14 +29,6 @@ final class TransferSchedulerTests: XCTestCase {
         queue.client = { _ in CloudAPI(account: .demo, demo: demo) }
         return (demo, queue)
     }
-    private func wait(_ condition: () -> Bool) async throws {
-        for _ in 0..<1000 {
-            if condition() { return }
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        XCTFail("Timed out waiting for queue")
-        throw CloudError.message("Test timeout")
-    }
     private func file(_ name: String, size: Int) throws -> URL {
         let url = root.appendingPathComponent(name)
         try Data(repeating: 7, count: size).write(to: url)

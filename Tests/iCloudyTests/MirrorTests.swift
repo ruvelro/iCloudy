@@ -9,10 +9,6 @@ final class MirrorTests: XCTestCase {
         try Data("b".utf8).write(to: root.appendingPathComponent("sub/b.txt"))
         try Data("c".utf8).write(to: root.appendingPathComponent("sub/deep/c.txt"))
     }
-    private func wait(_ condition: () -> Bool) async throws {
-        for _ in 0..<500 { if condition() { return }; try await Task.sleep(for: .milliseconds(10)) }
-        XCTFail("Timed out"); throw CloudError.message("timeout")
-    }
 
     func testPlannerMarksUnchangedFilesAndFullyUnchangedFolders() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

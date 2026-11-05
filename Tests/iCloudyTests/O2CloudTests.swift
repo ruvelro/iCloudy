@@ -48,8 +48,7 @@ final class O2CloudTests: XCTestCase {
         store.stored["o2:cloud.o2online.es:ana@ejemplo.com"] = Credential(
             accessToken: "", refreshToken: "", expires: .distantFuture,
             secret: O2API.store(validationKey: "clave-1", cookies: [cookie]))
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         let account = Account(id: "o2:cloud.o2online.es:ana@ejemplo.com", cloud: .o2, name: "O2 Cloud",
                               email: "ana@ejemplo.com", clientID: "", clientSecret: nil,
                               serverURL: "https://cloud.o2online.es", bookmark: nil,
@@ -140,8 +139,7 @@ final class O2CloudTests: XCTestCase {
         let store = MemoryCredentials()
         store.stored["o2:cloud.o2online.es:ana@ejemplo.com"] = Credential(accessToken: "", refreshToken: "",
                                                                           expires: .distantFuture, secret: stored)
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         let account = Account(id: "o2:cloud.o2online.es:ana@ejemplo.com", cloud: .o2, name: "O2 Cloud",
                               email: "ana@ejemplo.com", clientID: "", clientSecret: nil,
                               serverURL: "https://cloud.o2online.es", bookmark: nil,
@@ -247,8 +245,7 @@ final class O2CloudTests: XCTestCase {
         store.stored["o2:cloud.o2online.es:ana@ejemplo.com"] = Credential(
             accessToken: "", refreshToken: "", expires: .distantFuture,
             secret: O2API.store(validationKey: "clave-1", cookies: [cookie]))
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         let account = Account(id: "o2:cloud.o2online.es:ana@ejemplo.com", cloud: .o2, name: "O2 Cloud",
                               email: "ana@ejemplo.com", clientID: "", clientSecret: nil,
                               serverURL: "https://cloud.o2online.es", bookmark: nil,
@@ -285,8 +282,7 @@ final class O2CloudTests: XCTestCase {
         let store = MemoryCredentials()
         store.stored["o2:cloud.o2online.es:ana@ejemplo.com"] = Credential(accessToken: "", refreshToken: "",
                                                                           expires: .distantFuture, secret: "")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         let account = Account(id: "o2:cloud.o2online.es:ana@ejemplo.com", cloud: .o2, name: "O2 Cloud",
                               email: "ana@ejemplo.com", clientID: "", clientSecret: nil,
                               serverURL: "https://cloud.o2online.es", bookmark: nil, options: ["host": "cloud.o2online.es"])
@@ -313,8 +309,7 @@ final class O2CloudTests: XCTestCase {
     }
 
     func testTheIdentityOfTheSessionNamesTheAccount() async throws {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         let session = URLSession(configuration: configuration)
         let state = O2Session(host: "cloud.o2online.es", validationKey: "clave")
 
@@ -844,8 +839,8 @@ final class O2CloudTests: XCTestCase {
         // Funambol keeps a list of devices per account, and some deployments cap it and start expelling the oldest.
         // A fresh identifier on every sign-in and every silent renewal filled it by itself.
         let key = "o2DeviceID.pruebas.ejemplo.com"
-        UserDefaults.standard.removeObject(forKey: key)
-        defer { UserDefaults.standard.removeObject(forKey: key) }
+        Prefs.defaults.removeObject(forKey: key)
+        defer { Prefs.defaults.removeObject(forKey: key) }
         let first = O2WebSession.deviceID(host: "pruebas.ejemplo.com")
         XCTAssertFalse(first.isEmpty)
         XCTAssertEqual(O2WebSession.deviceID(host: "pruebas.ejemplo.com"), first, "El mismo Mac, el mismo dispositivo")

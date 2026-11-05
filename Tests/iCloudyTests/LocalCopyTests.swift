@@ -149,8 +149,8 @@ final class LocalCopyTests: XCTestCase {
         XCTAssertTrue(Prefs.bool(key, default: true))
         XCTAssertFalse(Prefs.bool(key, default: false))
         XCTAssertEqual(Prefs.int(key, default: 100), 100)
-        UserDefaults.standard.set(false, forKey: key)
+        Prefs.defaults.set(false, forKey: key)
         XCTAssertFalse(Prefs.bool(key, default: true), "A stored false must not read as the default true")
-        UserDefaults.standard.removeObject(forKey: key)
+        Prefs.defaults.removeObject(forKey: key)
     }
 }

@@ -104,7 +104,7 @@ final class AccountsAndBundleTests: XCTestCase {
         // Dropping on the Dock icon only works when the app says what it opens; without CFBundleDocumentTypes the
         // Finder never calls application(_:open:). Shortcuts only lists intents when Metadata.appintents is in the
         // bundle, which `swift build` does not produce, so the build script has to.
-        let plist = try PropertyListSerialization.propertyList(from: Data(contentsOf: URL(fileURLWithPath: "Resources/Info.plist")), format: nil) as? [String: Any]
+        let plist = try PropertyListSerialization.propertyList(from: Data(contentsOf: repositoryURL("Resources/Info.plist")), format: nil) as? [String: Any]
         let types = try XCTUnwrap(plist?["CFBundleDocumentTypes"] as? [[String: Any]])
         let accepted = Set(types.flatMap { $0["LSItemContentTypes"] as? [String] ?? [] })
         XCTAssertTrue(accepted.isSuperset(of: ["public.item", "public.folder"]), accepted.description)
@@ -120,7 +120,7 @@ final class AccountsAndBundleTests: XCTestCase {
         let changelog = try String(contentsOf: URL(fileURLWithPath: "CHANGELOG.md"), encoding: .utf8)
         XCTAssertTrue(changelog.contains("## \(version)"), "Esa versión no está contada en el registro de cambios")
 
-        let script = try String(contentsOf: URL(fileURLWithPath: "scripts/build-app.sh"), encoding: .utf8)
+        let script = try String(contentsOf: repositoryURL("scripts/build-app.sh"), encoding: .utf8)
         XCTAssertTrue(script.contains("appintentsmetadataprocessor"))
         XCTAssertTrue(script.contains("-emit-const-values"), "The processor reads the constant values the compiler extracts")
         XCTAssertTrue(script.contains("Metadata.appintents"))

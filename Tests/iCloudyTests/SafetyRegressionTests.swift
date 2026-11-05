@@ -5,10 +5,6 @@ import Network
 /// Regression coverage for the P1 findings in the September audit.
 @MainActor
 final class SafetyRegressionTests: XCTestCase {
-    private func wait(_ condition: () -> Bool) async throws {
-        for _ in 0..<500 { if condition() { return }; try await Task.sleep(for: .milliseconds(10)) }
-        throw CloudError.message("Audit probe timed out")
-    }
     private func root() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("icloudy-audit-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -127,8 +123,7 @@ final class SafetyRegressionTests: XCTestCase {
         let root = try root(); defer { try? FileManager.default.removeItem(at: root); StubProtocol.handler = nil }
         let local = root.appendingPathComponent("a.txt"); try Data("correct".utf8).write(to: local)
         let account = Account(id: "audit-box", cloud: .box, name: "audit", email: "audit", clientID: "", clientSecret: nil)
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        let api = CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "fake" })
+        let api = makeStubbedClient(account, token: "fake")
         var calls = 0
         StubProtocol.handler = { _ in calls += 1; return (201, [:], Data(#"{"entries":[{"id":"123","sha1":"wrong"}]}"#.utf8)) }
         var checkpoint: UploadCheckpoint?
@@ -154,8 +149,7 @@ final class SafetyRegressionTests: XCTestCase {
         let count = Int(DropboxProvider.dropboxChunk)
         try Data(repeating: 65, count: count + 8).write(to: local)
         let account = Account(id: "audit-dropbox", cloud: .dropbox, name: "audit", email: "audit", clientID: "", clientSecret: nil)
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        let api = CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "fake" })
+        let api = makeStubbedClient(account, token: "fake")
         var blocks = 0, sent = Data()
         StubProtocol.handler = { request in
             if request.url!.path.hasSuffix("/start") { return (200, [:], Data(#"{"session_id":"fake"}"#.utf8)) }
@@ -181,7 +175,7 @@ final class SafetyRegressionTests: XCTestCase {
     func testDropboxFailedAndPendingIntegrityCannotBecomeSuccessOnRestart() async throws {
         let root = try root(); defer { try? FileManager.default.removeItem(at: root); StubProtocol.handler = nil }
         let local = root.appendingPathComponent("a.txt"); try Data("correct".utf8).write(to: local)
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let config = StubProtocol.configuration()
         let account = Account(id: "test", cloud: .dropbox, name: "test", email: "test", clientID: "", clientSecret: nil)
         let api = CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "fake" })
         var calls = 0

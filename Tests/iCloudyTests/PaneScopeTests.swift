@@ -13,10 +13,6 @@ final class PaneScopeTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("no-existe-" + name + UUID().uuidString).path
         return Account(id: "volume:" + root, cloud: .volume, name: name, email: "local", clientID: "", clientSecret: nil, serverURL: root)
     }
-    private func wait(_ condition: () -> Bool) async throws {
-        for _ in 0..<1500 { if condition() { return }; try await Task.sleep(for: .milliseconds(10)) }
-        XCTFail("Timed out"); throw CloudError.message("timeout")
-    }
 
     // MARK: - Reloading after a write
 

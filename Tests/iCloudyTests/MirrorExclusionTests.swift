@@ -17,10 +17,6 @@ final class MirrorExclusionTests: XCTestCase {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(text.utf8).write(to: url)
     }
-    private func wait(_ condition: () -> Bool) async throws {
-        for _ in 0..<1500 { if condition() { return }; try await Task.sleep(for: .milliseconds(10)) }
-        XCTFail("Timed out"); throw CloudError.message("timeout")
-    }
     private let rules = SyncExclusions(patterns: ["*.log", "build/"]).matcher(caseInsensitive: true)
 
     // MARK: - Two-way planner

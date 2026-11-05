@@ -78,8 +78,7 @@ final class StorageTests: XCTestCase {
             }
             // SFTP asks over SSH, not HTTP; SFTPTests covers it against a real server.
             if cloud == .sftp { continue }
-            let config = URLSessionConfiguration.ephemeral
-            config.protocolClasses = [StubProtocol.self]
+            let config = StubProtocol.configuration()
             let session = URLSession(configuration: config)
             defer { session.invalidateAndCancel() }
             let account = Account(id: "quota-test", cloud: cloud, name: "Test", email: "test@example.com", clientID: "test", clientSecret: nil,

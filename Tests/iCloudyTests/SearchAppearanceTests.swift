@@ -16,8 +16,7 @@ final class SearchAppearanceTests: XCTestCase {
         XCTFail("Search did not settle")
     }
     private func client(_ cloud: Cloud) -> CloudAPI {
-        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [StubProtocol.self]
-        return CloudAPI(account: Account(id: "api", cloud: cloud, name: "Test", email: "test@example.com", clientID: "test", clientSecret: nil), session: URLSession(configuration: configuration), tokenProvider: { "test-token" })
+        makeStubbedClient(stubbedAccount(cloud, id: "api", clientID: "test"))
     }
     func testFiltersHandleBoundariesAndUnknownMetadata() {
         XCTAssertNotEqual(hit().id, hit(other.id).id)

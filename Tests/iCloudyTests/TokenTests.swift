@@ -1,27 +1,13 @@
 import XCTest
 @testable import iCloudy
 
-/// In-memory replacement for the Keychain so refresh logic runs without touching the user's real keychain.
-final class MemoryCredentials: CredentialStore {
-    var stored: [String: Credential] = [:]
-    var reads = 0
-    /// Set to play a locked Keychain: reads still work, writes do not.
-    var refuseSaves = false
-    func read(_ key: String) throws -> Credential? { reads += 1; return stored[key] }
-    func save(_ credential: Credential, key: String) throws {
-        if refuseSaves { throw CloudError.message("Llavero bloqueado") }
-        stored[key] = credential
-    }
-}
-
 @MainActor
 final class TokenTests: XCTestCase {
     private let account = Account(id: "google:1", cloud: .google, name: "Test", email: "test@example.com", clientID: "client", clientSecret: "desktop-metadata")
     private let tokenHost = "oauth2.googleapis.com"
 
     private func client(_ store: MemoryCredentials) -> CloudAPI {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        return CloudAPI(account: account, session: URLSession(configuration: config), credentials: store)
+        makeStubbedClient(account, credentials: store)
     }
     private func credential(expiresIn seconds: TimeInterval, access: String = "old") -> Credential {
         Credential(accessToken: access, refreshToken: "refresh-1", expires: Date().addingTimeInterval(seconds))
@@ -74,7 +60,7 @@ final class TokenTests: XCTestCase {
             used.append(body.contains("refresh_token=refresh-1") ? "refresh-1" : "otro")
             return (200, [:], Data(#"{"access_token":"fresh","refresh_token":"refresh-2","expires_in":3600}"#.utf8))
         }
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let config = StubProtocol.configuration()
         let session = URLSession(configuration: config)
         let parentAPI = CloudAPI(account: parent, session: session, credentials: store)
         let driveAPI = CloudAPI(account: drive, session: session, credentials: store)

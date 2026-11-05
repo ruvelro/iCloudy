@@ -43,11 +43,6 @@ private final class BrowserOutcome: @unchecked Sendable {
 
 @MainActor
 final class OAuthLoopbackTests: XCTestCase {
-    private func stubbedSession() -> URLSession {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        return URLSession(configuration: config)
-    }
-
     func testLoopbackFlowRejectsWrongStateThenExchangesTheCode() async throws {
         var tokenBody = ""
         StubProtocol.handler = { request in

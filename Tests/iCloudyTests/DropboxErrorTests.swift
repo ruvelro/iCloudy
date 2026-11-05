@@ -10,7 +10,7 @@ final class DropboxErrorTests: XCTestCase {
     override func tearDown() { StubProtocol.handler = nil }
 
     private func dropbox() -> CloudAPI {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let config = StubProtocol.configuration()
         let account = Account(id: "dbx", cloud: .dropbox, name: "Dropbox", email: "d@example.com", clientID: "client", clientSecret: nil)
         return CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "token" })
     }

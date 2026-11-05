@@ -5,10 +5,7 @@ import CryptoKit
 @MainActor
 final class ProviderTests: XCTestCase {
     private func client(_ cloud: Cloud, server: String? = nil) -> CloudAPI {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        let account = Account(id: "test", cloud: cloud, name: "Test", email: "test@example.com", clientID: "client", clientSecret: nil,
-                              serverURL: server ?? (cloud == .webdav ? "https://dav.example.com/remote.php/dav/files/ana" : nil))
-        return CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "test-token" })
+        makeStubbedClient(cloud, server: server ?? (cloud == .webdav ? "https://dav.example.com/remote.php/dav/files/ana" : nil))
     }
     private func temporaryFile(_ payload: Data) throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -219,7 +216,7 @@ final class ProviderTests: XCTestCase {
             if request.url!.path.hasSuffix("append_v2") { return (200, [:], Data()) }
             return (200, [:], Data(#"{"path_lower":"/x","content_hash":"\#(expected)"}"#.utf8))
         }
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let config = StubProtocol.configuration()
         let account = Account(id: "dropbox:1", cloud: .dropbox, name: "Ana", email: "ana@ejemplo.com", clientID: "c", clientSecret: nil)
         let api = CloudAPI(account: account, session: URLSession(configuration: config), credentials: store)
         let stamp = try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
@@ -489,8 +486,7 @@ final class ProviderTests: XCTestCase {
         let account = Account(id: "webdav:nc", cloud: .webdav, name: "NC", email: "ana@nc", clientID: "", clientSecret: nil,
                               serverURL: "https://nube.ejemplo.com/remote.php/dav/files/ana", bookmark: nil,
                               options: ["flavor": "nextcloud"])
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        let api = CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "token" })
+        let api = makeStubbedClient(account, token: "token")
         let file = CloudFile(id: "/nota.txt", name: "nota.txt", mime: "text/plain", size: 4, modified: nil, webURL: nil, isFolder: false)
 
         // Nextcloud makes a new link every time it is asked, and each has to be revoked separately.
@@ -539,7 +535,7 @@ final class ProviderTests: XCTestCase {
         XCTAssertTrue(LoginAddress.isLocalNetwork("::1"))
         XCTAssertTrue(LoginAddress.isLocalNetwork("fe80::1"), "Enlace local")
         XCTAssertTrue(LoginAddress.isLocalNetwork("fd00::1"), "Rango privado de IPv6")
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let config = StubProtocol.configuration()
         let oauth = WebDAVAuthentication(session: URLSession(configuration: config))
         StubProtocol.handler = { _ in (207, [:], Data(#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"></d:multistatus>"#.utf8)) }
         let nas = try await oauth.signInWebDAV(server: "http://nas.local/dav", username: "ana", password: "secreta")
@@ -697,7 +693,7 @@ final class ProviderTests: XCTestCase {
     }
 
     func testWebDAVSignInValidatesTheServerBeforeStoringAnything() async throws {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let config = StubProtocol.configuration()
         let oauth = WebDAVAuthentication(session: URLSession(configuration: config))
         StubProtocol.handler = { request in
             XCTAssertEqual(request.httpMethod, "PROPFIND")
@@ -722,7 +718,7 @@ final class ProviderTests: XCTestCase {
     func testCredentialsTypedIntoTheWebDAVAddressAreUsedButNeverStored() async throws {
         // Password managers hand out `https://ana:secreta@nas/dav`. The address lives in accounts.json, outside the
         // Keychain, so what rides in it is stripped and treated as the credentials it is.
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let config = StubProtocol.configuration()
         let oauth = WebDAVAuthentication(session: URLSession(configuration: config))
         var authorization: String?
         StubProtocol.handler = { request in
@@ -743,7 +739,7 @@ final class ProviderTests: XCTestCase {
     }
 
     private func webdavSignIn() -> WebDAVAuthentication {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let config = StubProtocol.configuration()
         StubProtocol.handler = { _ in (207, [:], Data(#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"></d:multistatus>"#.utf8)) }
         return WebDAVAuthentication(session: URLSession(configuration: config))
     }

@@ -55,7 +55,7 @@ final class PreviewTests: XCTestCase {
     func testGoogleDocumentPreviewExportsToPDFWithoutSizeConfirmation() async throws {
         let (root, _, model, _) = try fixture()
         defer { model.close(); try? FileManager.default.removeItem(at: root) }
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let config = StubProtocol.configuration()
         let api = CloudAPI(account: Account(id: "google:t", cloud: .google, name: "T", email: "t@example.com", clientID: "c", clientSecret: nil), session: URLSession(configuration: config), tokenProvider: { "token" })
         var exportURL: URL?
         let pdf = PDFDocument(); pdf.insert(PDFPage(), at: 0)

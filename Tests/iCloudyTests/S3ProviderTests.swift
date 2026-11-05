@@ -15,9 +15,7 @@ final class S3ProviderTests: XCTestCase {
                                                addressing: addressing, accessKey: "AKIDPRUEBA")
         let store = MemoryCredentials()
         store.stored[account.id] = Credential(accessToken: "AKIDPRUEBA", refreshToken: "", expires: .distantFuture, secret: "secreto")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
-        let api = CloudAPI(account: account, session: URLSession(configuration: configuration), credentials: store)
+        let api = makeStubbedClient(account, credentials: store)
         let provider = api.provider as! S3Provider
         provider.pause = { _ in }
         return (api, provider)
@@ -667,8 +665,7 @@ final class S3ProviderTests: XCTestCase {
     }
 
     func testSignInFindsTheRegionOfTheBucket() async throws {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         var calls = 0
         StubProtocol.handler = { request in
             calls += 1
@@ -689,8 +686,7 @@ final class S3ProviderTests: XCTestCase {
     }
 
     func testSignInWithoutBucketExplainsAKeyThatCannotListThem() async throws {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         StubProtocol.handler = { _ in (403, [:], self.xmlError("AccessDenied")) }
         let form = S3SignIn(service: .backblaze, region: "eu-central-003", accessKey: "k", secretKey: "s")
         do { _ = try await S3Authentication(session: URLSession(configuration: configuration)).signIn(form); XCTFail() }

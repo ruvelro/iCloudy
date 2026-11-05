@@ -11,14 +11,6 @@ final class TransferTests: XCTestCase {
         queue.client = { _ in CloudAPI(account: .demo, demo: demo) }
         return (root, demo, queue)
     }
-    private func wait(_ condition: () -> Bool) async throws {
-        for _ in 0..<500 {
-            if condition() { return }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        XCTFail("Timed out waiting for queue")
-        throw CloudError.message("Test timeout")
-    }
     private func upload(_ url: URL, batch: UUID = UUID()) -> Transfer {
         Transfer(batchID: batch, name: url.lastPathComponent, destination: "Demo", accountID: Account.demo.id, direction: .upload, localURL: url)
     }
