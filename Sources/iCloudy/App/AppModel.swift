@@ -8,10 +8,15 @@ import Combine
 @MainActor
 @Observable
 final class AppModel {
-    /// The Finder's list of locations follows the list of accounts, for as long as the person wants it to. Which
-    /// accounts, not their order: reordering the sidebar has nothing to tell the Finder.
-    var accounts: [Account] = [] {
-        didSet { if Set(oldValue.map(\.id)) != Set(accounts.map(\.id)) { syncFinderDomains() } }
+    /// The accounts, their sessions and the Keychain entry they are saved in.
+    let directory = AccountDirectory()
+    /// O2's keep-alive, silent renewals and WebKit stores.
+    @ObservationIgnored private(set) lazy var o2 = O2SessionKeeper(directory: directory)
+    /// What the views read. Setting it changes this run only: connecting, reordering and removing go through
+    /// `directory`, which saves.
+    var accounts: [Account] {
+        get { directory.accounts }
+        set { directory.accounts = newValue }
     }
     /// Panes and tabs, each with its own place and listing. The properties below forward to the focused pane's
     /// active tab, so everything that asks for "the open folder" keeps getting exactly that.
@@ -107,10 +112,6 @@ final class AppModel {
     var appearances: [String: AccountAppearance] = [:]
     /// Read through `subsystems`, so a view showing it redraws when a quota arrives.
     var storageQuotas: [String: StorageQuotaState] { _ = subsystems; return quotas.states }
-    /// Accounts whose provider rejected the stored credential. Shown in the sidebar until the user reconnects.
-    var expiredAccountIDs: Set<String> = []
-    /// Why each of them ended, when the provider said anything worth repeating.
-    var expiryReasons: [String: String] = [:]
     /// The last one chosen is also what a brand-new tab starts with.
     var viewMode: String {
         get { workspace.current.viewMode }
@@ -161,36 +162,16 @@ final class AppModel {
     @ObservationIgnored weak var undoManager: UndoManager?
     var appearanceStore: AppearanceStore?
     var demo: DemoStore?
-    let sessions = AccountClientRegistry()
+    var sessions: AccountClientRegistry { directory.sessions }
     let quotas = StorageQuotaController(refreshInterval: AppModel.quotaRefreshInterval)
     @ObservationIgnored var quotaSubscription: AnyCancellable?
     @ObservationIgnored var localCopySubscription: AnyCancellable?
     /// The listing each tab is waiting for, so a new request for the same tab cancels the old one.
     @ObservationIgnored var navigationTasks: [BrowserState.ID: Task<Void, Never>] = [:]
     @ObservationIgnored var subscription: AnyCancellable?
-    @ObservationIgnored var keepAlive: Task<Void, Never>?
-    @ObservationIgnored var wakeObserver: NSObjectProtocol?
-    @ObservationIgnored var lastKeepAlive: [String: Date] = [:]
-    /// Accounts with a keep-alive request in flight, so a slow one is not asked again on the next round.
-    @ObservationIgnored var touching: Set<String> = []
-    /// Accounts whose session is being renewed in the background, so it is only attempted once at a time.
-    var renewingAccountIDs: Set<String> = []
-    /// The renewals themselves, so disconnecting or signing in again can cancel one and refuse what it brings back.
-    let o2Renewals = O2RenewalTasks()
-    /// Moving O2 accounts signed in before WebKit stores were kept apart into stores of their own. Renewals wait for
-    /// it, so none runs in a store that is being emptied.
-    @ObservationIgnored var o2StoreMigration: Task<Void, Never>?
     @ObservationIgnored var editContext: (Account, String)?
     /// Opening folders refreshes the quota at most this often; explicit requests and finished transfers always do.
     static let quotaRefreshInterval: TimeInterval = 300
-    /// How long a session may go untouched. Measured against O2's server, which let 68 minutes pass and refused at
-    /// 80, so a quarter of an hour leaves room for several missed rounds.
-    static let keepAliveInterval: TimeInterval = 15 * 60
-    /// How often that is checked. Shorter than the interval on purpose: deciding by the clock rather than by how long
-    /// the sleep actually lasted is what survives a Mac that spends the night waking in the dark and going back to
-    /// sleep. (An earlier note here claimed the system stretched a twenty-minute sleep to forty. It did not: the
-    /// script that measured it was dropping one line in three. The shape of the fix stands; the reason given did not.)
-    static let keepAliveCheck: TimeInterval = 4 * 60
 
     var account: Account? { accounts.first { $0.id == selectedAccountID } ?? cryptomator.account(selectedAccountID) }
     var folderID: String { path.last?.id ?? collection.rootID }
@@ -243,7 +224,7 @@ final class AppModel {
             // Whatever failed while offline is worth one automatic retry now, and a session that goes quiet while the
             // network is away is one the provider may have given up on: the first thing to do is prove it is alive.
             if online {
-                touchIdleSessions(force: true, note: "ha vuelto la red")
+                o2.touchIdleSessions(force: true, note: "ha vuelto la red")
                 reloadVisible()
             }
         }
@@ -267,6 +248,9 @@ final class AppModel {
         mirrors.queue = queue
         configureTransferPolicy()
         mirrors.accountLookup = { [weak self] id in self?.accounts.first { $0.id == id } }
+        directory.membershipChanged = { [weak self] in self?.syncFinderDomains() }
+        o2.touch = { [weak self] account, answered in self?.refreshStorage(account, force: true, then: answered) }
+        o2.didRenew = { [weak self] account in self?.reloadVisible(accountID: account.id) }
         loadAccounts()
         preview.download = { [weak self] file, account in
             Task { await self?.saveMany([file], targetAccount: account) }
