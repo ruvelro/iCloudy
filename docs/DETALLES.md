@@ -251,7 +251,7 @@ Un archivo o una carpeta se marcan desde su menú contextual con «Disponible si
 - `Accounts/`, `Explorer/`, `Transfers/` e `Integration/`: coordinación de cada funcionalidad.
 - `App/`: arranque y estado observable; `Views/`: pantallas y componentes SwiftUI.
 
-La [guía del refactor 0.5.0](REFACTOR-0.5.0.md) describe las responsabilidades, las pruebas y la compilación de depuración.
+La [guía del refactor 0.5.0](historial/REFACTOR-0.5.0.md) describe las responsabilidades, las pruebas y la compilación de depuración.
 
 ## Referencias
 
