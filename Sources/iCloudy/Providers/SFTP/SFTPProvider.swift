@@ -138,14 +138,27 @@ extension SFTPProvider {
                     save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
         let total = cursor.total
         let path = try replacing ?? FTPListing.join(sftpPath(parent), name)
+        // The bytes go to a hidden name beside the target and take its place only once they are all there: a
+        // dropped connection used to leave a truncated file under the final name, indistinguishable from a good one.
+        let temporary = FTPListing.partialName(for: path)
         cursor.offset = 0; try save(cursor)
         // The client reports from its own actor; the callback only ever runs back here, on the main actor.
         let relay: @MainActor @Sendable (Int64) -> Void = { sent in progress(min(sent, total), total) }
-        try await sftpTranslating { try await sftp().upload(local, to: path) { sent in Task { @MainActor in relay(sent) } } }
+        let client = try await sftp()
+        do {
+            try await sftpTranslating { try await client.upload(local, to: temporary) { sent in Task { @MainActor in relay(sent) } } }
+            try await sftpTranslating { try await client.replace(path, with: temporary) }
+        } catch {
+            // Best effort: after a cancellation or a dropped session this cannot reach the server, and the hidden
+            // name is what is left behind, never a damaged file under the real one.
+            try? await client.remove(temporary)
+            throw error
+        }
         cursor.offset = total; cursor.complete = true; try save(cursor); progress(total, total)
         // The protocol reports no checksum; the closing status is the only confirmation.
         return UploadReceipt(remoteID: path, verification: .unavailable)
     }
+
     func sftpTrail(id: String) throws -> [CloudFile] {
         guard id != "root" else { return [] }
         let base = try sftpPath("root")

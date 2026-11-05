@@ -138,11 +138,19 @@ final class FakeSSHServer: @unchecked Sendable {
 
     // MARK: - The conversation
 
+    /// One connection after another, until the listener is closed: signing in connects once, and the account's
+    /// own session connects again.
     private func serve() {
-        var length = socklen_t(0)
-        connection = accept(listener, nil, &length)
-        guard connection >= 0 else { return }
-        defer { close(connection) }
+        while true {
+            var length = socklen_t(0)
+            connection = accept(listener, nil, &length)
+            guard connection >= 0 else { return }
+            tx = SSHPacketCipher(); rx = SSHPacketCipher(); sessionID = nil; inKex = false
+            converse()
+            close(connection)
+        }
+    }
+    private func converse() {
         do {
             try writeAll(Data((serverVersion + "\r\n").utf8))
             clientVersion = try readLine()

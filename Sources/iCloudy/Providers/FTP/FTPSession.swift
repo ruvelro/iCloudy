@@ -533,6 +533,12 @@ enum FTPListing {
     static func join(_ parent: String, _ name: String) -> String {
         parent == "/" || parent.isEmpty ? "/" + name : parent + "/" + name
     }
+    /// Where an FTP or SFTP upload is written before it takes the final name: `.name.icloudy-part` in the same
+    /// folder, hidden in listings and on the same file system, so the closing rename is one step.
+    static func partialName(for path: String) -> String {
+        let folder = (path as NSString).deletingLastPathComponent
+        return join(folder.isEmpty ? "/" : folder, "." + (path as NSString).lastPathComponent + ".icloudy-part")
+    }
     /// RFC 3659 machine listing: `type=file;size=12;modify=20260101120000; nombre.txt`
     static func parseMLSD(_ text: String, parent: String) -> [CloudFile] {
         text.split(whereSeparator: \.isNewline).compactMap { line -> CloudFile? in
