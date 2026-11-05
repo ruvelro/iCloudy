@@ -1886,3 +1886,4 @@
 "%@ ha devuelto la cuenta «%@». Conéctala solo si es la que acabas de autorizar en el navegador." = "%@ returned the account “%@”. Connect it only if it is the one you just authorised in the browser.";
 "No se ha conectado la cuenta de %@ «%@». Si no era la tuya, cierra las pestañas del navegador que no reconozcas y vuelve a intentarlo." = "The %@ account “%@” was not connected. If it was not yours, close any browser tabs you do not recognise and try again.";
 "«%@» no está borrada: aparece en la papelera para que puedas abrirla y ver lo que se borró dentro." = "“%@” is not deleted: it appears in the bin so you can open it and see what was deleted inside.";
+"El servicio devolvió la misma página una y otra vez, así que se ha dejado de pedir más." = "The service returned the same page over and over, so iCloudy stopped asking for more.";

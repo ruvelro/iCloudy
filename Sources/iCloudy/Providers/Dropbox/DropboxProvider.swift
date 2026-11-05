@@ -67,14 +67,16 @@ extension DropboxProvider {
             return try await dropboxListDeleted(in: String(parent.dropFirst(Collection.trashFolderPrefix.count)), onPage: onPage)
         }
         var files: [CloudFile] = []
-        var result = try await dropboxRPC("files/list_folder", ["path": dropboxPath(parent), "limit": 1000], repeatable: true)
-        while true {
-            files += (result["entries"] as? [[String: Any]] ?? []).compactMap(Self.dropboxFile)
-            guard result["has_more"] as? Bool == true, let cursor = result["cursor"] as? String else { break }
-            onPage?(Self.sorted(files))
-            result = try await dropboxRPC("files/list_folder/continue", ["cursor": cursor], repeatable: true)
-        }
+        try await dropboxPages(try await dropboxRPC("files/list_folder", ["path": dropboxPath(parent), "limit": 1000], repeatable: true),
+                               each: { files += ($0["entries"] as? [[String: Any]] ?? []).compactMap(Self.dropboxFile) },
+                               between: { onPage?(Self.sorted(files)) })
         return Self.sorted(files)
+    }
+    /// `list_folder` and its `continue`, to the end.
+    func dropboxPages(_ first: [String: Any], each: ([String: Any]) -> Void, between: () -> Void) async throws {
+        try await Pagination.follow(first: first, cursor: { $0["has_more"] as? Bool == true ? $0["cursor"] as? String : nil },
+                                    next: { try await self.dropboxRPC("files/list_folder/continue", ["cursor": $0], repeatable: true) },
+                                    each: each, between: between)
     }
 
     /// A deleted entry as Dropbox describes it: a name and a path, nothing else. Whether it was a file or a folder is
@@ -89,19 +91,16 @@ extension DropboxProvider {
     /// deleted files: what was deleted here, and the live folders to look inside. Live files are left out.
     func dropboxListDeleted(in path: String, onPage: (([CloudFile]) -> Void)?) async throws -> [CloudFile] {
         var files: [CloudFile] = []
-        var result = try await dropboxRPC("files/list_folder", ["path": path, "include_deleted": true, "limit": 2000], repeatable: true)
-        while true {
-            for entry in result["entries"] as? [[String: Any]] ?? [] {
+        try await dropboxPages(try await dropboxRPC("files/list_folder", ["path": path, "include_deleted": true, "limit": 2000], repeatable: true),
+                               each: { page in
+            for entry in page["entries"] as? [[String: Any]] ?? [] {
                 if let deleted = Self.dropboxDeleted(entry) { files.append(deleted) }
                 else if entry[".tag"] as? String == "folder", let name = entry["name"] as? String, let path = entry["path_lower"] as? String {
                     files.append(CloudFile(id: Collection.trashFolderPrefix + path, name: name, mime: "application/vnd.google-apps.folder",
                                            size: nil, modified: nil, webURL: nil, isFolder: true))
                 }
             }
-            guard result["has_more"] as? Bool == true, let cursor = result["cursor"] as? String else { break }
-            onPage?(Self.sorted(files))
-            result = try await dropboxRPC("files/list_folder/continue", ["cursor": cursor], repeatable: true)
-        }
+        }, between: { onPage?(Self.sorted(files)) })
         return Self.sorted(files)
     }
     /// A file comes back by restoring its last revision. Folders have no revisions and no restoration in the API.

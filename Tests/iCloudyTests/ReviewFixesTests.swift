@@ -218,6 +218,25 @@ final class ReviewFixesTests: XCTestCase {
         catch { XCTAssertTrue(error.localizedDescription.contains("no está borrada"), error.localizedDescription) }
     }
 
+    // MARK: - Pagination
+
+    func testADropboxCursorHandedOutTwiceEndsTheListingInsteadOfLoopingForEver() async throws {
+        var calls = 0
+        StubProtocol.handler = { request in
+            calls += 1
+            let name = "f\(calls).txt"
+            return (200, [:], Data(#"{"entries":[{".tag":"file","name":"\#(name)","path_lower":"/\#(name)","size":1}],"has_more":true,"cursor":"siempre-el-mismo"}"#.utf8))
+        }
+        do { _ = try await client(.dropbox).list(parent: "root"); XCTFail("Un cursor repetido no puede seguir para siempre") }
+        catch { XCTAssertTrue(error is Pagination.Looping, "\(error)") }
+        XCTAssertEqual(calls, 2, "La primera página y una sola repetición")
+
+        var pages: [Int] = []
+        try await Pagination.follow(first: ["n": 1], cursor: { ($0["n"] as! Int) < 3 ? "c\($0["n"] as! Int)" : nil },
+                                    next: { ["n": Int($0.dropFirst())! + 1] }, each: { pages.append($0["n"] as! Int) })
+        XCTAssertEqual(pages, [1, 2, 3])
+    }
+
     // MARK: - pCloud's search tree
 
     func testPCloudKeepsTheSearchTreeForAWhileAndDropsItOnAChange() async throws {
