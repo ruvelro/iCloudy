@@ -150,7 +150,7 @@ final class TransferWalker {
                     (folder || (old.size != nil && old.modified != nil && old.size == match.size && old.modified == match.modified))
                 } ?? false
             }, keepsMatchName: true)
-            guard case let .use(name, replacing) = decision else {
+            guard case .use(let name, let replacing) = decision else {
                 try edit {
                     $0.completedPaths.insert(key)
                     $0.recordSkip(key, leaf: local.lastPathComponent, folder: folder, bytes: values.fileSize.map(Int64.init))
@@ -233,7 +233,7 @@ final class TransferWalker {
         if let problem = FileNames.problem(with: localName, for: target.account.cloud) { throw CloudError.message(L("No se puede enviar «\(localName)»: \(problem)")) }
         var current = try forgetUncertainFolder(key, parent: parent)
         if current.names[key] == nil {
-            guard case let .use(name, replacing) = try await resolveName(localName, key: key, parent: parent, in: target, folder: file.isFolder) else {
+            guard case .use(let name, let replacing) = try await resolveName(localName, key: key, parent: parent, in: target, folder: file.isFolder) else {
                 try edit { $0.completedPaths.insert(key); $0.recordSkip(key, leaf: localName, folder: file.isFolder, bytes: file.size) }
                 advance(file.size ?? 0)
                 return
@@ -326,7 +326,7 @@ final class TransferWalker {
         let room = NameClaims.local(folder)
         if current.names[key] == nil || (!file.isFolder && !replace && FileManager.default.fileExists(atPath: target.path)) {
             let resolved = try await resolveLocalName(name, in: folder, target: target, room: room, isFolder: file.isFolder)
-            guard case let .use(selectedName, replacing) = resolved.decision else {
+            guard case .use(let selectedName, let replacing) = resolved.decision else {
                 try edit { $0.completedPaths.insert(key); $0.recordSkip(key, leaf: name, folder: file.isFolder, bytes: file.size) }
                 advance(file.size ?? 0)
                 return
