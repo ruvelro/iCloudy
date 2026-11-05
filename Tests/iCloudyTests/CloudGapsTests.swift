@@ -155,8 +155,8 @@ final class CloudGapsTests: XCTestCase {
     func testOneDriveListsWhatICloudyBinnedAndRestoresItByID() async throws {
         let journal = OneDriveBinJournal(url: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json"))
         let accountID = "onedrive-" + UUID().uuidString
-        journal.record(file("A1", "a.txt"), accountID: accountID, now: Date())
-        journal.record(file("B2", "viejo.txt"), accountID: accountID, now: Date().addingTimeInterval(-31 * 86_400))
+        try journal.record(file("A1", "a.txt"), accountID: accountID, now: Date())
+        try journal.record(file("B2", "viejo.txt"), accountID: accountID, now: Date().addingTimeInterval(-31 * 86_400))
         XCTAssertEqual(journal.items(accountID: accountID).map(\.file.id), ["A1"], "Lo de hace más de 30 días ya no está en la papelera")
 
         // The shared journal is what the provider uses; the test cleans up after itself.

@@ -131,7 +131,8 @@ extension Transfer {
                   uncertainFolders: try values.decodeIfPresent(Set<String>.self, forKey: .uncertainFolders) ?? [],
                   names: try values.decodeIfPresent([String: String].self, forKey: .names) ?? [:],
                   replacements: try values.decodeIfPresent([String: String].self, forKey: .replacements) ?? [:],
-                  uploads: try values.decodeIfPresent([String: UploadCheckpoint].self, forKey: .uploads) ?? [:],
+                  // Checkpoints of a newer format only cost a restart of those files, not the whole queue.
+                  uploads: (try? values.decodeIfPresent([String: UploadCheckpoint].self, forKey: .uploads)) ?? [:],
                   verifiedFiles: try values.decodeIfPresent(Int.self, forKey: .verifiedFiles) ?? 0,
                   unverifiedFiles: try values.decodeIfPresent(Int.self, forKey: .unverifiedFiles) ?? 0,
                   exportedFiles: try values.decodeIfPresent(Int.self, forKey: .exportedFiles) ?? 0,

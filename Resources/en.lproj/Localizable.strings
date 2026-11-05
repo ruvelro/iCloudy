@@ -1866,3 +1866,5 @@
 "Perfil" = "Profile";
 "Token de sesión (solo con credenciales temporales)" = "Session token (temporary credentials only)";
 "Estas credenciales caducan el %@; después habrá que volver a conectar la cuenta." = "These credentials expire on %@; after that the account will need connecting again.";
+"«%@» está en la papelera de OneDrive, pero iCloudy no pudo apuntarlo para restaurarlo desde aquí: " = "“%@” is in the OneDrive recycle bin, but iCloudy could not record it to restore it from here: ";
+" Puedes restaurarlo desde la web de OneDrive." = " You can restore it from the OneDrive website.";
