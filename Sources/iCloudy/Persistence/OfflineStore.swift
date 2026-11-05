@@ -166,7 +166,7 @@ final class OfflineStore {
         self.root = root
         self.indexURL = indexURL
         do {
-            if let snapshot = try LocalStore.read(Snapshot.self, from: indexURL) {
+            if let snapshot = try LocalStore.read(StoreEnvelope<Snapshot>.self, from: indexURL)?.items {
                 pins = snapshot.pins
                 entries = Dictionary(snapshot.entries.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
             }
@@ -449,7 +449,7 @@ final class OfflineStore {
     }
     /// Encoded and written off the main thread. A failure is reported when it happens.
     private func write() {
-        StoreWriter.shared.later(Snapshot(pins: pins, entries: Array(entries.values)), to: indexURL) { [weak self] error in
+        StoreWriter.shared.later(StoreEnvelope(Snapshot(pins: pins, entries: Array(entries.values))), to: indexURL) { [weak self] error in
             // Said once per kind of failure: a full disk fails every write, and one notice is enough.
             let text = L("No se pudo guardar la lista de copias sin conexión: \(error.localizedDescription) Los cambios se perderán al cerrar iCloudy.")
             guard let self, text != writeProblem else { return }

@@ -123,9 +123,8 @@ private struct CryptomatorUnlockSheet: View {
         guard !passphrase.isEmpty, !working else { return }
         working = true; problem = nil
         Task {
-            problem = await model.unlockVault(request, passphrase: passphrase, remember: remember)
-            working = false
-            if problem == nil { dismiss() }
+            do { try await model.unlockVault(request, passphrase: passphrase, remember: remember); working = false; dismiss() }
+            catch { working = false; problem = error.localizedDescription }
         }
     }
 }
@@ -177,9 +176,8 @@ private struct CryptomatorCreateSheet: View {
         guard ready else { return }
         working = true; problem = nil
         Task {
-            problem = await model.createVault(request, name: name, passphrase: passphrase, remember: remember)
-            working = false
-            if problem == nil { dismiss() }
+            do { try await model.createVault(request, name: name, passphrase: passphrase, remember: remember); working = false; dismiss() }
+            catch { working = false; problem = error.localizedDescription }
         }
     }
 }

@@ -31,7 +31,7 @@ final class SavedSearches {
 
     init(url: URL = LocalStore.directory.appendingPathComponent("saved-searches.json")) {
         self.url = url
-        do { items = try LocalStore.read([SavedSearch].self, from: url) ?? [] }
+        do { items = try LocalStore.read(StoreEnvelope<[SavedSearch]>.self, from: url)?.items ?? [] }
         catch { failure = L("No se pudieron leer las búsquedas guardadas: \(error.localizedDescription)") }
     }
 
@@ -48,7 +48,7 @@ final class SavedSearches {
     func remove(_ id: SavedSearch.ID) { items.removeAll { $0.id == id }; persist() }
 
     private func persist() {
-        do { try LocalStore.save(items, to: url); failure = nil }
+        do { try LocalStore.save(StoreEnvelope(items), to: url); failure = nil }
         catch { failure = L("No se pudieron guardar las búsquedas: \(error.localizedDescription)") }
     }
 }

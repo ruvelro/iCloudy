@@ -214,7 +214,7 @@ final class DownloadVerificationTests: XCTestCase {
         XCTAssertTrue(failed.detail.contains("suma de verificación"), failed.detail)
         XCTAssertEqual(failed.downloads["."], .failed, "The failed check is kept on the job")
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: output.path), [], "Neither the file nor a .part is left")
-        let saved = try XCTUnwrap(LocalStore.read([Transfer].self, from: queue.storeURL)?.first)
+        let saved = try XCTUnwrap(LocalStore.read(StoreEnvelope<[Transfer]>.self, from: queue.storeURL)?.items.first)
         XCTAssertEqual(saved.downloads["."], .failed, "And it is on disk, not only in memory")
     }
 

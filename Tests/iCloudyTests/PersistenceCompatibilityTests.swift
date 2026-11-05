@@ -2,6 +2,31 @@ import XCTest
 @testable import iCloudy
 
 final class PersistenceCompatibilityTests: XCTestCase {
+    /// Every store now carries `schemaVersion`; a file written before it, a bare list, reads as version 1.
+    func testStoresWrittenBeforeTheVersionFieldReadAsVersionOne() throws {
+        let legacy = Data(#"[{"accountID":"a","direction":"upload","localURL":"file:///tmp/x","state":"paused"}]"#.utf8)
+        let old = try JSONDecoder().decode(StoreEnvelope<[Transfer]>.self, from: legacy)
+        XCTAssertEqual(old.schemaVersion, 1)
+        XCTAssertEqual(old.items.first?.state, .paused)
+        let written = try JSONSerialization.jsonObject(with: JSONEncoder().encode(StoreEnvelope(old.items))) as? [String: Any]
+        XCTAssertEqual(written?["schemaVersion"] as? Int, StoreEnvelope<[Transfer]>.currentVersion)
+        let unknown = Data(#"{"schemaVersion":7,"items":[]}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(StoreEnvelope<[Transfer]>.self, from: unknown).schemaVersion, 7,
+                       "Una versión futura se reconoce como tal")
+    }
+
+    func testErrorsSayWhatKindOfFailureTheyAre() {
+        XCTAssertEqual(CloudError.message("x").kind, .other, "El caso de siempre sigue compilando y no tiene clase")
+        XCTAssertEqual(CloudError.conflict("ya existe").kind, .conflict)
+        XCTAssertEqual(CloudError.conflict("ya existe").localizedDescription, "ya existe")
+        XCTAssertTrue(CloudError.sessionExpired(nil).isSessionExpired)
+        XCTAssertEqual(CloudError.kind(of: ServiceError(status: 404)), .notFound)
+        XCTAssertEqual(CloudError.kind(of: ServiceError(status: 503)), .transient)
+        XCTAssertEqual(CloudError.kind(of: ServiceError(status: 507)), .quota)
+        XCTAssertEqual(CloudError.kind(of: URLError(.networkConnectionLost)), .transient)
+        XCTAssertEqual(CloudError.kind(of: CocoaError(.fileNoSuchFile)), .other)
+    }
+
     /// Up to 0.7 every mirror lived in one `mirrors.json`. Each moves into a file of its own, in the same order, and
     /// the old file stays beside itself, renamed, instead of being read again or deleted.
     @MainActor

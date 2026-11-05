@@ -64,11 +64,11 @@ final class AppearanceStore {
     let url: URL
     private(set) var values: [String: AccountAppearance]
     init(url: URL = LocalStore.directory.appendingPathComponent("account-appearance.json")) throws {
-        self.url = url; values = try LocalStore.read([String: AccountAppearance].self, from: url) ?? [:]
+        self.url = url; values = try LocalStore.read(StoreEnvelope<[String: AccountAppearance]>.self, from: url)?.items ?? [:]
     }
     func save(_ appearance: AccountAppearance, for accountID: String) throws {
         var updated = values; updated[accountID] = try appearance.validated()
-        try LocalStore.save(updated, to: url); values = updated
+        try LocalStore.save(StoreEnvelope(updated), to: url); values = updated
     }
 }
 

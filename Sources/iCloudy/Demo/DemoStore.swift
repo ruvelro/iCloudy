@@ -18,7 +18,7 @@ final class DemoStore {
 
     init(directory: URL = LocalStore.directory.appendingPathComponent("Demo")) throws {
         self.directory = directory
-        entries = try LocalStore.read([String: Entry].self, from: directory.appendingPathComponent("index.json")) ?? [:]
+        entries = try LocalStore.read(StoreEnvelope<[String: Entry]>.self, from: directory.appendingPathComponent("index.json"))?.items ?? [:]
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         if entries.isEmpty {
             let folder = try add(name: "Proyectos", parent: "root", folder: true)
@@ -163,7 +163,7 @@ final class DemoStore {
         guard entries[id] != nil else { throw CloudError.message(L("El archivo demo ya no existe.")) }
         return URL(string: "https://demo.icloudy.invalid/share/\(id)")!
     }
-    private func persist() throws { try LocalStore.save(entries, to: indexURL) }
+    private func persist() throws { try LocalStore.save(StoreEnvelope(entries), to: indexURL) }
 
     /// The demo's upload session: a `.part` file in its folder, named by the checkpoint and appended to on resume.
     /// The generic upload path has already resolved the checkpoint against the source and saved it.

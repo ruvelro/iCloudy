@@ -97,7 +97,7 @@ extension AppModel {
             let clashes = request.files.filter { file in siblings.contains { $0.id != file.id && $0.name.localizedCaseInsensitiveCompare(file.name) == .orderedSame } }
             guard clashes.isEmpty else {
                 let names = clashes.map { "«\($0.name)»" }.joined(separator: ", ")
-                throw CloudError.message(L("En la carpeta de destino ya existe \(names). Renombra antes de mover o copiar."))
+                throw CloudError.conflict(L("En la carpeta de destino ya existe \(names). Renombra antes de mover o copiar."))
             }
             if request.isMove, queue.hasActive(accountID: request.account.id) { throw CloudError.message(L("Pausa las transferencias de esta cuenta antes de mover sus archivos.")) }
             for file in request.files {

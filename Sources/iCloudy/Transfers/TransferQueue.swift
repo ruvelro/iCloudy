@@ -87,7 +87,7 @@ final class TransferQueue {
         self.storeURL = storeURL
         revisionSubscription = stateChanges.sink { [weak self] in self?.revision &+= 1 }
         do {
-            items = try LocalStore.read([Transfer].self, from: storeURL) ?? []
+            items = try LocalStore.read(StoreEnvelope<[Transfer]>.self, from: storeURL)?.items ?? []
             for index in items.indices where [.running, .queued].contains(items[index].state) { items[index].state = .paused; items[index].bytesPerSecond = 0; items[index].hold = nil }
             // The queue comes back paused for the person to decide, as it always has, except for jobs waiting for the
             // schedule or for a cheaper network: those were already decided, and the policy releases them.
@@ -175,12 +175,12 @@ final class TransferQueue {
         if coalesce { dirty = true; scheduleFlush(); return }
         flushTask?.cancel(); flushTask = nil; dirty = false
         guard now else {
-            StoreWriter.shared.later(items, to: storeURL) { [weak self] error in
+            StoreWriter.shared.later(StoreEnvelope(items), to: storeURL) { [weak self] error in
                 self?.persistenceError = L("No se pudo guardar la cola: \(error.localizedDescription)")
             }
             return
         }
-        do { try StoreWriter.shared.now(items, to: storeURL) }
+        do { try StoreWriter.shared.now(StoreEnvelope(items), to: storeURL) }
         catch { persistenceError = L("No se pudo guardar la cola: \(error.localizedDescription)"); throw error }
     }
     private func scheduleFlush() {
@@ -201,7 +201,7 @@ final class TransferQueue {
             return
         }
         dirty = false
-        StoreWriter.shared.later(items, to: storeURL) { [weak self] error in
+        StoreWriter.shared.later(StoreEnvelope(items), to: storeURL) { [weak self] error in
             self?.persistenceError = L("No se pudo guardar la cola: \(error.localizedDescription)")
         }
     }
@@ -470,7 +470,7 @@ final class TransferQueue {
         change(&items[index])
         guard writable else { throw CloudError.message(persistenceError ?? L("La cola no se puede guardar.")) }
         flushTask?.cancel(); flushTask = nil; dirty = false
-        do { try await StoreWriter.shared.write(items, to: storeURL) }
+        do { try await StoreWriter.shared.write(StoreEnvelope(items), to: storeURL) }
         catch { persistenceError = L("No se pudo guardar la cola: \(error.localizedDescription)"); throw error }
         if items.first(where: { $0.id == id })?.state != before { stateChanges.send() }
     }

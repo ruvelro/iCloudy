@@ -18,7 +18,7 @@ final class WorkspaceStore {
     func load() -> ExplorerWorkspace? {
         guard let url, let data = try? Data(contentsOf: url) else { return nil }
         saved = data
-        return try? JSONDecoder().decode(ExplorerWorkspace.self, from: data)
+        return (try? JSONDecoder().decode(StoreEnvelope<ExplorerWorkspace>.self, from: data))?.items
     }
 
     /// Writes a second after the last change: a listing arriving page by page is not worth a write per page.
@@ -27,8 +27,8 @@ final class WorkspaceStore {
     }
 
     func save(_ workspace: ExplorerWorkspace) {
-        guard let url, let data = try? JSONEncoder().encode(workspace), data != saved else { return }
-        do { try LocalStore.save(workspace, to: url); saved = data } catch {}
+        guard let url, let data = try? JSONEncoder().encode(StoreEnvelope(workspace)), data != saved else { return }
+        do { try LocalStore.save(StoreEnvelope(workspace), to: url); saved = data } catch {}
     }
 }
 
