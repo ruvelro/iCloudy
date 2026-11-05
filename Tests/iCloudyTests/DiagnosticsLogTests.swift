@@ -1,19 +1,9 @@
 import XCTest
 @testable import iCloudy
 
-/// A URLProtocol of its own, so these tests never touch the handler other suites install on `StubProtocol`.
-private final class DiagnosticsStub: URLProtocol {
-    static var status = 200
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    override func startLoading() {
-        let headers = Self.status == 429 ? ["Retry-After": "7"] : [:]
-        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: Self.status, httpVersion: nil, headerFields: headers)!,
-                            cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data("{}".utf8))
-        client?.urlProtocolDidFinishLoading(self)
-    }
-    override func stopLoading() {}
+/// Answers every request with `status`, adding the Retry-After that a 429 carries.
+private func serveDiagnostics(status: Int) {
+    StubProtocol.handler = { _ in (status, status == 429 ? ["Retry-After": "7"] : [:], Data("{}".utf8)) }
 }
 
 final class DiagnosticsLogTests: XCTestCase {
@@ -178,11 +168,9 @@ final class DiagnosticsLogTests: XCTestCase {
 
     @MainActor
     func testEveryRequestPassingTheGuardIsSeenWithItsContext() async throws {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [DiagnosticsStub.self]
-        let session = URLSession(configuration: configuration)
+        let session = StubProtocol.session()
         let host = "diag-\(UUID().uuidString.prefix(8).lowercased()).example"
-        DiagnosticsStub.status = 503
+        serveDiagnostics(status: 503)
         let transfer = UUID()
         let context = DiagnosticsContext(account: "dropbox:ana@example.com", provider: "dropbox", transfer: transfer, stage: DiagnosticStage.download)
         let request = URLRequest(url: URL(string: "https://\(host)/2/files/list_folder?access_token=SECRETO")!)
@@ -200,11 +188,9 @@ final class DiagnosticsLogTests: XCTestCase {
 
     @MainActor
     func testRateLimitsAreRetriesAndUploadsBelongToTheDestination() async throws {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [DiagnosticsStub.self]
-        let session = URLSession(configuration: configuration)
+        let session = StubProtocol.session()
         let host = "diag-\(UUID().uuidString.prefix(8).lowercased()).example"
-        DiagnosticsStub.status = 429
+        serveDiagnostics(status: 429)
         let context = DiagnosticsContext(account: "google:origen", provider: "google", transfer: UUID(), stage: DiagnosticStage.transfer,
                                          target: "microsoft:destino", targetProvider: "microsoft")
         var request = URLRequest(url: URL(string: "https://\(host)/rup/sesion-capacidad-0123456789/abc")!)
@@ -216,7 +202,7 @@ final class DiagnosticsLogTests: XCTestCase {
         XCTAssertEqual(event.severity, .retry)
         XCTAssertEqual(event.stage, DiagnosticStage.rateLimit)
         XCTAssertEqual(event.message, "Retry-After 7")
-        DiagnosticsStub.status = 200
+        serveDiagnostics(status: 200)
         let created = URLRequest(url: URL(string: "https://\(host)/upload/created")!)
         Diagnostics.shared.level = .detailed
         defer { Diagnostics.shared.level = .normal }

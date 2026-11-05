@@ -25,6 +25,9 @@ let package = Package(
         // The app, the library and the extension build in the Swift 6 language mode, with complete data-race
         // checking. The tests stay in Swift 5 mode: their stand-in servers share state with network callbacks on
         // purpose, and rewriting them would change no line of what ships.
-        .testTarget(name: "iCloudyTests", dependencies: ["iCloudy"], swiftSettings: [.swiftLanguageMode(.v5)])
+        .testTarget(name: "iCloudyTests", dependencies: ["iCloudy", "iCloudyTestBootstrap"], swiftSettings: [.swiftLanguageMode(.v5)]),
+        // A load-time hook for the test bundle: it installs the per-test isolation (HTTP stubs, preferences, the
+        // Application Support folder) before the first test runs. See Tests/iCloudyTests/TestSupport.swift.
+        .target(name: "iCloudyTestBootstrap", path: "Tests/iCloudyTestBootstrap"),
     ]
 )

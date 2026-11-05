@@ -200,7 +200,7 @@ estricta de concurrencia. Lo nuevo se ha probado con respuestas simuladas, no co
 - Google: una cuenta conectada sin marcar la casilla de acceso a Drive en la pantalla de permisos se rechaza al
   conectar, y una que ya lo estaba pide volver a conectarse en vez de fallar en cada carpeta con «Request had
   insufficient authentication scopes».
-- Detalle completo en [CORRECCIONES-P3-2026-10-01.md](docs/CORRECCIONES-P3-2026-10-01.md).
+- Detalle completo en [CORRECCIONES-P3-2026-10-01.md](docs/historial/CORRECCIONES-P3-2026-10-01.md).
 
 ## 0.5.0 — 19 de septiembre de 2026
 
@@ -213,7 +213,7 @@ proveedor por proveedor. 305 pruebas, todas en verde, sin red: las respuestas de
 - Modelos, persistencia, transporte, servicios de cuentas, coordinación y pantallas separados por responsabilidad.
 - Pruebas adicionales de aislamiento, compatibilidad de datos y respuestas tardías de cuotas.
 - Compilación debug independiente en `dist/debug/iCloudy.app`, manteniendo la versión 0.5.0 y los entitlements de release.
-- Detalles y pasos para depurar en [REFACTOR-0.5.0.md](docs/REFACTOR-0.5.0.md).
+- Detalles y pasos para depurar en [REFACTOR-0.5.0.md](docs/historial/REFACTOR-0.5.0.md).
 
 ### O2 Cloud
 

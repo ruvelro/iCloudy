@@ -9,10 +9,7 @@ final class SharingTests: XCTestCase {
     override func tearDown() { StubProtocol.handler = nil }
 
     private func client(_ cloud: Cloud, options: [String: String] = [:]) -> CloudAPI {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        let account = Account(id: "test", cloud: cloud, name: "Test", email: "ana@example.com", clientID: "client", clientSecret: nil,
-                              serverURL: cloud == .webdav ? "https://nube.example.com/remote.php/dav/files/ana" : nil, bookmark: nil, options: options)
-        return CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "test-token" })
+        makeStubbedClient(cloud, email: "ana@example.com", server: cloud == .webdav ? "https://nube.example.com/remote.php/dav/files/ana" : nil, options: options)
     }
     private func item(_ id: String, folder: Bool = false) -> CloudFile {
         CloudFile(id: id, name: "informe.pdf", mime: folder ? "application/vnd.google-apps.folder" : "application/pdf", size: 1, modified: nil, webURL: nil, isFolder: folder)

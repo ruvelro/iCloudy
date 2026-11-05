@@ -85,7 +85,7 @@ struct TransferPolicy: Equatable {
     /// Below this a suspended download waits so long between turns that the server may give up on it.
     static let minimumLimit: Int64 = 32_000
 
-    static func stored(in defaults: UserDefaults = .standard) -> TransferPolicy {
+    static func stored(in defaults: UserDefaults = Prefs.defaults) -> TransferPolicy {
         func int(_ key: String) -> Int? { defaults.object(forKey: key) as? Int }
         func bool(_ key: String) -> Bool { defaults.object(forKey: key) as? Bool ?? false }
         func limit(_ enabled: String, _ value: String, _ unit: String) -> Int64? {

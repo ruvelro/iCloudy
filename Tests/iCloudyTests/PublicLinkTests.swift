@@ -10,10 +10,7 @@ final class PublicLinkTests: XCTestCase {
     override func tearDown() { StubProtocol.handler = nil }
 
     private func client(_ cloud: Cloud, options: [String: String] = [:]) -> CloudAPI {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        let account = Account(id: "test", cloud: cloud, name: "Test", email: "ana@example.com", clientID: "client", clientSecret: nil,
-                              serverURL: cloud == .webdav ? "https://nube.example.com/remote.php/dav/files/ana" : nil, bookmark: nil, options: options)
-        return CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "test-token" })
+        makeStubbedClient(cloud, email: "ana@example.com", server: cloud == .webdav ? "https://nube.example.com/remote.php/dav/files/ana" : nil, options: options)
     }
     private func item(_ id: String, folder: Bool = false, web: String? = nil) -> CloudFile {
         CloudFile(id: id, name: folder ? "Proyecto" : "informe.pdf", mime: folder ? "application/vnd.google-apps.folder" : "application/pdf",
@@ -349,7 +346,7 @@ final class PublicLinkTests: XCTestCase {
     private func megaClient() -> CloudAPI {
         let store = MemoryCredentials()
         store.stored["mega:ana@ejemplo.com"] = Credential(accessToken: "sesión", refreshToken: "", expires: .distantFuture, secret: MegaCrypto.encode(masterKey))
-        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         let account = Account(id: "mega:ana@ejemplo.com", cloud: .mega, name: "Mega", email: "ana@ejemplo.com", clientID: "", clientSecret: nil)
         return CloudAPI(account: account, session: URLSession(configuration: configuration), credentials: store)
     }

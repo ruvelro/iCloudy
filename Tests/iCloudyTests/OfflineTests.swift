@@ -234,7 +234,7 @@ final class OfflineTests: XCTestCase {
         let source = store.root.deletingLastPathComponent().appendingPathComponent("preview.bin")
         try Data(repeating: 9, count: 30).write(to: source)
         store.cachePreview(remote("p", size: 30), accountID: Account.demo.id, from: source)
-        for _ in 0..<200 where store.cachedBytes == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        try await wait { !(store.cachedBytes == 0) }
         XCTAssertEqual(store.cachedBytes, 30)
         XCTAssertFalse(store.overBudget)
 
@@ -269,7 +269,7 @@ final class OfflineTests: XCTestCase {
         let date = Date(timeIntervalSince1970: 5_000)
         let file = remote("p", size: 5, modified: date)
         store.cachePreview(file, accountID: "a", from: source)
-        for _ in 0..<200 where store.entries.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        try await wait { !(store.entries.isEmpty) }
         let url = try XCTUnwrap(store.localURL(for: file, accountID: "a", acceptChanged: false))
         XCTAssertEqual(try Data(contentsOf: url), Data("vista".utf8))
         XCTAssertNil(store.status(for: file, accountID: "a"), "A cache may be evicted at any time, so it promises nothing")
@@ -292,7 +292,7 @@ final class OfflineTests: XCTestCase {
         preview.didDownload = { file, _, _ in downloaded.append(file.id) }
         demo.offline = true
         preview.open(file: file, account: .demo, client: api)
-        for _ in 0..<300 where preview.phase == .loading { try await Task.sleep(for: .milliseconds(10)) }
+        try await wait { !(preview.phase == .loading) }
         XCTAssertEqual(preview.phase, .ready, "The network is down, and the copy on this Mac is enough")
         XCTAssertEqual(preview.text, "sin red")
         XCTAssertTrue(downloaded.isEmpty, "A local copy is not reported as a new download")
@@ -302,7 +302,7 @@ final class OfflineTests: XCTestCase {
         demo.offline = false
         let other = try demo.add(name: "otra.txt", parent: "root", content: Data("con red".utf8))
         preview.open(file: try XCTUnwrap(demo.file(other)), account: .demo, client: api)
-        for _ in 0..<300 where preview.phase == .loading { try await Task.sleep(for: .milliseconds(10)) }
+        try await wait { !(preview.phase == .loading) }
         XCTAssertEqual(preview.phase, .ready)
         XCTAssertEqual(downloaded, [other])
         preview.close()

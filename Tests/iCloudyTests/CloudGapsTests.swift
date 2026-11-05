@@ -6,13 +6,9 @@ import XCTest
 @MainActor
 final class CloudGapsTests: XCTestCase {
     private func client(_ cloud: Cloud, server: String? = nil, flavor: String? = nil, credentials: CredentialStore? = nil, id: String = "gap") -> CloudAPI {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
         var options: [String: String] = cloud == .pcloud ? ["apiHost": "eapi.pcloud.com"] : [:]
         if let flavor { options["flavor"] = flavor }
-        let account = Account(id: id, cloud: cloud, name: "Prueba", email: "ana@example.com", clientID: "client", clientSecret: nil,
-                              serverURL: server, bookmark: nil, options: options)
-        if let credentials { return CloudAPI(account: account, session: URLSession(configuration: config), credentials: credentials) }
-        return CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "test-token" })
+        return makeStubbedClient(stubbedAccount(cloud, id: id, name: "Prueba", email: "ana@example.com", server: server, options: options), credentials: credentials)
     }
     private func file(_ id: String, _ name: String, folder: Bool = false, size: Int64? = 10) -> CloudFile {
         CloudFile(id: id, name: name, mime: folder ? "application/vnd.google-apps.folder" : "application/octet-stream", size: folder ? nil : size,
@@ -195,7 +191,7 @@ final class CloudGapsTests: XCTestCase {
     private func s3(_ credential: Credential) -> CloudAPI {
         let account = S3Authentication.account(.aws, endpoint: URLComponents(string: "https://s3.eu-west-1.amazonaws.com")!, region: "eu-west-1",
                                                bucket: "fotos", addressing: .path, accessKey: credential.accessToken)
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let config = StubProtocol.configuration()
         return CloudAPI(account: account, session: URLSession(configuration: config), credentials: Keys(credential))
     }
 

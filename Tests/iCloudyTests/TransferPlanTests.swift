@@ -113,7 +113,7 @@ final class TransferPlanTests: XCTestCase {
                 return [child]
             }, localFree: nil)
         }
-        try await Task.sleep(for: .milliseconds(30))
+        try await wait { calls.value == 1 }
         task.cancel()
         do { _ = try await task.value; XCTFail("A cancelled plan does not finish") } catch is CancellationError {}
         XCTAssertEqual(calls.value, 1)
@@ -124,12 +124,12 @@ final class TransferPlanTests: XCTestCase {
         var started: [TransferPlan?] = []
         // Small: starts by itself, without ever showing the sheet.
         planner.begin(title: "x", compute: { _ in var plan = TransferPlan(kind: .upload); plan.files = 2; return plan }, start: { started.append($0) })
-        for _ in 0..<100 where started.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        try await wait { !started.isEmpty }
         XCTAssertEqual(started.count, 1); XCTAssertEqual(started.first??.files, 2)
         XCTAssertNil(planner.session)
         // Large: waits for an answer.
         planner.begin(title: "y", compute: { _ in var plan = TransferPlan(kind: .upload); plan.files = 500; return plan }, start: { started.append($0) })
-        for _ in 0..<100 where planner.session?.plan == nil { try await Task.sleep(for: .milliseconds(5)) }
+        try await wait { planner.session?.plan != nil }
         XCTAssertEqual(planner.session?.shown, true)
         XCTAssertEqual(started.count, 1, "Nothing starts before Empezar")
         planner.confirm(dontAskAgain: false)
@@ -139,10 +139,10 @@ final class TransferPlanTests: XCTestCase {
             progress(PlanProgress(files: 7))
             try await Task.sleep(for: .seconds(5)); return TransferPlan(kind: .upload)
         }, start: { started.append($0) })
-        for _ in 0..<100 where planner.session?.progress.files != 7 { try await Task.sleep(for: .milliseconds(5)) }
+        try await wait { planner.session?.progress.files == 7 }
         planner.cancel()
-        try await Task.sleep(for: .milliseconds(20))
-        XCTAssertNil(planner.session); XCTAssertEqual(started.count, 2)
+        try await wait { planner.session == nil }
+        XCTAssertEqual(started.count, 2)
     }
 
     // MARK: - Seeds match the queue's keys
@@ -158,7 +158,7 @@ final class TransferPlanTests: XCTestCase {
         let queue = TransferQueue(storeURL: root.appendingPathComponent("queue.json"))
         queue.client = { _ in CloudAPI(account: .demo, demo: demo) }
         try queue.add([job])
-        for _ in 0..<500 where queue.isWorking || queue.items.first?.finished != true { try await Task.sleep(for: .milliseconds(10)) }
+        try await wait { !queue.isWorking && queue.items.first?.finished == true }
         let done = try XCTUnwrap(queue.items.first)
         XCTAssertEqual(done.state, .completed, done.detail)
         XCTAssertEqual(Set(done.report.keys), Set(plan.seeds[0].keys), "The run fills in the very lines the plan wrote")
@@ -180,7 +180,7 @@ final class TransferPlanTests: XCTestCase {
         let queue = TransferQueue(storeURL: root.appendingPathComponent("queue.json"))
         queue.client = { _ in CloudAPI(account: .demo, demo: demo) }
         try queue.add([job])
-        for _ in 0..<500 where queue.isWorking || queue.items.first?.finished != true { try await Task.sleep(for: .milliseconds(10)) }
+        try await wait { !queue.isWorking && queue.items.first?.finished == true }
         let done = try XCTUnwrap(queue.items.first)
         XCTAssertEqual(done.state, .completed, done.detail)
         XCTAssertEqual(Set(done.report.keys), Set(plan.seeds[0].keys))

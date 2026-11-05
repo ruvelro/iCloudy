@@ -17,7 +17,7 @@ Una extensión File Provider (`NSFileProviderReplicatedExtension`) que enseña c
 Tanto el App Group como el grupo de acceso al Llavero exigen un identificador de equipo de Apple: sin él, macOS no concede esos permisos y la extensión no tiene forma de saber qué cuentas hay ni con qué credenciales entrar. Por eso la extensión **solo se compila y se incrusta en el `.app` cuando `ICLOUDY_APP_GROUP` indica el grupo**:
 
 ```bash
-ICLOUDY_APP_GROUP=group.com.ejemplo.icloudy ICLOUDY_SIGNING_IDENTITY="Developer ID Application: …" Scripts/build-app.sh
+ICLOUDY_APP_GROUP=group.com.ejemplo.icloudy ICLOUDY_SIGNING_IDENTITY="Developer ID Application: …" scripts/build-app.sh
 ```
 
 Sin esa variable, el `.app` es exactamente el de antes y el ajuste del Finder aparece desactivado con la explicación. Con ella, el script copia el binario a `Contents/PlugIns/iCloudyFileProvider.appex`, le da su `Info.plist` (identificador `<app>.FileProvider`, punto de extensión `com.apple.fileprovider-nonui`, clase principal `iCloudyFileProvider.FileProviderExtension`) y firma la extensión y la app con el grupo en ambos.
