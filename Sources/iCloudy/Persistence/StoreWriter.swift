@@ -51,6 +51,18 @@ final class StoreWriter: @unchecked Sendable {
         }
     }
 
+    /// Writes in this file's turn and returns once the bytes are on disk, without holding the caller's thread. Never
+    /// skipped for a newer write: whoever waits for this is about to act on the state being durable.
+    func write<T: Encodable & Sendable>(_ value: T, to url: URL) async throws {
+        let (_, queue) = stamp(url)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            queue.async {
+                do { try LocalStore.save(value, to: url); continuation.resume() }
+                catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
     /// Runs `work` in this file's turn. A seam for tests that need a file's queue to be busy.
     func enqueue(on url: URL, _ work: @escaping @Sendable () -> Void) {
         lock.withLock { queueLocked(url) }.async(execute: work)
