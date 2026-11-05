@@ -198,6 +198,26 @@ final class ReviewFixesTests: XCTestCase {
         XCTAssertLessThanOrEqual(OAuth.statelessWindow, 300)
     }
 
+    // MARK: - Dropbox's bin, a folder at a time
+
+    func testDropboxsBinIsBrowsedAFolderAtATimeInsteadOfWalkingTheAccount() async throws {
+        var bodies: [String] = []
+        StubProtocol.handler = { request in
+            bodies.append(requestBody(request))
+            return (200, [:], Data(#"{"entries":[{".tag":"deleted","name":"viejo.txt","path_lower":"/fotos/viejo.txt"},{".tag":"folder","name":"Viaje","path_lower":"/fotos/viaje"},{".tag":"file","name":"vivo.txt","path_lower":"/fotos/vivo.txt","size":1}],"has_more":false}"#.utf8))
+        }
+        let api = client(.dropbox)
+        let listed = try await api.list(parent: Collection.trashFolderPrefix + "/fotos")
+        XCTAssertEqual(listed.map(\.id), [Collection.trashFolderPrefix + "/fotos/viaje", "/fotos/viejo.txt"], "Lo borrado y las carpetas por las que seguir")
+        XCTAssertTrue(listed[0].isFolder)
+        let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(bodies[0].utf8)) as? [String: Any])
+        XCTAssertEqual(body["path"] as? String, "/fotos")
+        XCTAssertEqual(body["include_deleted"] as? Bool, true)
+        XCTAssertNil(body["recursive"], "Nunca la cuenta entera")
+        do { try await api.restore(file: listed[0]); XCTFail("Una carpeta viva no se restaura") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("no está borrada"), error.localizedDescription) }
+    }
+
     // MARK: - Explicit FTPS
 
     func testEachExplicitFTPSConnectionCarriesItsOwnServerName() {

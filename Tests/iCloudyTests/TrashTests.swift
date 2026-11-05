@@ -157,7 +157,7 @@ final class TrashTests: XCTestCase {
         let api = client(.dropbox)
         let listed = try await api.list(parent: Collection.trash.rootID)
         XCTAssertTrue(seen[0].body.contains(#""include_deleted":true"#), seen[0].body)
-        XCTAssertTrue(seen[0].body.contains(#""recursive":true"#), "Dropbox solo entrega los borrados recorriendo toda la cuenta")
+        XCTAssertFalse(seen[0].body.contains(#""recursive":true"#), "La papelera se recorre carpeta a carpeta, no la cuenta entera")
         XCTAssertEqual(listed.map(\.id), ["/muerto.txt"], "Lo vivo no es papelera")
 
         try await api.restore(file: item("/muerto.txt"))

@@ -62,7 +62,10 @@ extension DropboxProvider {
     }
 
     func dropboxList(parent: String, onPage: (([CloudFile]) -> Void)?) async throws -> [CloudFile] {
-        if parent == Collection.trash.rootID { return try await dropboxListDeleted(onPage: onPage) }
+        if parent == Collection.trash.rootID { return try await dropboxListDeleted(in: "", onPage: onPage) }
+        if parent.hasPrefix(Collection.trashFolderPrefix) {
+            return try await dropboxListDeleted(in: String(parent.dropFirst(Collection.trashFolderPrefix.count)), onPage: onPage)
+        }
         var files: [CloudFile] = []
         var result = try await dropboxRPC("files/list_folder", ["path": dropboxPath(parent), "limit": 1000], repeatable: true)
         while true {
@@ -80,13 +83,21 @@ extension DropboxProvider {
         guard (value[".tag"] as? String) == "deleted", let name = value["name"] as? String, let path = value["path_lower"] as? String else { return nil }
         return CloudFile(id: path, name: name, mime: mime(forName: name), size: nil, modified: nil, webURL: nil, isFolder: false)
     }
-    /// Dropbox has no bin of its own to list: deleted entries are handed out among the live ones when asked for, and
-    /// only for the whole account at once. Pages are shown as they arrive because a big account has many of them.
-    func dropboxListDeleted(onPage: (([CloudFile]) -> Void)?) async throws -> [CloudFile] {
+    /// Dropbox has no bin of its own to list: `list_folder` with `include_deleted` hands deleted entries out among
+    /// the live ones of one folder. Asking that recursively for the whole account, as this once did, walked every
+    /// file of it on each visit to the bin. Now the bin is browsed a folder at a time, the way dropbox.com shows
+    /// deleted files: what was deleted here, and the live folders to look inside. Live files are left out.
+    func dropboxListDeleted(in path: String, onPage: (([CloudFile]) -> Void)?) async throws -> [CloudFile] {
         var files: [CloudFile] = []
-        var result = try await dropboxRPC("files/list_folder", ["path": "", "recursive": true, "include_deleted": true, "limit": 2000], repeatable: true)
+        var result = try await dropboxRPC("files/list_folder", ["path": path, "include_deleted": true, "limit": 2000], repeatable: true)
         while true {
-            files += (result["entries"] as? [[String: Any]] ?? []).compactMap(Self.dropboxDeleted)
+            for entry in result["entries"] as? [[String: Any]] ?? [] {
+                if let deleted = Self.dropboxDeleted(entry) { files.append(deleted) }
+                else if entry[".tag"] as? String == "folder", let name = entry["name"] as? String, let path = entry["path_lower"] as? String {
+                    files.append(CloudFile(id: Collection.trashFolderPrefix + path, name: name, mime: "application/vnd.google-apps.folder",
+                                           size: nil, modified: nil, webURL: nil, isFolder: true))
+                }
+            }
             guard result["has_more"] as? Bool == true, let cursor = result["cursor"] as? String else { break }
             onPage?(Self.sorted(files))
             result = try await dropboxRPC("files/list_folder/continue", ["cursor": cursor], repeatable: true)
@@ -95,6 +106,7 @@ extension DropboxProvider {
     }
     /// A file comes back by restoring its last revision. Folders have no revisions and no restoration in the API.
     func dropboxRestore(file: CloudFile) async throws {
+        try Self.refuseBrowsingFolder(file)
         let revisions: [String: Any]
         do { revisions = try await dropboxRPC("files/list_revisions", ["path": file.id, "mode": "path", "limit": 1], repeatable: true) }
         catch let error as ServiceError where error.status == 409 {
@@ -107,10 +119,17 @@ extension DropboxProvider {
     }
     /// Purging is a Business feature; a personal account gets a refusal, which is passed on with the reason.
     func dropboxDeletePermanently(file: CloudFile) async throws {
+        try Self.refuseBrowsingFolder(file)
         do { _ = try await dropboxRPC("files/permanently_delete", ["path": file.id]) }
         catch let error as ServiceError where [403, 409].contains(error.status) {
             throw CloudError.message(L("Dropbox solo permite el borrado definitivo en cuentas Business. En esta cuenta los archivos borrados caducan solos al cabo de 30 días, o se eliminan desde dropbox.com."))
         }
+    }
+
+    /// A live folder shown in the bin only to be looked inside: there is nothing of it to restore or purge.
+    static func refuseBrowsingFolder(_ file: CloudFile) throws {
+        guard file.id.hasPrefix(Collection.trashFolderPrefix) else { return }
+        throw CloudError.message(L("«\(file.name)» no está borrada: aparece en la papelera para que puedas abrirla y ver lo que se borró dentro."))
     }
 
     func dropboxCreateFolder(name: String, parent: String) async throws -> String {
