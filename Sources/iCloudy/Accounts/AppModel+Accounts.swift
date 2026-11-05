@@ -337,7 +337,7 @@ extension AppModel {
         do {
             if demo == nil { demo = try DemoStore() }
             if !accounts.contains(where: \.isDemo) { accounts.append(.demo) }
-            UserDefaults.standard.set(true, forKey: "demoEnabled")
+            Prefs.defaults.set(true, forKey: "demoEnabled")
             if shouldSelect { select(Account.demo.id); showConnect = false }
         } catch { self.error = error.localizedDescription }
     }
@@ -412,7 +412,7 @@ extension AppModel {
         do {
             if let shown = preview.model.account, leaving.contains(where: { $0.id == shown.id }) { preview.close() }
             let updated = accounts.filter { member in !leaving.contains { $0.id == member.id } }
-            if account.isDemo { UserDefaults.standard.set(false, forKey: "demoEnabled") }
+            if account.isDemo { Prefs.defaults.set(false, forKey: "demoEnabled") }
             else { try Vault.save(updated.filter { !$0.isDemo }, key: "accounts"); try Vault.delete(key: account.id) }
             for member in leaving { forget(member) }
             accounts = updated

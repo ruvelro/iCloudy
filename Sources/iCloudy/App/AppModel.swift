@@ -112,7 +112,7 @@ final class AppModel {
     /// The last one chosen is also what a brand-new tab starts with.
     var viewMode: String {
         get { workspace.current.viewMode }
-        set { workspace.current.viewMode = newValue; UserDefaults.standard.set(newValue, forKey: "viewMode") }
+        set { workspace.current.viewMode = newValue; Prefs.defaults.set(newValue, forKey: "viewMode") }
     }
     var sortMode: String {
         get { workspace.current.sortMode }
@@ -208,7 +208,7 @@ final class AppModel {
     func updateVisibleFiles() { workspace.current.updateVisibleFiles() }
     /// A tab as the explorer opens one from nothing: no account yet, and the list drawn the way it was drawn last.
     static func newBrowser() -> BrowserState {
-        BrowserState(viewMode: UserDefaults.standard.string(forKey: "viewMode") ?? "list")
+        BrowserState(viewMode: Prefs.defaults.string(forKey: "viewMode") ?? "list")
     }
     init() {
         do { let store = try AppearanceStore(); appearanceStore = store; appearances = store.values }
@@ -220,7 +220,7 @@ final class AppModel {
         // The tabs of the last session, put right against the accounts once those have been read.
         if let restored = workspaceStore.load() { workspace = restored }
         workspaceStore.watch(workspaceChanges.eraseToAnyPublisher())
-        if UserDefaults.standard.bool(forKey: "demoEnabled") { enableDemo(select: false) }
+        if Prefs.defaults.bool(forKey: "demoEnabled") { enableDemo(select: false) }
         queue.client = { [weak self] id in
             guard let self, let account = self.accounts.first(where: { $0.id == id }) ?? self.cryptomator.account(id) else {
                 throw CloudError.message(CryptomatorVaults.isVaultAccount(id) ? L("Desbloquea la bóveda de esta transferencia para continuar.") : L("Vuelve a conectar la cuenta de esta transferencia."))
