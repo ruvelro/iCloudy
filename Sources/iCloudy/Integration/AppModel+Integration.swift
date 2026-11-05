@@ -49,7 +49,7 @@ extension AppModel {
     /// Shared by the search view, the menu bar and the Shortcuts action.
     func startGlobalSearch(_ term: String) {
         preview.close()
-        showGlobalSearch = true
+        ui.showGlobalSearch = true
         globalSearch.query = String(term.prefix(256))
         // Providers without a search API would only add an error row to every search.
         let submittedFilters = globalSearch.filters
@@ -72,7 +72,7 @@ extension AppModel {
         NSApp.activate(ignoringOtherApps: true)
         if entry.file.isFolder { openFolder(accountID: account.id, folderID: entry.file.id) }
         else {
-            showGlobalSearch = false
+            ui.showGlobalSearch = false
             selectedAccountID = account.id
             do { preview.show(file: entry.file, account: account, client: try client(account)) }
             catch { self.error = error.localizedDescription }
@@ -186,7 +186,7 @@ extension AppModel {
     func openFavorite(_ favorite: Favorite) {
         guard accounts.contains(where: { $0.id == favorite.accountID }) else { error = L("Conecta la cuenta de este favorito."); return }
         preview.close()
-        showGlobalSearch = false; globalSearch.cancel()
+        ui.showGlobalSearch = false; globalSearch.cancel()
         go(to: BrowserLocation(accountID: favorite.accountID, collection: favorite.collection, path: favorite.path + (favorite.file.isFolder ? [favorite.file] : [])))
     }
 }

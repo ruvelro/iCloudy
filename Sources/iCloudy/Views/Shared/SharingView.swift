@@ -14,7 +14,7 @@ extension AppModel {
             error = L("\(account.cloud.title) no permite compartir con personas desde iCloudy. Usa el enlace público o la web del proveedor.")
             return
         }
-        sharing = SharingRequest(file: file, account: account)
+        ui.sharing = SharingRequest(file: file, account: account)
     }
 }
 
@@ -87,7 +87,7 @@ struct SharingView: View {
             }
             HStack {
                 Spacer()
-                Button("Cerrar") { model.sharing = nil; dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cerrar") { model.ui.sharing = nil; dismiss() }.keyboardShortcut(.cancelAction)
             }
         }
         .padding(24).frame(width: 520)

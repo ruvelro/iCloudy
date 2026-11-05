@@ -111,7 +111,7 @@ struct GlobalSearchView: View {
         }
         .navigationTitle("Buscar en todas las nubes")
         .toolbar {
-            Button("Volver al explorador") { model.showGlobalSearch = false; search.cancel(); model.preview.close() }
+            Button("Volver al explorador") { model.ui.showGlobalSearch = false; search.cancel(); model.preview.close() }
             Button { if let selectedHit { model.previewSearchHit(selectedHit) } } label: { Image(systemName: "eye") }.disabled(selectedHit == nil).help("Vista previa (Espacio)")
                 .accessibilityLabel("Vista previa")
         }

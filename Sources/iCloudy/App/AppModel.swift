@@ -26,8 +26,6 @@ final class AppModel {
     /// The workspace as a stream, for the store that saves it and the offline refresh that watches the open folder.
     @ObservationIgnored lazy var workspaceChanges = CurrentValueSubject<ExplorerWorkspace, Never>(workspace)
     @ObservationIgnored let workspaceStore = WorkspaceStore()
-    /// A move from one pane to another account, waiting for confirmation.
-    var pendingPaneMove: PaneMoveRequest?
     let paneTransfers = PaneTransfers()
     var selectedAccountID: String? {
         get { workspace.current.accountID }
@@ -55,49 +53,17 @@ final class AppModel {
         get { workspace.current.selection }
         set { workspace.current.selection = newValue }
     }
-    var error: String?
-    /// Non-error feedback, e.g. "link copied". Shown in a plain alert.
-    var info: String?
-    /// SwiftUI presents one alert at a time, so an error and a piece of good news arriving together meant the second
-    /// one never appeared at all. They share a presentation now: the error goes first and the other waits its turn.
-    var alertTitle: String { error != nil ? L("No se pudo completar la operación") : L("iCloudy") }
-    var alertMessage: String? { error ?? info }
-    func dismissAlert() { if error != nil { error = nil } else { info = nil } }
-    /// File awaiting confirmation before a public link is created for it.
-    var pendingShare: (file: CloudFile, account: Account)?
-    /// S3 file awaiting the choice of how long its presigned link lives.
-    var pendingTemporaryLink: (file: CloudFile, account: Account)?
-    /// Items awaiting confirmation before being sent to the provider's trash.
-    var pendingTrash: [CloudFile]?
-    /// The item whose sharing sheet is open.
-    var sharing: SharingRequest?
-    /// The item whose public links sheet is open, and the account whose list of every link is open.
-    var publicLinkManager: PublicLinksRequest?
-    var linkInventory: Account?
-    /// The file whose versions sheet is open.
-    var versionHistory: VersionsRequest?
-    /// Items awaiting confirmation before being deleted for good, from the trash or straight from the tree.
-    var pendingPurge: [CloudFile]?
-    /// True while the confirmation to empty the whole trash is showing.
-    var pendingEmptyTrash = false
-    /// A selection whose new names are being chosen.
-    var batchRename: BatchRenameRequest?
-    /// Move or copy in progress of being targeted; drives the folder picker sheet.
-    var relocation: Relocation?
-    /// Cross-cloud transfer waiting for its destination account.
-    var crossCloud: CrossCloudRequest?
-    /// Self-hosted provider whose credentials form is open, if any.
-    var serverLogin: Cloud?
-    /// The account that form was opened to reconnect, so it arrives with its address and user already written.
-    /// Retyping a NAS address from memory to fix a session is a poor way to ask somebody for a password.
-    var reconnecting: Account?
-    /// True while the advanced sheet for shared drives and document libraries is open.
-    /// Host of the O2 account being connected, which also drives the sign-in window.
-    var o2Login: O2LoginRequest?
-    var showAdvanced = false
-    var connecting = false
-    var connectionError: String?
-    var showConnect = false
+    /// Alerts, confirmations and sheets: the window's state, kept apart from the model's.
+    let ui = ExplorerPresentation()
+    /// The model reports what went wrong, and what went well, through these two; the window shows them.
+    var error: String? {
+        get { ui.error }
+        set { ui.error = newValue }
+    }
+    var info: String? {
+        get { ui.info }
+        set { ui.info = newValue }
+    }
     var search: String {
         get { workspace.current.search }
         set { workspace.current.search = newValue }
@@ -107,8 +73,6 @@ final class AppModel {
     var favorites: [Favorite] { favoriteStore.items }
     /// Filtered and sorted once per change of `files`, `search` or `sortMode`, not on every render.
     var visibleFiles: [CloudFile] { workspace.current.visibleFiles }
-    var showGlobalSearch = false
-    var appearanceAccount: Account?
     var appearances: [String: AccountAppearance] = [:]
     /// Read through `subsystems`, so a view showing it redraws when a quota arrives.
     var storageQuotas: [String: StorageQuotaState] { _ = subsystems; return quotas.states }
@@ -121,9 +85,6 @@ final class AppModel {
         get { workspace.current.sortMode }
         set { workspace.current.sortMode = newValue }
     }
-    var showNameDialog = false
-    var editName = ""
-    var editingFile: CloudFile?
     var demoOffline = false { didSet { demo?.offline = demoOffline } }
     let queue = TransferQueue()
     let remoteCopies = RemoteCopies()

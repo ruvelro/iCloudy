@@ -142,7 +142,7 @@ extension AppModel {
             enqueueCrossCloud(files, from: from, to: to, parent: target.folderID, destinationPath: target.path)
         case .crossCloud(true):
             guard let from = account(of: source), let to = account(of: target) else { return }
-            pendingPaneMove = PaneMoveRequest(files: files, source: from, target: to, parent: target.folderID, destinationPath: target.path)
+            ui.pendingPaneMove = PaneMoveRequest(files: files, source: from, target: to, parent: target.folderID, destinationPath: target.path)
         }
     }
 

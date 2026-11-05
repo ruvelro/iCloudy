@@ -41,7 +41,7 @@ struct MenuBarContent: View {
         Button("Abrir iCloudy") { activate() }
         Button("Subir el portapapeles…") { activate(); model.uploadFromPasteboard() }
             .disabled(!model.canWrite)
-        Button("Buscar en todas las nubes") { activate(); model.preview.close(); model.showGlobalSearch = true }
+        Button("Buscar en todas las nubes") { activate(); model.preview.close(); model.ui.showGlobalSearch = true }
         if !model.savedSearches.items.isEmpty {
             Menu("Búsquedas guardadas") {
                 ForEach(model.savedSearches.items) { item in Button(item.name) { activate(); model.runSavedSearch(item) } }

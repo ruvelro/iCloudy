@@ -23,7 +23,7 @@ extension AppModel {
 
     static func selected(_ ids: Set<String>, among visible: [CloudFile]) -> [CloudFile] { visible.filter { ids.contains($0.id) } }
 
-    func select(_ id: String?) { preview.close(); globalSearch.cancel(); showGlobalSearch = false; go(to: BrowserLocation(accountID: id)) }
+    func select(_ id: String?) { preview.close(); globalSearch.cancel(); ui.showGlobalSearch = false; go(to: BrowserLocation(accountID: id)) }
 
     /// Takes a tab somewhere else, the focused one unless told otherwise. Everything that changes where a tab stands
     /// goes through here, so the listing, the filter and the selection of the old place never leak into the new one.
@@ -65,7 +65,7 @@ extension AppModel {
                 let trail = try await client(account).folderTrail(id: target)
                 try Task.checkCancellation()
                 guard isAwaited(request, by: tab) else { return }
-                preview.close(); globalSearch.cancel(); showGlobalSearch = false
+                preview.close(); globalSearch.cancel(); ui.showGlobalSearch = false
                 go(to: BrowserLocation(accountID: account.id, collection: .files, path: trail), tab: tab)
             } catch {
                 guard isAwaited(request, by: tab) else { return }
@@ -108,7 +108,7 @@ extension AppModel {
             moved = step(&tab) { place in place.accountID.map(connected.contains) ?? false }
         }
         guard moved else { return }
-        preview.close(); globalSearch.cancel(); showGlobalSearch = false
+        preview.close(); globalSearch.cancel(); ui.showGlobalSearch = false
         reload()
     }
 

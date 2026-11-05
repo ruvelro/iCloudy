@@ -103,16 +103,16 @@ extension AppModel {
     /// Connects a folder of this Mac or of a mounted volume. macOS does the SMB, AFP or NFS work; iCloudy only needs
     /// the user to point at the folder once, which is also what grants access under the sandbox.
     func connectVolume() async {
-        guard !connecting else { return }
-        connectionError = nil
+        guard !ui.connecting else { return }
+        ui.connectionError = nil
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true; panel.canChooseFiles = false
         panel.allowsMultipleSelection = false; panel.canCreateDirectories = false
         panel.prompt = L("Conectar")
         panel.message = L("Elige la carpeta o el volumen que quieres usar como nube. Para un recurso de red, conéctalo antes en el Finder con ⌘K.")
         guard await panel.begin() == .OK, let folder = panel.url else { return }
-        connecting = true
-        defer { connecting = false }
+        ui.connecting = true
+        defer { ui.connecting = false }
         do {
             let standardized = folder.standardizedFileURL
             let values = try? standardized.resourceValues(forKeys: [.volumeNameKey, .volumeIsRemovableKey])
@@ -122,8 +122,8 @@ extension AppModel {
                                   clientID: "", clientSecret: nil, serverURL: standardized.path,
                                   bookmark: try TransferQueue.bookmark(folder))
             try directory.adopt(account, credential: nil)
-            select(account.id); showConnect = false
-        } catch { connectionError = error.localizedDescription }
+            select(account.id); ui.showConnect = false
+        } catch { ui.connectionError = error.localizedDescription }
     }
 
     /// Adds the shared drive as its own account. It borrows the credential of the account it came from, so there is no
@@ -132,8 +132,8 @@ extension AppModel {
         let account = Account.scoped(to: drive.id, named: drive.name, from: parent)
         do {
             try directory.adopt(account, credential: nil)
-            showAdvanced = false
-            select(account.id); showConnect = false
+            ui.showAdvanced = false
+            select(account.id); ui.showConnect = false
         } catch { self.error = error.localizedDescription }
     }
 
@@ -141,13 +141,13 @@ extension AppModel {
     /// went; the work itself, shared with the silent renewals, is the keeper's.
     func completeO2(host: String, validationKey: String, cookies: [HTTPCookie], userAgent: String?,
                     sso: [HTTPCookie] = [], webStore: UUID? = nil) async {
-        connectionError = nil; connecting = true
-        defer { connecting = false }
+        ui.connectionError = nil; ui.connecting = true
+        defer { ui.connecting = false }
         do {
             guard let account = try await o2.complete(host: host, validationKey: validationKey, cookies: cookies,
                                                       userAgent: userAgent, sso: sso, webStore: webStore) else { return }
-            select(account.id); showConnect = false
-        } catch { connectionError = error.localizedDescription }
+            select(account.id); ui.showConnect = false
+        } catch { ui.connectionError = error.localizedDescription }
     }
 
     /// A sign-in window has closed. Its store stays only if an account came out of it.
@@ -162,9 +162,9 @@ extension AppModel {
     /// Connects a server the user hosts: WebDAV or FTP. The password goes straight to the Keychain and never leaves
     /// this Mac except to that server.
     func connectServer(cloud: Cloud, server: String, username: String, password: String, flavor: String? = nil, key: SFTPKeyMaterial? = nil) async {
-        guard !connecting else { return }
-        connectionError = nil; connecting = true
-        defer { connecting = false }
+        guard !ui.connecting else { return }
+        ui.connectionError = nil; ui.connecting = true
+        defer { ui.connecting = false }
         do {
             let result: (Account, Credential)
             switch cloud {
@@ -178,16 +178,16 @@ extension AppModel {
             var (account, credential) = result
             if let flavor { account.options["flavor"] = flavor }
             try directory.adopt(account, credential: credential)
-            serverLogin = nil; reconnecting = nil
-            select(account.id); showConnect = false
-        } catch { connectionError = error.localizedDescription }
+            ui.serverLogin = nil; ui.reconnecting = nil
+            select(account.id); ui.showConnect = false
+        } catch { ui.connectionError = error.localizedDescription }
     }
 
     /// Starts the provider's sign-in for the same cloud; signing in with the same identity replaces the expired session.
     /// Reconnecting has to take the same road the account was created by. Sending a provider that never used OAuth
     /// down the OAuth path produced a message about configuration that had nothing to do with the problem.
     func reconnect(_ account: Account) async {
-        connectionError = nil
+        ui.connectionError = nil
         switch account.cloud {
         case .volume:
             await connectVolume()
@@ -195,17 +195,17 @@ extension AppModel {
             // These two sign in from inside the connection sheet, so it has to be on screen to present them. The
             // sheet is opened first and the form a moment later: presenting both in the same turn is a nesting
             // SwiftUI sometimes drops on the floor, leaving a connection sheet and no form.
-            reconnecting = account
-            showConnect = true
+            ui.reconnecting = account
+            ui.showConnect = true
             let host = account.options["host"] ?? O2SessionKeeper.defaultHost
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(120))
-                if cloud.usesWebLogin { self.o2Login = O2LoginRequest(host: host) } else { self.serverLogin = cloud }
+                if cloud.usesWebLogin { self.ui.o2Login = O2LoginRequest(host: host) } else { self.ui.serverLogin = cloud }
             }
         default:
             await connect(cloud: account.cloud)
         }
-        if let message = connectionError, !showConnect { error = message; connectionError = nil }
+        if let message = ui.connectionError, !ui.showConnect { error = message; ui.connectionError = nil }
     }
 
     func enableDemo(select shouldSelect: Bool = true) {
@@ -213,7 +213,7 @@ extension AppModel {
             if demo == nil { demo = try DemoStore() }
             if !accounts.contains(where: \.isDemo) { directory.accounts.append(.demo) }
             UserDefaults.standard.set(true, forKey: "demoEnabled")
-            if shouldSelect { select(Account.demo.id); showConnect = false }
+            if shouldSelect { select(Account.demo.id); ui.showConnect = false }
         } catch { self.error = error.localizedDescription }
     }
 
@@ -248,16 +248,16 @@ extension AppModel {
     func failNextDemoTransfer() { demo?.failNext = true }
 
     func connect(cloud: Cloud) async {
-        guard !connecting else { return }
-        connectionError = nil; connecting = true
-        defer { connecting = false }
+        guard !ui.connecting else { return }
+        ui.connectionError = nil; ui.connecting = true
+        defer { ui.connecting = false }
         do {
             let configuration = try OAuthConfiguration.load()
             let client = try configuration.client(for: cloud)
             let (account, credential) = try await oauth.signIn(cloud: cloud, clientID: client.id, clientSecret: client.secret)
             try adopt(account, credential: credential)
-            select(account.id); showConnect = false
-        } catch is CancellationError {} catch { connectionError = error.localizedDescription }
+            select(account.id); ui.showConnect = false
+        } catch is CancellationError {} catch { ui.connectionError = error.localizedDescription }
     }
 
     func canDisconnect(_ account: Account) -> Bool {

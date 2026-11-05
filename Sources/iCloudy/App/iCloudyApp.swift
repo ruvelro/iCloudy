@@ -76,10 +76,10 @@ struct iCloudyApp: App {
                 }
             }
             CommandGroup(after: .appInfo) {
-                Button("Añadir cuenta…") { model.showConnect = true }.keyboardShortcut("n", modifiers: [.command, .shift])
+                Button("Añadir cuenta…") { model.ui.showConnect = true }.keyboardShortcut("n", modifiers: [.command, .shift])
                 Button("Subir archivos…") { Task { await model.pickUpload() } }.disabled(!model.canWrite)
                 Button("Subir el portapapeles") { model.uploadFromPasteboard() }.disabled(!model.canWrite)
-                Button("Buscar en todas las nubes") { model.preview.close(); model.showGlobalSearch = true }.keyboardShortcut("f", modifiers: [.command, .shift])
+                Button("Buscar en todas las nubes") { model.preview.close(); model.ui.showGlobalSearch = true }.keyboardShortcut("f", modifiers: [.command, .shift])
                 Button("Comparar carpetas…") { model.openComparator() }.disabled(model.accounts.isEmpty)
                 Button("Buscar duplicados…") { model.openDuplicateFinder() }.disabled(model.accounts.isEmpty)
             }

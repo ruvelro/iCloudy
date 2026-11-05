@@ -41,20 +41,20 @@ extension AppModel {
     func requestPublicLink(_ file: CloudFile, account target: Account? = nil) {
         guard let account = target ?? account else { return }
         if let reason = account.limitation(.publicLink, for: [file]) { error = reason; return }
-        if account.cloud == .s3, !account.isDemo { pendingTemporaryLink = (file, account); return }
-        pendingShare = (file, account)
+        if account.cloud == .s3, !account.isDemo { ui.pendingTemporaryLink = (file, account); return }
+        ui.pendingShare = (file, account)
     }
 
     func requestRelocation(_ files: [CloudFile], copy: Bool) {
         guard let account, !files.isEmpty else { return }
         if copy, let reason = account.limitation(.copy, for: files) { error = reason; return }
-        relocation = Relocation(files: files, kind: copy ? .copy : .move, account: account, origin: path.isEmpty && collection != .files ? nil : folderID)
+        ui.relocation = Relocation(files: files, kind: copy ? .copy : .move, account: account, origin: path.isEmpty && collection != .files ? nil : folderID)
     }
 
     func requestCrossCloud(_ files: [CloudFile]) {
         guard let account, !files.isEmpty else { return }
         guard accounts.count > 1 else { error = L("Conecta otra cuenta para poder enviar archivos entre nubes."); return }
-        crossCloud = CrossCloudRequest(files: files, source: account)
+        ui.crossCloud = CrossCloudRequest(files: files, source: account)
     }
 
     /// Queues one job per item; the queue stages each file locally and uploads it with checkpoints and verification.
@@ -138,18 +138,18 @@ extension AppModel {
 
     func requestTrash(_ files: [CloudFile]) {
         guard account != nil, !files.isEmpty else { return }
-        pendingTrash = files
+        ui.pendingTrash = files
     }
 
     func requestPermanentDelete(_ files: [CloudFile]) {
         guard let account, !files.isEmpty else { return }
         if let reason = account.limitation(.permanentDelete, for: files) { error = reason; return }
-        pendingPurge = files
+        ui.pendingPurge = files
     }
 
     func requestEmptyTrash() {
         guard let account, account.capabilities.emptyTrash else { return }
-        pendingEmptyTrash = true
+        ui.pendingEmptyTrash = true
     }
 
     /// Deletes for good, one by one, stopping at the first failure so what remains is exactly what the list shows.
@@ -240,7 +240,7 @@ extension AppModel {
 
     func promptName(_ file: CloudFile? = nil) {
         guard let account, file != nil || canWrite else { return }
-        editingFile = file; editName = file?.name ?? ""; editContext = (account, folderID); showNameDialog = true
+        ui.editingFile = file; ui.editName = file?.name ?? ""; editContext = (account, folderID); ui.showNameDialog = true
     }
 
     func applyIdentityChange(_ change: RemoteIdentityChange, account: Account, destinationPath: [CloudFile]? = nil) throws {
@@ -258,7 +258,7 @@ extension AppModel {
 
     func commitName() async {
         guard let (account, parent) = editContext else { return }
-        let file = editingFile, name = editName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let file = ui.editingFile, name = ui.editName.trimmingCharacters(in: .whitespacesAndNewlines)
         if let problem = FileNames.problem(with: name, for: account.cloud) { error = problem; return }
         do {
             let api = try client(account)
@@ -271,7 +271,7 @@ extension AppModel {
                 try applyIdentityChange(change, account: account)
                 registerRenameUndo(file, renamed: change.file(file), account: account)
             } else { _ = try await api.createFolder(name: name, parent: parent) }
-            showNameDialog = false; reloadAfterWrite(to: account)
+            ui.showNameDialog = false; reloadAfterWrite(to: account)
         } catch { self.error = error.localizedDescription }
     }
 }

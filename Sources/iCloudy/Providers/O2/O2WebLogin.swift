@@ -243,7 +243,7 @@ struct O2WebLoginView: View {
     }
     private func finish() {
         login.stop()
-        model.o2Login = nil
+        model.ui.o2Login = nil
         dismiss()
     }
 }

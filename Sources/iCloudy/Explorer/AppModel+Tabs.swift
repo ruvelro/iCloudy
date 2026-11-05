@@ -46,7 +46,7 @@ extension AppModel {
     private func addTab(at place: BrowserLocation?, in pane: Int?) {
         let pane = pane ?? workspace.focusedPane
         guard workspace.panes.indices.contains(pane) else { return }
-        preview.close(); globalSearch.cancel(); showGlobalSearch = false
+        preview.close(); globalSearch.cancel(); ui.showGlobalSearch = false
         let id = workspace.panes[pane].addTab(at: place)
         workspace.focus(pane)
         reload(tab: id)
@@ -105,7 +105,7 @@ extension AppModel {
     }
 
     private func tabsDidSwitch() {
-        preview.close(); globalSearch.cancel(); showGlobalSearch = false
+        preview.close(); globalSearch.cancel(); ui.showGlobalSearch = false
         tabCameIntoView(workspace.current.id)
     }
 

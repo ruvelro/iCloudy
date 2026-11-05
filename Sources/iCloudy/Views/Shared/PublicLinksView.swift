@@ -12,12 +12,12 @@ extension AppModel {
     func requestPublicLinks(_ file: CloudFile, account target: Account? = nil) {
         guard let account = target ?? account else { return }
         guard account.capabilities.links.manage else { error = L("\(account.cloud.title) no gestiona enlaces públicos desde iCloudy."); return }
-        publicLinkManager = PublicLinksRequest(file: file, account: account)
+        ui.publicLinkManager = PublicLinksRequest(file: file, account: account)
     }
     /// Opens the account-wide list. A provider that cannot enumerate its links still opens it, to say so.
     func requestLinkInventory(_ account: Account) {
         guard account.capabilities.links.manage else { error = L("\(account.cloud.title) no gestiona enlaces públicos desde iCloudy."); return }
-        linkInventory = account
+        ui.linkInventory = account
     }
     func copyToPasteboard(_ url: URL) {
         NSPasteboard.general.clearContents()
@@ -84,7 +84,7 @@ struct PublicLinksView: View {
             }
             HStack {
                 Spacer()
-                Button("Cerrar") { model.publicLinkManager = nil; dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cerrar") { model.ui.publicLinkManager = nil; dismiss() }.keyboardShortcut(.cancelAction)
             }
         }
         .padding(24).frame(width: 560)

@@ -73,7 +73,7 @@ extension AppModel {
     /// Opens an unlocked vault in the tab that asked for it, or in the focused one when that tab has been closed.
     private func showVault(_ id: String, in tab: UUID?) {
         guard let tab, workspace.tab(tab) != nil else { select(id); return }
-        preview.close(); globalSearch.cancel(); showGlobalSearch = false
+        preview.close(); globalSearch.cancel(); ui.showGlobalSearch = false
         go(to: BrowserLocation(accountID: id), tab: tab)
     }
 

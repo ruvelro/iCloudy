@@ -62,7 +62,7 @@ struct ServerLoginView: View {
     /// Reconnecting is about a session, not about an address: the server and the user are already known, and asking
     /// for them again from memory is a poor way of asking somebody for a password.
     private func prefillForReconnect() {
-        guard server.isEmpty, username.isEmpty, let account = model.reconnecting, account.cloud == cloud else { return }
+        guard server.isEmpty, username.isEmpty, let account = model.ui.reconnecting, account.cloud == cloud else { return }
         username = Self.storedUser(of: account)
         guard needsServer, let stored = account.serverURL else { return }
         ftpSecurity = FTPSecurityChoice(scheme: stored)
@@ -96,8 +96,8 @@ struct ServerLoginView: View {
             // Checked now for its shape, so a public key or a certificate is refused before connecting.
             if let problem = Result(catching: { try SSHPrivateKey.parse(text, passphrase: "") }).failure as? SSHPrivateKey.Problem,
                [.notOpenSSH, .legacyPEM, .damaged].contains(problem) { throw problem }
-            keyText = text; keyName = url.lastPathComponent; model.connectionError = nil
-        } catch { model.connectionError = error.localizedDescription }
+            keyText = text; keyName = url.lastPathComponent; model.ui.connectionError = nil
+        } catch { model.ui.connectionError = error.localizedDescription }
     }
 
     var body: some View {
@@ -160,24 +160,24 @@ struct ServerLoginView: View {
                     Text("Avanzado").font(.caption)
                 }
             }
-            if let error = model.connectionError {
+            if let error = model.ui.connectionError {
                 Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             }
             HStack {
-                Button("Cancelar") { model.serverLogin = nil; model.reconnecting = nil; dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancelar") { model.ui.serverLogin = nil; model.ui.reconnecting = nil; dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
-                if model.connecting { ProgressView().controlSize(.small) }
+                if model.ui.connecting { ProgressView().controlSize(.small) }
                 Button("Conectar") {
                     Task {
                         await model.connectServer(cloud: cloud, server: address, username: username, password: password,
                                                   flavor: cloud == .webdav && nextcloud ? "nextcloud" : nil,
                                                   key: cloud == .sftp ? keyText.map { SFTPKeyMaterial(key: $0, passphrase: passphrase) } : nil)
                         password = ""; passphrase = ""
-                        if model.connectionError == nil { dismiss() }
+                        if model.ui.connectionError == nil { dismiss() }
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(model.connecting || (needsServer && server.isEmpty) || username.isEmpty || (password.isEmpty && keyText == nil))
+                .disabled(model.ui.connecting || (needsServer && server.isEmpty) || username.isEmpty || (password.isEmpty && keyText == nil))
             }
         }.padding(24).frame(width: 470)
     }

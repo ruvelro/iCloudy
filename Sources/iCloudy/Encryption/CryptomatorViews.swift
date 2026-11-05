@@ -33,7 +33,7 @@ struct CryptomatorSidebarSection: View {
                             }
                             Spacer(minLength: 0)
                         }.padding(Layout.sidebarInner).contentShape(Rectangle())
-                            .sidebarRow(selected: model.selectedAccountID == vault.id && !model.showGlobalSearch, tint: .green)
+                            .sidebarRow(selected: model.selectedAccountID == vault.id && !model.ui.showGlobalSearch, tint: .green)
                     }.buttonStyle(.plain)
                         .help("Bóveda de Cryptomator en \(model.accountTitle(vault.base))")
                         .contextMenu {

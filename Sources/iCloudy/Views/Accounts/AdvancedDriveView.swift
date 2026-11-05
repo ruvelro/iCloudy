@@ -43,7 +43,7 @@ struct AdvancedDriveView: View {
                 else if drives.isEmpty { Text("Esa cuenta no tiene unidades compartidas ni bibliotecas disponibles.").foregroundStyle(.secondary).font(.callout).multilineTextAlignment(.center).padding() }
             }
             if let failure { Text(failure).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
-            HStack { Spacer(); Button("Cerrar") { model.showAdvanced = false; dismiss() }.keyboardShortcut(.cancelAction) }
+            HStack { Spacer(); Button("Cerrar") { model.ui.showAdvanced = false; dismiss() }.keyboardShortcut(.cancelAction) }
         }.padding(24).frame(width: 520)
     }
     private func load() async {
