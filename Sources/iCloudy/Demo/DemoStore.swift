@@ -165,18 +165,12 @@ final class DemoStore {
     }
     private func persist() throws { try LocalStore.save(entries, to: indexURL) }
 
-    func upload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: (Int64, Int64) -> Void) async throws -> String? {
+    /// The demo's upload session: a `.part` file in its folder, named by the checkpoint and appended to on resume.
+    /// The generic upload path has already resolved the checkpoint against the source and saved it.
+    func upload(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: (Int64, Int64) -> Void) async throws -> String {
         try check()
-        let attributes = try local.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-        let total = Int64(attributes.fileSize ?? 0)
-        let previous = checkpoint
-        var cursor = try UploadCheckpoint.resuming(checkpoint, for: local, total: total, modified: attributes.contentModificationDate)
-        let stamp = cursor.sourceStamp!
-        // A fresh checkpoint drops the partial file of the one it replaces.
-        if let old = previous?.url, old != cursor.url, old.deletingLastPathComponent().standardizedFileURL.path == directory.standardizedFileURL.path {
-            try? FileManager.default.removeItem(at: old)
-        }
-        if cursor.complete { progress(total, total); return cursor.remoteID }
+        let total = cursor.total
+        guard let stamp = cursor.sourceStamp else { throw CloudError.message(L("Sesión demo no válida.")) }
         if cursor.url == nil { cursor.url = directory.appendingPathComponent(UUID().uuidString + ".part"); try save(cursor) }
         let temporary = cursor.url!
         guard temporary.deletingLastPathComponent().standardizedFileURL.path == directory.standardizedFileURL.path else { throw CloudError.message(L("Sesión demo no válida.")) }

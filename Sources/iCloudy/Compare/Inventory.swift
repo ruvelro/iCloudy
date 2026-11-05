@@ -107,10 +107,10 @@ final class CloudInventorySource: InventorySource {
 
     init(api: CloudAPI, rootID: String, pacer: ListingPacer? = nil) {
         self.api = api; self.rootID = rootID
-        self.pacer = pacer ?? (api.demo != nil ? ListingPacer(interval: .zero) : ListingPacer.shared(for: api.account.id))
+        self.pacer = pacer ?? (api.provider is DemoProvider ? ListingPacer(interval: .zero) : ListingPacer.shared(for: api.account.id))
     }
 
-    private var volume: VolumeProvider? { api.demo == nil ? api.provider as? VolumeProvider : nil }
+    private var volume: VolumeProvider? { api.provider as? VolumeProvider }
 
     var caseSensitive: Bool {
         if let volume, let root = try? volume.volumeRoot() { return LocalInventorySource.caseSensitive(root) }
