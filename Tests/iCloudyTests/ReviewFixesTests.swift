@@ -29,7 +29,12 @@ private func browserGET(_ url: URL) async -> String? {
         connection.start(queue: DispatchQueue(label: "review-browser"))
     }
 }
-private final class Seen: @unchecked Sendable { var answers: [String?] = [] }
+private final class Seen: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [String?] = []
+    var answers: [String?] { lock.withLock { stored } }
+    func append(_ answer: String?) { lock.withLock { stored.append(answer) } }
+}
 
 /// The fixes of the review of 5 November 2026 that are not about SSH or about the hand-written cryptography.
 @MainActor
@@ -145,7 +150,7 @@ final class ReviewFixesTests: XCTestCase {
 
     // MARK: - pCloud's callback without state
 
-    private func pcloudSignIn(confirm: Bool, asked: Locked<[LoginPrompts.AccountQuestion]>, seen: Seen) async throws -> (Account, Credential) {
+    private func pcloudSignIn(confirm: Bool, asked: Box<[LoginPrompts.AccountQuestion]>, seen: Seen) async throws -> (Account, Credential) {
         StubProtocol.handler = { request in
             switch request.url!.path {
             case "/oauth2_token": return (200, [:], Data(#"{"result":0,"access_token":"tok","locationid":1}"#.utf8))
@@ -157,12 +162,12 @@ final class ReviewFixesTests: XCTestCase {
         let oauth = OAuth(session: URLSession(configuration: config), openURL: { url in
             let redirect = URLComponents(url: url, resolvingAgainstBaseURL: false)!.queryItems!.first { $0.name == "redirect_uri" }!.value!
             _ = Task.detached {
-                seen.answers.append(await browserGET(URL(string: redirect + "?code=the-code&locationid=1")!))
+                seen.append(await browserGET(URL(string: redirect + "?code=the-code&locationid=1")!))
                 // A second answer without state, as a hostile page would send: dropped without a reply.
-                seen.answers.append(await browserGET(URL(string: redirect + "?code=evil&locationid=1")!))
+                seen.append(await browserGET(URL(string: redirect + "?code=evil&locationid=1")!))
             }
             return true
-        }, confirmAccount: { question in asked.set(asked.get() + [question]); return confirm })
+        }, confirmAccount: { question in asked.value = asked.value + [question]; return confirm })
         let watchdog = Task { try? await Task.sleep(for: .seconds(20)); oauth.cancel() }
         defer { watchdog.cancel() }
         // pCloud's port is fixed, and the previous listener (or another test run on this Mac) may still hold it.
@@ -176,17 +181,17 @@ final class ReviewFixesTests: XCTestCase {
     }
 
     func testAPCloudCallbackWithoutStateConnectsOnlyAnAccountThePersonConfirms() async throws {
-        let asked = Locked<[LoginPrompts.AccountQuestion]>([]), seen = Seen()
+        let asked = Box<[LoginPrompts.AccountQuestion]>([]), seen = Seen()
         let (account, _) = try await pcloudSignIn(confirm: true, asked: asked, seen: seen)
         XCTAssertEqual(account.email, "ana@example.com")
-        XCTAssertEqual(asked.get(), [LoginPrompts.AccountQuestion(service: Cloud.pcloud.title, email: "ana@example.com")])
-        for _ in 0..<200 where seen.answers.count < 2 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(asked.value, [LoginPrompts.AccountQuestion(service: Cloud.pcloud.title, email: "ana@example.com")])
+        try await wait(until: { seen.answers.count >= 2 })
         XCTAssertTrue(seen.answers.first??.hasPrefix("HTTP/1.1 200") == true)
 
-        let refused = Locked<[LoginPrompts.AccountQuestion]>([])
+        let refused = Box<[LoginPrompts.AccountQuestion]>([])
         do { _ = try await pcloudSignIn(confirm: false, asked: refused, seen: Seen()); XCTFail("Sin confirmar no se guarda") }
         catch { XCTAssertTrue(error.localizedDescription.contains("ana@example.com"), error.localizedDescription) }
-        XCTAssertEqual(refused.get().count, 1)
+        XCTAssertEqual(refused.value.count, 1)
     }
 
     func testOnlyTheFirstStatelessCallbackIsTakenAndOnlyByPCloud() throws {
@@ -293,12 +298,12 @@ final class ReviewFixesTests: XCTestCase {
                 return (200, [:], try JSONSerialization.data(withJSONObject: [["k": MegaCrypto.encode(Data(count: 8))]]))
             }
         }
-        let retries = Locked<[Bool]>([])
-        let answers = Locked<[String]>(["111111", "654321"])
+        let retries = Box<[Bool]>([])
+        let answers = Box<[String]>(["111111", "654321"])
         do {
             _ = try await MegaAPI.signIn(email: "ana@ejemplo.com", password: "frase con 123456", code: nil, askCode: { retry in
-                retries.set(retries.get() + [retry])
-                let next = answers.get().first; answers.set(Array(answers.get().dropFirst())); return next
+                retries.value = retries.value + [retry]
+                let next = answers.value.first; answers.value = Array(answers.value.dropFirst()); return next
             }, session: URLSession(configuration: configuration))
             XCTFail("La clave de prueba no desenvuelve")
         } catch {
@@ -306,7 +311,7 @@ final class ReviewFixesTests: XCTestCase {
         }
         XCTAssertEqual(logins.map(\.mfa), [nil, "111111", "654321"])
         XCTAssertEqual(Set(logins.map(\.uh)).count, 1, "La misma prueba derivada: la contraseña entera, con su espacio y sus cifras")
-        XCTAssertEqual(retries.get(), [false, true], "La segunda vez se dice que el código no valía")
+        XCTAssertEqual(retries.value, [false, true], "La segunda vez se dice que el código no valía")
     }
 
     func testMegaSecondFactorGivenUpIsReportedAsSuch() async throws {

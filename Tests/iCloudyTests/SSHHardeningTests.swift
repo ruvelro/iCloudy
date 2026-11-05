@@ -91,11 +91,11 @@ final class SSHHardeningTests: XCTestCase {
 
     func testAnUnknownHostKeyIsShownBeforeAnyCredentialAndCanBeRefused() async throws {
         let fake = try server()
-        let shown = Locked<Data?>(nil)
-        let ssh = transport(fake, approve: { blob in shown.set(blob); return false })
+        let shown = Box<Data?>(nil)
+        let ssh = transport(fake, approve: { blob in shown.value = blob; return false })
         do { try await ssh.connect(); XCTFail("Sin confirmar la huella no se conecta") }
         catch let error as SSHTransport.HostKeyNotTrusted { XCTAssertEqual(error.offered, SSHHostKey.fingerprint(fake.hostKeyBlob)) }
-        XCTAssertEqual(shown.get(), fake.hostKeyBlob, "Se pregunta por la clave que el servidor demostró tener")
+        XCTAssertEqual(shown.value, fake.hostKeyBlob, "Se pregunta por la clave que el servidor demostró tener")
         XCTAssertTrue(fake.waitFor("closed"))
         XCTAssertFalse(fake.events.contains { $0.hasSuffix(":5") || $0.hasSuffix(":50") }, "Ni la petición de servicio ni la contraseña salen")
     }
@@ -121,13 +121,13 @@ final class SSHHardeningTests: XCTestCase {
 
     @MainActor func testSigningInAsksAboutTheKeyAndKeepsThePinInTheKeychainOnly() async throws {
         let fake = try server { $0.sftp = true }
-        let asked = Locked<[LoginPrompts.HostKeyQuestion]>([])
+        let asked = Box<[LoginPrompts.HostKeyQuestion]>([])
         let (account, credential) = try await SFTPAuthentication().signInSFTP(
             server: "sftp://127.0.0.1:\(fake.port)/base", username: "ana", password: "secreta",
-            trustHostKey: { question in asked.set(asked.get() + [question]); return true })
-        XCTAssertEqual(asked.get().map(\.fingerprint), [SSHHostKey.fingerprint(fake.hostKeyBlob)])
-        XCTAssertEqual(asked.get().first?.server, "127.0.0.1:\(fake.port)")
-        XCTAssertEqual(asked.get().first?.keyType, "ssh-ed25519")
+            trustHostKey: { question in asked.value = asked.value + [question]; return true })
+        XCTAssertEqual(asked.value.map(\.fingerprint), [SSHHostKey.fingerprint(fake.hostKeyBlob)])
+        XCTAssertEqual(asked.value.first?.server, "127.0.0.1:\(fake.port)")
+        XCTAssertEqual(asked.value.first?.keyType, "ssh-ed25519")
         XCTAssertEqual(credential.hostKey, fake.hostKeyBlob.base64EncodedString(), "El pin va al Llavero")
         XCTAssertNil(account.options["hostKey"], "Y no a accounts.json")
         XCTAssertEqual(account.options["hostKeyFingerprint"], SSHHostKey.fingerprint(fake.hostKeyBlob))
@@ -269,11 +269,3 @@ final class SSHHardeningTests: XCTestCase {
     }
 }
 
-/// A value shared with a `@Sendable` closure in a test.
-final class Locked<Value>: @unchecked Sendable {
-    private var value: Value
-    private let lock = NSLock()
-    init(_ value: Value) { self.value = value }
-    func get() -> Value { lock.withLock { value } }
-    func set(_ newValue: Value) { lock.withLock { value = newValue } }
-}
