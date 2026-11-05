@@ -113,6 +113,69 @@ final class ReviewFixesTests: XCTestCase {
         XCTAssertEqual(transfers[0].state, .paused)
     }
 
+    // MARK: - Mega's second factor
+
+    func testMegaAsksForTheSecondFactorWhenItIsNeededAndKeepsThePasswordWhole() async throws {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [StubProtocol.self]
+        var logins: [(uh: String?, mfa: String?)] = []
+        StubProtocol.handler = { request in
+            let command = try XCTUnwrap((try JSONSerialization.jsonObject(with: requestData(request)) as? [[String: Any]])?.first)
+            switch command["a"] as? String {
+            case "us0": return (200, [:], try JSONSerialization.data(withJSONObject: [["s": MegaCrypto.encode(Data(count: 16)), "v": 2]]))
+            default:
+                logins.append((command["uh"] as? String, command["mfa"] as? String))
+                if command["mfa"] as? String != "654321" { return (200, [:], Data("[-26]".utf8)) }
+                // A key that does not unwrap: enough to show the code got the request past the second factor.
+                return (200, [:], try JSONSerialization.data(withJSONObject: [["k": MegaCrypto.encode(Data(count: 8))]]))
+            }
+        }
+        let retries = Locked<[Bool]>([])
+        let answers = Locked<[String]>(["111111", "654321"])
+        do {
+            _ = try await MegaAPI.signIn(email: "ana@ejemplo.com", password: "frase con 123456", code: nil, askCode: { retry in
+                retries.set(retries.get() + [retry])
+                let next = answers.get().first; answers.set(Array(answers.get().dropFirst())); return next
+            }, session: URLSession(configuration: configuration))
+            XCTFail("La clave de prueba no desenvuelve")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("contraseña de Mega no es correcta"), error.localizedDescription)
+        }
+        XCTAssertEqual(logins.map(\.mfa), [nil, "111111", "654321"])
+        XCTAssertEqual(Set(logins.map(\.uh)).count, 1, "La misma prueba derivada: la contraseña entera, con su espacio y sus cifras")
+        XCTAssertEqual(retries.get(), [false, true], "La segunda vez se dice que el código no valía")
+    }
+
+    func testMegaSecondFactorGivenUpIsReportedAsSuch() async throws {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [StubProtocol.self]
+        StubProtocol.handler = { request in
+            let command = try XCTUnwrap((try JSONSerialization.jsonObject(with: requestData(request)) as? [[String: Any]])?.first)
+            if command["a"] as? String == "us0" { return (200, [:], try JSONSerialization.data(withJSONObject: [["s": MegaCrypto.encode(Data(count: 16)), "v": 2]])) }
+            return (200, [:], Data("[-26]".utf8))
+        }
+        do {
+            _ = try await MegaAPI.signIn(email: "ana@ejemplo.com", password: "x", code: nil, askCode: { _ in nil },
+                                         session: URLSession(configuration: configuration))
+            XCTFail("Sin código no hay sesión")
+        } catch { XCTAssertTrue(error is MegaTwoFactorRequired, "\(error)") }
+    }
+
+    func testLoginPromptsResumeTheWaitingSignIn() async {
+        let prompts = LoginPrompts()
+        async let trusted = prompts.trust(LoginPrompts.HostKeyQuestion(host: "nas", port: 2222, blob: Data()))
+        while prompts.hostKey == nil { await Task.yield() }
+        XCTAssertEqual(prompts.hostKey?.server, "nas:2222")
+        prompts.answerHostKey(true)
+        let answer = await trusted
+        XCTAssertTrue(answer)
+        XCTAssertNil(prompts.hostKey)
+
+        async let code = prompts.code(LoginPrompts.CodeQuestion(service: "Mega", retry: false))
+        while prompts.code == nil { await Task.yield() }
+        prompts.answerCode("  123456 ")
+        let typed = await code
+        XCTAssertEqual(typed, "123456")
+    }
+
     // MARK: - OneDrive's own bin list
 
     func testOneDriveJournalReportsAWriteThatFailed() throws {
