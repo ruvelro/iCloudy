@@ -57,6 +57,9 @@ enum TestIsolation {
 
     fileprivate static func end(_ test: XCTestCase) {
         StubProtocol.dropHandlers()
+        // Static switches of the app that a test may flip; none of them may outlive it.
+        StartTLSFramer.trustAnyCertificateForTesting = false
+        Diagnostics.shared.level = .normal
     }
 
     private static func isolateStorage(for scope: Int) {
