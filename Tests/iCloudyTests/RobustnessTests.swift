@@ -20,6 +20,21 @@ final class RobustnessTests: XCTestCase {
         XCTAssertEqual(try LocalStore.read([String].self, from: url), ["ahora"], "Lo inmediato no lo pisa una escritura anterior")
     }
 
+    func testABusyStoreDoesNotHoldUpAnImmediateWriteOfAnotherOne() throws {
+        let slow = temporaryURL(), quick = temporaryURL()
+        defer { for url in [slow, quick] { try? FileManager.default.removeItem(at: url) } }
+        let writer = StoreWriter()
+        let release = DispatchSemaphore(value: 0)
+        writer.enqueue(on: slow) { release.wait() }
+        writer.later(["lento"], to: slow)
+        // With one queue for every file this waited for the semaphore forever.
+        try writer.now(["rápido"], to: quick)
+        XCTAssertEqual(try LocalStore.read([String].self, from: quick), ["rápido"])
+        release.signal()
+        writer.flush()
+        XCTAssertEqual(try LocalStore.read([String].self, from: slow), ["lento"], "Cada archivo conserva su orden")
+    }
+
     func testAFailedBackgroundWriteIsReported() async throws {
         let writer = StoreWriter()
         let blocked = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
