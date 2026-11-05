@@ -67,7 +67,7 @@ extension ExplorerView {
 /// Sidebar section with everything kept offline: what it takes, how it stands, and the way to update or remove it.
 struct OfflineList: View {
     let model: AppModel
-    @ObservedObject var store: OfflineStore
+    @Bindable var store: OfflineStore
     @State private var removing: OfflinePin?
 
     var body: some View {
@@ -146,7 +146,7 @@ struct OfflineList: View {
 /// The "Sin conexión" tab of the settings window.
 struct OfflineSettingsView: View {
     @Bindable var model: AppModel
-    @ObservedObject var store: OfflineStore
+    @Bindable var store: OfflineStore
     @AppStorage(OfflineSettings.budgetKey) private var budgetGB = 10
     @AppStorage(OfflineSettings.refreshKey) private var refreshMinutes = 60
     @AppStorage(OfflineSettings.keepPreviewsKey) private var keepPreviews = true

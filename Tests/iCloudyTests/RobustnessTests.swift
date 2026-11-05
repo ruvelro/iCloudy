@@ -98,10 +98,19 @@ final class RobustnessTests: XCTestCase {
         XCTAssertTrue(transfersChanged, "Lo que lee la cola se entera de sus cambios")
         XCTAssertFalse(accountsChanged, "Lo que solo lee las cuentas, no")
 
-        var statusChanged = false
+        // The quotas and the queue no longer move a counter every badge of every row reads.
+        var badgeChanged = false
+        let url = temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let copies = LocalCopyIndex(storeURL: url)
         let file = CloudFile(id: "a", name: "a.txt", mime: "text/plain", size: 1, modified: nil, webURL: nil, isFolder: false)
-        withObservationTracking { _ = model.localStatus(file) } onChange: { statusChanged = true }
-        model.localCopies.objectWillChange.send()
-        XCTAssertTrue(statusChanged, "Olvidar una copia local redibuja su marca")
+        copies.record(LocalCopy(accountID: "x", fileID: "a", name: "a.txt", path: url.path, bookmark: nil, size: 1,
+                                remoteModified: nil, savedAt: Date(), origin: .download))
+        withObservationTracking { _ = copies.status(for: file, accountID: "x") } onChange: { badgeChanged = true }
+        model.queue.stateChanges.send()
+        XCTAssertFalse(badgeChanged, "Una transición de la cola no redibuja la marca de una fila")
+        copies.forget(accountID: "x", fileID: "a")
+        XCTAssertTrue(badgeChanged, "Olvidar una copia local redibuja su marca")
+        copies.flush()
     }
 }

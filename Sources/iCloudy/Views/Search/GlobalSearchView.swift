@@ -3,7 +3,7 @@ import SwiftUI
 struct GlobalSearchView: View {
     @Bindable var model: AppModel
     @ObservedObject var search: GlobalSearch
-    @ObservedObject var saved: SavedSearches
+    @Bindable var saved: SavedSearches
     @State private var selected: Set<SearchHit.ID> = []
     @State private var naming = false
     @State private var newName = ""

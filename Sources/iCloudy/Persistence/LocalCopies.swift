@@ -72,9 +72,10 @@ enum LocalCopyStatus: Equatable {
 /// Remembers which remote files also exist on this Mac. Entries are created when iCloudy itself puts a file on disk
 /// (a download, the source of an upload, or an explicitly saved preview), never by scanning the user's folders.
 @MainActor
-final class LocalCopyIndex: ObservableObject {
-    @Published private(set) var copies: [String: LocalCopy] = [:]
-    @Published private(set) var unavailable: Set<String> = []
+@Observable
+final class LocalCopyIndex {
+    private(set) var copies: [String: LocalCopy] = [:]
+    private(set) var unavailable: Set<String> = []
     let storeURL: URL
     private var verifying = false
     /// Delay before a coalesced write reaches disk. Every file of a transfer records a copy, and writing the whole

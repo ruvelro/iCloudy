@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 /// Observes the queue directly: progress ticks re-render this panel only, not the whole explorer.
 struct TransferPanel: View {
     let model: AppModel
-    @ObservedObject var queue: TransferQueue
+    @Bindable var queue: TransferQueue
     @ObservedObject var history: TransferHistory
     @State private var showHistory = false
     /// The drawer is built when it opens and thrown away when it closes, so this always starts on what is moving.

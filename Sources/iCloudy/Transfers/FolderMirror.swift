@@ -180,11 +180,12 @@ final class FolderWatcher {
 }
 
 @MainActor
-final class MirrorManager: ObservableObject {
-    @Published private(set) var mirrors: [FolderMirror] = []
-    @Published var persistenceError: String?
+@Observable
+final class MirrorManager {
+    private(set) var mirrors: [FolderMirror] = []
+    var persistenceError: String?
     /// Mirrors whose folder changed while a sync was running or waiting for the debounce.
-    @Published private(set) var pending: Set<UUID> = []
+    private(set) var pending: Set<UUID> = []
     let storeURL: URL
     weak var queue: TransferQueue? {
         didSet {
@@ -533,6 +534,6 @@ final class MirrorManager: ObservableObject {
             mirrors[index].activeTransferID = nil; mirrors[index].pendingStamps = nil
             changed = true
         }
-        if changed { try? persist(); objectWillChange.send() }
+        if changed { try? persist() }
     }
 }

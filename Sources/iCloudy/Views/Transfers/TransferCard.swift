@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 /// going to, so a queue with three accounts in it can be read without opening anything.
 struct TransferCard: View {
     let model: AppModel
-    @ObservedObject var queue: TransferQueue
+    @Bindable var queue: TransferQueue
     let transfer: Transfer
     @State private var showReport = false
 

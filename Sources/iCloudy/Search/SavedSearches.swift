@@ -23,9 +23,10 @@ struct SavedSearch: Codable, Identifiable, Equatable {
 }
 
 @MainActor
-final class SavedSearches: ObservableObject {
-    @Published private(set) var items: [SavedSearch] = []
-    @Published private(set) var failure: String?
+@Observable
+final class SavedSearches {
+    private(set) var items: [SavedSearch] = []
+    private(set) var failure: String?
     let url: URL
 
     init(url: URL = LocalStore.directory.appendingPathComponent("saved-searches.json")) {

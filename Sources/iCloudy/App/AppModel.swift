@@ -74,8 +74,7 @@ final class AppModel {
     /// Filtered and sorted once per change of `files`, `search` or `sortMode`, not on every render.
     var visibleFiles: [CloudFile] { workspace.current.visibleFiles }
     var appearances: [String: AccountAppearance] = [:]
-    /// Read through `subsystems`, so a view showing it redraws when a quota arrives.
-    var storageQuotas: [String: StorageQuotaState] { _ = subsystems; return quotas.states }
+    var storageQuotas: [String: StorageQuotaState] { quotas.states }
     /// The last one chosen is also what a brand-new tab starts with.
     var viewMode: String {
         get { workspace.current.viewMode }
@@ -125,8 +124,6 @@ final class AppModel {
     var demo: DemoStore?
     var sessions: AccountClientRegistry { directory.sessions }
     let quotas = StorageQuotaController(refreshInterval: AppModel.quotaRefreshInterval)
-    @ObservationIgnored var quotaSubscription: AnyCancellable?
-    @ObservationIgnored var localCopySubscription: AnyCancellable?
     /// The listing each tab is waiting for, so a new request for the same tab cancels the old one.
     @ObservationIgnored var navigationTasks: [BrowserState.ID: Task<Void, Never>] = [:]
     @ObservationIgnored var subscription: AnyCancellable?
@@ -140,12 +137,9 @@ final class AppModel {
     var canWrite: Bool { account != nil && workspace.current.isWritableLocation }
     /// The trash shows what was binned; the only things to do with it are restoring it and deleting it for good.
     var inTrash: Bool { collection == .trash }
-    var transfers: [Transfer] { _ = subsystems; return queue.items }
-    var hasActiveTransfers: Bool { _ = subsystems; return queue.hasActive }
-    /// The queue, the quotas and the offline copies are objects of their own. A change in any of them moves this
-    /// counter, and what the model reads from them reads it first, so the views drawing that redraw.
-    private(set) var subsystems = 0
-    func subsystemsChanged() { subsystems &+= 1 }
+    /// The queue as of its last structural change: progress ticks redraw the transfer panel alone.
+    var transfers: [Transfer] { queue.structuralItems }
+    var hasActiveTransfers: Bool { queue.structuralItems.contains { [.queued, .running].contains($0.state) } }
     var location: String { ([account?.email ?? ""] + (collection == .files ? [] : [collection.title]) + path.map(\.name)).joined(separator: " / ") }
     func updateVisibleFiles() { workspace.current.updateVisibleFiles() }
     /// A tab as the explorer opens one from nothing: no account yet, and the list drawn the way it was drawn last.
@@ -194,13 +188,8 @@ final class AppModel {
             self.reloadVisible(accountID: id, fresh: true)
             if let account = self.accounts.first(where: { $0.id == id }) { self.refreshStorage(account, force: true) }
         }
-        // Only structural queue changes reach the explorer; progress ticks re-render the transfer panel alone.
-        quotaSubscription = quotas.objectWillChange.sink { [weak self] _ in self?.subsystemsChanged() }
-        // The marks of what is on this Mac change with a finished download, but also when a copy is forgotten.
-        localCopySubscription = localCopies.objectWillChange.sink { [weak self] _ in self?.subsystemsChanged() }
         subscription = queue.stateChanges.sink { [weak self] _ in
             guard let self else { return }
-            subsystemsChanged()
             notifier.queueChanged(active: queue.hasActive)
         }
         if let message = queue.persistenceError { error = message }
@@ -233,7 +222,6 @@ final class AppModel {
     var pendingSpotlightItem: String?
 
     var downloadedCount: Int {
-        _ = subsystems
         guard let account else { return 0 }
         return files.filter { !$0.isFolder && localCopies.status(for: $0, accountID: account.id).copy != nil }.count
     }

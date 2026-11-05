@@ -81,7 +81,6 @@ extension AppModel {
 
     /// Where this file stands: only in the cloud, downloaded, or downloaded but behind the cloud.
     func localStatus(_ file: CloudFile) -> LocalCopyStatus {
-        _ = subsystems
         guard let account else { return .cloudOnly }
         return localCopies.status(for: file, accountID: account.id)
     }

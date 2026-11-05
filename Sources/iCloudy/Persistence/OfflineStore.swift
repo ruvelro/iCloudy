@@ -143,12 +143,13 @@ enum OfflineError: LocalizedError, Equatable {
 /// are only ever written by the verified download path. Nothing here is synchronised back: editing goes through
 /// a two-way sync, not through these copies.
 @MainActor
-final class OfflineStore: ObservableObject {
-    @Published private(set) var pins: [OfflinePin] = []
-    @Published private(set) var entries: [String: OfflineEntry] = [:]
+@Observable
+final class OfflineStore {
+    private(set) var pins: [OfflinePin] = []
+    private(set) var entries: [String: OfflineEntry] = [:]
     /// Pins whose refresh is running now.
-    @Published private(set) var refreshing: Set<String> = []
-    @Published var notices: [OfflineNotice] = []
+    private(set) var refreshing: Set<String> = []
+    var notices: [OfflineNotice] = []
     let root: URL
     let indexURL: URL
     /// The budget in bytes, or nil for no limit. A closure so tests can set it without touching the user's defaults.

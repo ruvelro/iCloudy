@@ -14,13 +14,23 @@ struct ConflictRequest: Identifiable {
 }
 
 @MainActor
-final class TransferQueue: ObservableObject {
-    @Published private(set) var items: [Transfer] = []
-    @Published var conflict: ConflictRequest? { didSet { stateChanges.send() } }
-    @Published var persistenceError: String? { didSet { stateChanges.send() } }
+@Observable
+final class TransferQueue {
+    private(set) var items: [Transfer] = []
+    var conflict: ConflictRequest? { didSet { stateChanges.send() } }
+    var persistenceError: String? { didSet { stateChanges.send() } }
     /// Fires on structural changes only: jobs added or removed, state transitions, conflicts and persistence errors.
     /// Progress ticks mutate `items` without touching it, so views observing the whole app do not re-render per block.
     let stateChanges = PassthroughSubject<Void, Never>()
+    /// Moves with every structural change, so what reads `structuralItems` redraws with those and not per block.
+    private(set) var revision = 0
+    @ObservationIgnored private var revisionSubscription: AnyCancellable?
+    /// The jobs, observed only through `revision`. The explorer's badges and menus read this: they care that a job
+    /// started or ended, and redrawing every row of every listing on each progress tick was a visible stutter.
+    var structuralItems: [Transfer] {
+        _ = revision
+        return _items
+    }
     var client: ((String) throws -> CloudAPI)?
     var didComplete: ((String) -> Void)?
     /// Receives the completed job itself, for the persistent history.
@@ -51,29 +61,30 @@ final class TransferQueue: ObservableObject {
     /// The clock the schedule is read against; a seam for tests.
     var now: () -> Date = Date.init
     /// Why nothing is starting right now, shown above the list and as each paused job's status.
-    @Published private(set) var hold: TransferHold?
+    private(set) var hold: TransferHold?
     /// The jobs whose task is alive, running or still unwinding from a pause.
     var runningIDs: Set<UUID> { Set(tasks.keys) }
     /// The bandwidth limits, one bucket per direction shared by every job of this queue.
     let uploadLimiter = BandwidthLimiter(), downloadLimiter = BandwidthLimiter()
     private var costlyNetwork = false
-    private var windowTimer: Task<Void, Never>?
+    @ObservationIgnored private var windowTimer: Task<Void, Never>?
     let storeURL: URL
     private var writable = true
-    private var dirty = false
-    private var flushTask: Task<Void, Never>?
+    @ObservationIgnored private var dirty = false
+    @ObservationIgnored private var flushTask: Task<Void, Never>?
     private var tasks: [UUID: Task<Void, Never>] = [:]
     /// Several jobs can meet a name conflict at the same time; they wait in line and the sheet shows one at a time.
-    private var conflictContinuations: [UUID: CheckedContinuation<ConflictChoice, Error>] = [:]
+    @ObservationIgnored private var conflictContinuations: [UUID: CheckedContinuation<ConflictChoice, Error>] = [:]
     private var pendingConflicts: [ConflictRequest] = []
     /// Per job: when it started this run, from how many bytes, and when it last reported.
-    private var meters: [UUID: (started: Date, startBytes: Int64, lastReport: Date)] = [:]
-    private var claims = NameClaims()
+    @ObservationIgnored private var meters: [UUID: (started: Date, startBytes: Int64, lastReport: Date)] = [:]
+    @ObservationIgnored private var claims = NameClaims()
     /// The item each running job is working on, so a failure lands on the right line of its report.
-    private var inFlight: [UUID: ReportCursor] = [:]
+    @ObservationIgnored private var inFlight: [UUID: ReportCursor] = [:]
 
     init(storeURL: URL = LocalStore.directory.appendingPathComponent("transfers.json")) {
         self.storeURL = storeURL
+        revisionSubscription = stateChanges.sink { [weak self] in self?.revision &+= 1 }
         do {
             items = try LocalStore.read([Transfer].self, from: storeURL) ?? []
             for index in items.indices where [.running, .queued].contains(items[index].state) { items[index].state = .paused; items[index].bytesPerSecond = 0; items[index].hold = nil }
