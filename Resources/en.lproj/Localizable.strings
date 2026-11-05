@@ -1881,3 +1881,7 @@
 "Continuar" = "Continue";
 "%@ no aceptó el código. Escribe el que muestra ahora tu aplicación de autenticación." = "%@ did not accept the code. Type the one your authenticator app shows now.";
 "Escribe el código que muestra tu aplicación de autenticación para %@." = "Type the code your authenticator app shows for %@.";
+"¿Es esta tu cuenta?" = "Is this your account?";
+"No es mía" = "It is not mine";
+"%@ ha devuelto la cuenta «%@». Conéctala solo si es la que acabas de autorizar en el navegador." = "%@ returned the account “%@”. Connect it only if it is the one you just authorised in the browser.";
+"No se ha conectado la cuenta de %@ «%@». Si no era la tuya, cierra las pestañas del navegador que no reconozcas y vuelve a intentarlo." = "The %@ account “%@” was not connected. If it was not yours, close any browser tabs you do not recognise and try again.";

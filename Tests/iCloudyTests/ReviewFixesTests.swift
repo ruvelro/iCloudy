@@ -1,5 +1,35 @@
 import XCTest
+import Network
 @testable import iCloudy
+
+/// The browser, for the loopback tests here: one GET over TCP, the answer as text, or nil if the listener hung up.
+private func browserGET(_ url: URL) async -> String? {
+    guard let port = url.port.flatMap({ NWEndpoint.Port(rawValue: UInt16($0)) }) else { return nil }
+    let connection = NWConnection(host: "127.0.0.1", port: port, using: .tcp)
+    final class Once: @unchecked Sendable { var done = false }
+    let once = Once()
+    return await withCheckedContinuation { continuation in
+        let finish: @Sendable (String?) -> Void = { text in
+            guard !once.done else { return }
+            once.done = true; connection.cancel(); continuation.resume(returning: text)
+        }
+        connection.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                let request = "GET \(url.path)?\(url.query ?? "") HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+                connection.send(content: Data(request.utf8), completion: .contentProcessed { _ in
+                    connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, _, _ in
+                        finish(data.flatMap { $0.isEmpty ? nil : String(decoding: $0, as: UTF8.self) })
+                    }
+                })
+            case .failed, .cancelled: finish(nil)
+            default: break
+            }
+        }
+        connection.start(queue: DispatchQueue(label: "review-browser"))
+    }
+}
+private final class Seen: @unchecked Sendable { var answers: [String?] = [] }
 
 /// The fixes of the review of 5 November 2026 that are not about SSH or about the hand-written cryptography.
 @MainActor
@@ -111,6 +141,54 @@ final class ReviewFixesTests: XCTestCase {
         XCTAssertEqual(transfers.count, 1)
         XCTAssertTrue(transfers[0].uploads.isEmpty, "Solo se pierde el punto de reanudación, no la cola")
         XCTAssertEqual(transfers[0].state, .paused)
+    }
+
+    // MARK: - pCloud's callback without state
+
+    private func pcloudSignIn(confirm: Bool, asked: Locked<[LoginPrompts.AccountQuestion]>, seen: Seen) async throws -> (Account, Credential) {
+        StubProtocol.handler = { request in
+            switch request.url!.path {
+            case "/oauth2_token": return (200, [:], Data(#"{"result":0,"access_token":"tok","locationid":1}"#.utf8))
+            case "/userinfo": return (200, [:], Data(#"{"result":0,"userid":7,"email":"ana@example.com"}"#.utf8))
+            default: XCTFail(request.url!.absoluteString); return (500, [:], Data())
+            }
+        }
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let oauth = OAuth(session: URLSession(configuration: config), openURL: { url in
+            let redirect = URLComponents(url: url, resolvingAgainstBaseURL: false)!.queryItems!.first { $0.name == "redirect_uri" }!.value!
+            _ = Task.detached {
+                seen.answers.append(await browserGET(URL(string: redirect + "?code=the-code&locationid=1")!))
+                // A second answer without state, as a hostile page would send: dropped without a reply.
+                seen.answers.append(await browserGET(URL(string: redirect + "?code=evil&locationid=1")!))
+            }
+            return true
+        }, confirmAccount: { question in asked.set(asked.get() + [question]); return confirm })
+        let watchdog = Task { try? await Task.sleep(for: .seconds(20)); oauth.cancel() }
+        defer { watchdog.cancel() }
+        return try await oauth.signIn(cloud: .pcloud, clientID: "client", clientSecret: "secret")
+    }
+
+    func testAPCloudCallbackWithoutStateConnectsOnlyAnAccountThePersonConfirms() async throws {
+        let asked = Locked<[LoginPrompts.AccountQuestion]>([]), seen = Seen()
+        let (account, _) = try await pcloudSignIn(confirm: true, asked: asked, seen: seen)
+        XCTAssertEqual(account.email, "ana@example.com")
+        XCTAssertEqual(asked.get(), [LoginPrompts.AccountQuestion(service: Cloud.pcloud.title, email: "ana@example.com")])
+        for _ in 0..<200 where seen.answers.count < 2 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(seen.answers.first??.hasPrefix("HTTP/1.1 200") == true)
+
+        let refused = Locked<[LoginPrompts.AccountQuestion]>([])
+        do { _ = try await pcloudSignIn(confirm: false, asked: refused, seen: Seen()); XCTFail("Sin confirmar no se guarda") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("ana@example.com"), error.localizedDescription) }
+        XCTAssertEqual(refused.get().count, 1)
+    }
+
+    func testOnlyTheFirstStatelessCallbackIsTakenAndOnlyByPCloud() throws {
+        XCTAssertEqual(try OAuthRequest.callbackCode(target: "/callback?code=a", expectedState: "s", toleratesMissingState: true), "a")
+        XCTAssertThrowsError(try OAuthRequest.callbackCode(target: "/callback?code=a", expectedState: "s"), "Google, Box, Dropbox y Microsoft exigen state")
+        for cloud in [Cloud.google, .box, .dropbox, .microsoft] {
+            XCTAssertEqual(OAuthProviderSettings.settings(for: cloud)?.toleratesMissingState, false, cloud.rawValue)
+        }
+        XCTAssertLessThanOrEqual(OAuth.statelessWindow, 300)
     }
 
     // MARK: - Mega's second factor
