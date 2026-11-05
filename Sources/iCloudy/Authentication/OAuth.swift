@@ -14,15 +14,27 @@ final class OAuth {
     /// The query the browser came back with, for providers that put more than the code in it.
     private var callbackItems: [URLQueryItem] = []
     private var toleratesMissingState = false
+    /// When the browser was sent to the provider, and whether a callback without `state` has already been taken.
+    private var browserOpened: Date?
+    private var statelessAccepted = false
+    private var callbackWasStateless = false
     private let session: URLSession
     private let openURL: (URL) -> Bool
+    private let confirmAccount: (LoginPrompts.AccountQuestion) async -> Bool
     /// Account picker, consent screen and a second factor can easily take several minutes.
     static let loginTimeout: Duration = .seconds(600)
+    /// How long after opening the browser a callback without `state` is still believed. pCloud drops `state`, so
+    /// for it the loopback port is the only thing tying the answer to this sign-in, and any web page can request
+    /// `http://127.0.0.1:53682/callback?code=…` with a code for its own account. Keeping the window short, taking only
+    /// the first such callback and having the person confirm the account it connects is what is left to do.
+    static let statelessWindow: TimeInterval = 300
 
-    /// `session` carries the token and profile requests; `openURL` hands the authorization URL to the browser.
-    /// Both are injectable so the loopback flow can run end to end in tests.
-    init(session: URLSession = .shared, openURL: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) }) {
-        self.session = session; self.openURL = openURL
+    /// `session` carries the token and profile requests; `openURL` hands the authorization URL to the browser;
+    /// `confirmAccount` asks the person about an account whose callback came without `state`. All are injectable so
+    /// the loopback flow can run end to end in tests.
+    init(session: URLSession = .shared, openURL: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) },
+         confirmAccount: @escaping (LoginPrompts.AccountQuestion) async -> Bool = { await LoginPrompts.shared.confirm($0) }) {
+        self.session = session; self.openURL = openURL; self.confirmAccount = confirmAccount
     }
 
     static func random() -> String {
@@ -39,6 +51,7 @@ final class OAuth {
         guard let settings = OAuthProviderSettings.settings(for: cloud) else { throw CloudError.message(L("Este proveedor no usa OAuth.")) }
         cancelled = false
         callbackItems = []; toleratesMissingState = settings.toleratesMissingState
+        browserOpened = nil; statelessAccepted = false; callbackWasStateless = false
         let verifier = Self.random()
         expectedState = Self.random()
         defer { stop() }
@@ -59,6 +72,7 @@ final class OAuth {
                 do { try await Task.sleep(for: Self.loginTimeout) } catch { return }
                 self?.finish(.failure(CloudError.message(L("No llegó la respuesta del navegador en 10 minutos y se ha cancelado el inicio de sesión. Si aún estás en la página del proveedor, ciérrala y vuelve a pulsar «Continuar» para empezar de nuevo."))))
             }
+            browserOpened = Date()
             if !openURL(url) { finish(.failure(CloudError.message(L("No se pudo abrir el navegador.")))) }
         }
         // pCloud trades the code on its account's regional host, without PKCE, for a token with no refresh token.
@@ -66,6 +80,14 @@ final class OAuth {
             let result = try await PCloudAuthentication.complete(code: code, callback: callbackItems, clientID: clientID,
                                                                  clientSecret: clientSecret, session: session)
             guard !cancelled else { throw CancellationError() }
+            // Nothing tied that callback to this sign-in, so the account is named to the person before it is kept:
+            // a page that slipped its own code in would otherwise connect the attacker's account in silence.
+            if callbackWasStateless {
+                guard await confirmAccount(LoginPrompts.AccountQuestion(service: cloud.title, email: result.0.email)) else {
+                    throw CloudError.message(L("No se ha conectado la cuenta de \(cloud.title) «\(result.0.email)». Si no era la tuya, cierra las pestañas del navegador que no reconozcas y vuelve a intentarlo."))
+                }
+                guard !cancelled else { throw CancellationError() }
+            }
             return result
         }
         var fields = ["client_id": clientID, "code": code, "redirect_uri": redirect, "grant_type": "authorization_code", "code_verifier": verifier]
@@ -174,6 +196,14 @@ final class OAuth {
                 let items = components.queryItems ?? []
                 let state = items.first(where: { $0.name == "state" })?.value
                 guard state == self.expectedState || (state == nil && self.toleratesMissingState) else { connection.cancel(); return }
+                if state == nil {
+                    // Only the first callback without `state`, and only while a person could still be on the
+                    // consent page; anything else is dropped without an answer, like a wrong `state`.
+                    guard !self.statelessAccepted, let opened = self.browserOpened,
+                          Date().timeIntervalSince(opened) <= Self.statelessWindow else { connection.cancel(); return }
+                    self.statelessAccepted = true
+                    self.callbackWasStateless = true
+                }
                 let result = Result { try OAuthRequest.callbackCode(target: parts[1], expectedState: self.expectedState,
                                                                     toleratesMissingState: self.toleratesMissingState) }
                 // The first accepted answer is the one that completes the sign-in; a later one must not replace it.

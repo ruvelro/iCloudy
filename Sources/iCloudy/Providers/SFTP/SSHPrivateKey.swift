@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import CommonCrypto
+import Security
 
 /// A private key to sign in to an SSH server with, read from the file `ssh-keygen` writes: the OpenSSH format, which
 /// every version since 7.8 uses by default. Ed25519, ECDSA on the three NIST curves and RSA, with or without a
@@ -11,8 +12,9 @@ struct SSHPrivateKey: Sendable {
         case p256(P256.Signing.PrivateKey)
         case p384(P384.Signing.PrivateKey)
         case p521(P521.Signing.PrivateKey)
-        /// Modulus and private exponent, big-endian. Signing is one modular exponentiation.
-        case rsa(modulus: Data, exponent: Data)
+        /// A PKCS#1 `RSAPrivateKey` with every CRT parameter, which Security.framework signs with in constant time.
+        /// Kept as bytes: a `SecKey` is not Sendable, and building one per sign-in costs nothing measurable.
+        case rsa(der: Data)
     }
     let kind: Kind
     /// The public key as the server stores it in `authorized_keys`, in its wire form.
@@ -110,12 +112,15 @@ struct SSHPrivateKey: Sendable {
                 default: kind = .p521(try P521.Signing.PrivateKey(rawRepresentation: pad(scalar, to: 66)))
                 }
             case "ssh-rsa":
-                let modulus = try secret.mpint()
-                _ = try secret.mpint()
-                let exponent = try secret.mpint()
-                _ = try secret.mpint(); _ = try secret.mpint(); _ = try secret.mpint()
+                // OpenSSH's order: n, e, d, iqmp, p, q.
+                let modulus = try secret.mpint(), publicExponent = try secret.mpint(), exponent = try secret.mpint()
+                let qInverse = try secret.mpint(), p = try secret.mpint(), q = try secret.mpint()
                 guard modulus.count >= 128, modulus.last.map({ $0 & 1 == 1 }) == true else { throw Problem.unsupported(L("un módulo RSA de menos de 1024 bits")) }
-                kind = .rsa(modulus: modulus, exponent: exponent)
+                guard p.last.map({ $0 & 1 == 1 }) == true, q.last.map({ $0 & 1 == 1 }) == true else { throw Problem.damaged }
+                let der = Self.pkcs1(n: modulus, e: publicExponent, d: exponent, p: p, q: q, qInverse: qInverse)
+                // Built once now, so a key Security will not take is refused when it is chosen, not at sign-in.
+                _ = try Self.rsaKey(der)
+                kind = .rsa(der: der)
             default:
                 throw Problem.unsupported(L("el tipo «\(type)»"))
             }
@@ -195,8 +200,8 @@ struct SSHPrivateKey: Sendable {
             writer.string(Self.ecdsa(try key.signature(for: data).rawRepresentation))
         case .p521(let key):
             writer.string(Self.ecdsa(try key.signature(for: data).rawRepresentation))
-        case .rsa(let modulus, let exponent):
-            writer.string(try Self.rsaSHA256(data, modulus: modulus, exponent: exponent))
+        case .rsa(let der):
+            writer.string(try Self.rsaSHA256(data, der: der))
         }
         return writer.data
     }
@@ -209,16 +214,71 @@ struct SSHPrivateKey: Sendable {
         return inner.data
     }
 
-    /// RSASSA-PKCS1-v1_5 with SHA-256 (RFC 8017 §8.2), computed directly: the padded digest raised to the private
-    /// exponent modulo n. Security.framework would need the CRT parameters, which take a division to compute.
-    static func rsaSHA256(_ data: Data, modulus: Data, exponent: Data) throws -> Data {
-        let digestInfo = Data([0x30, 0x31, 0x30, 0x0D, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20])
-            + Data(SHA256.hash(data: data))
-        let length = modulus.count
-        guard length >= digestInfo.count + 11, let montgomery = MegaMontgomery(modulus: MegaBigInt(modulus)) else { throw Problem.damaged }
-        let encoded = Data([0x00, 0x01]) + Data(repeating: 0xFF, count: length - digestInfo.count - 3) + Data([0x00]) + digestInfo
-        let signature = montgomery.power(base: MegaBigInt(encoded), exponent: MegaBigInt(exponent)).data
-        return pad(signature, to: length)
+    /// RSASSA-PKCS1-v1_5 with SHA-256 (RFC 8017 §8.2), by Security.framework. It used to be one exponentiation with
+    /// the big-number code written for Mega, whose running time depends on the private exponent's bits.
+    static func rsaSHA256(_ data: Data, der: Data) throws -> Data {
+        var error: Unmanaged<CFError>?
+        guard let signature = SecKeyCreateSignature(try rsaKey(der), .rsaSignatureMessagePKCS1v15SHA256, data as CFData, &error) else {
+            throw Problem.damaged
+        }
+        return signature as Data
+    }
+    static func rsaKey(_ der: Data) throws -> SecKey {
+        let attributes: [CFString: Any] = [kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeyClass: kSecAttrKeyClassPrivate]
+        var error: Unmanaged<CFError>?
+        guard let key = SecKeyCreateWithData(der as CFData, attributes as CFDictionary, &error) else { throw Problem.damaged }
+        return key
+    }
+
+    /// RFC 8017 A.1.2: SEQUENCE { 0, n, e, d, p, q, d mod (p-1), d mod (q-1), q⁻¹ mod p }. OpenSSH stores all of
+    /// them but the two reduced exponents, which are one remainder each.
+    static func pkcs1(n: Data, e: Data, d: Data, p: Data, q: Data, qInverse: Data) -> Data {
+        // p and q are odd, so subtracting one only clears the last bit.
+        func minusOne(_ odd: Data) -> Data { var value = odd; value[value.index(before: value.endIndex)] &= 0xFE; return value }
+        let fields = [Data(), n, e, d, p, q, remainder(d, minusOne(p)), remainder(d, minusOne(q)), qInverse]
+        let body = fields.reduce(Data()) { $0 + derInteger($1) }
+        return Data([0x30]) + SSHHostKey.derLength(body.count) + body
+    }
+    /// A non-negative DER INTEGER from a big-endian magnitude.
+    static func derInteger(_ magnitude: Data) -> Data {
+        var bytes = Data(magnitude.drop { $0 == 0 })
+        if bytes.isEmpty || bytes[bytes.startIndex] & 0x80 != 0 { bytes.insert(0, at: 0) }
+        return Data([0x02]) + SSHHostKey.derLength(bytes.count) + bytes
+    }
+    /// `a mod m` for big-endian magnitudes, a bit at a time. It runs once when a key is read, never per signature,
+    /// and only on this Mac: nothing a server can time.
+    static func remainder(_ a: Data, _ m: Data) -> Data {
+        // Little-endian 32-bit limbs, one more than the modulus needs: twice a remainder fits in it.
+        func limbs(_ data: Data) -> [UInt32] {
+            var result: [UInt32] = []
+            var bytes = Array(data)
+            while !bytes.isEmpty {
+                let chunk = bytes.suffix(4); bytes.removeLast(chunk.count)
+                result.append(chunk.reduce(0) { $0 << 8 | UInt32($1) })
+            }
+            return result
+        }
+        let modulus = limbs(m) + [0]
+        var r = [UInt32](repeating: 0, count: modulus.count)
+        func atLeastModulus() -> Bool {
+            for index in stride(from: r.count - 1, through: 0, by: -1) where r[index] != modulus[index] { return r[index] > modulus[index] }
+            return true
+        }
+        for byte in a {
+            for shift in stride(from: 7, through: 0, by: -1) {
+                var carry = UInt32((byte >> UInt8(shift)) & 1)
+                for index in r.indices { let value = r[index]; r[index] = value << 1 | carry; carry = value >> 31 }
+                guard atLeastModulus() else { continue }
+                var borrow: UInt64 = 0
+                for index in r.indices {
+                    let difference = UInt64(r[index]) &- UInt64(modulus[index]) &- borrow
+                    r[index] = UInt32(truncatingIfNeeded: difference); borrow = difference >> 63
+                }
+            }
+        }
+        var result = Data()
+        for limb in r.reversed() { for shift in stride(from: 24, through: 0, by: -8) { result.append(UInt8(truncatingIfNeeded: limb >> UInt32(shift))) } }
+        return Data(result.drop { $0 == 0 })
     }
 }
 

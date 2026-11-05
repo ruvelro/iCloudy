@@ -446,7 +446,8 @@ extension MegaProvider {
             // on that would lose the whole upload over a moment's delay.
             var text = ""
             for attempt in 0..<5 {
-                let (data, response) = try await session.upload(for: request, from: cipher, delegate: RedirectGuard.shared)
+                // A 5xx from a storage server is waited out like the API's own -3, instead of ending the upload.
+                let (data, response) = try await sendBlock { try await session.upload(for: request, from: cipher, delegate: RedirectGuard.shared) }
                 try HTTP.validate(response, data: data)
                 text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 guard text.hasPrefix("-") else { break }

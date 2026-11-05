@@ -121,7 +121,7 @@ extension OneDriveProvider {
         var request = try await request(URL(string: "\(graphDrive)/items/\(Self.segment(file.id))")!, method: "DELETE")
         let (data, response) = try await send(&request)
         try HTTP.validate(response, data: data)
-        binJournal.record(file, accountID: account.id)
+        try rememberTrashed(file)
     }
 
     func restore(file: CloudFile) async throws { try await oneDriveRestore(file) }
@@ -130,7 +130,7 @@ extension OneDriveProvider {
     func deletePermanently(file: CloudFile) async throws {
         var request = try await request(URL(string: "\(graphDrive)/items/\(Self.segment(file.id))/permanentDelete")!, method: "POST")
         let (data, response) = try await send(&request)
-        do { try HTTP.validate(response, data: data); binJournal.forget(file.id, accountID: account.id) }
+        do { try HTTP.validate(response, data: data); try? binJournal.forget(file.id, accountID: account.id) }
         catch let error as ServiceError where [400, 403, 404, 405, 501].contains(error.status) {
             throw CloudError.message(L("OneDrive no admite el borrado definitivo en esta cuenta: ") + (error.detail ?? "HTTP \(error.status)") + L(" El elemento sigue donde estaba; envíalo a la papelera y vacíala desde la web de OneDrive."))
         }

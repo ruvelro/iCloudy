@@ -173,7 +173,7 @@ extension S3Provider {
             // The same transient failure, reported inside a 200 by CompleteMultipartUpload or a copy.
             if delay == nil, status == 200, let code = body?.code, S3Failure.transient.contains(code),
                call.repeatable || ["GET", "HEAD", "PUT", "DELETE"].contains(call.method) {
-                delay = min(pow(2, Double(state.attempt)), 30)
+                delay = RetryAfter.delay(announced: nil, attempt: state.attempt)
             }
             if let delay { state.attempt += 1; return .again(delay) }
         }

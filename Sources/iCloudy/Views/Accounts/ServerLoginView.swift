@@ -29,6 +29,9 @@ struct ServerLoginView: View {
     @State private var passphrase = ""
     @State private var nextcloud = false
     @State private var showAdvanced = false
+    /// The questions a sign-in asks halfway: the SSH host key on a first connection, Mega's second-factor code.
+    @State private var prompts = LoginPrompts.shared
+    @State private var typedCode = ""
 
     /// WebDAV and FTP need a full server address; Mega has only one.
     private var needsServer: Bool { cloud != .mega }
@@ -47,7 +50,7 @@ struct ServerLoginView: View {
         switch cloud {
         case .webdav: return L("Para Nextcloud, ownCloud, Synology, otros NAS y cualquier servidor WebDAV. La dirección es la ruta WebDAV completa.")
         case .mega: return L("Tu contraseña no sale de este Mac: se usa para derivar las claves con las que Mega cifra los nombres y el contenido.")
-        case .sftp: return L("Para servidores SSH y NAS con SFTP, en el puerto 22 salvo que indiques otro. Todo va cifrado. La clave del servidor se guarda al conectar y se comprueba en cada sesión; si cambia, iCloudy lo dirá antes de enviar nada.")
+        case .sftp: return L("Para servidores SSH y NAS con SFTP, en el puerto 22 salvo que indiques otro. Todo va cifrado. Al conectar verás la huella de la clave del servidor para confirmarla; se guarda en el Llavero y se comprueba en cada sesión, y si cambia, iCloudy lo dirá antes de enviar nada.")
         default: return L("Para servidores FTP propios y NAS. iCloudy usa siempre modo pasivo. Sin FTPS, la contraseña y los archivos viajan sin cifrar.")
         }
     }
@@ -149,7 +152,7 @@ struct ServerLoginView: View {
             }
             Text(needsServer
                  ? "Si tu servidor usa verificación en dos pasos, crea una contraseña de aplicación en su configuración."
-                 : "Si la cuenta tiene verificación en dos pasos, escribe la contraseña, un espacio y el código de seis dígitos.")
+                 : "Si la cuenta tiene verificación en dos pasos, iCloudy te pedirá el código después de comprobar la contraseña.")
                 .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if cloud == .webdav {
                 DisclosureGroup(isExpanded: $showAdvanced) {
@@ -180,5 +183,27 @@ struct ServerLoginView: View {
                 .disabled(model.ui.connecting || (needsServer && server.isEmpty) || username.isEmpty || (password.isEmpty && keyText == nil))
             }
         }.padding(24).frame(width: 470)
+        .alert("¿Confías en este servidor?", isPresented: Binding(get: { prompts.hostKey != nil }, set: { if !$0 { prompts.answerHostKey(false) } }),
+               presenting: prompts.hostKey) { _ in
+            Button("Confiar y conectar") { prompts.answerHostKey(true) }
+            Button("Cancelar", role: .cancel) { prompts.answerHostKey(false) }
+        } message: { question in
+            Text("Es la primera vez que iCloudy se conecta a \(question.server). El servidor se identifica con esta clave \(question.keyType):\n\n\(question.fingerprint)\n\nCompárala con la huella que da el propio servidor (por ejemplo, «ssh-keygen -lf» sobre su clave pública) y confía solo si coincide. Hasta que no aceptes, no se envía la contraseña ni la clave.")
+        }
+        .alert("Verificación en dos pasos", isPresented: Binding(get: { prompts.code != nil }, set: { if !$0 { prompts.answerCode(nil) } }),
+               presenting: prompts.code) { _ in
+            TextField("Código de seis dígitos", text: $typedCode)
+            Button("Continuar") { prompts.answerCode(typedCode); typedCode = "" }
+            Button("Cancelar", role: .cancel) { prompts.answerCode(nil); typedCode = "" }
+        } message: { question in
+            // Two Texts rather than one with a conditional: a conditional of literals is a String, shown verbatim.
+            if question.retry {
+                Text("\(question.service) no aceptó el código. Escribe el que muestra ahora tu aplicación de autenticación.")
+            } else {
+                Text("Escribe el código que muestra tu aplicación de autenticación para \(question.service).")
+            }
+        }
+        // A form closed halfway leaves no sign-in waiting for an answer nobody can give.
+        .onDisappear { prompts.answerHostKey(false); prompts.answerCode(nil) }
     }
 }

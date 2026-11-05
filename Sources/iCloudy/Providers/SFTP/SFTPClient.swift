@@ -249,6 +249,24 @@ actor SFTPClient {
             }
         } }
     }
+    /// Puts a finished upload in place of `path`. OpenSSH's posix-rename replaces the target in one step, as
+    /// rename(2) does; plain RENAME refuses an existing target, so on servers without the extension the old file is
+    /// removed first, which leaves a short moment with neither.
+    func replace(_ path: String, with temporary: String) async throws {
+        try await exclusive { try await self.withSession {
+            if await self.supports("posix-rename@openssh.com") {
+                try await self.status(try await self.request(Packet.extended) { $0.string("posix-rename@openssh.com"); $0.string(temporary); $0.string(path) })
+                return
+            }
+            var answer = try await self.response(try await self.request(Packet.stat) { $0.string(path) })
+            if answer.type == Packet.attrs {
+                try await self.status(try await self.request(Packet.remove) { $0.string(path) })
+            } else if answer.type == Packet.status, try answer.reader.uint32() != 2 {
+                throw SSHReader.Malformed()
+            }
+            try await self.status(try await self.request(Packet.rename) { $0.string(temporary); $0.string(path) })
+        } }
+    }
     /// Free and total bytes of the file system under `path`, when the server implements OpenSSH's extension.
     func statvfs(_ path: String) async throws -> (total: Int64, free: Int64)? {
         try await exclusive { try await self.withSession {

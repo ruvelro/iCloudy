@@ -33,6 +33,8 @@ final class FakeFTPServer: @unchecked Sendable {
     var replyDelays: [String: TimeInterval] = [:]
     /// The verb of the previous command, so RNTO is refused unless it comes straight after RNFR, as real servers do.
     private var previousVerb = ""
+    /// What the last RNFR named, so RNTO moves an upload that is in `stored`.
+    private var renameSource = ""
     /// Verbs whose next arrival closes the control connection without a reply, as a server that crashes or a network
     /// that drops at that moment would. Each entry fires once.
     private var dropOnArrival: [String] = []
@@ -169,8 +171,10 @@ final class FakeFTPServer: @unchecked Sendable {
             return   // the 226 is sent once the upload finishes
         case "MKD": send("257 \"\(argument)\" creada\r\n")
         case "DELE", "RMD": send("250 Eliminado\r\n")
-        case "RNFR": send("350 Listo para el nuevo nombre\r\n", after: delay)
-        case "RNTO": send(renaming ? "250 Renombrado\r\n" : "503 RNFR primero\r\n")
+        case "RNFR": renameSource = argument; send("350 Listo para el nuevo nombre\r\n", after: delay)
+        case "RNTO":
+            if renaming { lock.withLock { if let moved = stored.removeValue(forKey: renameSource) { stored[argument] = moved } } }
+            send(renaming ? "250 Renombrado\r\n" : "503 RNFR primero\r\n")
         case "NOOP": send("200 Sigo aquí\r\n")
         case "QUIT": send("221 Adiós\r\n")
         default: send("502 No implementado\r\n")
@@ -543,7 +547,9 @@ final class FTPTests: XCTestCase {
         }
         XCTAssertEqual(server.count("STOR"), 1, "La subida no se repite sola: \(server.log())")
         XCTAssertFalse(checkpoint.complete)
-        XCTAssertEqual(server.uploaded()["/s.txt"], Data("contenido".utf8), "El servidor sí la tenía")
+        // Under the hidden name: the real one is never touched by an upload that did not finish for sure.
+        XCTAssertEqual(server.uploaded()["/.s.txt.icloudy-part"], Data("contenido".utf8), "El servidor sí la tenía")
+        XCTAssertNil(server.uploaded()["/s.txt"])
     }
 
     func testAQuietConnectionIsCheckedBeforeAChangeIsSentDownIt() async throws {

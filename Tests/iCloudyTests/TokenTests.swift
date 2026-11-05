@@ -124,7 +124,7 @@ final class TokenTests: XCTestCase {
         XCTAssertNil(CloudSession.retryDelay(nil, method: "GET", attempt: 0))
         // What the provider asks for wins over the backoff, within reason.
         XCTAssertEqual(CloudSession.retryDelay(response(429, retryAfter: "7"), method: "GET", attempt: 0), 7)
-        XCTAssertEqual(CloudSession.retryDelay(response(429, retryAfter: "9999"), method: "GET", attempt: 0), 30, "Con un tope")
+        XCTAssertEqual(CloudSession.retryDelay(response(429, retryAfter: "9999"), method: "GET", attempt: 0), 120, "Con un tope")
         XCTAssertEqual(CloudSession.retryDelay(response(429), method: "GET", attempt: 3), 8, "Sin cabecera, se duplica la espera")
     }
     private func response(_ status: Int, retryAfter: String? = nil) -> HTTPURLResponse {
@@ -170,7 +170,7 @@ final class TokenTests: XCTestCase {
         let patient = HTTPURLResponse(url: URL(string: "https://example.com")!, statusCode: 429, httpVersion: nil,
                                       headerFields: ["Retry-After": "3600"])!
         do { try HTTP.validate(patient, data: Data()); XCTFail("Un 429 es un error") }
-        catch let error as ServiceError { XCTAssertEqual(TransferQueue.retryWait(after: error, attempt: 0, base: 1), 60) }
+        catch let error as ServiceError { XCTAssertEqual(TransferQueue.retryWait(after: error, attempt: 0, base: 1), RetryAfter.cap) }
     }
 
     func testInvalidGrantMarksTheSessionExpiredWithTheProviderDetail() async throws {

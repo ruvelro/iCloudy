@@ -579,7 +579,7 @@ final class TransferQueue {
     /// to be left alone; waiting less is what turns one refusal into a string of them and burns the three attempts in
     /// a few seconds. Anything else doubles the wait each time.
     static func retryWait(after error: Error, attempt: Int, base: Double) -> Double {
-        if let announced = (error as? ServiceError)?.retryAfter { return min(max(1, announced), 60) }
+        if let announced = (error as? ServiceError)?.retryAfter { return RetryAfter.delay(announced: announced, attempt: attempt) }
         return base * pow(2, Double(attempt))
     }
     /// `download` words the unverified part for downloads, where nothing is resumed and only the size was compared.

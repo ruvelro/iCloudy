@@ -5,11 +5,13 @@ struct AccountKeychain: Sendable {
     var saveAccounts: @Sendable ([Account]) throws -> Void
     var saveCredential: @Sendable (Credential, String) throws -> Void
     var deleteCredential: @Sendable (String) throws -> Void
+    var readCredential: @Sendable (String) -> Credential? = { _ in nil }
 
     static let vault = AccountKeychain(
         saveAccounts: { try Vault.save($0, key: AccountDirectory.storageKey) },
         saveCredential: { try Vault.save($0, key: $1) },
-        deleteCredential: { try Vault.delete(key: $0) })
+        deleteCredential: { try Vault.delete(key: $0) },
+        readCredential: { try? Vault.read(Credential.self, key: $0) })
 }
 
 /// The connected accounts, the state of their sessions, and the only code that writes them to the Keychain.
@@ -89,8 +91,24 @@ final class AccountDirectory {
 
     /// Writes a new list and then shows it. The demo account is never stored: it is local and comes back by itself.
     func replace(_ updated: [Account]) throws {
-        try keychain.saveAccounts(updated.filter { !$0.isDemo })
-        accounts = updated
+        let cleaned = scrubbed(updated)
+        try save(cleaned)
+        accounts = cleaned
+    }
+
+    private func save(_ list: [Account]) throws { try keychain.saveAccounts(list.filter { !$0.isDemo }) }
+
+    /// SFTP accounts connected before 0.8 kept the server's key in their options, which any process of this user can
+    /// rewrite. Once the Keychain entry holds the pin the copy is ignored, and it is dropped the next time the list
+    /// is saved. Never before: until the session has moved it, the copy is the only pin there is.
+    private func scrubbed(_ list: [Account]) -> [Account] {
+        list.map { account in
+            guard account.cloud == .sftp, account.options["hostKey"] != nil,
+                  keychain.readCredential(account.credentialKey)?.hostKey != nil else { return account }
+            var cleaned = account
+            cleaned.options["hostKey"] = nil
+            return cleaned
+        }
     }
 
     /// The order lives in the same Keychain entry as the accounts, so it is the order they come back in on the next
@@ -99,8 +117,8 @@ final class AccountDirectory {
     func reorder(_ updated: [Account]) throws -> Bool {
         guard updated.map(\.id) != accounts.map(\.id) else { return false }
         // Moved in memory even if the write fails: the person sees what they did, and is told it will not last.
-        accounts = updated
-        try keychain.saveAccounts(updated.filter { !$0.isDemo })
+        accounts = scrubbed(updated)
+        try save(accounts)
         return true
     }
 
@@ -111,8 +129,8 @@ final class AccountDirectory {
         change(&updated[index])
         guard updated[index] != accounts[index] else { return }
         // In memory either way: the change works for this run even when it cannot be saved for the next one.
-        accounts = updated
-        try keychain.saveAccounts(updated.filter { !$0.isDemo })
+        accounts = scrubbed(updated)
+        try save(accounts)
     }
 
     /// Takes an account out with the ones that borrow its credential, and deletes that credential. Returns who left.
@@ -120,9 +138,9 @@ final class AccountDirectory {
     func remove(_ account: Account) throws -> [Account] {
         let leaving = [account] + Self.dependents(of: account, in: accounts)
         let ids = Set(leaving.map(\.id))
-        let updated = accounts.filter { !ids.contains($0.id) }
+        let updated = scrubbed(accounts.filter { !ids.contains($0.id) })
         if !account.isDemo {
-            try keychain.saveAccounts(updated.filter { !$0.isDemo })
+            try save(updated)
             try keychain.deleteCredential(account.id)
         }
         forgetSessions(Array(ids))

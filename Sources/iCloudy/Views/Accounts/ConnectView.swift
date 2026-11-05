@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct ConnectView: View {
     @Bindable var model: AppModel
     private var sheets: Bindable<ExplorerPresentation> { Bindable(model.ui) }
+    @State private var prompts = LoginPrompts.shared
 
     var body: some View {
         ScrollView {
@@ -68,6 +69,14 @@ struct ConnectView: View {
                 }
             }.padding(30)
         }.frame(width: 470, height: 640).interactiveDismissDisabled(model.ui.connecting)
+            // pCloud comes back without `state`, so the account it connected is named before it is kept.
+            .alert("¿Es esta tu cuenta?", isPresented: Binding(get: { prompts.account != nil }, set: { if !$0 { prompts.answerAccount(false) } }),
+                   presenting: prompts.account) { _ in
+                Button("Conectar") { prompts.answerAccount(true) }
+                Button("No es mía", role: .cancel) { prompts.answerAccount(false) }
+            } message: { question in
+                Text("\(question.service) ha devuelto la cuenta «\(question.email)». Conéctala solo si es la que acabas de autorizar en el navegador.")
+            }
             .onAppear { model.ui.connectionError = nil }
             .sheet(item: sheets.serverLogin) { cloud in
                 if cloud == .s3 { S3LoginView(model: model) } else { ServerLoginView(model: model, cloud: cloud) }

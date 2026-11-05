@@ -22,7 +22,17 @@ actor SSHTransport {
     private(set) var hostKey: Data?
     /// What the caller expects the server's key to be, from an earlier connection. Nil the first time.
     private let expectedHostKey: Data?
+    /// Asked about a key nobody has seen before, after the server proved it holds it and before any credential is
+    /// sent. Without it, an unknown key is refused: trusting one in silence is what pins a man in the middle.
+    private let approveHostKey: (@Sendable (Data) async -> Bool)?
     private(set) var timeout: TimeInterval
+    /// Strict key exchange (OpenSSH's answer to Terrapin), when both sides announced it in their first KEXINIT.
+    private(set) var strictKex = false
+    /// Until the first NEWKEYS arrives. Strict mode tolerates nothing but key exchange messages in that stretch.
+    private var initialHandshake = true
+    /// Messages produced while a key exchange runs (a window adjustment, a reply to a global request). RFC 4253 §7.1
+    /// forbids sending them until NEWKEYS; OpenSSH drops them, and the channel then stalls for good.
+    private var deferred: [Data] = []
 
     // The one channel.
     private var remoteChannel: UInt32 = 0
@@ -35,9 +45,10 @@ actor SSHTransport {
     static let localWindow = 1 << 22
     static let localMaxPacket = 32768
 
-    init(host: String, port: UInt16, user: String, password: String, privateKey: SSHPrivateKey? = nil, expectedHostKey: Data?, timeout: TimeInterval = 45) {
+    init(host: String, port: UInt16, user: String, password: String, privateKey: SSHPrivateKey? = nil, expectedHostKey: Data?,
+         approveHostKey: (@Sendable (Data) async -> Bool)? = nil, timeout: TimeInterval = 45) {
         self.host = host; self.port = port; self.user = user; self.password = password; self.privateKey = privateKey
-        self.expectedHostKey = expectedHostKey; self.timeout = timeout
+        self.expectedHostKey = expectedHostKey; self.approveHostKey = approveHostKey; self.timeout = timeout
     }
 
     struct Disconnected: LocalizedError {
@@ -51,6 +62,20 @@ actor SSHTransport {
         let offered: String
         var errorDescription: String? {
             L("La clave del servidor SSH ha cambiado. iCloudy conocía \(stored) y ahora el servidor presenta \(offered). Si has reinstalado el servidor, desconecta la cuenta y vuelve a conectarla; si no, alguien podría estar interceptando la conexión.")
+        }
+    }
+    /// The person did not recognise the fingerprint, or nobody was there to ask.
+    struct HostKeyNotTrusted: LocalizedError {
+        let offered: String
+        var errorDescription: String? {
+            L("No se ha conectado: la clave del servidor (\(offered)) no se ha aceptado. Compárala con la que muestra el servidor, por ejemplo con «ssh-keygen -lf» sobre su clave pública, antes de confiar en ella.")
+        }
+    }
+    /// Strict key exchange was agreed and the server broke it: the signature of a prefix-truncation attack.
+    struct StrictKexViolation: LocalizedError {
+        let type: UInt8
+        var errorDescription: String? {
+            L("El servidor SSH envió un mensaje (\(type)) que el intercambio estricto de claves no permite. La conexión se corta por seguridad: alguien podría estar manipulándola.")
         }
     }
 
@@ -102,9 +127,20 @@ actor SSHTransport {
     // MARK: - Packets
 
     private func send(_ payload: Data) async throws {
+        if inKeyExchange, let type = payload.first, !Self.allowedDuringKeyExchange(type) {
+            deferred.append(payload)
+            return
+        }
         guard let socket else { throw RawSocket.ConnectionClosed() }
         try await socket.send(try encrypt.seal(payload))
     }
+    /// RFC 4253 §7.1: once KEXINIT is sent, only transport-generic messages other than the service ones, and the
+    /// key exchange's own, may follow until NEWKEYS.
+    static func allowedDuringKeyExchange(_ type: UInt8) -> Bool {
+        (1...49).contains(type) && type != SSHMessage.serviceRequest && type != SSHMessage.serviceAccept
+    }
+    /// Key exchange messages, the only ones strict mode accepts before the first NEWKEYS.
+    static func isKeyExchangeMessage(_ type: UInt8) -> Bool { (20...49).contains(type) }
     /// True while a packet is being read. The actor is reentrant at every `await`, and two readers on one stream
     /// would each get half of the other's packets: the bytes would still decrypt into nothing but noise. The
     /// client above serialises its operations; this turns a slip there into an error instead of silent corruption.
@@ -126,6 +162,10 @@ actor SSHTransport {
         let payload = try await readPacket()
         var reader = SSHReader(payload)
         let type = try reader.byte()
+        // A disconnect is still read, for its reason; anything else outside the exchange is an injected packet.
+        if strictKex, initialHandshake, !Self.isKeyExchangeMessage(type), type != SSHMessage.disconnect {
+            throw StrictKexViolation(type: type)
+        }
         switch type {
         case SSHMessage.ignore, SSHMessage.debug, SSHMessage.extInfo, SSHMessage.userauthBanner, SSHMessage.unimplemented:
             return nil
@@ -189,11 +229,14 @@ actor SSHTransport {
 
     // MARK: - Key exchange
 
-    private func kexInitPayload() -> Data {
+    /// The marker names of the strict key exchange, announced among the key exchange algorithms. Only the client's
+    /// first KEXINIT carries ours; only the server's first one counts.
+    static let strictKexClient = "kex-strict-c-v00@openssh.com", strictKexServer = "kex-strict-s-v00@openssh.com"
+    private func kexInitPayload(initial: Bool) -> Data {
         var writer = SSHWriter()
         writer.byte(SSHMessage.kexInit)
         writer.raw(Data((0..<16).map { _ in UInt8.random(in: 0...255) }))
-        writer.nameList(SSHAlgorithms.kex); writer.nameList(SSHAlgorithms.hostKeys)
+        writer.nameList(SSHAlgorithms.kex + (initial ? [Self.strictKexClient] : [])); writer.nameList(SSHAlgorithms.hostKeys)
         writer.nameList(SSHAlgorithms.ciphers); writer.nameList(SSHAlgorithms.ciphers)
         writer.nameList(SSHAlgorithms.macs); writer.nameList(SSHAlgorithms.macs)
         writer.nameList(SSHAlgorithms.compression); writer.nameList(SSHAlgorithms.compression)
@@ -201,7 +244,7 @@ actor SSHTransport {
         writer.bool(false); writer.uint32(0)
         return writer.data
     }
-    private struct Negotiated { let kex, hostKey, cipherOut, cipherIn, macOut, macIn: String }
+    private struct Negotiated { let kex, hostKey, cipherOut, cipherIn, macOut, macIn: String; let strict: Bool }
     private func negotiate(_ serverKexInit: Data) throws -> Negotiated {
         var reader = SSHReader(serverKexInit)
         _ = try reader.byte(); _ = try reader.bytes(16)
@@ -224,14 +267,16 @@ actor SSHTransport {
         guard compressionIn.contains("none"), compressionOut.contains("none") else {
             throw CloudError.message(L("El servidor SSH exige compresión, que iCloudy no usa."))
         }
-        return Negotiated(kex: kexName, hostKey: hostKeyName, cipherOut: out, cipherIn: inbound, macOut: macOut, macIn: macIn)
+        return Negotiated(kex: kexName, hostKey: hostKeyName, cipherOut: out, cipherIn: inbound, macOut: macOut, macIn: macIn,
+                          strict: kex.contains(Self.strictKexServer))
     }
     /// The whole exchange, first time and rekeys alike. `serverKexInit` is set when the server spoke first.
     private var inKeyExchange = false
     private func keyExchange(serverKexInit: Data?) async throws {
         inKeyExchange = true
         defer { inKeyExchange = false }
-        let ours = kexInitPayload()
+        let initial = sessionID == nil
+        let ours = kexInitPayload(initial: initial)
         try await send(ours)
         let theirs: Data
         if let serverKexInit { theirs = serverKexInit }
@@ -240,6 +285,12 @@ actor SSHTransport {
             theirs = message.reader.data
         }
         let chosen = try negotiate(theirs)
+        if initial, chosen.strict {
+            strictKex = true
+            // The server's KEXINIT has to be the very first packet it sent: anything before it (even an IGNORE) is
+            // how the Terrapin attack shifts the sequence numbers.
+            guard decrypt.sequence == 1 else { throw StrictKexViolation(type: SSHMessage.kexInit) }
+        }
         let ephemeral = try SSHKeyExchange.start(chosen.kex)
         var initMessage = SSHWriter()
         initMessage.byte(SSHMessage.kexECDHInit); initMessage.string(ephemeral.publicBytes)
@@ -254,10 +305,11 @@ actor SSHTransport {
             throw CloudError.message(L("La firma del servidor SSH no es válida: la clave que presenta no es la que usó para firmar."))
         }
         // The key is checked before anything is sent under the new keys, and never accepted twice under two names.
-        try checkHostKey(serverKey)
+        try await checkHostKey(serverKey)
         var newKeys = SSHWriter(); newKeys.byte(SSHMessage.newKeys)
         try await send(newKeys.data)
         _ = try await expect([SSHMessage.newKeys])
+        initialHandshake = false
         let session = sessionID ?? hash
         sessionID = session
         func derive(_ letter: Character, _ length: Int) -> Data {
@@ -269,17 +321,27 @@ actor SSHTransport {
         let inbound = try SSHPacketCipher.build(cipher: chosen.cipherIn, mac: chosen.macIn,
                                                 key: derive("D", SSHPacketCipher.keyLength(chosen.cipherIn)),
                                                 iv: derive("B", SSHPacketCipher.ivLength(chosen.cipherIn)), macKey: derive("F", 32))
-        // Sequence numbers run on across a rekey; only the keys change.
-        outbound.sequence = encrypt.sequence; inbound.sequence = decrypt.sequence
+        // Sequence numbers run on across a rekey; only the keys change. In strict mode they start again from zero
+        // after every NEWKEYS, so a packet slipped in before the exchange cannot shift them.
+        outbound.sequence = strictKex ? 0 : encrypt.sequence; inbound.sequence = strictKex ? 0 : decrypt.sequence
         encrypt = outbound; decrypt = inbound
+        inKeyExchange = false
+        let queued = deferred
+        deferred = []
+        for payload in queued { try await send(payload) }
     }
-    private func checkHostKey(_ offered: Data) throws {
+    private func checkHostKey(_ offered: Data) async throws {
         if let hostKey {
             guard hostKey == offered else { throw HostKeyChanged(stored: SSHHostKey.fingerprint(hostKey), offered: SSHHostKey.fingerprint(offered)) }
             return
         }
-        if let expectedHostKey, expectedHostKey != offered {
-            throw HostKeyChanged(stored: SSHHostKey.fingerprint(expectedHostKey), offered: SSHHostKey.fingerprint(offered))
+        if let expectedHostKey {
+            guard expectedHostKey == offered else {
+                throw HostKeyChanged(stored: SSHHostKey.fingerprint(expectedHostKey), offered: SSHHostKey.fingerprint(offered))
+            }
+        } else {
+            // First contact: the person compares the fingerprint before the password or the key signature leaves.
+            guard let approveHostKey, await approveHostKey(offered) else { throw HostKeyNotTrusted(offered: SSHHostKey.fingerprint(offered)) }
         }
         hostKey = offered
     }
@@ -323,27 +385,48 @@ actor SSHTransport {
             if offered.contains("password") { throw CloudError.message(L("El servidor SSH rechazó el usuario o la contraseña.")) }
             throw CloudError.message(L("El servidor SSH no acepta contraseñas para este usuario (admite: \(offered.joined(separator: ", "))). Conecta la cuenta con una clave privada."))
         }
-        // Servers that only take the password through PAM offer this instead of "password": each prompt is
-        // answered with the same password, and a server that wants a second factor gets it too and refuses.
+        // Servers that only take the password through PAM offer this instead of "password". Only a hidden prompt
+        // that asks for a password gets it, and only once: sending the password as the answer to a one-time code
+        // prompt would hand it to whatever logs those, and a second password prompt means the first was wrong.
         var interactive = SSHWriter()
         interactive.byte(SSHMessage.userauthRequest); interactive.string(user); interactive.string("ssh-connection")
         interactive.string("keyboard-interactive"); interactive.string(""); interactive.string("")
         try await send(interactive.data)
+        var answered = false
         while true {
             outcome = try await expect([SSHMessage.userauthSuccess, SSHMessage.userauthFailure, SSHMessage.userauthInfoRequest])
             switch outcome.type {
             case SSHMessage.userauthSuccess: return
             case SSHMessage.userauthInfoRequest:
                 _ = try outcome.reader.text(); _ = try outcome.reader.text(); _ = try outcome.reader.text()
-                let prompts = Int(try outcome.reader.uint32())
+                let count = Int(try outcome.reader.uint32())
+                guard count <= 16 else { throw SSHReader.Malformed() }
+                var prompts: [(text: String, echo: Bool)] = []
+                for _ in 0..<count { prompts.append((try outcome.reader.text(), try outcome.reader.bool())) }
                 var response = SSHWriter()
-                response.byte(SSHMessage.userauthInfoResponse); response.uint32(UInt32(prompts))
-                for _ in 0..<prompts { response.string(password) }
+                response.byte(SSHMessage.userauthInfoResponse); response.uint32(UInt32(count))
+                for prompt in prompts {
+                    guard Self.isPasswordPrompt(prompt.text, echo: prompt.echo) else {
+                        let shown = String(prompt.text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+                        throw CloudError.message(L("El servidor SSH pide «\(shown)» además de la contraseña, probablemente un segundo factor. iCloudy todavía no sabe responder a eso: conecta la cuenta con una clave privada o desactiva el segundo factor para SFTP."))
+                    }
+                    guard !answered else { throw CloudError.message(L("El servidor SSH rechazó el usuario o la contraseña.")) }
+                    response.string(password)
+                }
+                if !prompts.isEmpty { answered = true }
                 try await send(response.data)
             default:
                 throw CloudError.message(L("El servidor SSH rechazó el usuario o la contraseña."))
             }
         }
+    }
+    /// A hidden prompt that names a password, in the languages PAM speaks most often. A visible prompt is never one:
+    /// nobody echoes a password, while a one-time code often is echoed.
+    static func isPasswordPrompt(_ text: String, echo: Bool) -> Bool {
+        guard !echo else { return false }
+        let lowered = text.lowercased()
+        return ["password", "passwort", "contraseña", "contrasena", "mot de passe", "senha", "wachtwoord", "kennwort", "parola"]
+            .contains { lowered.contains($0) }
     }
 
     // MARK: - The channel

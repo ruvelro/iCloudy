@@ -10,7 +10,7 @@
 [![macOS](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-6-F05138?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![SwiftUI](https://img.shields.io/badge/SwiftUI-nativo-0071e3?style=flat-square)](https://developer.apple.com/xcode/swiftui/)
-[![tests](https://img.shields.io/badge/tests-835%20✓-43c463?style=flat-square)](Tests)
+[![tests](https://img.shields.io/badge/tests-swift%20test-43c463?style=flat-square)](Tests)
 [![licencia](https://img.shields.io/badge/licencia-GPL--3.0-8a7ee0?style=flat-square)](LICENSE)
 
 </div>
@@ -118,7 +118,7 @@ cancelable y limpieza al cerrar.
 | **Personalización por cuenta** | Alias, ocho colores e iconos propios, para distinguir la cuenta del trabajo de la de casa de un golpe de vista. |
 | **Iconos por tipo de archivo** | Un PDF es rojo, una hoja de cálculo verde, un vídeo índigo. El ojo encuentra el archivo antes de que el cerebro lea el nombre. |
 | **Espacio de verdad** | Gráfico circular o barra, a tu gusto, con el desglose por cuenta: archivos, papelera y —en Google— el resto de servicios. Si el proveedor no da cuota, no se inventa un porcentaje. |
-| **Integrado en macOS** | Icono en la barra de menús, «Subir a iCloudy» en el menú Servicios, soltar en el Dock, Spotlight, Atajos y Automatizador. |
+| **Integrado en macOS** | Icono en la barra de menús, «Subir a iCloudy» en el menú Servicios, soltar en el Dock, Spotlight y Atajos (también desde Automator, con «Ejecutar atajo»). |
 | **Unidades compartidas** | Unidades compartidas de Google y bibliotecas de SharePoint, sin volver a iniciar sesión. |
 | **En dos idiomas** | Castellano e inglés, y añadir otro es soltar un `.lproj`. |
 
@@ -182,12 +182,18 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
   en copias de iCloud y solo se leen con la sesión desbloqueada. La excepción es O2: su acceso se hace en las páginas
   del operador y las cookies de ese acceso viven en el contenedor de WebKit, como en un navegador. Ahí es donde se
   renueva la sesión sin preguntar nada, y desconectar la cuenta las borra.
-- **OAuth con PKCE** y navegador externo. iCloudy nunca ve tu contraseña de Google, Microsoft, Dropbox ni Box.
-- **Borrar es reversible por defecto.** Suprimir envía a la papelera del proveedor, y en Drive, Box, Mega y Dropbox
-  la pestaña **Papelera** deja restaurar lo enviado. El borrado definitivo y «Vaciar papelera» existen, pero son
-  acciones aparte, con su propia confirmación que dice que nadie podrá deshacerlo. WebDAV y FTP no tienen papelera:
-  ahí borrar es definitivo, y el diálogo de confirmación lo dice antes de hacerlo.
-- **No se indexan contenidos.** Spotlight recibe nombres y ubicaciones, nunca lo que hay dentro de los archivos.
+- **OAuth con PKCE** y navegador externo. iCloudy nunca ve tu contraseña de Google, Microsoft, Dropbox ni Box. pCloud
+  no devuelve el `state` de OAuth, así que la cuenta que conecta se te enseña para que la confirmes antes de guardarla.
+- **SFTP sin confianza a ciegas.** La primera vez se muestra la huella `SHA256:` de la clave del servidor y no se
+  envía nada secreto hasta que la aceptas; la clave queda en el Llavero y una distinta corta la conexión.
+- **Borrar es reversible donde el proveedor lo permite.** Suprimir envía a la papelera del proveedor, y la pestaña
+  **Papelera** deja restaurar lo enviado en Drive, Box, Dropbox, pCloud, Mega y Nextcloud; en OneDrive, lo enviado
+  desde iCloudy en los últimos 30 días. O2 y los volúmenes usan su papelera pero no la listan. El borrado definitivo y
+  «Vaciar papelera» existen, pero son acciones aparte, con su propia confirmación que dice que nadie podrá
+  deshacerlo. FTP, SFTP y WebDAV sin Nextcloud no tienen papelera: ahí borrar es definitivo, y el diálogo de
+  confirmación lo dice antes de hacerlo.
+- **No se indexan contenidos.** Spotlight recibe el nombre y la ubicación de lo que abres y de tus favoritos, nunca
+  lo que hay dentro de los archivos.
 - **Sin telemetría.** Ninguna.
 
 <br>
@@ -203,13 +209,13 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 - [x] Reflejos de carpeta local → nube con FSEvents
 - [x] Vista previa Quick Look y exportación de documentos de Google
 - [x] Modo sin conexión y caché de listados
-- [x] Integración con Spotlight, Atajos, Automatizador, Servicios y Dock
+- [x] Integración con Spotlight, Atajos (también desde Automator, con «Ejecutar atajo»), Servicios y Dock
 - [x] Castellano e inglés
 - [x] Papelera navegable con restaurar, borrado definitivo y vaciado, donde el proveedor lo permite
 - [x] SFTP con SSH propio sobre CryptoKit, y FTPS explícito (`AUTH TLS`) — [cómo funciona](docs/FTP.md)
 - [x] Compartir con personas, con permiso de ver o editar, y revocar accesos: Drive, OneDrive, Dropbox, Box y Nextcloud
 - [x] Sincronización en ambos sentidos entre una carpeta del Mac y una de la nube, con línea base, conflictos que conservan las dos versiones y freno ante borrados masivos
-- [x] Extensión File Provider (`NSFileProviderReplicatedExtension`) sobre los mismos proveedores, con la app dividida en librería y lanzador para compartir el código
+
 - [x] pCloud y S3 con sus compatibles
 - [x] Pestañas, doble panel, cola en paralelo con límite de ancho de banda, plan e informe de transferencias
 - [x] Descargas verificadas, copias sin conexión, versiones, gestión de enlaces, comparador y buscador de duplicados
@@ -221,7 +227,7 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 **En camino**
 
 - [ ] **Binario firmado y notarizado**, con actualizaciones automáticas
-- [ ] **Extensión del Finder firmada y verificada**: el código está ([File Provider](docs/FILEPROVIDER.md)) y se empaqueta al indicar un App Group, pero cargarla en el Finder exige un identificador de equipo de Apple que todavía no hay
+- [ ] **Extensión del Finder (File Provider)**: el código está (`NSFileProviderReplicatedExtension` sobre los mismos proveedores, [File Provider](docs/FILEPROVIDER.md)) y se empaqueta al indicar un App Group, pero nunca se ha cargado en el Finder: hace falta un identificador de equipo de Apple que todavía no hay, así que está sin verificar
 - [ ] **Mega**: probar el segundo factor y las cuentas anteriores a 2018 contra cuentas reales
 - [ ] **pCloud, S3 y bóvedas**: probarlos contra cuentas reales y contra una bóveda creada por Cryptomator
 - [ ] **Proton Drive**: necesita OpenPGP propio, y no se añadirá sin poder verificarlo contra cuentas reales
@@ -243,14 +249,15 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 | [pCloud](docs/PCLOUD.md) | API, regiones y registro del cliente |
 | [Cifrado](docs/CIFRADO.md) | Bóvedas compatibles con Cryptomator: qué protege y qué no |
 | [Diagnóstico](docs/DIAGNOSTICO.md) | Niveles, qué se oculta y qué se exporta |
+| [Seguridad](SECURITY.md) | Qué criptografía es del sistema, cuál es propia y cómo avisar de un fallo |
 
 <br>
 
 ## 🛠️ Desarrollo
 
 ```bash
-swift test                       # 792 pruebas; HTTP simulado y servidores FTP locales
-swift run iCloudy                # iterar sobre la interfaz
+swift test                       # todas las pruebas; HTTP simulado y servidores FTP y SSH locales
+swift run iCloudyMain            # iterar sobre la interfaz
 python3 scripts/mockups/generar.py  # rehacer las maquetas del README
 swift scripts/render-mockups.swift  # y convertirlas en PNG
 ```

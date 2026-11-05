@@ -85,6 +85,26 @@ final class AccountDirectoryTests: XCTestCase {
         XCTAssertEqual(directory.accounts.first?.bookmark, Data([1]))
     }
 
+    func testAnSFTPHostKeyLeavesTheAccountListOnlyOnceTheKeychainHoldsIt() throws {
+        let recorder = KeychainRecorder()
+        var keychain = recorder.keychain
+        keychain.readCredential = { [recorder] key in recorder.credentials[key] }
+        let directory = AccountDirectory(keychain: keychain)
+        var legacy = Account(id: "sftp:nas", cloud: .sftp, name: "NAS", email: "ana@nas", clientID: "", clientSecret: nil)
+        legacy.options["hostKey"] = "QUJD"
+        directory.accounts = [legacy]
+
+        try directory.replace([legacy])
+        XCTAssertEqual(recorder.saved.last?.first?.options["hostKey"], "QUJD", "Sin copia en el Llavero, la de la cuenta es el único pin")
+
+        var moved = Credential(accessToken: "", refreshToken: "", expires: .distantFuture)
+        moved.hostKey = "QUJD"
+        recorder.credentials[legacy.id] = moved
+        try directory.replace([legacy])
+        XCTAssertNil(recorder.saved.last?.first?.options["hostKey"])
+        XCTAssertNil(directory.accounts.first?.options["hostKey"])
+    }
+
     func testTheModelReadsAndShowsTheDirectory() {
         let model = AppModel()
         model.accounts = [account("a")]
