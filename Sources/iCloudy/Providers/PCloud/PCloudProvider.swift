@@ -250,7 +250,7 @@ extension PCloudProvider {
     }
 
     /// pCloud forgets an abandoned upload by itself after a while; deleting it frees the space it holds sooner.
-    func abandonUploadSessions(urls: [URL], boxSessions: [String]) async {
-        for id in boxSessions { _ = try? await pcloud("upload_delete", ["uploadid": id], write: true) }
+    func abandonUploadSessions(urls: [URL], sessionIDs: [String]) async {
+        for id in sessionIDs { _ = try? await pcloud("upload_delete", ["uploadid": id], write: true) }
     }
 }

@@ -461,8 +461,8 @@ extension S3Provider {
     func verifiableChecksum(of file: CloudFile) -> ContentHash? {
         opaqueChecksums.contains(file.id) ? nil : file.checksum
     }
-    func abandonUploadSessions(urls: [URL], boxSessions: [String]) async {
-        for raw in boxSessions {
+    func abandonUploadSessions(urls: [URL], sessionIDs: [String]) async {
+        for raw in sessionIDs {
             guard let upload = S3UploadSession(raw), let path = try? path(upload.objectID) else { continue }
             _ = try? await s3(S3Call(method: "DELETE", bucket: path.bucket, key: path.key, query: [("uploadId", upload.uploadID)]))
         }

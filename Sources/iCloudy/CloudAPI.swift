@@ -41,7 +41,7 @@ final class CloudAPI {
     }
     func availableDrives() async throws -> [RemoteDrive] { try await provider.availableDrives() }
     func remoteCopyStatus(_ url: URL) async throws -> RemoteCopy.State { try await provider.remoteCopyStatus(url) }
-    func abandonUploadSessions(urls: [URL], boxSessions: [String]) async { await provider.abandonUploadSessions(urls: urls, boxSessions: boxSessions) }
+    func abandonUploadSessions(urls: [URL], sessionIDs: [String]) async { await provider.abandonUploadSessions(urls: urls, sessionIDs: sessionIDs) }
     func list(parent: String, onPage: (([CloudFile]) -> Void)? = nil) async throws -> [CloudFile] {
         return try await provider.list(parent: parent, onPage: onPage)
     }

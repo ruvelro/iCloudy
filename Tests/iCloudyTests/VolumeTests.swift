@@ -217,7 +217,7 @@ final class VolumeTests: XCTestCase {
         XCTAssertTrue(volume.quota)
         XCTAssertTrue(volume.copy)
         XCTAssertFalse(volume.publicLinks)
-        XCTAssertFalse(volume.oauth)
+        XCTAssertEqual(volume.signIn, .folder)
         XCTAssertFalse(volume.usesPasswordLoginForTesting, "Un volumen se conecta eligiendo carpeta, no con contraseña")
         XCTAssertTrue(Cloud.volume.isSelfHosted)
     }

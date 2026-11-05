@@ -334,13 +334,13 @@ extension BoxProvider {
     func uploadFile(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
         return try await boxUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
     }
-    func abandonUploadSessions(urls: [URL], boxSessions: [String]) async {
+    func abandonUploadSessions(urls: [URL], sessionIDs: [String]) async {
         for url in urls where url.scheme == "https" {
             var request = URLRequest(url: url)
             request.httpMethod = "DELETE"
             _ = try? await session.data(for: request, delegate: RedirectGuard.shared)
         }
-        for id in boxSessions {
+        for id in sessionIDs {
             guard var request = try? await request(URL(string: "https://upload.box.com/api/2.0/files/upload_sessions/\(Self.segment(id))")!, method: "DELETE") else { continue }
             _ = try? await send(&request)
         }

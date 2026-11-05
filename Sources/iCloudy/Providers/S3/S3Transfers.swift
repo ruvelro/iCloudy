@@ -145,7 +145,7 @@ extension S3Provider {
                 }
             } else {
                 // A session for another object: abandon it rather than mix two uploads.
-                await abandonUploadSessions(urls: [], boxSessions: [raw])
+                await abandonUploadSessions(urls: [], sessionIDs: [raw])
                 cursor.sessionID = nil
             }
         }
@@ -392,7 +392,7 @@ extension S3Provider {
             complete.errorsInBody = true
             _ = try await s3(complete)
         } catch {
-            await abandonUploadSessions(urls: [], boxSessions: [S3UploadSession(uploadID: uploadID, objectID: target.id).raw])
+            await abandonUploadSessions(urls: [], sessionIDs: [S3UploadSession(uploadID: uploadID, objectID: target.id).raw])
             throw error
         }
     }

@@ -41,7 +41,7 @@ extension AppModel {
     func requestPublicLink(_ file: CloudFile, account target: Account? = nil) {
         guard let account = target ?? account else { return }
         if let reason = account.limitation(.publicLink, for: [file]) { error = reason; return }
-        if account.cloud == .s3, !account.isDemo { ui.pendingTemporaryLink = (file, account); return }
+        if account.capabilities.temporaryLinks { ui.pendingTemporaryLink = (file, account); return }
         ui.pendingShare = (file, account)
     }
 
@@ -106,7 +106,7 @@ extension AppModel {
                     let change = try api.identityChange(file: file, name: file.name, destination: destination)
                     try applyIdentityChange(change, account: request.account, destinationPath: destinationPath)
                     if let origin = request.origin { moves.append((file, change.file(file), origin, destination)) }
-                } else if request.account.cloud == .microsoft && !request.account.isDemo {
+                } else if request.account.capabilities.asyncCopy {
                     try await remoteCopies.start(file: file, destination: destination, api: api)
                 } else { try await api.copy(file: file, to: destination) }
                 done += 1
@@ -114,7 +114,7 @@ extension AppModel {
             }
             if request.isMove, moves.count == request.files.count { registerMoveUndo(moves, account: request.account) }
             let target = destinationPath.last?.name ?? L("Mis archivos")
-            if !request.isMove, request.account.cloud == .microsoft, !request.account.isDemo {
+            if !request.isMove, request.account.capabilities.asyncCopy {
                 info = L("Copia enviada a OneDrive. Su estado se muestra en Transferencias hasta que el servidor confirme el resultado.")
                 reloadAfterWrite(to: request.account)
                 return

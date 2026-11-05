@@ -324,10 +324,10 @@ final class TransferQueue {
     /// by themselves, but Box counts the open ones against the account and the others hold storage meanwhile.
     private func abandonSessions(_ transfer: Transfer) {
         let urls = transfer.uploads.values.compactMap(\.url)
-        let boxSessions = transfer.uploads.values.compactMap(\.sessionID)
-        guard !urls.isEmpty || !boxSessions.isEmpty, let lookup = client,
+        let sessionIDs = transfer.uploads.values.compactMap(\.sessionID)
+        guard !urls.isEmpty || !sessionIDs.isEmpty, let lookup = client,
               let api = try? lookup(transfer.targetAccountID ?? transfer.accountID) else { return }
-        Task { await api.abandonUploadSessions(urls: urls, boxSessions: boxSessions) }
+        Task { await api.abandonUploadSessions(urls: urls, sessionIDs: sessionIDs) }
     }
     /// True for jobs that can be re-prioritised: waiting or paused. Running jobs and finished ones keep their place.
     func isMovable(_ transfer: Transfer) -> Bool { [.queued, .paused].contains(transfer.state) && tasks[transfer.id] == nil }
