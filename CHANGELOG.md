@@ -21,6 +21,65 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
   conflicto», «Queda 1 por transferir», en lugar de «1 seleccionados». Las reglas viven en `.stringsdict`, generados
   con `scripts/make-plurals.py`.
 
+### Correcciones de la revisión
+
+Lo que encontró la revisión del 5 de noviembre (`docs/REVISION-2026-11-05.md`), salvo lo que es de arquitectura.
+
+- **Google Drive ve las unidades compartidas desde una cuenta personal.** Cada llamada lleva `supportsAllDrives` y los
+  listados y búsquedas, `includeItemsFromAllDrives`: una carpeta de una unidad compartida que alguien te comparte
+  aparece en «Compartido conmigo» y se abre, en lugar de faltar o dar 404 al entrar.
+- **Una descarga SFTP larga ya no se queda parada tras la renovación de claves** que OpenSSH pide cada hora: la
+  ampliación de ventana que salía en mitad del intercambio, y que el servidor descartaba, espera ahora a `NEWKEYS`.
+- **La cola no se pierde entera por un punto de reanudación que no entiende**: las subidas a medias que escribió una
+  versión más nueva se descartan solas, como ya pasaba con las descargas.
+- **WebDAV reintenta**: un 429 o el 503 de un Nextcloud en mantenimiento se esperan, respetando `Retry-After`, en
+  lugar de fallar a la primera. Solo se repite lo que se puede repetir sin efectos dobles.
+- **La papelera propia de OneDrive avisa si no se pudo apuntar** lo enviado, en vez de callarlo; y si su archivo no se
+  puede leer, se aparta en lugar de sobrescribirse con una lista vacía.
+- **`Retry-After` en forma de fecha** se entiende, y la espera máxima sube de 30 a 120 segundos: Box y Graph piden a
+  menudo uno o dos minutos, y volver antes era encontrarse otra vez la negativa. Los cinco lectores de la cabecera son
+  ahora uno.
+- **Un bloque que falla ya no tira la subida.** Un 5xx, un 429 o una conexión cortada en mitad de un bloque de Google,
+  OneDrive, Dropbox, Box o de los servidores de almacenamiento de Mega se espera y se repite; en Google y OneDrive,
+  preguntando antes cuánto llegó y enviando solo lo que falta. Antes la sesión se perdía y la cola empezaba el archivo
+  otra vez desde su punto de control. Google y OneDrive comparten ahora el mismo bucle de subida.
+- **SFTP y FTP suben con un nombre provisional** (`.nombre.icloudy-part`) y lo renombran al terminar: una caída ya no
+  deja un archivo cortado con el nombre definitivo. Si falla, el provisional se borra cuando la conexión lo permite.
+- **La papelera de Dropbox se recorre carpeta a carpeta**, como en dropbox.com: lo borrado en cada carpeta y las
+  carpetas por las que seguir. Antes cada visita listaba la cuenta entera, archivo a archivo.
+- **La búsqueda de pCloud reutiliza el árbol cinco minutos**, como la de Mega, en vez de bajarlo entero en cada
+  consulta; cualquier cambio hecho desde iCloudy lo descarta.
+- **Un listado que repite la misma página se corta** en lugar de pedirla para siempre.
+- **El README dice la verdad**: sin recuentos de pruebas fijos, `swift run iCloudyMain`, Automator solo a través de
+  «Ejecutar atajo», la extensión del Finder en «En camino» porque nunca se ha cargado, qué indexa Spotlight y qué
+  papeleras se pueden restaurar.
+
+### Seguridad
+
+- **pCloud ya no puede conectar en silencio la cuenta de otro.** pCloud no devuelve el `state` de OAuth, así que una
+  página cualquiera podía mandar al puerto local un código de su propia cuenta. Ahora solo vale la primera vuelta sin
+  `state`, en los cinco minutos siguientes a abrir el navegador, y antes de guardar nada se te pregunta si la cuenta
+  que ha vuelto (con su correo) es la tuya. Google, Microsoft, Dropbox y Box siguen exigiendo `state`.
+- **SFTP enseña la huella del servidor la primera vez** y no envía la contraseña ni la firma de la clave hasta que la
+  aceptas. La clave aceptada pasa al Llavero; la que guardaban en `accounts.json` las cuentas anteriores se mueve allí
+  en la primera conexión, y desde entonces manda el Llavero.
+- **Intercambio estricto de claves SSH** (`kex-strict-c-v00@openssh.com`, contra Terrapin): se anuncia, se rechaza
+  cualquier paquete ajeno al primer intercambio y los contadores vuelven a cero tras cada `NEWKEYS` cuando el servidor
+  también lo admite. Además: claves RSA de servidor de al menos 2048 bits y relleno mínimo de cuatro bytes.
+- **Las claves RSA del usuario firman con Security.framework**, con la clave PKCS#1 completa y sus parámetros CRT, en
+  lugar de con la aritmética propia de Mega, cuyo tiempo dependía del exponente.
+- **keyboard-interactive** solo contesta con la contraseña a un aviso oculto que la pide, y una vez. Un segundo factor
+  se rechaza con un mensaje claro en vez de recibir la contraseña.
+- **El segundo factor de Mega se pide cuando Mega lo pide**, en un campo propio, en lugar de adivinarlo de «contraseña,
+  espacio y seis cifras», que rompía cualquier contraseña que acabase así.
+- **FTPS explícito** lleva el nombre del servidor en las opciones de cada conexión y lo comprueba de forma explícita
+  contra el certificado, también cuando es una dirección IP. Antes salía de una tabla compartida que no se vaciaba y
+  que, con dos sesiones a la vez, podía darle a una el nombre de la otra.
+- **`SECURITY.md`** explica qué criptografía es del sistema y cuál está escrita aquí, y cómo avisar de un fallo. Se
+  añaden los vectores oficiales que faltaban: el resto de ejemplos del RFC 3394, el último del RFC 4493 y los de
+  regresión de OpenBSD para bcrypt_pbkdf.
+- Un **servidor SSH falso** en las pruebas ejercita todo lo anterior sin red.
+
 ## 0.7.0 — 12 de octubre de 2026
 
 El Llavero deja de preguntar por cada nube, una tanda de mejoras para el uso diario y lo que le faltaba a cada
