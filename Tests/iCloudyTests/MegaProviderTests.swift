@@ -912,11 +912,13 @@ extension MegaProviderTests {
         let base = try XCTUnwrap(StubProtocol.handler)
         let payload = Data((0..<3_000_000).map { UInt8($0 % 251) })
         var received: [Int64: Data] = [:]
-        var failAt: Int64? = MegaCrypto.chunks(of: Int64(payload.count))[4].offset
+        let failAt = MegaCrypto.chunks(of: Int64(payload.count))[4].offset
+        // A dropped connection is retried in place now, so the piece fails on every attempt of the first run.
+        var drops = ResumableSessionUpload.attemptsPerBlock
         StubProtocol.handler = { request in
             guard request.url?.host == "subida.ejemplo.com" else { return try base(request) }
             let offset = Int64(request.url?.lastPathComponent ?? "") ?? -1
-            if offset == failAt { failAt = nil; throw URLError(.networkConnectionLost) }
+            if offset == failAt, drops > 0 { drops -= 1; throw URLError(.networkConnectionLost) }
             let body = requestData(request)
             received[offset] = body
             // Like Mega's storage servers: nothing for a piece, the receipt once every byte has arrived.
@@ -929,6 +931,7 @@ extension MegaProviderTests {
         let stamp = try source.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
         var saved = UploadCheckpoint(total: Int64(payload.count), modified: stamp)
         let api = client()
+        (api.provider as! CloudSession).blockRetryDelay = { _, _ in 0 }
 
         do {
             _ = try await api.resumableUpload(local: source, parent: "root", name: "grande.bin", replacing: nil,

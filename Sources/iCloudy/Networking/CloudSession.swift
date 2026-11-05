@@ -189,6 +189,33 @@ class CloudSession {
         }
     }
 
+    /// The wait before sending a block again. Tests set it to nothing.
+    var blockRetryDelay: (_ attempt: Int, _ response: URLResponse?) -> Double = { attempt, response in
+        RetryAfter.delay(announced: RetryAfter.seconds(response), attempt: attempt)
+    }
+    /// Sends one block of a chunked upload, and again after a transient failure (a 5xx, a 429, a dropped
+    /// connection), up to `ResumableSessionUpload.attemptsPerBlock` times. Only for blocks that are safe to repeat as
+    /// they are: Dropbox's append at an explicit offset (a repeat of one that landed is answered with the right offset),
+    /// Box's part with its range, a chunk to Mega's storage at its offset. One transient failure used to fail the
+    /// session, and the queue then started the file again from its checkpoint.
+    func sendBlock(_ send: () async throws -> (Data, URLResponse)) async throws -> (Data, URLResponse) {
+        var attempt = 0
+        while true {
+            try Task.checkCancellation()
+            let last = attempt + 1 >= ResumableSessionUpload.attemptsPerBlock
+            var response: URLResponse?
+            do {
+                let answer = try await send()
+                guard !last, ResumableSessionUpload.isTransient(status: (answer.1 as? HTTPURLResponse)?.statusCode ?? 0) else { return answer }
+                response = answer.1
+            } catch where !last && ResumableSessionUpload.isTransient(error) {}
+            Diagnostics.retrying(account, method: "PUT", url: response?.url, status: (response as? HTTPURLResponse)?.statusCode,
+                                 attempt: attempt + 1, delay: blockRetryDelay(attempt, response))
+            try await Task.sleep(for: .seconds(blockRetryDelay(attempt, response)))
+            attempt += 1
+        }
+    }
+
     /// Tells the provider to forget upload sessions a cancelled transfer will never finish. Every failure here is
     /// ignored on purpose: the sessions expire by themselves, so this is a courtesy, not a step that can fail.
 

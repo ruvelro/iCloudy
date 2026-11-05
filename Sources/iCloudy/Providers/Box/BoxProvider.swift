@@ -196,7 +196,7 @@ extension BoxProvider {
             upload.setValue("bytes \(cursor.offset)-\(cursor.offset + Int64(chunk.count) - 1)/\(total)", forHTTPHeaderField: "Content-Range")
             upload.setValue("sha=" + Data(Insecure.SHA1.hash(data: chunk)).base64EncodedString(), forHTTPHeaderField: "Digest")
             upload.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-            let (data, response) = try await self.upload(&upload, from: chunk)
+            let (data, response) = try await sendBlock { try await self.upload(&upload, from: chunk) }
             try HTTP.validate(response, data: data)
             guard let part = (try? HTTP.json(data))?["part"] as? [String: Any],
                   let encoded = try? JSONSerialization.data(withJSONObject: part), let text = String(data: encoded, encoding: .utf8) else {

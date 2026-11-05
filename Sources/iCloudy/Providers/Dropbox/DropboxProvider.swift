@@ -231,7 +231,7 @@ extension DropboxProvider {
             append.timeoutInterval = 180
             append.setValue(Self.asciiJSON(["cursor": ["session_id": cursor.sessionID!, "offset": cursor.offset], "close": false]), forHTTPHeaderField: "Dropbox-API-Arg")
             append.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-            let (data, response) = try await upload(&append, from: chunk)
+            let (data, response) = try await sendBlock { try await upload(&append, from: chunk) }
             if let corrected = Self.dropboxCorrectOffset(response, data) {
                 corrections += 1
                 guard corrected <= total, corrected != cursor.offset, corrections <= 3 else {
