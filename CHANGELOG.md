@@ -21,6 +21,9 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
   nombre delante («Dropbox:/Fotos/2024»). Si la ruta acaba en un archivo, se abre su carpeta con el archivo
   seleccionado. Las migas también se pueden escribir: el lápiz que hay a su derecha, o ⌘L, las convierte en un campo
   de ruta; Intro va y Escape las devuelve.
+- **Carpetas recientes**: las veinte últimas carpetas abiertas, de cualquier pestaña, panel o cuenta, debajo de los
+  favoritos y en el menú Ir. Se guardan entre sesiones; una carpeta renombrada sigue en la lista con su nombre nuevo,
+  y una movida o borrada sale de ella. Las de una bóveda cifrada no se apuntan nunca.
 
 ### Robustez
 

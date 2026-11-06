@@ -1933,3 +1933,12 @@
 "Escribir una ruta" = "Type a path";
 "Escribir la ruta" = "Type the Path";
 "Elige una cuenta o escribe su nombre delante de la ruta, como «Dropbox:/Fotos»." = "Choose an account or type its name in front of the path, as in “Dropbox:/Photos”.";
+"RECIENTES" = "RECENTS";
+"Borrar la lista de carpetas recientes" = "Clear the list of recent folders";
+"Quitar de recientes" = "Remove from Recents";
+"Abre esta carpeta" = "Opens this folder";
+"Carpetas recientes" = "Recent Folders";
+"Borrar el menú" = "Clear Menu";
+"Conecta la cuenta de esta carpeta." = "Connect the account of this folder.";
+"No se pudieron leer las carpetas recientes: %@ La lista empieza vacía." = "The recent folders could not be read: %@ The list starts empty.";
+"No se pudieron guardar las carpetas recientes: %@" = "The recent folders could not be saved: %@";

@@ -82,6 +82,14 @@ struct iCloudyApp: App {
                 Button("Escribir la ruta") { model.ui.editingPath = model.workspace.focusedPane }
                     .keyboardShortcut("l", modifiers: .command)
                     .disabled(model.account == nil || model.collection != .files || model.ui.showGlobalSearch)
+                Divider()
+                Menu("Carpetas recientes") {
+                    ForEach(model.recents.items) { recent in
+                        Button(model.recentTitle(recent)) { model.openRecent(recent) }
+                    }
+                    if !model.recents.items.isEmpty { Divider() }
+                    Button("Borrar el menú") { model.recents.clear() }.disabled(model.recents.items.isEmpty)
+                }
             }
             CommandGroup(after: .appInfo) {
                 Button("Añadir cuenta…") { model.ui.showConnect = true }.keyboardShortcut("n", modifiers: [.command, .shift])

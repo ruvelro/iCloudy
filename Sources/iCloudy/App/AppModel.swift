@@ -68,6 +68,8 @@ final class AppModel {
         get { workspace.current.search }
         set { workspace.current.search = newValue }
     }
+    /// The last folders visited, in any tab.
+    let recents = RecentLocationsStore()
     /// How the lists are drawn: their columns, for every tab alike.
     let explorer = ExplorerSettings()
     /// The favorites and their file. Read-only here: every change goes through the store, which saves it.
@@ -152,6 +154,8 @@ final class AppModel {
         do { let store = try AppearanceStore(); appearanceStore = store; appearances = store.values }
         catch { self.error = L("No se pudo cargar la personalización: \(error.localizedDescription)") }
         if let problem = favoriteStore.loadError { self.error = problem }
+        if let problem = recents.loadError { self.error = problem }
+        recents.saveFailed = { [weak self] message in self?.error = message }
         favoriteStore.saveFailed = { [weak self] message in self?.error = message }
         favoriteStore.didChange = { [weak self] in self?.refreshSpotlightFavorites() }
         // The tabs of the last session, put right against the accounts once those have been read.

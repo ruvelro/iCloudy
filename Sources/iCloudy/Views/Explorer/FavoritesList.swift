@@ -47,6 +47,7 @@ struct FavoritesList: View {
                     .sidebarRow(selected: false)
                     .help(model.accounts.first { $0.id == favorite.accountID }?.email ?? L("Cuenta desconectada"))
             }
+            RecentLocationsList(model: model, store: model.recents)
         }
     }
 }

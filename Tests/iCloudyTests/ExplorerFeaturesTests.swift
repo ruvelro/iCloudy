@@ -194,4 +194,60 @@ final class ExplorerFeaturesTests: XCTestCase {
         catch { XCTAssertTrue(error.localizedDescription.contains("No existe")) }
         XCTAssertTrue(model.path.isEmpty, "A failed jump stays where it was")
     }
+
+    // MARK: - Recent folders
+
+    func testRecentsKeepTheLastTwentyFoldersOnceEachNewestFirst() throws {
+        let url = try temporaryRoot().appendingPathComponent("recent-locations.json")
+        let store = RecentLocationsStore(url: url)
+        for index in 0..<25 {
+            store.note(BrowserLocation(accountID: "a", collection: .files, path: [file("F\(index)", folder: true)]))
+        }
+        XCTAssertEqual(store.items.count, RecentLocationsStore.limit)
+        XCTAssertEqual(store.items.first?.path.last?.name, "F24")
+        store.note(BrowserLocation(accountID: "a", collection: .files, path: [file("F10", folder: true)]))
+        XCTAssertEqual(store.items.first?.path.last?.name, "F10", "A folder visited again moves to the top")
+        XCTAssertEqual(store.items.filter { $0.path.last?.name == "F10" }.count, 1, "and is listed once")
+
+        XCTAssertFalse(store.note(BrowserLocation(accountID: "a", collection: .trash)), "The bin is not a place to go back to")
+        XCTAssertFalse(store.note(BrowserLocation(accountID: nil)))
+        XCTAssertFalse(store.note(BrowserLocation(accountID: CryptomatorVaults.accountPrefix + "x", collection: .files)),
+                       "A vault's decrypted names are never written down")
+
+        let reopened = RecentLocationsStore(url: url)
+        XCTAssertEqual(reopened.items.map(\.id), store.items.map(\.id), "The list survives a relaunch")
+        reopened.forget(accountID: "a", fileID: "F10")
+        XCTAssertFalse(reopened.items.contains { $0.path.last?.name == "F10" })
+        reopened.clear()
+        XCTAssertTrue(RecentLocationsStore(url: url).items.isEmpty)
+    }
+
+    func testAnUnreadableRecentsFileIsSetAsideNotOverwritten() throws {
+        let root = try temporaryRoot()
+        let url = root.appendingPathComponent("recent-locations.json")
+        try Data("{ not json".utf8).write(to: url)
+        let store = RecentLocationsStore(url: url)
+        XCTAssertTrue(store.items.isEmpty)
+        XCTAssertNotNil(store.loadError)
+        let kept = try FileManager.default.contentsOfDirectory(atPath: root.path).filter { $0.contains(".corrupt-") }
+        XCTAssertEqual(kept.count, 1, "The unreadable bytes are kept beside it")
+    }
+
+    func testBrowsingNotesFoldersAndARenameFollowsThem() async throws {
+        let model = AppModel()
+        model.enableDemo()
+        model.demo?.latency = .milliseconds(1)
+        try await wait(until: { model.files.contains { $0.name == "Proyectos" } })
+        let folder = try XCTUnwrap(model.files.first { $0.name == "Proyectos" })
+        model.navigate(folder)
+        XCTAssertEqual(model.recents.items.first?.path.map(\.name), ["Proyectos"])
+        model.goBack()
+        XCTAssertEqual(model.recents.items.first?.path, [], "Going back counts as a visit too")
+
+        try model.applyIdentityChange(RemoteIdentityChange(oldID: folder.id, newID: folder.id, name: "Proyectos 2026", descendants: true),
+                                      account: try XCTUnwrap(model.account))
+        XCTAssertTrue(model.recents.items.contains { $0.path.last?.name == "Proyectos 2026" }, "A rename keeps the recent folder, renamed")
+        model.openRecent(try XCTUnwrap(model.recents.items.first { !$0.path.isEmpty }))
+        XCTAssertEqual(model.path.map(\.name), ["Proyectos 2026"])
+    }
 }
