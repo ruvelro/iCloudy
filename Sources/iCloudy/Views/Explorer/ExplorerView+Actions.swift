@@ -172,6 +172,8 @@ extension ExplorerView {
         }
         Divider()
         if file.webURL != nil { Button("Copiar enlace") { model.copyLink(file) } }
+        Button("Copiar enlace de iCloudy") { model.copyICloudyLink(file) }
+            .help("Un enlace icloudy:// que abre iCloudy en este elemento, en este Mac")
         if let account = model.account, account.capabilities.memberSharing {
             Button("Compartir con personas…") { model.requestSharing(file) }
         }

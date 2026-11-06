@@ -30,6 +30,17 @@
             </array>
         </dict>
     </array>
+    <!-- icloudy:// links: open a folder, reveal an item, search (Integration/URLCommand.swift). A link only ever shows
+         things; nothing it says deletes, moves or sends anything. -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key><string>dev.icloudy.desktop.link</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>CFBundleURLSchemes</key>
+            <array><string>icloudy</string></array>
+        </dict>
+    </array>
     <!-- What a row carries when it is dragged from one pane to the other. Offered only inside the app. -->
     <key>UTExportedTypeDeclarations</key>
     <array>

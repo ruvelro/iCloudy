@@ -3,8 +3,7 @@ import AppKit
 
 /// What an `icloudy://` link asks for. Any app, script or web page can open one, so a link only ever shows things:
 /// it opens a folder, reveals an item or starts a search. Nothing a link says is a reason to delete, move, overwrite
-/// or send anything; the command-line companion's requests (`cli`) are answered only for a client the person paired
-/// in the app, with a confirmation (`CLIBridge`).
+/// or send anything.
 ///
 ///     icloudy://open?account=<id, alias, name or e-mail>&path=/Fotos/2024
 ///     icloudy://reveal?account=…&path=/Fotos/2024/playa.jpg
@@ -14,7 +13,6 @@ enum URLCommand: Equatable {
     case open(account: String, path: [String])
     case reveal(account: String, path: [String])
     case search(query: String)
-    case cli(CLIRequest)
 
     static let scheme = "icloudy"
     /// Long enough for any real path; a link built to exhaust memory or the log is refused instead.
@@ -48,8 +46,6 @@ enum URLCommand: Equatable {
         case "search":
             guard let query = clean(fields["q"])?.trimmingCharacters(in: .whitespaces), !query.isEmpty else { throw Failure.missing("q") }
             return .search(query: String(query.prefix(256)))
-        case "cli":
-            return .cli(try CLIRequest(fields: fields))
         case "":
             throw Failure.missing("account")
         default:
@@ -88,8 +84,6 @@ enum URLCommand: Equatable {
         case .search(let query):
             components.host = "search"
             components.queryItems = [URLQueryItem(name: "q", value: query)]
-        case .cli:
-            return nil
         }
         return components.url
     }
@@ -112,12 +106,12 @@ extension AppModel {
     func handle(_ url: URL) async {
         do {
             let command = try URLCommand.parse(url)
-            NSApp.activate(ignoringOtherApps: true)
+            // There is no application object when the model runs under the tests.
+            NSApp?.activate(ignoringOtherApps: true)
             switch command {
             case .open(let reference, let path): try await openLink(account: try account(named: reference), path: path, revealing: false)
             case .reveal(let reference, let path): try await openLink(account: try account(named: reference), path: path, revealing: true)
             case .search(let query): startGlobalSearch(query)
-            case .cli(let request): await cli.handle(request, model: self)
             }
         } catch { self.error = error.localizedDescription }
     }
@@ -137,5 +131,13 @@ extension AppModel {
         guard let file = place.file else { return }
         if revealing { selectedIDs = [file.id] }
         else { preview.show(file: file, account: account, client: try client(account)) }
+    }
+
+    /// The `icloudy://` link that reveals `file` in the open folder, for pasting into notes, scripts or a chat.
+    func copyICloudyLink(_ file: CloudFile) {
+        guard let account, collection == .files,
+              let link = URLCommand.link(.reveal(account: account.id, path: path.map(\.name) + [file.name])) else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(link.absoluteString, forType: .string)
     }
 }

@@ -41,6 +41,11 @@ simulados y la documentación de cada uno. Se marca como 🆕 hasta que alguien 
   bloques con su MD5 y se reanudan; las descargas, por rangos fijados a una versión y comprobadas con `Content-MD5`;
   copiar dentro de la cuenta espera a que Azure termine antes de borrar el origen al mover. Los enlaces son SAS
   temporales de solo lectura. Cómo funciona, en [docs/AZURE.md](docs/AZURE.md).
+- **Enlaces `icloudy://`.** `icloudy://open?account=…&path=/Fotos/2024` abre una carpeta (o la vista previa de un
+  archivo), `reveal` abre la carpeta que lo contiene y lo selecciona, `search?q=…` busca en todas las nubes, y
+  `icloudy://cuenta/ruta` es la forma corta de `open`. La cuenta se nombra por su identificador, su alias, su nombre o
+  su correo. Un enlace solo enseña: nunca borra, mueve ni sube nada, y una ruta con `..` se rechaza. «Copiar enlace de
+  iCloudy» en el menú de cada elemento da el enlace que lo vuelve a mostrar.
 
 ### Robustez
 

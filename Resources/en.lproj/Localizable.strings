@@ -1987,3 +1987,12 @@
 "Solo para nubes soberanas, dominios propios o Azurite (http://127.0.0.1:10000/devstoreaccount1)." = "Only for sovereign clouds, custom domains or Azurite (http://127.0.0.1:10000/devstoreaccount1).";
 "Conectar Azure Blob Storage" = "Connect Azure Blob Storage";
 "Con la clave de la cuenta de almacenamiento o un token SAS" = "With the storage account key or a SAS token";
+"Ese enlace no es de iCloudy." = "That link is not an iCloudy link.";
+"El enlace de iCloudy es demasiado largo." = "The iCloudy link is too long.";
+"iCloudy no sabe hacer «%@» desde un enlace." = "iCloudy cannot do “%@” from a link.";
+"Al enlace de iCloudy le falta «%@»." = "The iCloudy link is missing “%@”.";
+"La ruta del enlace de iCloudy no es válida." = "The path of the iCloudy link is not valid.";
+"No hay ninguna cuenta conectada que se llame «%@»." = "No connected account is called “%@”.";
+"Hay varias cuentas que se llaman «%@». Usa el identificador de la cuenta." = "Several accounts are called “%@”. Use the account’s identifier.";
+"Copiar enlace de iCloudy" = "Copy iCloudy Link";
+"Un enlace icloudy:// que abre iCloudy en este elemento, en este Mac" = "An icloudy:// link that opens iCloudy on this item, on this Mac";
