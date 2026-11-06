@@ -82,7 +82,7 @@ struct InspectorView: View {
     }
 
     @ViewBuilder private func many(_ totals: InspectorSummary.Totals) -> some View {
-        Text(L("\(totals.count) elementos")).font(.headline)
+        Text("\(totals.count) elementos").font(.headline)
         Divider()
         Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 7) {
             row("Carpetas", "\(totals.folders)")

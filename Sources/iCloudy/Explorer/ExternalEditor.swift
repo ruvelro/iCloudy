@@ -262,7 +262,7 @@ final class ExternalEditor {
     static func sameVersion(_ a: CloudFile, _ b: CloudFile) -> Bool {
         if let x = a.checksum, let y = b.checksum, x.algorithm == y.algorithm { return x.matches(y.value) }
         let dates: Bool = switch (a.modified, b.modified) {
-        case let (x?, y?): abs(x.timeIntervalSince(y)) < 1
+        case (let x?, let y?): abs(x.timeIntervalSince(y)) < 1
         case (nil, nil): true
         default: false
         }
