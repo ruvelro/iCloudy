@@ -216,6 +216,22 @@
 			<string>%lld conflicts await</string>
 		</dict>
 	</dict>
+	<key>%lld copiados</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld copied</string>
+			<key>other</key>
+			<string>%lld copied</string>
+		</dict>
+	</dict>
 	<key>%lld elementos</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -280,6 +296,22 @@
 			<string>%lld sent</string>
 		</dict>
 	</dict>
+	<key>%lld enviados a la papelera del destino</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@ to the destination's trash</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld sent</string>
+			<key>other</key>
+			<string>%lld sent</string>
+		</dict>
+	</dict>
 	<key>%lld finalizadas</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -326,6 +358,22 @@
 			<string>%lld could not</string>
 			<key>other</key>
 			<string>%lld could not</string>
+		</dict>
+	</dict>
+	<key>%lld pendientes o fallidos</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld pending or failed</string>
+			<key>other</key>
+			<string>%lld pending or failed</string>
 		</dict>
 	</dict>
 	<key>%lld se dejaron fuera a propósito.</key>

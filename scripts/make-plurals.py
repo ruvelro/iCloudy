@@ -68,6 +68,11 @@ TABLE = [
     # 0.9 — Transferencias
     ("%lld conflictos esperan tu decisión", "%#@n@ tu decisión", [("n", "%lld conflicto espera", "%lld conflictos esperan")],
      "%#@n@ your decision", [("n", "%lld conflict awaits", "%lld conflicts await")]),
+    ("%lld copiados", "%#@n@", [("n", "%lld copiado", "%lld copiados")], "%#@n@", [("n", "%lld copied", "%lld copied")]),
+    ("%lld pendientes o fallidos", "%#@n@", [("n", "%lld pendiente o fallido", "%lld pendientes o fallidos")],
+     "%#@n@", [("n", "%lld pending or failed", "%lld pending or failed")]),
+    ("%lld enviados a la papelera del destino", "%#@n@ a la papelera del destino", [("n", "%lld enviado", "%lld enviados")],
+     "%#@n@ to the destination's trash", [("n", "%lld sent", "%lld sent")]),
 ]
 
 def entry(format_key, variables):

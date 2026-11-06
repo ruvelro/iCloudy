@@ -9,6 +9,7 @@ struct TransferPanel: View {
     @Bindable var queue: TransferQueue
     @ObservedObject var history: TransferHistory
     @State private var showHistory = false
+    @Environment(\.openWindow) private var openWindow
     /// The drawer is built when it opens and thrown away when it closes, so this always starts on what is moving.
     @State private var tab = TransferTab.active
     @State private var errorFilter = TransferErrorFilter.all
@@ -29,7 +30,12 @@ struct TransferPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Transferencias").font(.headline)
+            HStack {
+                Text("Transferencias").font(.headline)
+                Spacer()
+                Button { openWindow(id: "jobs") } label: { Image(systemName: "tray.full") }
+                    .buttonStyle(.borderless).help("Trabajos guardados").accessibilityLabel("Trabajos guardados")
+            }
             RemoteCopyRows(copies: model.remoteCopies)
             Picker("", selection: $tab) {
                 ForEach(TransferTab.allCases) { Text($0.title).tag($0) }

@@ -82,6 +82,9 @@ final class MirrorChecksumTests: XCTestCase {
         let date = try XCTUnwrap(try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
         try Data("UNO".utf8).write(to: file)
         try touch(file, date)
+        // Dates do not round-trip to the nanosecond everywhere: the baseline takes the stamp as it reads back now, which
+        // is what a copy silently damaged in place looks like.
+        f.manager.mirrors[0].baseline["a.txt"]?.local = try MirrorPlanner.stamps(of: f.local)["a.txt"]
         let summary = try await f.manager.verify(f.id)
         XCTAssertEqual(summary.missing, 1, summary.text)
         try await wait { (try? String(contentsOf: file, encoding: .utf8)) == "uno" }

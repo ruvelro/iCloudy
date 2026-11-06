@@ -53,6 +53,15 @@ struct MenuBarContent: View {
         if !model.mirrors.mirrors.isEmpty {
             Button("Sincronizar reflejos") { _ = model.syncAllMirrors() }
         }
+        Menu("Trabajos guardados") {
+            ForEach(model.jobs.jobs) { job in
+                Button(job.name) {
+                    Task { do { try await model.runJob(id: job.id) } catch { model.error = error.localizedDescription } }
+                }.disabled(job.running)
+            }
+            if !model.jobs.jobs.isEmpty { Divider() }
+            Button("Gestionar trabajos…") { NSApp.activate(ignoringOtherApps: true); openWindow(id: "jobs") }
+        }
         Divider()
         ForEach(model.accounts) { account in
             Text(model.accountTitle(account) + " · " + storage(account))
