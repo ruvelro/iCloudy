@@ -5,6 +5,64 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
 
 ## Sin publicar
 
+### Proveedores e integración
+
+Lo nuevo de esta sección no se ha probado contra cuentas reales de cada servicio: lo cubren las pruebas con servidores
+simulados y la documentación de cada uno. Se marca como 🆕 hasta que alguien lo use de verdad.
+
+- **«Más servidores» al añadir una nube.** Hetzner Storage Box (SFTP y WebDAV), Koofr, Yandex Disk, Infomaniak
+  kDrive, IONOS HiDrive, Fastmail Files, Seafile, ownCloud Infinite Scale y Nextcloud llegan con la dirección, el
+  puerto y la ruta ya puestos, lo que hay que saber antes (la contraseña de aplicación, el protocolo que hay que
+  activar en su panel) y un enlace a sus instrucciones. En S3 se añaden Storj e iDrive e2 a Backblaze, Wasabi y R2.
+  Por debajo son cuentas WebDAV, SFTP o S3 normales: una tabla de datos, no proveedores nuevos.
+- **Nextcloud inicia sesión en el navegador** (Login Flow v2): se escribe la dirección, se abre la página del propio
+  servidor, se entra con lo que pida (dos pasos, SSO, llave de seguridad) y Nextcloud entrega a iCloudy una contraseña
+  de aplicación solo para él, revocable desde su seguridad. Los archivos se buscan bajo el id del usuario aunque se
+  entre con el correo. El formulario de usuario y contraseña sigue a mano para los servidores que lo tengan apagado.
+- **Subidas grandes a Nextcloud por trozos que se reanudan** (chunking v2). Desde 32 MB, el archivo sube en trozos
+  numerados a una carpeta de subida propia y un MOVE final lo deja en su sitio de una vez. Si la conexión cae, el
+  reintento pregunta si la subida sigue en el servidor y continúa por el siguiente trozo; cancelar la borra. Antes
+  era un único PUT que volvía a empezar desde cero.
+- **WebDAV habla Digest y acepta tokens.** Un servidor que pide autenticación Digest (algunos NAS, IIS) ya no se
+  rechaza: se responde con MD5 o SHA-256 y la contraseña no viaja, y una cuenta Básica cuyo servidor cambia a Digest
+  lo sigue sin volver a conectarla. En «Avanzado» se puede conectar con un token de acceso OAuth (`Bearer`), para
+  servidores como ownCloud Infinite Scale; iCloudy no lo renueva. Los certificados de cliente quedan fuera por ahora.
+- **SFTP reanuda subidas y descargas por donde iban.** La subida guarda cada 16 MB cuánto ha confirmado el servidor
+  en el parcial oculto (`.nombre.icloudy-part`) y el reintento sigue desde ahí, si el origen no ha cambiado. La
+  descarga deja junto al destino un parcial con la versión que estaba bajando; si el archivo sigue igual en el
+  servidor, se continúa, y si cambió, se empieza de cero. Cancelar borra los parciales.
+- **iCloud Drive** 🆕, como carpeta de este Mac: se confirma una vez su carpeta y la cuenta muestra, archivo a
+  archivo, si está solo en iCloud, bajando, descargado o subiendo. Abrir, previsualizar, descargar o copiar un archivo
+  que solo está en iCloud pide antes la descarga y espera, sin bloquear y con opción de cancelar, y lo lee coordinado
+  con iCloud. «Descargar de iCloud a este Mac» y «Quitar la descarga» están en el menú; «Mantener descargado» no,
+  porque macOS no lo ofrece a las apps. Por debajo es un volumen, sin cuota: la de iCloud no se puede leer.
+- **Azure Blob Storage** 🧪, con la clave de la cuenta (Shared Key, firmada en el Mac) o un token SAS. Los
+  contenedores son la raíz y las carpetas, prefijos; los listados siguen los marcadores; las subidas grandes van por
+  bloques con su MD5 y se reanudan; las descargas, por rangos fijados a una versión y comprobadas con `Content-MD5`;
+  copiar dentro de la cuenta espera a que Azure termine antes de borrar el origen al mover. Los enlaces son SAS
+  temporales de solo lectura. Cómo funciona, en [docs/AZURE.md](docs/AZURE.md).
+- **Enlaces `icloudy://`.** `icloudy://open?account=…&path=/Fotos/2024` abre una carpeta (o la vista previa de un
+  archivo), `reveal` abre la carpeta que lo contiene y lo selecciona, `search?q=…` busca en todas las nubes, y
+  `icloudy://cuenta/ruta` es la forma corta de `open`. La cuenta se nombra por su identificador, su alias, su nombre o
+  su correo. Un enlace solo enseña: nunca borra, mueve ni sube nada, y una ruta con `..` se rechaza. «Copiar enlace de
+  iCloudy» en el menú de cada elemento da el enlace que lo vuelve a mostrar.
+- **Más Atajos**: subir a una carpeta concreta de una cuenta, crear carpetas, mover o renombrar, enviar a la papelera
+  (siempre pregunta antes, y avisa si en esa nube es definitivo), buscar devolviendo los elementos encontrados para
+  usarlos en el atajo («Abrir en iCloudy» los muestra), sincronizar un reflejo concreto y crear un enlace con
+  caducidad. Las frases para Siri y Spotlight van en castellano y en inglés.
+- **`icloudy`, la línea de órdenes.** Va dentro de la app (`Contents/Helpers/icloudy`; un `ln -s` la deja en el
+  `PATH`) y habla con iCloudy, abriéndola si hace falta: `icloudy ls trabajo:/Fotos`, `get`, `put`, `search`, `open`,
+  `accounts` y `jobs run <reflejo>`. Como la app vive en la sandbox, la línea de órdenes escucha en 127.0.0.1 y la app
+  se conecta a ella para responder. Solo contesta a una copia emparejada: `icloudy pair` pregunta en la ventana y
+  guarda un token en `~/.config/icloudy/token`; sin él no se lista ni se envía nada. Las descargas pasan la misma
+  verificación que las de la ventana y las subidas van a la cola.
+- **Spotlight puede conocer una cuenta entera.** En Ajustes › Spotlight, por cuenta: iCloudy la recorre carpeta a
+  carpeta, sin prisa y hasta un límite (5000 elementos por omisión), y publica los nombres y las rutas, nunca el
+  contenido. Se repite una vez al día al abrir la app, vive aparte de lo abierto y los favoritos, y apagarlo lo quita
+  de Spotlight sin tocar lo demás.
+- **AppleScript, lo mínimo**: `list accounts`, `show "Dropbox:/Fotos"` y `search for "factura" in account "Trabajo"`,
+  que devuelve lo encontrado. Funciona en la sandbox porque la app solo recibe los eventos; macOS pregunta al script
+  que los envía. Como los enlaces, solo enseña: nada borra, mueve ni sube.
 ### Distribución
 
 Lo necesario para que iCloudy se descargue y se abra sin Xcode. Todo funciona ya sin cuenta de Apple, marcado como

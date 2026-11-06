@@ -53,6 +53,9 @@ terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga 
 | **O2 Cloud** | Sesión de Mi O2 | ✅⁸ | — | — | ✅ | — | 🧪 Experimental |
 | **pCloud** | OAuth | ✅⁸ | ✅ | — | ✅ | SHA-256 / SHA-1 | 🆕 Nuevo |
 | **S3 y compatibles**⁶ | Clave de acceso, STS o perfil de `~/.aws` | Prefijo | Temporales⁷ | — | — | MD5 (ETag) | 🆕 Nuevo |
+| **Azure Blob Storage** | Clave de la cuenta o token SAS | Prefijo | Temporales (SAS)⁷ | — | — | MD5 (`Content-MD5`) | 🆕 Sin probar con cuentas reales |
+| **iCloud Drive**¹⁰ | Carpeta del Mac | ✅ | — | — | ✅² | — | 🆕 Sin probar con cuentas reales |
+| **Más servidores**¹¹ | Según el protocolo | Según el protocolo | — | — | — | — | 🆕 Presets, sin probar con cuentas reales |
 
 <sub>
 ¹ Enlaces públicos y compartir con personas en Nextcloud y ownCloud, activando la API OCS al conectar.
@@ -60,10 +63,12 @@ terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga 
 ³ Cifrado de extremo a extremo: cada descarga se verifica contra el resumen que lleva dentro la clave del archivo.
 <br>⁴ En Mega, enlaces de archivo. Una carpeta se comparte con una clave aparte que iCloudy todavía no sabe crear, y lo dice.
 <br>⁵ Papelera navegable (restaurar, eliminar definitivamente, vaciar) en Drive, Box y Mega; en Dropbox se listan y restauran archivos, y el vaciado depende de la cuenta. En OneDrive se lista lo eliminado desde iCloudy en los últimos 30 días y se restaura (cuentas personales): Graph no deja ver la papelera entera. O2 y los volúmenes borran sin listar su papelera. pCloud lista, restaura y vacía la suya.
-<br>⁶ Amazon S3, Backblaze B2, Wasabi, Cloudflare R2, MinIO, Scaleway y DigitalOcean Spaces, con firma SigV4 propia y subidas multiparte reanudables — [guía](docs/S3.md).
+<br>⁶ Amazon S3, Backblaze B2, Wasabi, Cloudflare R2, Storj, iDrive e2, MinIO, Scaleway y DigitalOcean Spaces, con firma SigV4 propia y subidas multiparte reanudables — [guía](docs/S3.md).
 <br>⁷ URL prefirmadas de una hora, un día o siete días, solo de archivos.
 <br>⁹ En Nextcloud: la papelera se lista, se restaura, se purga y se vacía. WebDAV a secas no tiene.
 <br>⁸ Por nombre. El proveedor no tiene búsqueda propia: iCloudy recorre las carpetas (pCloud, con un solo listado recursivo).
+<br>¹⁰ La carpeta de iCloud Drive de este Mac, con el estado de cada archivo (solo en iCloud, bajando, descargado, subiendo), descarga bajo demanda y «Quitar la descarga». Sin cuota: macOS no deja leer la del plan.
+<br>¹¹ Hetzner Storage Box (SFTP y WebDAV), Koofr, Yandex Disk, kDrive, HiDrive, Fastmail Files, Seafile, ownCloud Infinite Scale y Nextcloud (con inicio de sesión en el navegador), más Storj e iDrive e2 en S3: dirección, puerto y ruta ya puestos sobre los proveedores WebDAV, SFTP y S3. Azure, en su [guía](docs/AZURE.md).
 </sub>
 
 **SFTP** cubre cualquier servidor SSH y la mayoría de NAS, cifrado y con la clave del servidor comprobada en cada sesión. **WebDAV** cubre Nextcloud, ownCloud, Synology y casi cualquier NAS. **Volúmenes** cubre SMB, AFP, NFS, discos
@@ -164,6 +169,19 @@ cancelable y limpieza al cerrar.
 | **Vista previa como Vista Rápida** | Pantalla completa, compartir, zoom y giro en imágenes, ⌘Y. |
 | **Teclas del Finder** | ⌘D duplica, ⇧⌘N crea carpeta, ⌘E expulsa, y escribir un nombre lo selecciona. Barra lateral con teclado y VoiceOver. |
 
+### 🆕 Nuevo en proveedores e integración
+
+|  |  |
+|---|---|
+| **Nextcloud en el navegador** | Login Flow v2: inicias sesión en tu servidor, con dos pasos o SSO, y Nextcloud da a iCloudy una contraseña de aplicación propia. Las subidas grandes van por trozos (chunking v2) y se reanudan. |
+| **WebDAV Digest y tokens** | Servidores que solo aceptan Digest, sin que la contraseña viaje, y tokens de acceso OAuth para ownCloud Infinite Scale y similares. |
+| **SFTP que se reanuda** | Subidas y descargas que siguen desde el último byte confirmado, comprobando que el origen no ha cambiado. |
+| **Enlaces `icloudy://`** | `icloudy://open?account=Trabajo&path=/Fotos`, `reveal`, `search?q=…`; «Copiar enlace de iCloudy» en cada elemento. Un enlace solo enseña: nunca borra ni sube. |
+| **Línea de órdenes** | `icloudy ls`, `get`, `put`, `search`, `open`, `jobs run`, hablando con la app abierta. Va en `Contents/Helpers/icloudy`: `ln -s /Applications/iCloudy.app/Contents/Helpers/icloudy /usr/local/bin/icloudy` y después `icloudy pair`. |
+| **Más Atajos** | Subir a una ruta, crear carpetas, mover, enviar a la papelera (con confirmación), buscar devolviendo resultados, sincronizar un reflejo y enlaces con caducidad, con frases en castellano e inglés. |
+| **Spotlight completo** | Opcional por cuenta: los nombres de todo el árbol, hasta un límite, además de lo abierto y los favoritos. |
+| **AppleScript** | `list accounts`, `show "Dropbox:/Fotos"` y `search for "factura"`. |
+
 <br>
 
 ## 🚀 Instalación
@@ -261,6 +279,7 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 | [FTP](docs/FTP.md) | Qué hay, qué falta y lo que costaría añadirlo |
 | [Vista previa](docs/PREVIEW.md) | Formatos, límites y consentimiento |
 | [S3](docs/S3.md) | Puntos de acceso, firma, subidas multiparte y verificación |
+| [Azure](docs/AZURE.md) | Shared Key y SAS, bloques reanudables, rangos y lo que falta |
 | [pCloud](docs/PCLOUD.md) | API, regiones y registro del cliente |
 | [Cifrado](docs/CIFRADO.md) | Bóvedas compatibles con Cryptomator: qué protege y qué no |
 | [Diagnóstico](docs/DIAGNOSTICO.md) | Niveles, qué se oculta y qué se exporta |

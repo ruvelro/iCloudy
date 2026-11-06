@@ -431,8 +431,12 @@ final class TransferWalker {
                                    relative: relative.isEmpty ? child.name : relative + "/" + child.name)
             }
         } else {
-            let temporary = folder.appendingPathComponent(".icloudy-" + UUID().uuidString + ".part")
-            defer { try? FileManager.default.removeItem(at: temporary) }
+            // A provider that resumes by offset gets a partial named after the job and the item, which survives a
+            // failed or paused attempt; every other one gets a fresh name that is always removed.
+            let resumable = api.account.capabilities.resumesDownloads && !exporting && !file.isGoogleDocument
+            let temporary = folder.appendingPathComponent(resumable ? ResumableDownload.partialName(job: id, key: key) : ".icloudy-" + UUID().uuidString + ".part")
+            var keepPartial = false
+            defer { if !keepPartial { try? FileManager.default.removeItem(at: temporary) } }
             var verification: DownloadVerification?
             if file.isGoogleDocument && !exporting {
                 guard let url = file.webURL else { throw CloudError.message(L("No hay enlace web para este documento.")) }
@@ -446,6 +450,11 @@ final class TransferWalker {
                         queue.report(id, base: base, bytes: bytes, total: total)
                     }
                 } catch let error as DownloadIntegrityError { try queue.recordFailedCheck(id, key: key, error); throw error }
+                catch {
+                    // Kept for the next attempt, unless the person cancelled the job: then nothing will continue it.
+                    keepPartial = resumable && (try? job().state) != .cancelled
+                    throw error
+                }
             }
             try Task.checkCancellation()
             let destination = target, replacing = replace

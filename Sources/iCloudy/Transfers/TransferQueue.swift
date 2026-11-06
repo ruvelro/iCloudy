@@ -340,12 +340,25 @@ final class TransferQueue {
             items[index].uploads = [:]
         }
         if !pause, items[index].direction == .transfer, tasks[id] == nil { try? FileManager.default.removeItem(at: items[index].localURL) }
+        // A download that resumes by offset may have left a partial behind from an earlier attempt.
+        if !pause, items[index].direction == .download, tasks[id] == nil { Self.removeResumablePartials(of: items[index]) }
         if let task = tasks[id] {
             task.cancel()
             dropConflict(of: id)
         }
         do { try persist() } catch { persistenceError = error.localizedDescription }
         stateChanges.send()
+    }
+    /// Removes the partials of a cancelled download job, in its destination folder and below, off the main thread.
+    nonisolated static func removeResumablePartials(of transfer: Transfer) {
+        let id = transfer.id, bookmark = transfer.bookmark, folder = transfer.localURL
+        Task.detached(priority: .utility) {
+            var url = folder, stale = false
+            if let bookmark, let resolved = try? URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale) { url = resolved }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            ResumableDownload.removePartials(job: id, under: url)
+        }
     }
     /// Asks the provider to drop the upload sessions of a job that will never finish them. Best effort: they expire
     /// by themselves, but Box counts the open ones against the account and the others hold storage meanwhile.

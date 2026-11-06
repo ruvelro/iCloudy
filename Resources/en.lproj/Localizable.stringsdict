@@ -376,6 +376,22 @@
 			<string>%lld pending or failed</string>
 		</dict>
 	</dict>
+	<key>%lld resultados.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@.</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld result</string>
+			<key>other</key>
+			<string>%lld results</string>
+		</dict>
+	</dict>
 	<key>%lld se dejaron fuera a propósito.</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -534,6 +550,22 @@
 			<string>%lld change waiting</string>
 			<key>other</key>
 			<string>%lld changes waiting</string>
+		</dict>
+	</dict>
+	<key>Enlace creado. Caduca en %lld días.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Link created. It expires in %#@n@.</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld day</string>
+			<key>other</key>
+			<string>%lld days</string>
 		</dict>
 	</dict>
 	<key>Quedan %lld por transferir o por comprobar.</key>

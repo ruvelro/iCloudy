@@ -12,6 +12,8 @@ Un único paquete SwiftPM sin dependencias externas (`Package.swift`, `swift-too
 | `iCloudy` (librería) | Toda la aplicación: modelo, proveedores, persistencia, vistas. Modo de lenguaje Swift 6 con comprobación completa de concurrencia. |
 | `iCloudyMain` | El ejecutable: un `main.swift` que cede el control a la librería. |
 | `iCloudyFileProvider` | La extensión del Finder; entra por `NSExtensionMain` y comparte proveedores, cuentas y Llavero con la app. |
+| `iCloudyCLI` | `icloudy`, la línea de órdenes, empaquetada en `Contents/Helpers`. No enlaza la app: abre un enlace `icloudy://cli` con el puerto en el que escucha (127.0.0.1) y la app, desde la sandbox, se conecta para responder (`Integration/CLIBridge.swift`). |
+| `iCloudyCommandWire` | Lo único que comparten la app y la línea de órdenes: la petición, los mensajes y las tramas. |
 | `iCloudyTests` | Las pruebas (modo Swift 5). `iCloudyTestBootstrap` es un destino en C cuyo constructor de carga prepara el aislamiento antes de que corra nada. |
 
 ## Carpetas de `Sources/iCloudy`
@@ -23,7 +25,7 @@ Un único paquete SwiftPM sin dependencias externas (`Package.swift`, `swift-too
 | `Explorer/` | Pestañas, paneles, navegación, operaciones de archivo, deshacer, versiones, sin conexión y `ExplorerPresentation`. |
 | `Transfers/` | `TransferQueue`, `TransferWalker`, el planificador, los reflejos (`MirrorManager`, `TwoWaySync`), el historial, la recuperación y la verificación. |
 | `Persistence/` | `LocalStore`, `StoreWriter`, `StoreEnvelope`, el Llavero (`KeychainStorage`/`Vault`), favoritos, copias locales y sin conexión, caché de listados. |
-| `Providers/` | El protocolo `CloudProvider`, la fábrica y un subdirectorio por proveedor (Google, OneDrive, Dropbox, Box, WebDAV, FTP, SFTP, volumen, Mega, O2, pCloud, S3). |
+| `Providers/` | El protocolo `CloudProvider`, la fábrica, la tabla de presets de servidores (`ServerPresets.swift`) y un subdirectorio por proveedor (Google, OneDrive, Dropbox, Box, WebDAV, FTP, SFTP, volumen —con iCloud Drive como sabor—, Mega, O2, pCloud, S3, Azure). |
 | `Networking/` | `CloudSession` (la clase base de los proveedores: token, reintentos, descargas HTTP), errores de servicio, sockets y TLS. |
 | `Authentication/` | OAuth con PKCE y bucle local, configuración de clientes, renovación de tokens. |
 | `Models/` | Tipos de valor: `Account`, `Cloud` y `CloudCapabilities`, `CloudFile`, `Transfer`, `CloudError`… |
