@@ -34,6 +34,8 @@ jobs:
           git diff --exit-code Resources
       - name: No new orphan keys in the English table
         run: python3 scripts/check-localization.py --baseline scripts/localization-orphans.txt
+      - name: VERSION, CHANGELOG.md and README.md agree
+        run: python3 scripts/release.py check
 
   test:
     name: Test (${{ matrix.os }}, Xcode ${{ matrix.xcode }})
@@ -149,6 +151,21 @@ jobs:
           plutil -lint dist/debug/iCloudy.app/Contents/Info.plist
           codesign --verify --deep --strict dist/debug/iCloudy.app
           test ! -e dist/debug/iCloudy.app/Contents/PlugIns
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' dist/debug/iCloudy.app/Contents/Info.plist)" = "$(scripts/version.sh)"
+      - name: Package
+        # The same packaging, feed and cask steps as the release workflow, on the debug bundle: the .zip, the .dmg
+        # with its Applications link, the sums, and an appcast.json the app's update checker can read.
+        run: |
+          bash scripts/package.sh dist/debug/iCloudy.app
+          source dist/release/package.env
+          (cd dist/release && shasum -a 256 -c SHA256SUMS.txt)
+          hdiutil imageinfo "$DMG" > /dev/null
+          python3 scripts/release.py notes "$VERSION" > "$RUNNER_TEMP/notes.md"
+          python3 scripts/release.py appcast --version "$VERSION" --build "$BUILD" --notes "$RUNNER_TEMP/notes.md" \
+            --zip "$ZIP" --dmg "$DMG" --out dist/release
+          python3 scripts/release.py cask --version "$VERSION" --zip "$ZIP" --out dist/release
+          ruby -c dist/release/icloudy.rb
+          scripts/notarize.sh app dist/debug/iCloudy.app
       - name: Bundle with the File Provider extension
         # The extension is only packaged when an App Group is named. A made-up group cannot load on a Mac without a
         # matching provisioning profile, but it exercises the packaging, the entitlements and the signatures.
