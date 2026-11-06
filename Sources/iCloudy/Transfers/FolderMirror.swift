@@ -598,7 +598,7 @@ final class MirrorManager {
             job.folders["."] = mirror.remoteFolderID
             job.mirrorEntries = mirrors[position].remoteEntries
             job.completedPaths = unchanged
-            job.options = TransferOptions(conflictPolicy: mirror.transferPolicy)
+            job.options = TransferOptions(conflictPolicy: mirror.transferPolicy, skipIdentical: mirror.options.skipIdentical)
             try queue.add([job])
             mirrors[position].activeTransferID = job.id
             mirrors[position].pendingStamps = current

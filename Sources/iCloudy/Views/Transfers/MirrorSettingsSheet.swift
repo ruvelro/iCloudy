@@ -39,6 +39,9 @@ struct MirrorSettingsSheet: View {
                     Toggle("Comparar por suma de verificación donde el proveedor la dé", isOn: $options.compareChecksums)
                     Text("Un archivo con otra fecha pero el mismo contenido no se vuelve a copiar ni cuenta como conflicto. Donde no hay suma deciden el tamaño y la fecha, como siempre. Calcular la suma lee el archivo entero en el Mac.")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    if mirror.mode == .upload {
+                        Toggle("No subir lo que la nube ya tiene con la misma suma", isOn: $options.skipIdentical)
+                    }
                     Picker("Verificar todo lo reflejado", selection: $options.verifyEvery) {
                         Text("Nunca").tag(TimeInterval?.none)
                         Text("Cada día").tag(TimeInterval?.some(86_400))

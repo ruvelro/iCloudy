@@ -1944,3 +1944,5 @@
 "Verificar ahora" = "Verify now";
 "«%@»: %@" = "“%@”: %@";
 "Compara cada archivo del reflejo en los dos lados por tamaño y, donde se pueda, por suma de verificación" = "Compares every file of the mirror on both sides by size and, where possible, by checksum";
+"Ya estaba en el destino con la misma suma; no se ha vuelto a enviar." = "It was already at the destination with the same checksum; it was not sent again.";
+"No subir lo que la nube ya tiene con la misma suma" = "Do not upload what the cloud already has with the same checksum";

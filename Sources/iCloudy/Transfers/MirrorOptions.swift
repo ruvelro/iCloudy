@@ -13,17 +13,22 @@ struct MirrorOptions: Codable, Equatable, Sendable {
     var compareChecksums = false
     /// How often a verification pass looks at every mirrored file on both sides; nil never.
     var verifyEvery: TimeInterval?
+    /// Uploads only: a file the cloud already holds with the same checksum is not sent again.
+    var skipIdentical = false
 
-    init(conflictPolicy: ConflictPolicy? = nil, exact: Bool = false, compareChecksums: Bool = false, verifyEvery: TimeInterval? = nil) {
+    init(conflictPolicy: ConflictPolicy? = nil, exact: Bool = false, compareChecksums: Bool = false, verifyEvery: TimeInterval? = nil,
+         skipIdentical: Bool = false) {
         self.conflictPolicy = conflictPolicy; self.exact = exact; self.compareChecksums = compareChecksums; self.verifyEvery = verifyEvery
+        self.skipIdentical = skipIdentical
     }
-    enum CodingKeys: String, CodingKey { case conflictPolicy, exact, compareChecksums, verifyEvery }
+    enum CodingKeys: String, CodingKey { case conflictPolicy, exact, compareChecksums, verifyEvery, skipIdentical }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         conflictPolicy = (try? values.decodeIfPresent(String.self, forKey: .conflictPolicy)).flatMap { $0.flatMap(ConflictPolicy.init(rawValue:)) }
         exact = try values.decodeIfPresent(Bool.self, forKey: .exact) ?? false
         compareChecksums = try values.decodeIfPresent(Bool.self, forKey: .compareChecksums) ?? false
         verifyEvery = try values.decodeIfPresent(TimeInterval.self, forKey: .verifyEvery)
+        skipIdentical = try values.decodeIfPresent(Bool.self, forKey: .skipIdentical) ?? false
     }
 }
 

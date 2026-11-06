@@ -122,6 +122,17 @@ final class TransferWalker {
         return policy.choice(incoming: incoming, existing: existing, canReplace: canReplace)
     }
 
+    /// The file of that name at the destination when it already holds these exact bytes, judged by the checksum the
+    /// destination lists and the same digest of ours; nil when it differs or cannot be compared.
+    private func identicalAtDestination(name: String, parent: String, in api: CloudAPI, size: Int64?,
+                                        digest: (ContentHash.Algorithm) async throws -> String?) async throws -> CloudFile? {
+        if siblings[parent] == nil { siblings[parent] = try await api.list(parent: parent) }
+        guard let match = siblings[parent]?.first(where: { !$0.isFolder && $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }),
+              let checksum = match.checksum, match.size == nil || match.size == size else { return nil }
+        guard let mine = try await digest(checksum.algorithm), checksum.matches(mine) else { return nil }
+        return match
+    }
+
     /// Waits for the person (or the batch's standing answer) when a name is taken.
     private func askConflict(_ name: String, replace: Bool, folder: Bool) async throws -> ConflictChoice {
         try await queue.choose(id, name: name, replace: replace, folder: folder)
@@ -178,6 +189,18 @@ final class TransferWalker {
             throw CloudError.message(L("No se puede subir «\(local.lastPathComponent)»: \(problem)"))
         }
         var current = try forgetUncertainFolder(key, parent: parent)
+        if !folder, current.options?.skipIdentical == true, current.names[key] == nil || current.replacements[key] != nil,
+           let same = try await identicalAtDestination(name: current.mirrorEntries?[key]?.name ?? current.names[key] ?? local.lastPathComponent, parent: parent,
+                                                       in: api, size: values.fileSize.map(Int64.init),
+                                                       digest: { algorithm in try await blockingIO { try ContentHasher.digest(of: local, algorithm: algorithm).digest } }) {
+            try edit(coalesce: true) {
+                $0.completedPaths.insert(key); $0.names[key] = same.name
+                $0.record(key, .verified, bytes: values.fileSize.map(Int64.init), reason: L("Ya estaba en el destino con la misma suma; no se ha vuelto a enviar."))
+                if $0.mirrorEntries != nil { $0.mirrorEntries?[key] = same }
+            }
+            advance(Int64(values.fileSize ?? 0))
+            return
+        }
         if current.names[key] == nil {
             let remembered = current.mirrorEntries?[key]
             let decision = try await resolveName(local.lastPathComponent, key: key, parent: parent, in: api, folder: folder,
@@ -269,6 +292,17 @@ final class TransferWalker {
         let localName = export.map { file.name + "." + $0.ext } ?? file.name
         if let problem = FileNames.problem(with: localName, for: target.account.cloud) { throw CloudError.message(L("No se puede enviar «\(localName)»: \(problem)")) }
         var current = try forgetUncertainFolder(key, parent: parent)
+        // Between clouds the source's listed checksum is the digest: nothing needs downloading to know.
+        if !file.isFolder, export == nil, current.options?.skipIdentical == true, current.names[key] == nil, let source = file.checksum,
+           let same = try await identicalAtDestination(name: localName, parent: parent, in: target, size: file.size,
+                                                       digest: { $0 == source.algorithm ? source.value : nil }) {
+            try edit(coalesce: true) {
+                $0.completedPaths.insert(key); $0.names[key] = same.name
+                $0.record(key, .verified, bytes: file.size, reason: L("Ya estaba en el destino con la misma suma; no se ha vuelto a enviar."))
+            }
+            advance(file.size ?? 0)
+            return
+        }
         if current.names[key] == nil {
             guard case .use(let name, let replacing) = try await resolveName(localName, key: key, parent: parent, in: target, folder: file.isFolder, incoming: file.modified) else {
                 try edit { $0.completedPaths.insert(key); $0.recordSkip(key, leaf: localName, folder: file.isFolder, bytes: file.size) }
