@@ -40,7 +40,24 @@ enum SyncAction: Hashable {
 
 struct SyncReport: Codable, Equatable {
     var uploaded = 0, downloaded = 0, deletedRemote = 0, deletedLocal = 0, conflicts = 0
-    var isEmpty: Bool { uploaded + downloaded + deletedRemote + deletedLocal + conflicts == 0 }
+    /// Conflicts left alone for the person to decide.
+    var unresolved = 0
+    /// Bytes sent either way, for the history.
+    var bytes: Int64 = 0
+    init() {}
+    enum CodingKeys: String, CodingKey { case uploaded, downloaded, deletedRemote, deletedLocal, conflicts, unresolved, bytes }
+    init(from decoder: Decoder) throws {
+        // Every counter is optional, so a report written before one existed still reads.
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        uploaded = try values.decodeIfPresent(Int.self, forKey: .uploaded) ?? 0
+        downloaded = try values.decodeIfPresent(Int.self, forKey: .downloaded) ?? 0
+        deletedRemote = try values.decodeIfPresent(Int.self, forKey: .deletedRemote) ?? 0
+        deletedLocal = try values.decodeIfPresent(Int.self, forKey: .deletedLocal) ?? 0
+        conflicts = try values.decodeIfPresent(Int.self, forKey: .conflicts) ?? 0
+        unresolved = try values.decodeIfPresent(Int.self, forKey: .unresolved) ?? 0
+        bytes = try values.decodeIfPresent(Int64.self, forKey: .bytes) ?? 0
+    }
+    var isEmpty: Bool { uploaded + downloaded + deletedRemote + deletedLocal + conflicts + unresolved == 0 }
     var summary: String {
         var parts: [String] = []
         if uploaded > 0 { parts.append(L("\(uploaded) subidos")) }
@@ -48,6 +65,7 @@ struct SyncReport: Codable, Equatable {
         if deletedRemote > 0 { parts.append(L("\(deletedRemote) borrados en la nube")) }
         if deletedLocal > 0 { parts.append(L("\(deletedLocal) enviados a la papelera del Mac")) }
         if conflicts > 0 { parts.append(L("\(conflicts) conflictos")) }
+        if unresolved > 0 { parts.append(L("\(unresolved) conflictos esperan tu decisión")) }
         return parts.isEmpty ? L("sin cambios") : parts.joined(separator: ", ")
     }
 }
@@ -197,6 +215,13 @@ final class TwoWaySyncEngine {
     var shouldStop: (() -> Bool)?
     /// The plan of the last `run()`, as the planner returned it.
     private(set) var lastPlan: [SyncAction] = []
+    /// What a conflict becomes when the person has not decided about that path.
+    var conflictPolicy: ConflictPolicy = .keepBoth
+    /// What the person decided, path by path, for conflicts an earlier run left waiting.
+    var decisions: [String: ConflictPolicy] = [:]
+    /// Paths of the last run whose conflict was settled, and those it left waiting for a decision.
+    private(set) var resolvedConflicts: Set<String> = []
+    private(set) var unresolvedConflicts: [String] = []
     /// Tests bypass the Finder Trash, which a temporary folder on some volumes does not have.
     var trashLocally: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }
 
@@ -246,6 +271,7 @@ final class TwoWaySyncEngine {
 
     func run() async throws -> SyncReport {
         report = SyncReport()
+        resolvedConflicts = []; unresolvedConflicts = []
         var (local, remote, folders) = try await snapshot()
         let plan = try TwoWayPlanner.plan(local: local, remote: remote, baseline: baseline, allowMassDeletion: allowMassDeletion, exclusions: exclusions)
         lastPlan = plan
@@ -270,10 +296,10 @@ final class TwoWaySyncEngine {
                 let source = localRoot.appendingPathComponent(path)
                 let receipt = try await api.resumableUpload(local: source, parent: parent, name: name(of: path), replacing: replacing, checkpoint: nil, save: { _ in }, progress: { _, _ in })
                 baseline[path] = SyncEntry(local: local[path], remoteID: receipt.remoteID, remoteSize: local[path]?.size, remoteModified: nil, isFolder: false)
-                touchedRemote.insert(path); report.uploaded += 1
+                touchedRemote.insert(path); report.uploaded += 1; report.bytes += local[path]?.size ?? 0
             case .download(let path, let file):
                 try await download(file, to: path)
-                report.downloaded += 1
+                report.downloaded += 1; report.bytes += file.size ?? 0
             case .adopt(let path, let file):
                 baseline[path] = SyncEntry(local: local[path], remoteID: file.id, remoteSize: file.size, remoteModified: file.modified, isFolder: false)
             case .deleteRemote(let path, let file):
@@ -284,6 +310,30 @@ final class TwoWaySyncEngine {
                 if FileManager.default.fileExists(atPath: target.path) { try trashLocally(target) }
                 forgetBelow(path); report.deletedLocal += 1
             case .conflict(let path, let file):
+                switch Self.resolution(of: decisions[path] ?? conflictPolicy, local: local[path], remote: file) {
+                case .undecided:
+                    // Left as it is on both sides, and out of the baseline, so it is a conflict again next time.
+                    unresolvedConflicts.append(path); report.unresolved += 1
+                    continue
+                case .local:
+                    let parent = try remoteParent(of: path, folders: folders)
+                    let receipt = try await api.resumableUpload(local: localRoot.appendingPathComponent(path), parent: parent, name: name(of: path), replacing: file.id, checkpoint: nil, save: { _ in }, progress: { _, _ in })
+                    baseline[path] = SyncEntry(local: local[path], remoteID: receipt.remoteID, remoteSize: local[path]?.size, remoteModified: nil, isFolder: false)
+                    touchedRemote.insert(path); report.conflicts += 1; report.bytes += local[path]?.size ?? 0
+                    resolvedConflicts.insert(path)
+                    try persist?(baseline)
+                    continue
+                case .remote:
+                    // The Mac's version goes to the Trash rather than being overwritten where nobody can get it back.
+                    let target = localRoot.appendingPathComponent(path)
+                    if FileManager.default.fileExists(atPath: target.path) { try trashLocally(target) }
+                    try await download(file, to: path)
+                    report.conflicts += 1; report.bytes += file.size ?? 0
+                    resolvedConflicts.insert(path)
+                    try persist?(baseline)
+                    continue
+                case .both: resolvedConflicts.insert(path)
+                }
                 // Both copies survive: the local one under a name that says where it came from, the remote one in
                 // its place. The renamed copy goes up too, so both sides end with both versions.
                 let original = localRoot.appendingPathComponent(path)
@@ -337,6 +387,20 @@ final class TwoWaySyncEngine {
         let parent = path.split(separator: "/").dropLast().joined(separator: "/")
         guard let id = folders[parent] else { throw CloudError.message(L("Falta la carpeta remota «\(parent)»; vuelve a sincronizar.")) }
         return id
+    }
+    enum Resolution: Equatable { case both, local, remote, undecided }
+    /// Which version a conflict keeps under a policy. "Newest" with a date missing on either side keeps both, the one
+    /// answer that cannot lose anything.
+    static func resolution(of policy: ConflictPolicy, local: FileStamp?, remote: CloudFile) -> Resolution {
+        switch policy {
+        case .keepBoth: return .both
+        case .thisSideWins: return .local
+        case .otherSideWins: return .remote
+        case .ask: return .undecided
+        case .newestWins:
+            guard let mine = local?.modified, mine != .distantPast, let theirs = remote.modified else { return .both }
+            return mine > theirs ? .local : .remote
+        }
     }
     static func conflictName(for path: String, host: String, date: Date = Date()) -> String {
         let formatter = DateFormatter(); formatter.dateFormat = "yyyy-MM-dd HH.mm"

@@ -10,6 +10,7 @@ struct MirrorList: View {
     @State private var removing: FolderMirror?
     @State private var editingExclusions: FolderMirror?
     @State private var previewing: FolderMirror?
+    @State private var configuring: FolderMirror?
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
         Divider().padding(.vertical, 8)
@@ -37,6 +38,7 @@ struct MirrorList: View {
                 Button("Cambios pendientes…") { previewing = mirror }
                     .help("Muestra lo que haría la próxima sincronización, sin hacerlo")
                 Button("Exclusiones…") { editingExclusions = mirror }
+                Button("Ajustes…") { configuring = mirror }
                 Divider()
                 Button("Abrir carpeta remota") { model.openFolder(accountID: mirror.accountID, folderID: mirror.remoteFolderID) }
                 Button("Mostrar carpeta local en el Finder") { model.revealLocal(mirror) }
@@ -51,5 +53,6 @@ struct MirrorList: View {
         } message: { Text("Se deja de vigilar la carpeta. No se borra nada, ni en el Mac ni en la nube.") }
         .sheet(item: $editingExclusions) { mirror in MirrorExclusionsSheet(mirror: mirror, manager: mirrors) }
         .sheet(item: $previewing) { mirror in MirrorPendingChangesSheet(mirror: mirror, manager: mirrors) }
+        .sheet(item: $configuring) { mirror in MirrorSettingsSheet(mirror: mirror, manager: mirrors) }
     }
 }

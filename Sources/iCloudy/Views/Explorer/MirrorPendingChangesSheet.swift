@@ -11,6 +11,19 @@ struct MirrorPendingChangesSheet: View {
     /// Long lists are cut so the sheet stays responsive; the header still gives the full count.
     private let rowsPerSection = 300
 
+    private var current: FolderMirror { manager.mirrors.first { $0.id == mirror.id } ?? mirror }
+    /// Two-way syncs set to ask leave each conflict for the person, who settles it from here.
+    private var decides: Bool { current.mode == .twoWay && current.conflictPolicy == .ask }
+
+    @ViewBuilder private func decisionMenu(_ path: String) -> some View {
+        let decided = current.conflictDecisions[path]
+        ForEach([ConflictPolicy.thisSideWins, .otherSideWins, .keepBoth, .newestWins]) { policy in
+            Button { manager.decide(policy, conflict: path, for: mirror.id); Task { await load() } } label: {
+                if decided == policy { Label(policy.title, systemImage: "checkmark") } else { Text(verbatim: policy.title) }
+            }
+        }
+    }
+
     private var paused: Bool { manager.mirrors.first { $0.id == mirror.id }?.paused ?? mirror.paused }
 
     var body: some View {
@@ -70,6 +83,7 @@ struct MirrorPendingChangesSheet: View {
                             Section {
                                 ForEach(rows.prefix(rowsPerSection)) { change in
                                     Label(change.path, systemImage: change.isFolder ? "folder" : "doc").lineLimit(1).truncationMode(.middle)
+                                        .contextMenu { if kind == .conflict, decides { decisionMenu(change.path) } }
                                 }
                                 if rows.count > rowsPerSection { Text("… y \(rows.count - rowsPerSection) más").foregroundStyle(.secondary) }
                             } header: {
@@ -98,7 +112,14 @@ struct MirrorPendingChangesSheet: View {
         case .download: return "Se bajarán"
         case .trashRemote: return "Irán a la papelera de la nube"
         case .trashLocal: return "Irán a la papelera del Mac"
-        case .conflict: return "Conflictos: se conservarán las dos versiones"
+        case .conflict:
+            switch current.conflictPolicy {
+            case .keepBoth: return "Conflictos: se conservarán las dos versiones"
+            case .newestWins: return "Conflictos: ganará la versión más reciente"
+            case .thisSideWins: return "Conflictos: ganará la versión del Mac"
+            case .otherSideWins: return "Conflictos: ganará la versión de la nube"
+            case .ask: return decides ? "Conflictos: esperan tu decisión (clic secundario en cada uno)" : "Conflictos: se preguntará en cada uno"
+            }
         case .excluded: return "Excluidos: no se tocan"
         }
     }

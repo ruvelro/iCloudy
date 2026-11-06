@@ -65,6 +65,9 @@ TABLE = [
      "%#@n@ already at the destination (%@).", [("n", "%lld file is", "%lld files are")]),
     ("En pausa · %lld cambios esperando", "En pausa · %#@n@", [("n", "%lld cambio esperando", "%lld cambios esperando")],
      "Paused · %#@n@", [("n", "%lld change waiting", "%lld changes waiting")]),
+    # 0.9 — Transferencias
+    ("%lld conflictos esperan tu decisión", "%#@n@ tu decisión", [("n", "%lld conflicto espera", "%lld conflictos esperan")],
+     "%#@n@ your decision", [("n", "%lld conflict awaits", "%lld conflicts await")]),
 ]
 
 def entry(format_key, variables):

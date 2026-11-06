@@ -40,10 +40,16 @@ struct FolderMirror: Identifiable, Codable {
     /// Relative paths FSEvents reported while paused, for the sidebar's count. The run on resume compares the whole
     /// folder anyway, so this is never what decides what travels and losing it would lose nothing.
     var changesWhilePaused: Set<String> = []
+    /// Conflict policy and the other settings of this mirror.
+    var options = MirrorOptions()
+    /// Two-way, with the policy set to ask: what the person decided for each conflict, used by the next run.
+    var conflictDecisions: [String: ConflictPolicy] = [:]
+    /// Two-way, with the policy set to ask: conflicts the last run left alone waiting for a decision.
+    var unresolvedConflicts: [String] = []
 }
 
 extension FolderMirror {
-    enum CodingKeys: String, CodingKey { case id, mode, baseline, lastReport, accountID, remoteFolderID, remoteName, localURL, bookmark, stamps, pendingStamps, lastSync, activeTransferID, lastError, remoteEntries, exclusions, paused, changesWhilePaused }
+    enum CodingKeys: String, CodingKey { case id, mode, baseline, lastReport, accountID, remoteFolderID, remoteName, localURL, bookmark, stamps, pendingStamps, lastSync, activeTransferID, lastError, remoteEntries, exclusions, paused, changesWhilePaused, options, conflictDecisions, unresolvedConflicts }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
@@ -64,6 +70,11 @@ extension FolderMirror {
         exclusions = try values.decodeIfPresent(SyncExclusions.self, forKey: .exclusions) ?? SyncExclusions()
         paused = try values.decodeIfPresent(Bool.self, forKey: .paused) ?? false
         changesWhilePaused = try values.decodeIfPresent(Set<String>.self, forKey: .changesWhilePaused) ?? []
+        // Settings written by a newer version fall back to the defaults instead of setting the mirror aside.
+        options = (try? values.decodeIfPresent(MirrorOptions.self, forKey: .options)) ?? MirrorOptions()
+        conflictDecisions = ((try? values.decodeIfPresent([String: String].self, forKey: .conflictDecisions)) ?? nil)?
+            .compactMapValues(ConflictPolicy.init(rawValue:)) ?? [:]
+        unresolvedConflicts = try values.decodeIfPresent([String].self, forKey: .unresolvedConflicts) ?? []
     }
 }
 
@@ -431,6 +442,20 @@ final class MirrorManager {
         persist(id)
         scheduleSync(id, immediate: true)
     }
+    /// Replaces a mirror's settings. A change that alters what the next run would do runs it at once.
+    func setOptions(_ options: MirrorOptions, for id: UUID) {
+        guard let index = mirrors.firstIndex(where: { $0.id == id }), mirrors[index].options != options else { return }
+        mirrors[index].options = options
+        persist(id)
+        scheduleSync(id, immediate: true)
+    }
+    /// Settles one conflict a two-way run left waiting for the person; the run it starts carries the decision out.
+    func decide(_ policy: ConflictPolicy, conflict path: String, for id: UUID) {
+        guard let index = mirrors.firstIndex(where: { $0.id == id }), policy != .ask else { return }
+        mirrors[index].conflictDecisions[path] = policy
+        persist(id)
+        scheduleSync(id, immediate: true)
+    }
     func exclusions(of mirror: FolderMirror) -> SyncExclusionMatcher {
         if let cached = matchers[mirror.id] { return cached }
         let matcher = mirror.exclusions.matcher(caseInsensitive: SyncExclusions.isCaseInsensitive(resolvedURL(mirror)))
@@ -546,6 +571,7 @@ final class MirrorManager {
             job.folders["."] = mirror.remoteFolderID
             job.mirrorEntries = mirrors[position].remoteEntries
             job.completedPaths = unchanged
+            job.options = TransferOptions(conflictPolicy: mirror.transferPolicy)
             try queue.add([job])
             mirrors[position].activeTransferID = job.id
             mirrors[position].pendingStamps = current
@@ -579,6 +605,8 @@ final class MirrorManager {
             guard let position = mirrors.firstIndex(where: { $0.id == id }) else { return }
             mirrors[position].baseline = engine.baseline
             mirrors[position].lastReport = report
+            for path in engine.resolvedConflicts { mirrors[position].conflictDecisions[path] = nil }
+            mirrors[position].unresolvedConflicts = engine.unresolvedConflicts
             mirrors[position].lastSync = Date()
             mirrors[position].lastError = nil
             persist(id)
@@ -596,6 +624,8 @@ final class MirrorManager {
         guard let api = try queue?.client?(account.id) else { throw CloudError.message(L("Vuelve a conectar la cuenta de este reflejo.")) }
         let engine = TwoWaySyncEngine(api: api, localRoot: url, remoteRoot: mirror.remoteFolderID, baseline: mirror.baseline)
         engine.exclusions = exclusions(of: mirror)
+        engine.conflictPolicy = mirror.conflictPolicy
+        engine.decisions = mirror.conflictDecisions
         return engine
     }
     /// A dry run of the next sync, paused or not: the same scan and the same planner as the real one, and nothing

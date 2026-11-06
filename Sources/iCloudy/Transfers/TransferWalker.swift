@@ -63,7 +63,7 @@ final class TransferWalker {
     /// spelling it already has.
     private func resolveName(_ desired: String, key: String, parent: String, in api: CloudAPI, folder: Bool,
                              remembered: CloudFile? = nil, owns: ((CloudFile) -> Bool)? = nil,
-                             keepsMatchName: Bool = false) async throws -> NameDecision {
+                             keepsMatchName: Bool = false, incoming: Date? = nil) async throws -> NameDecision {
         if siblings[parent] == nil { siblings[parent] = try await api.list(parent: parent) }
         let room = NameClaims.remote(account: api.account.id, parent: parent)
         let existing = (siblings[parent] ?? []) + queue.claimed(room, by: id, besides: siblings[parent] ?? [])
@@ -71,11 +71,10 @@ final class TransferWalker {
         let matches = existing.filter { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame || $0.id == remembered?.id }
         guard let match = matches.first else { return .use(name, replacing: nil) }
         let choice: ConflictChoice
+        let canReplace = matches.count == 1 && match.isFolder == folder && !match.isGoogleDocument && !match.id.isEmpty
         if let owns, owns(match), matches.count == 1 { choice = .replace }
-        else {
-            choice = try await askConflict(name, replace: matches.count == 1 && match.isFolder == folder && !match.isGoogleDocument && !match.id.isEmpty,
-                                           folder: folder)
-        }
+        else if let decided = try policyChoice(incoming: incoming, existing: match.modified, canReplace: canReplace, folder: folder) { choice = decided }
+        else { choice = try await askConflict(name, replace: canReplace, folder: folder) }
         switch choice {
         case .skip: return .skip
         // Claimed again after the wait: another job may have taken a name while this one was asking.
@@ -85,20 +84,33 @@ final class TransferWalker {
     }
 
     /// Picks the local name of a downloaded item, against what is on disk and what other jobs are downloading.
-    private func resolveLocalName(_ name: String, in folder: URL, target: URL, room: String, isFolder: Bool) async throws -> (decision: NameDecision, target: URL) {
+    private func resolveLocalName(_ name: String, in folder: URL, target: URL, room: String, isFolder: Bool,
+                                  incoming: Date? = nil) async throws -> (decision: NameDecision, target: URL) {
         let exists = FileManager.default.fileExists(atPath: target.path)
         // A name another running job is downloading to is as taken as one already on disk, but there is nothing
         // there yet to replace.
         let claimed = queue.claims.others(in: room, excluding: id).contains { $0.localizedCaseInsensitiveCompare(target.lastPathComponent) == .orderedSame }
         guard exists || claimed else { return (.use(target.lastPathComponent, replacing: nil), target) }
-        let values = exists ? try target.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) : nil
-        switch try await askConflict(name, replace: !claimed && values?.isDirectory == isFolder && values?.isSymbolicLink != true, folder: isFolder) {
+        let values = exists ? try target.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .contentModificationDateKey]) : nil
+        let canReplace = !claimed && values?.isDirectory == isFolder && values?.isSymbolicLink != true
+        let choice: ConflictChoice
+        if let decided = try policyChoice(incoming: incoming, existing: values?.contentModificationDate, canReplace: canReplace, folder: isFolder) { choice = decided }
+        else { choice = try await askConflict(name, replace: canReplace, folder: isFolder) }
+        switch choice {
         case .skip: return (.skip, target)
         case .copy:
             let available = queue.available(in: folder, name: name, room: room, for: id)
             return (.use(available.lastPathComponent, replacing: nil), available)
         case .replace: return (.use(target.lastPathComponent, replacing: "local"), target)
         }
+    }
+
+    /// The answer of the job's conflict policy, nil when there is none or it says to ask. A folder that meets a
+    /// folder is merged into, whatever the policy: two copies of a folder tree is never what a sync meant.
+    private func policyChoice(incoming: Date?, existing: Date?, canReplace: Bool, folder: Bool) throws -> ConflictChoice? {
+        guard let policy = try job().options?.conflictPolicy else { return nil }
+        if folder, canReplace, policy != .ask { return .replace }
+        return policy.choice(incoming: incoming, existing: existing, canReplace: canReplace)
     }
 
     /// Waits for the person (or the batch's standing answer) when a name is taken.
@@ -165,7 +177,7 @@ final class TransferWalker {
                     old.id == match.id && old.name == match.name && old.isFolder == match.isFolder &&
                     (folder || (old.size != nil && old.modified != nil && old.size == match.size && old.modified == match.modified))
                 } ?? false
-            }, keepsMatchName: true)
+            }, keepsMatchName: true, incoming: values.contentModificationDate)
             guard case .use(let name, let replacing) = decision else {
                 try edit {
                     $0.completedPaths.insert(key)
@@ -249,7 +261,7 @@ final class TransferWalker {
         if let problem = FileNames.problem(with: localName, for: target.account.cloud) { throw CloudError.message(L("No se puede enviar «\(localName)»: \(problem)")) }
         var current = try forgetUncertainFolder(key, parent: parent)
         if current.names[key] == nil {
-            guard case .use(let name, let replacing) = try await resolveName(localName, key: key, parent: parent, in: target, folder: file.isFolder) else {
+            guard case .use(let name, let replacing) = try await resolveName(localName, key: key, parent: parent, in: target, folder: file.isFolder, incoming: file.modified) else {
                 try edit { $0.completedPaths.insert(key); $0.recordSkip(key, leaf: localName, folder: file.isFolder, bytes: file.size) }
                 advance(file.size ?? 0)
                 return
@@ -341,7 +353,7 @@ final class TransferWalker {
         var replace = current.replacements[key] != nil
         let room = NameClaims.local(folder)
         if current.names[key] == nil || (!file.isFolder && !replace && FileManager.default.fileExists(atPath: target.path)) {
-            let resolved = try await resolveLocalName(name, in: folder, target: target, room: room, isFolder: file.isFolder)
+            let resolved = try await resolveLocalName(name, in: folder, target: target, room: room, isFolder: file.isFolder, incoming: file.modified)
             guard case .use(let selectedName, let replacing) = resolved.decision else {
                 try edit { $0.completedPaths.insert(key); $0.recordSkip(key, leaf: name, folder: file.isFolder, bytes: file.size) }
                 advance(file.size ?? 0)
