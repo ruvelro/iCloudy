@@ -337,9 +337,20 @@ final class FakeSSHServer: @unchecked Sendable {
                     status(id, 0)
                 case SFTPClient.Packet.open:
                     let path = try request.text()
+                    let flags = (try? request.uint32()) ?? 0x10
                     note("sftp:open " + path)
-                    files[path] = Data()
+                    // READ alone opens what is there; TRUNC empties it; WRITE without TRUNC keeps it, to continue.
+                    if flags & 0x2 != 0, flags & 0x10 != 0 || files[path] == nil { files[path] = Data() }
+                    else if flags & 0x2 == 0, files[path] == nil { status(id, 2); continue }
                     reply(SFTPClient.Packet.handle) { $0.uint32(id); $0.string("f:" + path) }
+                case SFTPClient.Packet.read:
+                    let path = String(try request.text().dropFirst(2))
+                    let offset = Int(try request.uint64()), length = Int(try request.uint32())
+                    note("sftp:read \(offset)")
+                    let contents = files[path] ?? Data()
+                    guard offset < contents.count else { status(id, 1); continue }
+                    let chunk = contents.subdata(in: offset..<min(contents.count, offset + length))
+                    reply(SFTPClient.Packet.data) { $0.uint32(id); $0.string(chunk) }
                 case SFTPClient.Packet.write:
                     let path = String(try request.text().dropFirst(2))
                     let offset = Int(try request.uint64())

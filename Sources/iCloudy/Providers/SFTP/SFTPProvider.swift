@@ -6,6 +6,8 @@ import Foundation
 @MainActor
 final class SFTPProvider: CloudSession, CloudProvider {
     var sftpClient: SFTPClient?
+    /// How much of an upload goes in one stretch before the checkpoint is saved. Tests make it one block.
+    var uploadSegment = SFTPProvider.defaultUploadSegment
     override func invalidate() {
         super.invalidate()
         if let sftpClient { Task { await sftpClient.close() } }
@@ -134,26 +136,47 @@ extension SFTPProvider {
         for child in try await sftpList(parent: file.id) { try await sftpDelete(file: child) }
         try await sftpTranslating { try await client.rmdir(file.id) }
     }
+    /// How much of an upload goes in one stretch before the checkpoint is saved. The pipeline drains at each
+    /// boundary, which costs one round trip per 16 MiB, and a dropped connection loses at most this much.
+    nonisolated static let defaultUploadSegment: Int64 = 16 * 1024 * 1024
+
+    /// The bytes go to a hidden name beside the target and take its place only once they are all there: a dropped
+    /// connection used to leave a truncated file under the final name, indistinguishable from a good one. That hidden
+    /// file is also the upload session: its path is the checkpoint's `sessionID`, `offset` counts the bytes the
+    /// server confirmed, in order, and a retry continues from there, after checking that the partial on the server
+    /// is still at least that long. The source is held to its stamp by the checkpoint, so a file that changed in
+    /// between starts again instead of being stitched to its old self.
     func sftpUpload(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint,
                     save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
         let total = cursor.total
         let path = try replacing ?? FTPListing.join(sftpPath(parent), name)
-        // The bytes go to a hidden name beside the target and take its place only once they are all there: a
-        // dropped connection used to leave a truncated file under the final name, indistinguishable from a good one.
         let temporary = FTPListing.partialName(for: path)
-        cursor.offset = 0; try save(cursor)
+        let client = try await sftp()
+        var start: Int64 = 0
+        if cursor.sessionID == temporary, cursor.offset > 0, cursor.offset <= total,
+           let size = try? await client.stat(temporary).size {
+            start = min(cursor.offset, Int64(clamping: size))
+        }
+        cursor.sessionID = temporary; cursor.offset = start; try save(cursor)
         // The client reports from its own actor; the callback only ever runs back here, on the main actor.
         let relay: @MainActor @Sendable (Int64) -> Void = { sent in progress(min(sent, total), total) }
-        let client = try await sftp()
+        progress(start, total)
         do {
-            try await sftpTranslating { try await client.upload(local, to: temporary) { sent in Task { @MainActor in relay(sent) } } }
+            repeat {
+                try Task.checkCancellation()
+                let from = start, length = min(uploadSegment, total - start)
+                try await sftpTranslating { try await client.upload(local, to: temporary, from: from, length: length) { sent in Task { @MainActor in relay(sent) } } }
+                start += length
+                cursor.offset = start; try save(cursor)
+            } while start < total
             try await sftpTranslating { try await client.replace(path, with: temporary) }
         } catch {
-            // Best effort: after a cancellation or a dropped session this cannot reach the server, and the hidden
-            // name is what is left behind, never a damaged file under the real one.
-            try? await client.remove(temporary)
+            // Nothing confirmed yet: the hidden name is removed, as before. Otherwise it stays for the retry to
+            // continue; cancelling the transfer removes it through `abandonUploadSessions`.
+            if cursor.offset == 0 { try? await client.remove(temporary) }
             throw error
         }
+        cursor.sessionID = nil
         cursor.offset = total; cursor.complete = true; try save(cursor); progress(total, total)
         // The protocol reports no checksum; the closing status is the only confirmation.
         return UploadReceipt(remoteID: path, verification: .unavailable)
@@ -212,10 +235,23 @@ extension SFTPProvider {
     func uploadFile(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
         try await sftpUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
     }
+    /// Into a partial the queue keeps between attempts (`ResumableDownload`), the download continues from the bytes
+    /// already there when they are of the same version, and what arrives before a failure is kept for the next try.
     func download(file: CloudFile, to destination: URL, exportMime: String?, maxBytes: Int64?, progress: @escaping (Int64, Int64) -> Void) async throws {
         let total = file.size ?? 0
+        let resumable = ResumableDownload.isPartial(destination)
+        let start = resumable ? try await blockingIO { try ResumableDownload.prepare(destination, for: file) } : 0
         let relay: @MainActor @Sendable (Int64) -> Void = { got in progress(got, total) }
-        try await sftpTranslating { try await sftp().download(file.id, to: destination, maxBytes: maxBytes) { got in Task { @MainActor in relay(got) } } }
+        try await sftpTranslating {
+            try await sftp().download(file.id, to: destination, from: start, keepPartial: resumable, maxBytes: maxBytes) { got in Task { @MainActor in relay(got) } }
+        }
+    }
+    /// A cancelled upload's hidden partial is removed; nothing but such a partial ever is.
+    func abandonUploadSessions(urls: [URL], sessionIDs: [String]) async {
+        guard let client = try? await sftp() else { return }
+        for path in sessionIDs where (path as NSString).lastPathComponent.hasSuffix(".icloudy-part") {
+            try? await client.remove(path)
+        }
     }
     func identityChange(file: CloudFile, name: String, destination: String?) throws -> RemoteIdentityChange {
         let newID = FTPListing.join(try destination.map(sftpPath) ?? (file.id as NSString).deletingLastPathComponent, name)

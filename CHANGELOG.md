@@ -27,6 +27,10 @@ simulados y la documentación de cada uno. Se marca como 🆕 hasta que alguien 
   rechaza: se responde con MD5 o SHA-256 y la contraseña no viaja, y una cuenta Básica cuyo servidor cambia a Digest
   lo sigue sin volver a conectarla. En «Avanzado» se puede conectar con un token de acceso OAuth (`Bearer`), para
   servidores como ownCloud Infinite Scale; iCloudy no lo renueva. Los certificados de cliente quedan fuera por ahora.
+- **SFTP reanuda subidas y descargas por donde iban.** La subida guarda cada 16 MB cuánto ha confirmado el servidor
+  en el parcial oculto (`.nombre.icloudy-part`) y el reintento sigue desde ahí, si el origen no ha cambiado. La
+  descarga deja junto al destino un parcial con la versión que estaba bajando; si el archivo sigue igual en el
+  servidor, se continúa, y si cambió, se empieza de cero. Cancelar borra los parciales.
 
 ### Robustez
 

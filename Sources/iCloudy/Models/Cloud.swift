@@ -107,8 +107,11 @@ struct CloudCapabilities {
     /// Links are presigned URLs that expire, whose lifetime the person chooses. S3 has no other kind.
     var temporaryLinks = false
     /// Large uploads go up in pieces that survive a dropped connection, and a retry carries on from the last piece the
-    /// server confirmed. Nextcloud's chunking v2 is the WebDAV case, set per account.
+    /// server confirmed. Nextcloud's chunking v2 is the WebDAV case, set per account; SFTP writes at an offset.
     var chunkedUploads = false
+    /// An interrupted download carries on from the bytes already on this Mac instead of starting over. SFTP reads at
+    /// any offset; `ResumableDownload` keeps the partial between attempts and checks it belongs to the same version.
+    var resumesDownloads = false
     /// How many jobs the session runs at once, whatever the queue's setting. FTP has a single control connection,
     /// SFTP one channel, and Mega and O2 a session the server serialises (or drops requests from) when it is asked
     /// two things at once. A second job on them would only queue inside the session while showing as running.
@@ -169,8 +172,10 @@ struct CloudCapabilities {
         case .sftp:
             // SSH gives the channel its privacy and the server its identity, but the file protocol is as bare as
             // FTP's: no search (iCloudy walks the tree), no links, no bin, no copy, no checksum. OpenSSH does report free space.
+            // Uploads and downloads resume by offset: a hidden partial on the server, and one on this Mac.
             return CloudCapabilities(recents: false, sharedWithMe: false,
-                                     publicLinks: false, copy: false, reversibleTrash: false, sessionLimit: 1, signIn: .password)
+                                     publicLinks: false, copy: false, reversibleTrash: false, chunkedUploads: true, resumesDownloads: true,
+                                     sessionLimit: 1, signIn: .password)
         case .volume:
             // The file system gives search, free space and a real Trash; only sharing links are missing.
             // The user's Trash is the Finder's, and under the sandbox iCloudy cannot read it back; it can only skip
