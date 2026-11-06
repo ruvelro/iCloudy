@@ -289,7 +289,6 @@
 "Este Mac no tiene conexión a internet, así que no se pudo hablar con Mega." = "This Mac has no internet connection, so Mega could not be reached.";
 "Este proveedor no usa peticiones HTTP." = "This provider does not use HTTP requests.";
 "Este servidor no tiene papelera: lo que elimines se borra de forma definitiva, con todo el contenido de las carpetas. iCloudy no puede deshacerlo." = "This server has no trash: whatever you delete is gone for good, together with everything inside folders. iCloudy cannot undo it.";
-"Este servidor pide autenticación Digest, que iCloudy todavía no habla. Habilita la autenticación Basic sobre HTTPS en el servidor, o usa una contraseña de aplicación si la ofrece." = "This server asks for Digest authentication, which iCloudy does not speak yet. Enable Basic authentication over HTTPS on the server, or use an app password if it offers one.";
 "Este servidor WebDAV no admite enlaces públicos desde iCloudy. Créalos en su interfaz web." = "This WebDAV server does not support public links from iCloudy. Create them in its web interface.";
 "Este volumen no admite papelera. Elimina el elemento desde el Finder si quieres borrarlo definitivamente." = "This volume has no Trash. Delete the item from the Finder if you want to remove it for good.";
 "Experimental" = "Experimental";
@@ -1922,3 +1921,13 @@
 "Se abrirá tu Nextcloud en el navegador. Inicia sesión allí, también con verificación en dos pasos, y concede el acceso: iCloudy recibe una contraseña de aplicación propia, que puedes revocar desde la seguridad de tu cuenta." = "Your Nextcloud will open in the browser. Sign in there, two-step verification included, and grant access: iCloudy receives an app password of its own, which you can revoke from your account’s security settings.";
 "Usar usuario y contraseña" = "Use user and password";
 "Iniciar sesión en el navegador" = "Sign in in the browser";
+"Este servidor pide autenticación Digest, y esta cuenta está conectada con un token. Vuelve a conectarla con usuario y contraseña." = "This server asks for Digest authentication, and this account is connected with a token. Reconnect it with a user and password.";
+"El servidor ya no pide autenticación Digest. Vuelve a conectar la cuenta." = "The server no longer asks for Digest authentication. Reconnect the account.";
+"Pega el token de acceso del servidor." = "Paste the server’s access token.";
+"Usuario (opcional, solo para reconocer la cuenta)" = "User (optional, only to recognise the account)";
+"Token de acceso" = "Access token";
+"Autenticación" = "Authentication";
+"Usuario y contraseña" = "User and password";
+"Token de acceso (OAuth)" = "Access token (OAuth)";
+"El token se envía como «Authorization: Bearer». iCloudy no lo renueva: cuando caduque, vuelve a conectar la cuenta con uno nuevo." = "The token is sent as “Authorization: Bearer”. iCloudy does not renew it: when it expires, reconnect the account with a new one.";
+"Si el servidor pide autenticación Digest, iCloudy la usa sola y la contraseña no viaja." = "If the server asks for Digest authentication, iCloudy uses it on its own and the password does not travel.";

@@ -23,6 +23,10 @@ simulados y la documentación de cada uno. Se marca como 🆕 hasta que alguien 
   numerados a una carpeta de subida propia y un MOVE final lo deja en su sitio de una vez. Si la conexión cae, el
   reintento pregunta si la subida sigue en el servidor y continúa por el siguiente trozo; cancelar la borra. Antes
   era un único PUT que volvía a empezar desde cero.
+- **WebDAV habla Digest y acepta tokens.** Un servidor que pide autenticación Digest (algunos NAS, IIS) ya no se
+  rechaza: se responde con MD5 o SHA-256 y la contraseña no viaja, y una cuenta Básica cuyo servidor cambia a Digest
+  lo sigue sin volver a conectarla. En «Avanzado» se puede conectar con un token de acceso OAuth (`Bearer`), para
+  servidores como ownCloud Infinite Scale; iCloudy no lo renueva. Los certificados de cliente quedan fuera por ahora.
 
 ### Robustez
 

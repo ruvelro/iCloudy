@@ -29,6 +29,9 @@ struct ServerLoginView: View {
     @State private var passphrase = ""
     @State private var nextcloud = false
     @State private var showAdvanced = false
+    /// Password (Basic, or Digest when the server asks for it) or an access token, for WebDAV.
+    @State private var webdavAuth = WebDAVAuth.basic
+    private var usesToken: Bool { cloud == .webdav && webdavAuth == .bearer }
     /// The questions a sign-in asks halfway: the SSH host key on a first connection, Mega's second-factor code.
     @State private var prompts = LoginPrompts.shared
     @State private var typedCode = ""
@@ -85,6 +88,7 @@ struct ServerLoginView: View {
         guard needsServer, let stored = account.serverURL else { return }
         ftpSecurity = FTPSecurityChoice(scheme: stored)
         nextcloud = account.flavor == "nextcloud"
+        webdavAuth = account.webdavAuth == .bearer ? .bearer : .basic
         switch cloud {
         case .ftp: server = stored.replacingOccurrences(of: "ftpes://", with: "").replacingOccurrences(of: "ftps://", with: "").replacingOccurrences(of: "ftp://", with: "")
         case .sftp: server = stored.replacingOccurrences(of: "sftp://", with: "")
@@ -165,9 +169,9 @@ struct ServerLoginView: View {
                     .onAppear(perform: prefillForReconnect)
                 Button("Usar usuario y contraseña") { manualNextcloud = true }.buttonStyle(.link).font(.caption)
             } else {
-            TextField(needsServer ? "Usuario" : "Correo de la cuenta", text: $username).textFieldStyle(.roundedBorder)
+            TextField(usesToken ? "Usuario (opcional, solo para reconocer la cuenta)" : needsServer || preset != nil ? "Usuario" : "Correo de la cuenta", text: $username).textFieldStyle(.roundedBorder)
                 .onAppear(perform: prefillForReconnect)
-            SecureField(cloud == .sftp ? (keyText == nil ? "Contraseña" : "Contraseña (si el servidor la pide además)") : needsServer ? "Contraseña o contraseña de aplicación" : "Contraseña", text: $password).textFieldStyle(.roundedBorder)
+            SecureField(usesToken ? "Token de acceso" : cloud == .sftp ? (keyText == nil ? "Contraseña" : "Contraseña (si el servidor la pide además)") : needsServer ? "Contraseña o contraseña de aplicación" : "Contraseña", text: $password).textFieldStyle(.roundedBorder)
             if cloud == .sftp {
                 HStack {
                     Button(keyText == nil ? "Usar una clave privada…" : "Cambiar de clave…") { pickKey() }
@@ -187,10 +191,20 @@ struct ServerLoginView: View {
                  : "Si la cuenta tiene verificación en dos pasos, iCloudy te pedirá el código después de comprobar la contraseña.")
                 .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            if cloud == .webdav, preset == nil {
+            if cloud == .webdav, !usesBrowserLogin {
                 DisclosureGroup(isExpanded: $showAdvanced) {
-                    Toggle("Servidor Nextcloud u ownCloud", isOn: $nextcloud)
-                    Text("Habilita «Crear enlace público» usando su API de compartición, que WebDAV por sí solo no tiene. Déjalo desactivado si no sabes qué servidor es.")
+                    if preset == nil {
+                        Toggle("Servidor Nextcloud u ownCloud", isOn: $nextcloud)
+                        Text("Habilita «Crear enlace público» usando su API de compartición, que WebDAV por sí solo no tiene. Déjalo desactivado si no sabes qué servidor es.")
+                            .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    Picker("Autenticación", selection: $webdavAuth) {
+                        Text("Usuario y contraseña").tag(WebDAVAuth.basic)
+                        Text("Token de acceso (OAuth)").tag(WebDAVAuth.bearer)
+                    }
+                    Text(usesToken
+                         ? "El token se envía como «Authorization: Bearer». iCloudy no lo renueva: cuando caduque, vuelve a conectar la cuenta con uno nuevo."
+                         : "Si el servidor pide autenticación Digest, iCloudy la usa sola y la contraseña no viaja.")
                         .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 } label: {
                     Text("Avanzado").font(.caption)
@@ -220,13 +234,14 @@ struct ServerLoginView: View {
                     Task {
                         await model.connectServer(cloud: cloud, server: address, username: username, password: password,
                                                   flavor: preset?.flavor ?? (cloud == .webdav && nextcloud ? "nextcloud" : nil),
-                                                  key: cloud == .sftp ? keyText.map { SFTPKeyMaterial(key: $0, passphrase: passphrase) } : nil)
+                                                  key: cloud == .sftp ? keyText.map { SFTPKeyMaterial(key: $0, passphrase: passphrase) } : nil,
+                                                  webdavAuth: cloud == .webdav ? webdavAuth : .basic)
                         password = ""; passphrase = ""
                         if model.ui.connectionError == nil { dismiss() }
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(model.ui.connecting || (needsServer && server.isEmpty) || (preset != nil && address.isEmpty) || username.isEmpty || (password.isEmpty && keyText == nil))
+                .disabled(model.ui.connecting || (needsServer && server.isEmpty) || (preset != nil && address.isEmpty) || (username.isEmpty && !usesToken) || (password.isEmpty && keyText == nil))
                 }
             }
         }.padding(24).frame(width: 470)

@@ -7,6 +7,13 @@ final class WebDAVProvider: CloudSession, CloudProvider {
     /// Where Nextcloud's chunked upload starts, and the size of its chunks. Tests make both small.
     var chunkedThreshold = WebDAVProvider.chunkedUploadThreshold
     var chunkOverride: Int64?
+    /// The server's Digest challenge, once it has sent one, and how many requests have answered it (`nc`).
+    var digestChallenge: HTTPDigest.Challenge?
+    var digestCount: UInt32 = 0
+    override func authorization(method: String, url: URL) async throws -> String { try await webdavAuthorization(method: method, url: url) }
+    override func answer(_ refusal: HTTPURLResponse, method: String, url: URL) async throws -> String? {
+        try await webdavAnswer(refusal, method: method, url: url)
+    }
 }
 
 extension WebDAVProvider {
@@ -204,7 +211,14 @@ extension WebDAVProvider {
         let total = cursor.total
         let delegate = UploadProgress { sent in Task { @MainActor in progress(min(sent, total), total) } }
         cursor.offset = 0; try save(cursor)
-        let (data, response) = try await session.upload(for: request, fromFile: local, delegate: delegate)
+        var (data, response) = try await session.upload(for: request, fromFile: local, delegate: delegate)
+        // The PUT streams from the file and so bypasses `send`: a Digest nonce that went stale is answered here.
+        if let http = response as? HTTPURLResponse, http.statusCode == 401,
+           let header = try await answer(http, method: "PUT", url: request.url ?? webdavURL(path)) {
+            request.setValue(header, forHTTPHeaderField: "Authorization")
+            (data, response) = try await session.upload(for: request, fromFile: local, delegate: delegate)
+            if (response as? HTTPURLResponse)?.statusCode == 401 { expireSession(); throw CloudError.sessionExpired(nil) }
+        }
         try HTTP.validate(response, data: data)
         cursor.offset = total; cursor.complete = true; try save(cursor); progress(total, total)
         // Plain WebDAV reports no checksum, so the upload cannot be verified beyond the server accepting it.
