@@ -72,13 +72,16 @@ enum TwoWayPlanner {
     /// Excluded paths are taken out of all three inputs before anything is decided, so they are never transferred,
     /// deleted or reported as conflicts. Their baseline entries are not forgotten either: a rule added after a file
     /// was synced leaves that file alone on both sides, and removing the rule picks it up again from where it was.
+    /// A file the size or age filters leave out on either side is left out on both, so a file that grew past the
+    /// limit on one side is neither sent nor deleted on the other. `now` is what ages are measured against.
     static func plan(local fullLocal: [String: FileStamp], remote fullRemote: [String: CloudFile], baseline fullBaseline: [String: SyncEntry],
-                     allowMassDeletion: Bool = false, exclusions: SyncExclusionMatcher = .none) throws -> [SyncAction] {
-        let excludedLocal = fullLocal.filter { exclusions.excludes($0.key, isFolder: $0.value.size == -1) }
-        let excludedRemote = fullRemote.filter { exclusions.excludes($0.key, isFolder: $0.value.isFolder) }
+                     allowMassDeletion: Bool = false, exclusions: SyncExclusionMatcher = .none, now: Date = Date()) throws -> [SyncAction] {
+        let filtered = filteredFiles(local: fullLocal, remote: fullRemote, exclusions: exclusions, now: now)
+        let excludedLocal = fullLocal.filter { exclusions.excludes($0.key, isFolder: $0.value.size == -1) || filtered.contains($0.key) }
+        let excludedRemote = fullRemote.filter { exclusions.excludes($0.key, isFolder: $0.value.isFolder) || filtered.contains($0.key) }
         let local = fullLocal.filter { excludedLocal[$0.key] == nil }
         let remote = fullRemote.filter { excludedRemote[$0.key] == nil }
-        let baseline = fullBaseline.filter { !exclusions.excludes($0.key, isFolder: $0.value.isFolder) }
+        let baseline = fullBaseline.filter { !exclusions.excludes($0.key, isFolder: $0.value.isFolder) && !filtered.contains($0.key) }
         // A folder holding something excluded is not removed as a whole, which would take the excluded item along;
         // its synced contents go one by one and the folder stays. Folder metadata such as .DS_Store does not count.
         func keeps(_ folder: String, _ excluded: [String]) -> Bool {
@@ -147,6 +150,14 @@ enum TwoWayPlanner {
             if remoteDeletions >= massDeletionMinimum, remoteDeletions * 2 > remoteFiles { throw MassDeletionRefused(count: remoteDeletions, side: L("la nube")) }
         }
         return creates + transfers + deletes
+    }
+    /// Files whose version on either side the size or age filters leave out.
+    static func filteredFiles(local: [String: FileStamp], remote: [String: CloudFile], exclusions: SyncExclusionMatcher, now: Date) -> Set<String> {
+        guard exclusions.filtersFiles else { return [] }
+        var result: Set<String> = []
+        for (path, stamp) in local where stamp.size != -1 && exclusions.filtersOut(size: stamp.size, modified: stamp.modified, now: now) { result.insert(path) }
+        for (path, file) in remote where !file.isFolder && exclusions.filtersOut(size: file.size, modified: file.modified, now: now) { result.insert(path) }
+        return result
     }
     private static func isFolder(_ path: String, local: [String: FileStamp], remote: [String: CloudFile], baseline: [String: SyncEntry]) -> Bool {
         if let l = local[path] { return l.size == -1 }

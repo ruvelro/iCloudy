@@ -1889,3 +1889,16 @@
 "No se ha conectado la cuenta de %@ «%@». Si no era la tuya, cierra las pestañas del navegador que no reconozcas y vuelve a intentarlo." = "The %@ account “%@” was not connected. If it was not yours, close any browser tabs you do not recognise and try again.";
 "«%@» no está borrada: aparece en la papelera para que puedas abrirla y ver lo que se borró dentro." = "“%@” is not deleted: it appears in the bin so you can open it and see what was deleted inside.";
 "El servicio devolvió la misma página una y otra vez, así que se ha dejado de pedir más." = "The service returned the same page over and over, so iCloudy stopped asking for more.";
+
+/* 0.9 — Transferencias */
+"minutos" = "minutes";
+"horas" = "hours";
+"días" = "days";
+"Solo archivos de al menos" = "Only files of at least";
+"Solo archivos de como mucho" = "Only files of at most";
+"Solo los modificados en los últimos" = "Only files modified in the last";
+"Saltar los modificados hace menos de" = "Skip files modified less than";
+"Los filtros miran solo archivos, nunca carpetas. Lo que dejan fuera no se sube, no se baja y no se borra en ningún lado; un archivo que cumple en un lado y no en el otro se deja como está en los dos." = "The filters look at files only, never folders. What they leave out is not uploaded, downloaded or deleted anywhere; a file that passes on one side and not on the other is left as it is on both.";
+"Tiempo" = "Time";
+"Una línea que empieza por «!» vuelve a incluir lo que excluyó una anterior, como en gitignore: «*.log» y después «!importante.log». Decide la última regla que coincide, y no se puede recuperar nada de dentro de una carpeta excluida." = "A line starting with “!” includes again what an earlier one excluded, as in gitignore: “*.log” and then “!important.log”. The last matching rule decides, and nothing inside an excluded folder can be brought back.";
+"Filtros por tamaño y fecha" = "Size and date filters";

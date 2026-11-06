@@ -48,6 +48,10 @@ struct MirrorExclusionsSheet: View {
                 .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.secondary.opacity(0.3)))
             Text("«*» es cualquier texto dentro de un nombre, «?» un carácter, «[a-z]» uno de la lista y «**» cualquier número de carpetas. Si el patrón lleva «/», cuenta desde la carpeta reflejada; si no, vale para el nombre a cualquier profundidad. Una «/» al final lo limita a carpetas. Las líneas que empiezan por «#» son comentarios.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Una línea que empieza por «!» vuelve a incluir lo que excluyó una anterior, como en gitignore: «*.log» y después «!importante.log». Decide la última regla que coincide, y no se puede recuperar nada de dentro de una carpeta excluida.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Filtros por tamaño y fecha").font(.subheadline.weight(.semibold))
+            SyncFilterFields(rules: $rules)
             HStack {
                 TextField("Prueba una ruta, por ejemplo Fotos/IMG_001.tmp", text: $probe).textFieldStyle(.roundedBorder)
                 if !probe.isEmpty {

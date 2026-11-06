@@ -8,6 +8,8 @@ import Foundation
 /// - A pattern with a `/` before its end is anchored to the mirror's root (a leading `/` only says so explicitly);
 ///   without one it is compared with the name alone, at any depth. A trailing `/` restricts it to folders.
 /// `*` and `?` match a leading dot as well: `*.tmp` catches `.x.tmp`, as in gitignore and unlike the shell.
+/// A leading `!` negates the pattern: whatever it matches is included again (`\!` is a literal `!`). The matcher
+/// gives the last matching pattern the final word, as gitignore does.
 struct GlobPattern: Equatable, Sendable {
     private enum Token: Equatable, Sendable {
         case literal(Character)
@@ -23,12 +25,15 @@ struct GlobPattern: Equatable, Sendable {
     let anchored: Bool
     let foldersOnly: Bool
     let caseInsensitive: Bool
+    /// `!pattern`: a match re-includes the item instead of excluding it.
+    let negated: Bool
     private let tokens: [Token]
 
     init(_ pattern: String, caseInsensitive: Bool = false) {
         source = pattern
         self.caseInsensitive = caseInsensitive
-        var text = Self.normalize(pattern, caseInsensitive: caseInsensitive)
+        negated = pattern.hasPrefix("!")
+        var text = Self.normalize(negated ? String(pattern.dropFirst()) : pattern, caseInsensitive: caseInsensitive)
         var foldersOnly = false
         while text.count > 1, text.hasSuffix("/") { text.removeLast(); foldersOnly = true }
         var anchored = false
@@ -149,6 +154,13 @@ struct SyncExclusions: Codable, Equatable, Sendable {
     var skipPackages = false
     /// The person's own patterns, one per entry. Blank entries and lines starting with `#` are ignored.
     var patterns: [String] = []
+    /// Files outside these sizes, in bytes, are left alone. Folders are never filtered by size.
+    var minSize: Int64?
+    var maxSize: Int64?
+    /// Files last modified longer ago than `maxAge` seconds, or more recently than `minAge`, are left alone: the
+    /// first keeps a mirror to what is recent, the second skips what an app may still be writing.
+    var maxAge: TimeInterval?
+    var minAge: TimeInterval?
 
     /// System clutter and the lock and scratch files editors leave next to a document while it is open.
     static let defaults = [".DS_Store", "._*", ".Spotlight-V100", ".Trashes", ".fseventsd", "Icon\r", "~$*", "*.tmp", "*.swp",
@@ -165,8 +177,10 @@ struct SyncExclusions: Codable, Equatable, Sendable {
         "playground", "xcarchive", "dsym", "sparsebundle", "pkg", "mpkg", "scptd", "workflow", "nib", "lpdf", "abbu",
     ]
 
-    init(useDefaults: Bool = true, skipHidden: Bool = false, skipPackages: Bool = false, patterns: [String] = []) {
+    init(useDefaults: Bool = true, skipHidden: Bool = false, skipPackages: Bool = false, patterns: [String] = [],
+         minSize: Int64? = nil, maxSize: Int64? = nil, maxAge: TimeInterval? = nil, minAge: TimeInterval? = nil) {
         self.useDefaults = useDefaults; self.skipHidden = skipHidden; self.skipPackages = skipPackages; self.patterns = patterns
+        self.minSize = minSize; self.maxSize = maxSize; self.maxAge = maxAge; self.minAge = minAge
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -174,15 +188,25 @@ struct SyncExclusions: Codable, Equatable, Sendable {
         skipHidden = try values.decodeIfPresent(Bool.self, forKey: .skipHidden) ?? false
         skipPackages = try values.decodeIfPresent(Bool.self, forKey: .skipPackages) ?? false
         patterns = try values.decodeIfPresent([String].self, forKey: .patterns) ?? []
+        // Records written before the size and age filters existed filter nothing.
+        minSize = try values.decodeIfPresent(Int64.self, forKey: .minSize)
+        maxSize = try values.decodeIfPresent(Int64.self, forKey: .maxSize)
+        maxAge = try values.decodeIfPresent(TimeInterval.self, forKey: .maxAge)
+        minAge = try values.decodeIfPresent(TimeInterval.self, forKey: .minAge)
     }
-    /// The patterns that apply, in the order they are tried.
+    /// True when any size or age filter is set.
+    var filtersFiles: Bool { minSize != nil || maxSize != nil || maxAge != nil || minAge != nil }
+    /// The patterns that apply, in the order they are tried. The internal ones come first and cannot be negated.
     var activePatterns: [String] {
         let own = patterns.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.hasPrefix("#") }
         return Self.internalPatterns + (useDefaults ? Self.defaults : []) + own
     }
     func matcher(caseInsensitive: Bool) -> SyncExclusionMatcher {
-        SyncExclusionMatcher(patterns: activePatterns.map { GlobPattern($0, caseInsensitive: caseInsensitive) },
-                             skipHidden: skipHidden, skipPackages: skipPackages, caseInsensitive: caseInsensitive)
+        let rules = activePatterns.dropFirst(Self.internalPatterns.count).map { GlobPattern($0, caseInsensitive: caseInsensitive) }
+        var matcher = SyncExclusionMatcher(patterns: Array(rules), skipHidden: skipHidden, skipPackages: skipPackages, caseInsensitive: caseInsensitive)
+        matcher.sizes = (minSize, maxSize)
+        matcher.ages = (maxAge, minAge)
+        return matcher
     }
     /// Whether names on the volume holding `url` differ only by case. APFS and HFS+ are case-insensitive unless
     /// formatted otherwise; when the volume cannot be asked, that common case is assumed.
@@ -195,22 +219,56 @@ struct SyncExclusions: Codable, Equatable, Sendable {
 /// The compiled form of `SyncExclusions`, answering for paths relative to the mirror's root. Pure: it never touches
 /// the disk, so the local and the remote tree are judged by exactly the same rules.
 struct SyncExclusionMatcher: Sendable {
+    /// The defaults and the person's rules, in order: the last one that matches an item decides.
     let patterns: [GlobPattern]
     let skipHidden: Bool
     let skipPackages: Bool
     let caseInsensitive: Bool
+    /// `SyncExclusions.internalPatterns`: always excluded, whatever a negated rule says.
+    private let internals: [GlobPattern]
     private let metadata: [GlobPattern]
+    /// Smallest and largest file, in bytes, that is looked at.
+    var sizes: (min: Int64?, max: Int64?) = (nil, nil)
+    /// Oldest and newest a file may be, in seconds since it was last modified.
+    var ages: (max: TimeInterval?, min: TimeInterval?) = (nil, nil)
 
-    init(patterns: [GlobPattern], skipHidden: Bool, skipPackages: Bool, caseInsensitive: Bool) {
+    init(patterns: [GlobPattern], skipHidden: Bool, skipPackages: Bool, caseInsensitive: Bool,
+         internalPatterns: [String] = SyncExclusions.internalPatterns) {
         self.patterns = patterns; self.skipHidden = skipHidden; self.skipPackages = skipPackages; self.caseInsensitive = caseInsensitive
+        internals = internalPatterns.map { GlobPattern($0, caseInsensitive: caseInsensitive) }
         metadata = SyncExclusions.folderMetadata.map { GlobPattern($0, caseInsensitive: caseInsensitive) }
     }
     /// Excludes nothing; what the planners used before exclusions existed.
-    static let none = SyncExclusionMatcher(patterns: [], skipHidden: false, skipPackages: false, caseInsensitive: false)
+    static let none = SyncExclusionMatcher(patterns: [], skipHidden: false, skipPackages: false, caseInsensitive: false, internalPatterns: [])
+    /// Whether any path rule is set at all, so the common case of none skips the walk up the path.
+    private var excludesPaths: Bool { !patterns.isEmpty || !internals.isEmpty || skipHidden || skipPackages }
 
-    /// True when `path` or any folder above it is excluded. Everything inside an excluded folder is excluded too.
+    /// True when a size or age filter is set.
+    var filtersFiles: Bool { sizes.min != nil || sizes.max != nil || ages.max != nil || ages.min != nil }
+
+    /// Whether a file is left out by its size or its age alone. What is not known never filters a file out: a listing
+    /// without dates keeps every file rather than dropping all of them.
+    func filtersOut(size: Int64?, modified: Date?, now: Date) -> Bool {
+        if let size {
+            if let min = sizes.min, size < min { return true }
+            if let max = sizes.max, size > max { return true }
+        }
+        if let modified {
+            let age = now.timeIntervalSince(modified)
+            if let max = ages.max, age > max { return true }
+            if let min = ages.min, age < min { return true }
+        }
+        return false
+    }
+    /// A file judged by its path and by its size and age.
+    func excludesFile(_ path: String, size: Int64?, modified: Date?, now: Date) -> Bool {
+        excludes(path, isFolder: false) || filtersOut(size: size, modified: modified, now: now)
+    }
+
+    /// True when `path` or any folder above it is excluded. Everything inside an excluded folder is excluded too, so,
+    /// as in gitignore, a negated rule cannot bring back an item whose folder is excluded.
     func excludes(_ path: String, isFolder: Bool) -> Bool {
-        guard !patterns.isEmpty || skipHidden || skipPackages else { return false }
+        guard excludesPaths else { return false }
         let components = path.split(separator: "/", omittingEmptySubsequences: true)
         var prefix = ""
         for (index, component) in components.enumerated() {
@@ -219,12 +277,17 @@ struct SyncExclusionMatcher: Sendable {
         }
         return false
     }
-    /// The item alone, without looking at the folders above it.
+    /// The item alone, without looking at the folders above it. The switches for hidden items and packages count as
+    /// rules that come before the patterns, so `!.config/` brings one hidden folder back.
     func excludesItself(_ path: String, name: Substring, isFolder: Bool) -> Bool {
-        if skipHidden, name.hasPrefix(".") { return true }
+        if internals.contains(where: { $0.matches(path, isFolder: isFolder) }) { return true }
+        var excluded = false
+        if skipHidden, name.hasPrefix(".") { excluded = true }
         if skipPackages, isFolder, let dot = name.lastIndex(of: "."), dot != name.startIndex,
-           SyncExclusions.packageExtensions.contains(name[name.index(after: dot)...].lowercased()) { return true }
-        return patterns.contains { $0.matches(path, isFolder: isFolder) }
+           SyncExclusions.packageExtensions.contains(name[name.index(after: dot)...].lowercased()) { excluded = true }
+        // The last rule that matches decides, so the search runs from the end and stops at the first hit.
+        if let last = patterns.last(where: { $0.matches(path, isFolder: isFolder) }) { return !last.negated }
+        return excluded
     }
     /// System clutter that only describes the folder holding it (see `SyncExclusions.folderMetadata`).
     func isFolderMetadata(_ path: String) -> Bool {

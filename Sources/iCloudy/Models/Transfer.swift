@@ -59,6 +59,9 @@ struct Transfer: Identifiable, Codable {
     /// The last run stopped because a partly uploaded file is no longer the file it started from. Retrying cannot
     /// help, so the panel offers to start that upload from zero instead.
     var needsRestart = false
+    /// Conflict policy, filters and the rest a mirror or a saved job asked for; nil for an ordinary transfer. In a
+    /// transfer "this side" is the source.
+    var options: TransferOptions?
     var finished: Bool { [.completed, .cancelled, .failed].contains(state) }
     var failed: Bool { state == .failed }
     var progress: Double { state == .completed ? 1 : (total > 0 ? min(1, Double(bytes) / Double(total)) : 0) }
@@ -101,7 +104,7 @@ extension Transfer {
         case id, batchID, name, destination, accountID, direction, localURL, bookmark, parent, file, exportMime, exportExtension
         case state, detail, bytes, total, bytesPerSecond, attempts, batchChoice, completedPaths, folders, uncertainFolders, names, replacements, uploads
         case verifiedFiles, unverifiedFiles, exportedFiles, downloads, targetAccountID, mirrorEntries, report, planned
-        case hold, needsRestart
+        case hold, needsRestart, options
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -146,5 +149,7 @@ extension Transfer {
         report = (try? values.decodeIfPresent([String: FileRecord].self, forKey: .report)) ?? [:]
         planned = try values.decodeIfPresent(Bool.self, forKey: .planned) ?? false
         needsRestart = try values.decodeIfPresent(Bool.self, forKey: .needsRestart) ?? false
+        // Options a newer version wrote are dropped rather than costing the queue: the job then asks.
+        options = (try? values.decodeIfPresent(TransferOptions.self, forKey: .options)) ?? nil
     }
 }

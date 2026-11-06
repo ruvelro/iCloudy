@@ -15,6 +15,8 @@ final class TransferWalker {
     /// One remote listing per destination folder for the whole run. Before, every item listed its parent again,
     /// which made a folder of N files cost N listings of N items.
     private var siblings: [String: [CloudFile]] = [:]
+    /// The job's own rules, compiled once per run. A mirror's come from the queue instead, asked for every item.
+    private var ownRules: SyncExclusionMatcher??
 
     init(queue: TransferQueue, id: UUID) { self.queue = queue; self.id = id }
 
@@ -23,6 +25,16 @@ final class TransferWalker {
     /// The same, written to disk before returning, for a marker that must exist before a request is sent.
     private func commit(_ change: (inout Transfer) -> Void) async throws { try await queue.commit(id, change) }
     private func advance(_ bytes: Int64) { done += bytes; queue.mark(id, done: done) }
+
+    /// What an upload leaves out: the mirror's current rules, or the ones the job was saved with.
+    private func uploadRules() throws -> SyncExclusionMatcher? {
+        if let rules = queue.uploadExclusions?(id) { return rules }
+        if let ownRules { return ownRules }
+        let job = try job()
+        let compiled = job.options?.exclusions.map { $0.matcher(caseInsensitive: SyncExclusions.isCaseInsensitive(job.localURL)) }
+        ownRules = .some(compiled)
+        return compiled
+    }
 
     // MARK: Shared steps
 
@@ -124,12 +136,16 @@ final class TransferWalker {
 
     func upload(api: CloudAPI, local: URL, parent: String, key: String = ".") async throws {
         try Task.checkCancellation()
-        let values = try local.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey])
+        let values = try local.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey])
         let folder = values.isDirectory == true
         queue.inFlight[id] = ReportCursor(key: key, leaf: local.lastPathComponent, folder: folder)
         guard values.isSymbolicLink != true else { throw CloudError.message(L("No se admiten enlaces simbólicos.")) }
         // Excluded: never uploaded, never listed, never counted. The root itself is the mirror and is never excluded.
-        if key != ".", let rules = queue.uploadExclusions?(id), rules.excludes(String(key.dropFirst(2)), isFolder: folder) { return }
+        if key != ".", let rules = try uploadRules() {
+            let path = String(key.dropFirst(2))
+            if rules.excludes(path, isFolder: folder) { return }
+            if !folder, rules.filtersOut(size: values.fileSize.map(Int64.init), modified: values.contentModificationDate, now: Date()) { return }
+        }
         if try await alreadyCompleted(key, bytes: { try await blockingIO { try TransferQueue.localSize(local) } }) { return }
         // A mirror's own folder is never created remotely: its contents go into one that already exists, so its name
         // never reaches the provider. Judging it by the provider's rules stopped a mirror of "Fotos." from ever

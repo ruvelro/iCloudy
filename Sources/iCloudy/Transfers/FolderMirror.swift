@@ -79,7 +79,8 @@ enum MirrorPlanner {
     }
     /// Relative path → stamp for every regular file under `root`. Symlinks are skipped, hidden files are included.
     nonisolated static func stamps(of root: URL) throws -> [String: FileStamp] { try scan(root, exclusions: .none).stamps }
-    nonisolated static func scan(_ root: URL, exclusions: SyncExclusionMatcher) throws -> LocalScan {
+    /// Files the size and age filters leave out go to `excluded` too, judged against `now`.
+    nonisolated static func scan(_ root: URL, exclusions: SyncExclusionMatcher, now: Date = Date()) throws -> LocalScan {
         var result = LocalScan()
         let base = root.standardizedFileURL.path
         guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey], options: []) else { return result }
@@ -95,7 +96,8 @@ enum MirrorPlanner {
             // Parents come before their children, so checking the item alone is enough: an excluded parent was
             // never descended into.
             let name = relative.split(separator: "/").last ?? Substring(relative)
-            if exclusions.excludesItself(relative, name: name, isFolder: values.isDirectory == true) {
+            if exclusions.excludesItself(relative, name: name, isFolder: values.isDirectory == true)
+                || (values.isDirectory != true && exclusions.filtersOut(size: stamp.size, modified: stamp.modified, now: now)) {
                 result.excluded[relative] = stamp
                 if values.isDirectory == true { enumerator.skipDescendants() }
             } else {
