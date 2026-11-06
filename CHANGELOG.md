@@ -31,6 +31,10 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
   General). La subida pasa por la cola de siempre, con su comprobación. Si alguien cambió el archivo en la nube
   mientras tanto, no se sobrescribe: tus cambios se suben al lado como «Nombre (mi versión)» y los siguientes van a
   esa copia. Se deja de vigilar al cerrar la aplicación o con «Dejar de vigilar».
+- **Inspector (⌘I)**, un panel al lado de la lista con lo que se sabe de la selección: tipo, tamaño, fecha, cuenta,
+  ruta, la suma de comprobación y su algoritmo, si hay copia en este Mac o sin conexión, si está abierto en otra
+  aplicación, cuántas versiones guarda el proveedor y cuántos enlaces públicos tiene, donde se pueden consultar. Con
+  botones para copiar la ruta o el enlace, mostrar la copia local y abrirlo. Con varios elementos, suma el total.
 
 ### Robustez
 

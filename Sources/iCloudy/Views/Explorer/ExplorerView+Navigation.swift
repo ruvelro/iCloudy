@@ -189,6 +189,10 @@ extension ExplorerView {
             }
             .frame(minWidth: 580, maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(nsColor: .windowBackgroundColor))
+            // The selection's details, beside the list rather than over it, as the Finder's Get Info panel is.
+            .inspector(isPresented: sheets.showInspector) {
+                InspectorView(model: model).inspectorColumnWidth(min: 220, ideal: 270, max: 380)
+            }
         }
         .background(ExplorerWindowChrome())
         .background(ExplorerWindowReader())

@@ -390,4 +390,35 @@ final class ExplorerFeaturesTests: XCTestCase {
         XCTAssertTrue(ExternalEditor.sameVersion(a, a))
         XCTAssertFalse(ExternalEditor.sameVersion(a, file("a", size: 4, modified: Date(timeIntervalSince1970: 10))))
     }
+
+    // MARK: - Inspector
+
+    func testTheInspectorDescribesOneItemOrAddsUpSeveral() async throws {
+        let model = AppModel()
+        model.enableDemo()
+        model.demo?.latency = .milliseconds(1)
+        try await wait(until: { model.files.count >= 3 })
+        XCTAssertEqual(model.inspectorSummary().content, .nothing)
+
+        let welcome = try XCTUnwrap(model.files.first { $0.name == "Bienvenido.txt" })
+        model.selectedIDs = [welcome.id]
+        guard case .single(let item) = model.inspectorSummary().content else { return XCTFail("One item selected") }
+        XCTAssertEqual(item.file, welcome)
+        XCTAssertEqual(item.address, model.accountTitle(try XCTUnwrap(model.account)) + ":/Bienvenido.txt")
+        XCTAssertEqual(item.local, .cloudOnly)
+        XCTAssertNil(item.editing)
+        XCTAssertFalse(item.hasVersions, "The demo keeps no versions, so none are asked for")
+        XCTAssertFalse(item.kind.isEmpty)
+
+        model.selectedIDs = Set(model.files.map(\.id))
+        guard case .many(let totals) = model.inspectorSummary().content else { return XCTFail("Several selected") }
+        XCTAssertEqual(totals.count, model.files.count)
+        XCTAssertEqual(totals.folders, 1)
+        XCTAssertEqual(totals.bytes, model.files.reduce(0) { $0 + ($1.isFolder ? 0 : ($1.size ?? 0)) })
+        XCTAssertEqual(totals.unknownSizes, 0)
+
+        // What the filter hides is not counted, like every other action on the selection.
+        model.search = "Bienvenido"
+        guard case .single = model.inspectorSummary().content else { return XCTFail("Only the visible row counts") }
+    }
 }

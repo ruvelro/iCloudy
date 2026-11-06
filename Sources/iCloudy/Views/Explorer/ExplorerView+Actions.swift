@@ -21,6 +21,10 @@ extension ExplorerView {
             Button { Task { await model.saveMany(model.selection(selected)) } } label: { Label("Descargar selección", systemImage: "square.and.arrow.down") }.disabled(selected.isEmpty)
             Button { previewSelection() } label: { Image(systemName: "eye") }.help("Vista previa (Espacio)")
                 .accessibilityLabel("Vista previa").disabled(selected.count != 1)
+            Button { model.ui.showInspector.toggle() } label: {
+                Image(systemName: "info.circle").symbolVariant(model.ui.showInspector ? .fill : .none)
+            }.help(model.ui.showInspector ? "Ocultar el inspector (⌘I)" : "Mostrar el inspector (⌘I)")
+                .accessibilityLabel("Inspector")
             ToolbarSeparator()
             Group {
                 Picker("Vista", selection: $model.viewMode) {

@@ -51,6 +51,8 @@ final class ExplorerPresentation {
     /// The account whose name and colour are being edited.
     var appearanceAccount: Account?
     var showGlobalSearch = false
+    /// The inspector beside the list (⌘I).
+    var showInspector = false
     /// «Ir a la carpeta…» (⇧⌘G).
     var showGoToFolder = false
     /// The pane whose breadcrumbs are being typed over as a path (⌘L), if any.
