@@ -3,7 +3,13 @@
 Las versiones siguen [SemVer](https://semver.org/lang/es/). Mientras el número mayor sea `0`, la app se considera
 en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y así se dirá aquí.
 
-## Sin publicar
+## 0.9.0 — 6 de noviembre de 2026
+
+La versión que sale de la revisión del 5 de noviembre (`docs/REVISION-2026-11-05.md`): los fallos que encontró,
+corregidos; la deuda de arquitectura, saldada; pruebas y CI que se pueden creer; y casi todas las funciones que
+proponía, del explorador a los trabajos guardados, Azure, iCloud Drive y una línea de órdenes. Más de mil pruebas en
+verde, también en paralelo. Lo nuevo se ha probado con servidores simulados y con la cuenta de demostración, no contra
+cuentas reales: antes de la 1.0 queda un último repaso con servicios de verdad y en la app en marcha.
 
 ### Proveedores e integración
 

@@ -6,7 +6,7 @@
 
 **Google Drive · OneDrive · Dropbox · Box · pCloud · S3 · Mega · Nextcloud · Synology · SFTP · FTP · SMB**
 
-[![versión](https://img.shields.io/badge/versión-0.7.0-6f9dff?style=flat-square)](https://github.com/ruvelro/iCloudy/releases)
+[![versión](https://img.shields.io/badge/versión-0.9.0-6f9dff?style=flat-square)](https://github.com/ruvelro/iCloudy/releases)
 [![macOS](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-6-F05138?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![SwiftUI](https://img.shields.io/badge/SwiftUI-nativo-0071e3?style=flat-square)](https://developer.apple.com/xcode/swiftui/)
@@ -31,7 +31,7 @@ No hay servidor intermedio. Tu Mac habla directamente con cada proveedor, y **na
 terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga lo que tú eliges.
 
 > [!NOTE]
-> **Versión 0.7** — La base es sólida y está probada, pero todavía no hay binario firmado. Los proveedores marcados
+> **Versión 0.9** — La base es sólida y está probada, y ya hay paquetes de cada versión, aunque sin firmar mientras no haya cuenta de desarrollador de Apple. Los proveedores marcados
 > como experimentales, y los nuevos de esta versión, no se han probado aún contra cuentas reales y pueden romperse sin aviso. Léete [estado y hoja de ruta](#-estado-y-hoja-de-ruta) antes de
 > confiarle nada importante.
 
