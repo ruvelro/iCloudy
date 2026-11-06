@@ -172,6 +172,14 @@ final class SSHHardeningTests: XCTestCase {
         XCTAssertEqual(fake.interactiveAnswers.count, 1)
     }
 
+    func testARefusedPasswordIsNotTriedAgainThroughKeyboardInteractive() async throws {
+        let fake = try server { $0.methods = ["password", "keyboard-interactive"]; $0.interactiveRounds = [[("Password: ", false)]] }
+        do { try await transport(fake, password: "mala").connect(); XCTFail("Una contraseña incorrecta no inicia sesión") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("rechazó el usuario o la contraseña"), error.localizedDescription) }
+        XCTAssertFalse(fake.events.contains("auth:keyboard-interactive"), "Un segundo intento solo suma otro fallo a la cuenta")
+        XCTAssertTrue(fake.interactiveAnswers.isEmpty)
+    }
+
     func testPasswordPromptsAreRecognisedOnlyWhenHidden() {
         XCTAssertTrue(SSHTransport.isPasswordPrompt("Password: ", echo: false))
         XCTAssertTrue(SSHTransport.isPasswordPrompt("(ana@nas) Contraseña:", echo: false))

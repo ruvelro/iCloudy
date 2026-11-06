@@ -381,8 +381,11 @@ actor SSHTransport {
         var outcome = try await expect([SSHMessage.userauthSuccess, SSHMessage.userauthFailure])
         if outcome.type == SSHMessage.userauthSuccess { return }
         let offered = try outcome.reader.nameList()
+        // A server that still offers "password" after refusing it has checked the password and found it wrong.
+        // Trying it again through keyboard-interactive would only count a second failure against the account, and
+        // macOS's PAM leaves that second attempt unanswered until the connection times out.
+        if offered.contains("password") { throw CloudError.message(L("El servidor SSH rechazó el usuario o la contraseña.")) }
         guard offered.contains("keyboard-interactive") else {
-            if offered.contains("password") { throw CloudError.message(L("El servidor SSH rechazó el usuario o la contraseña.")) }
             throw CloudError.message(L("El servidor SSH no acepta contraseñas para este usuario (admite: \(offered.joined(separator: ", "))). Conecta la cuenta con una clave privada."))
         }
         // Servers that only take the password through PAM offer this instead of "password". Only a hidden prompt

@@ -232,6 +232,9 @@ Lo que encontró la revisión del 5 de noviembre (`docs/REVISION-2026-11-05.md`)
 - **Intercambio estricto de claves SSH** (`kex-strict-c-v00@openssh.com`, contra Terrapin): se anuncia, se rechaza
   cualquier paquete ajeno al primer intercambio y los contadores vuelven a cero tras cada `NEWKEYS` cuando el servidor
   también lo admite. Además: claves RSA de servidor de al menos 2048 bits y relleno mínimo de cuatro bytes.
+- **Una contraseña SSH rechazada no se vuelve a probar.** Si el servidor la rechaza por el método `password`, iCloudy
+  ya no la repite por `keyboard-interactive`: solo sumaba otro fallo a la cuenta y, con el PAM de macOS, se quedaba
+  esperando hasta agotar el tiempo en lugar de decir que la contraseña no vale.
 - **Las claves RSA del usuario firman con Security.framework**, con la clave PKCS#1 completa y sus parámetros CRT, en
   lugar de con la aritmética propia de Mega, cuyo tiempo dependía del exponente.
 - **keyboard-interactive** solo contesta con la contraseña a un aviso oculto que la pide, y una vez. Un segundo factor
