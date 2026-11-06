@@ -76,7 +76,7 @@ extension ExplorerView {
                                     }
                                     Divider()
                                     Button("Desconectar cuenta…", role: .destructive) {
-                                        disconnectTarget = account; confirmDisconnect = true
+                                        model.ui.pendingDisconnect = account
                                     }.disabled(!model.canDisconnect(account))
                                     if !model.canDisconnect(account) {
                                         Text("Pausa o termina las transferencias de esta cuenta")

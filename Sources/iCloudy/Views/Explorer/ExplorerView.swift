@@ -17,8 +17,8 @@ struct ExplorerView: View {
     @State var dropTarget: Int?
     /// The transfers drawer starts closed and opens itself when something is transferring.
     @State var showTransfers = false
-    @State var confirmDisconnect = false
-    @State var disconnectTarget: Account?
+    /// Letters typed over the list, to select by name.
+    @State var typeSelect = TypeSelect()
     @State var previewFollow: Task<Void, Never>?
     @State var sidebarVisible = true
     /// Which half of the sidebar is showing. Favourites used to live under every account, so reaching them on a Mac
@@ -132,7 +132,7 @@ struct ExplorerView: View {
         } message: {
             Text("Todo lo que hay en la papelera de \(model.account?.cloud.title ?? L("la nube")) se elimina de forma definitiva, también lo que otras aplicaciones hayan enviado ahí. No se puede deshacer.")
         }
-        .confirmationDialog("¿Desconectar esta cuenta?", isPresented: $confirmDisconnect, titleVisibility: .visible, presenting: disconnectTarget) { account in
+        .confirmationDialog("¿Desconectar esta cuenta?", isPresented: Binding(get: { model.ui.pendingDisconnect != nil }, set: { if !$0 { model.ui.pendingDisconnect = nil } }), titleVisibility: .visible, presenting: model.ui.pendingDisconnect) { account in
             Button("Desconectar", role: .destructive) { model.disconnect(account) }
             Button("Cancelar", role: .cancel) {}
         } message: { account in

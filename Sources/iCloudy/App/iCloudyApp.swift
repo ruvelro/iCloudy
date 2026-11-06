@@ -45,6 +45,15 @@ struct iCloudyApp: App {
             // There is still one window; ⌘T opens a tab in it instead of a second one.
             CommandGroup(replacing: .newItem) {
                 Button("Nueva pestaña") { model.newTab() }.keyboardShortcut("t", modifiers: .command)
+                // The Finder's keys: ⇧⌘N for a folder, ⌘D to duplicate, ⌘E to eject.
+                Button("Nueva carpeta") { model.promptName() }.keyboardShortcut("n", modifiers: [.command, .shift])
+                    .disabled(!model.canWrite)
+                Button("Duplicar") { Task { await model.duplicate(model.selection(model.selectedIDs)) } }
+                    .keyboardShortcut("d", modifiers: .command)
+                    .disabled(model.duplicateLimitation(model.selection(model.selectedIDs)) != nil)
+                Button(model.ejectable.map { CryptomatorVaults.isVaultAccount($0.id) ? L("Bloquear la bóveda") : L("Expulsar «\(model.accountTitle($0))»…") } ?? L("Expulsar"))
+                { model.eject() }
+                    .keyboardShortcut("e", modifiers: .command).disabled(model.ejectable == nil)
                 Divider()
                 // F5 and F6, as in the two-pane file managers they come from.
                 Button("Copiar al otro panel") { model.sendSelectionToOtherPane(move: false) }
@@ -100,7 +109,8 @@ struct iCloudyApp: App {
                 }
             }
             CommandGroup(after: .appInfo) {
-                Button("Añadir cuenta…") { model.ui.showConnect = true }.keyboardShortcut("n", modifiers: [.command, .shift])
+                // ⇧⌘N is the Finder's New Folder now; adding an account moves to ⌥⌘N.
+                Button("Añadir cuenta…") { model.ui.showConnect = true }.keyboardShortcut("n", modifiers: [.command, .option])
                 Button("Subir archivos…") { Task { await model.pickUpload() } }.disabled(!model.canWrite)
                 Button("Subir el portapapeles") { model.uploadFromPasteboard() }.disabled(!model.canWrite)
                 Button("Buscar en todas las nubes") { model.preview.close(); model.ui.showGlobalSearch = true }.keyboardShortcut("f", modifiers: [.command, .shift])

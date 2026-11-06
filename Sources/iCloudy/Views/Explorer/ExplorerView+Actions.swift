@@ -136,6 +136,9 @@ extension ExplorerView {
         Button("Copiar a…") { model.requestRelocation([file], copy: true) }
             .disabled(!model.canCopy([file]))
             .help(model.limitation(.copy, for: [file]) ?? "")
+        Button("Duplicar") { Task { await model.duplicate([file]) } }
+            .disabled(model.duplicateLimitation([file]) != nil)
+            .help(model.duplicateLimitation([file]) ?? L("Hace una copia en esta misma carpeta (⌘D)"))
         if model.accounts.count > 1 { Button("Enviar a otra nube…") { model.requestCrossCloud([file]) } }
         otherPaneActions([file])
         Divider()

@@ -41,6 +41,10 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
 - **La vista previa se acerca a Vista Rápida**: pantalla completa, botón de compartir, «Abrir con» (que abre la copia
   vigilada de arriba) y, en las imágenes, zoom por pasos (⌘+, ⌘-, ⌘0 para ajustar) y giro a izquierda y derecha. ⌘Y
   abre y cierra la vista previa de lo seleccionado, como en el Finder.
+- **Las teclas del Finder**: ⌘D duplica en la misma carpeta (copia en el servidor, en Google Drive, Mega y la demo;
+  en los demás el menú dice por qué no), ⇧⌘N crea una carpeta, ⌘E bloquea la bóveda abierta o desconecta el volumen,
+  tras preguntar. «Añadir cuenta…» pasa a ⌥⌘N. Y escribir las primeras letras de un nombre lo selecciona, en la
+  lista, los iconos y las columnas.
 
 ### Robustez
 

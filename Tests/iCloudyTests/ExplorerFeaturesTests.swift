@@ -509,4 +509,43 @@ final class ExplorerFeaturesTests: XCTestCase {
         let fromRecents = await model.openWith(other, application: nil, in: model.account)
         XCTAssertEqual(fromRecents.flatMap { model.editor.session($0) }?.canUpload, false, "Recientes is a list, not a folder")
     }
+
+    // MARK: - Keyboard
+
+    func testTypeSelectAddsUpLettersAndStartsAgainAfterAPause() {
+        let files = BrowserState.visible([file("Álbum", folder: true), file("bienvenido.txt"), file("Bitácora.md"), file("zeta")],
+                                         search: "", sortMode: "name")
+        var typing = TypeSelect()
+        let start = Date()
+        XCTAssertEqual(TypeSelect.match(typing.type("b", at: start), in: files)?.name, "bienvenido.txt")
+        XCTAssertEqual(TypeSelect.match(typing.type("it", at: start.addingTimeInterval(0.3)), in: files)?.name, "Bitácora.md",
+                       "Letters typed together add up")
+        XCTAssertEqual(TypeSelect.match(typing.type("a", at: start.addingTimeInterval(2)), in: files)?.name, "Álbum",
+                       "A pause starts again, and accents do not matter")
+        XCTAssertEqual(TypeSelect.match("c", in: files)?.name, "zeta", "Nothing starts with it: the next name after it")
+        XCTAssertNil(TypeSelect.match("zz", in: files))
+    }
+
+    func testDuplicateCopiesInPlaceUnderANameOfItsOwn() async throws {
+        let model = AppModel()
+        model.enableDemo()
+        let demo = try XCTUnwrap(model.demo)
+        demo.latency = .milliseconds(1)
+        try await wait(until: { model.files.contains { $0.name == "Bienvenido.txt" } })
+        let welcome = try XCTUnwrap(model.files.first { $0.name == "Bienvenido.txt" })
+        XCTAssertNil(model.duplicateLimitation([welcome]))
+        await model.duplicate([welcome])
+        await model.duplicate([welcome])
+        XCTAssertNil(model.error)
+        let names = try demo.list("root").map(\.name)
+        XCTAssertTrue(names.contains("Bienvenido copia.txt"), "\(names)")
+        XCTAssertTrue(names.contains("Bienvenido copia (2).txt"), "A second duplicate does not clash with the first")
+        XCTAssertEqual(names.filter { $0 == "Bienvenido.txt" }.count, 1, "The original keeps its name")
+        XCTAssertEqual(AppModel.duplicateName("Proyectos", isFolder: true, existing: []), "Proyectos copia")
+
+        XCTAssertNotNil(model.duplicateLimitation([]))
+        model.go(to: BrowserLocation(accountID: model.account?.id, collection: .recent))
+        XCTAssertNotNil(model.duplicateLimitation([welcome]), "Recientes has no folder to duplicate into")
+        XCTAssertNil(model.ejectable, "A cloud is not ejected")
+    }
 }

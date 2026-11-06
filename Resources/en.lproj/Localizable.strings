@@ -2015,3 +2015,14 @@
 "Girar a la izquierda" = "Rotate Left";
 "Girar a la derecha" = "Rotate Right";
 "Vista rápida" = "Quick Look";
+"Selecciona lo que quieras duplicar." = "Select what you want to duplicate.";
+"Abre su carpeta en «Mis archivos» para duplicarlo." = "Open its folder in “My files” to duplicate it.";
+"%@ no hace copias en la misma carpeta desde iCloudy. Usa «Copiar a…» con otra carpeta." = "%@ does not make copies in the same folder from iCloudy. Use “Copy to…” with another folder.";
+"%@ copia" = "%@ copy";
+"La copia de «%@» no apareció en la carpeta." = "The copy of “%@” did not appear in the folder.";
+"Se duplicaron %lld de %lld. " = "%lld of %lld were duplicated.";
+"Duplicar" = "Duplicate";
+"Bloquear la bóveda" = "Lock the Vault";
+"Expulsar «%@»…" = "Eject “%@”…";
+"Expulsar" = "Eject";
+"Hace una copia en esta misma carpeta (⌘D)" = "Makes a copy in this same folder (⌘D)";

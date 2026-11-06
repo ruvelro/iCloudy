@@ -51,6 +51,8 @@ final class ExplorerPresentation {
     /// The account whose name and colour are being edited.
     var appearanceAccount: Account?
     var showGlobalSearch = false
+    /// The account waiting for confirmation before it is disconnected, from its menu or with ⌘E.
+    var pendingDisconnect: Account?
     /// The inspector beside the list (⌘I).
     var showInspector = false
     /// «Ir a la carpeta…» (⇧⌘G).
