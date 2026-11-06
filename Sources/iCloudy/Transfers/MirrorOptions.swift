@@ -8,15 +8,22 @@ struct MirrorOptions: Codable, Equatable, Sendable {
     /// One-way only, "espejo exacto": what is deleted at the source goes to the destination's trash too, as long as
     /// the mirror put it there and nobody changed it there since.
     var exact = false
+    /// Two files are the same when their contents hash the same, where the provider lists a checksum to compare
+    /// with; elsewhere size and date decide, as without this setting.
+    var compareChecksums = false
+    /// How often a verification pass looks at every mirrored file on both sides; nil never.
+    var verifyEvery: TimeInterval?
 
-    init(conflictPolicy: ConflictPolicy? = nil, exact: Bool = false) {
-        self.conflictPolicy = conflictPolicy; self.exact = exact
+    init(conflictPolicy: ConflictPolicy? = nil, exact: Bool = false, compareChecksums: Bool = false, verifyEvery: TimeInterval? = nil) {
+        self.conflictPolicy = conflictPolicy; self.exact = exact; self.compareChecksums = compareChecksums; self.verifyEvery = verifyEvery
     }
-    enum CodingKeys: String, CodingKey { case conflictPolicy, exact }
+    enum CodingKeys: String, CodingKey { case conflictPolicy, exact, compareChecksums, verifyEvery }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         conflictPolicy = (try? values.decodeIfPresent(String.self, forKey: .conflictPolicy)).flatMap { $0.flatMap(ConflictPolicy.init(rawValue:)) }
         exact = try values.decodeIfPresent(Bool.self, forKey: .exact) ?? false
+        compareChecksums = try values.decodeIfPresent(Bool.self, forKey: .compareChecksums) ?? false
+        verifyEvery = try values.decodeIfPresent(TimeInterval.self, forKey: .verifyEvery)
     }
 }
 

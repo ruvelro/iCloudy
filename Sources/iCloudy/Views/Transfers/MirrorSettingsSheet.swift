@@ -18,6 +18,12 @@ struct MirrorSettingsSheet: View {
         Binding(get: { options.conflictPolicy ?? mirror.conflictPolicy }, set: { options.conflictPolicy = $0 })
     }
 
+    private var verifyNote: LocalizedStringKey {
+        mirror.mode == .twoWay
+            ? "La verificación compara cada archivo de los dos lados por tamaño y suma, y avisa de lo que no coincide sin tocarlo."
+            : "La verificación compara cada archivo de los dos lados por tamaño y suma; lo que falte o no coincida se vuelve a copiar en la siguiente pasada."
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Ajustes de «\(mirror.localURL.lastPathComponent)»").font(.headline)
@@ -27,6 +33,18 @@ struct MirrorSettingsSheet: View {
                         ForEach(ConflictPolicy.allCases) { Text(verbatim: mirror.title(of: $0)).tag($0) }
                     }
                     Text(verbatim: mirror.explanation(of: policy.wrappedValue))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                Section("Comparación") {
+                    Toggle("Comparar por suma de verificación donde el proveedor la dé", isOn: $options.compareChecksums)
+                    Text("Un archivo con otra fecha pero el mismo contenido no se vuelve a copiar ni cuenta como conflicto. Donde no hay suma deciden el tamaño y la fecha, como siempre. Calcular la suma lee el archivo entero en el Mac.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Picker("Verificar todo lo reflejado", selection: $options.verifyEvery) {
+                        Text("Nunca").tag(TimeInterval?.none)
+                        Text("Cada día").tag(TimeInterval?.some(86_400))
+                        Text("Cada semana").tag(TimeInterval?.some(7 * 86_400))
+                    }
+                    Text(verifyNote)
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 if mirror.mode != .twoWay {

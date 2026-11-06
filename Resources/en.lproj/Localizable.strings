@@ -1934,3 +1934,13 @@
 "Espejo exacto: llevar también los borrados" = "Exact mirror: carry deletions too";
 "Lo que se borre en la nube se envía también a la Papelera del Mac, y lo que cambies aquí vuelve a quedar como en la nube (tu versión va a la Papelera). Solo se toca lo que trajo este reflejo y nadie cambió aquí después; lo que añadas tú se queda. Si fuera a borrar la mayor parte de la carpeta, se detiene y pregunta." = "What is deleted in the cloud is sent to the Mac's Trash too, and what you change here is put back as it is in the cloud (your version goes to the Trash). Only what this mirror brought and nobody changed here since is touched; what you add yourself stays. If it would delete most of the folder, it stops and asks.";
 "Lo que borres en el Mac se envía también a la papelera de la nube. Solo se borra lo que subió este reflejo y nadie cambió allí después; lo demás de la carpeta remota se queda. Si fuera a borrar la mayor parte, se detiene y pregunta. Revisa «Cambios pendientes» antes de activarlo." = "What you delete on the Mac is sent to the cloud's trash too. Only what this mirror uploaded and nobody changed there since is deleted; everything else in the remote folder stays. If it would delete most of it, it stops and asks. Check “Pending changes” before turning it on.";
+"Comparación" = "Comparison";
+"Comparar por suma de verificación donde el proveedor la dé" = "Compare by checksum where the provider gives one";
+"Un archivo con otra fecha pero el mismo contenido no se vuelve a copiar ni cuenta como conflicto. Donde no hay suma deciden el tamaño y la fecha, como siempre. Calcular la suma lee el archivo entero en el Mac." = "A file with another date but the same contents is not copied again nor counted as a conflict. Where there is no checksum, size and date decide, as always. Computing the checksum reads the whole file on the Mac.";
+"Verificar todo lo reflejado" = "Verify everything mirrored";
+"Cada semana" = "Every week";
+"La verificación compara cada archivo de los dos lados por tamaño y suma, y avisa de lo que no coincide sin tocarlo." = "Verification compares every file on both sides by size and checksum, and reports what does not match without touching it.";
+"La verificación compara cada archivo de los dos lados por tamaño y suma; lo que falte o no coincida se vuelve a copiar en la siguiente pasada." = "Verification compares every file on both sides by size and checksum; whatever is missing or does not match is copied again on the next pass.";
+"Verificar ahora" = "Verify now";
+"«%@»: %@" = "“%@”: %@";
+"Compara cada archivo del reflejo en los dos lados por tamaño y, donde se pueda, por suma de verificación" = "Compares every file of the mirror on both sides by size and, where possible, by checksum";

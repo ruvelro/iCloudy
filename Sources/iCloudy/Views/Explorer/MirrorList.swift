@@ -39,6 +39,12 @@ struct MirrorList: View {
                     .help("Muestra lo que haría la próxima sincronización, sin hacerlo")
                 Button("Exclusiones…") { editingExclusions = mirror }
                 Button("Ajustes…") { configuring = mirror }
+                Button("Verificar ahora") {
+                    Task {
+                        do { model.info = L("«\(mirror.localURL.lastPathComponent)»: \(try await mirrors.verify(mirror.id).text)") }
+                        catch { model.error = error.localizedDescription }
+                    }
+                }.help("Compara cada archivo del reflejo en los dos lados por tamaño y, donde se pueda, por suma de verificación")
                 Divider()
                 Button("Abrir carpeta remota") { model.openFolder(accountID: mirror.accountID, folderID: mirror.remoteFolderID) }
                 Button("Mostrar carpeta local en el Finder") { model.revealLocal(mirror) }

@@ -93,7 +93,8 @@ enum TwoWayPlanner {
     /// A file the size or age filters leave out on either side is left out on both, so a file that grew past the
     /// limit on one side is neither sent nor deleted on the other. `now` is what ages are measured against.
     static func plan(local fullLocal: [String: FileStamp], remote fullRemote: [String: CloudFile], baseline fullBaseline: [String: SyncEntry],
-                     allowMassDeletion: Bool = false, exclusions: SyncExclusionMatcher = .none, now: Date = Date()) throws -> [SyncAction] {
+                     allowMassDeletion: Bool = false, exclusions: SyncExclusionMatcher = .none, now: Date = Date(),
+                     contents: ContentComparison.Result = .init()) throws -> [SyncAction] {
         let filtered = filteredFiles(local: fullLocal, remote: fullRemote, exclusions: exclusions, now: now)
         let excludedLocal = fullLocal.filter { exclusions.excludes($0.key, isFolder: $0.value.size == -1) || filtered.contains($0.key) }
         let excludedRemote = fullRemote.filter { exclusions.excludes($0.key, isFolder: $0.value.isFolder) || filtered.contains($0.key) }
@@ -131,6 +132,12 @@ enum TwoWayPlanner {
         for path in paths where !isFolder(path, local: local, remote: remote, baseline: baseline) {
             if isUnder(path, any: localFolderDeletes) || isUnder(path, any: remoteFolderDeletes) { continue }
             let l = local[path], r = remote[path], b = baseline[path]
+            // The same bytes on both sides, by checksum: whatever the dates say, there is nothing to move. The
+            // baseline is brought up to date so the next run does not hash it again.
+            if let l, let r, contents.identical.contains(path) {
+                if b?.local != l || b?.remoteSignature != SyncEntry.signature(r) { transfers.append(.adopt(path, r)) }
+                continue
+            }
             let localChanged = l != b?.local
             let remoteChanged = r.map(SyncEntry.signature) != b?.remoteSignature
             switch (localChanged, remoteChanged) {
@@ -151,7 +158,8 @@ enum TwoWayPlanner {
                 case (let l?, let r?):
                     // The first sync of two copies of the same folder: same size is taken as the same file rather
                     // than doubling every one of them. With a baseline behind them, a disagreement is a conflict.
-                    if b == nil, l.size == r.size ?? -2 { transfers.append(.adopt(path, r)) } else { transfers.append(.conflict(path, r)) }
+                    if b == nil, l.size == r.size ?? -2, !contents.different.contains(path) { transfers.append(.adopt(path, r)) }
+                    else { transfers.append(.conflict(path, r)) }
                 }
             }
         }
@@ -215,6 +223,8 @@ final class TwoWaySyncEngine {
     var shouldStop: (() -> Bool)?
     /// The plan of the last `run()`, as the planner returned it.
     private(set) var lastPlan: [SyncAction] = []
+    /// Compare by checksum where the provider lists one; see `ContentComparison`.
+    var compareChecksums = false
     /// What a conflict becomes when the person has not decided about that path.
     var conflictPolicy: ConflictPolicy = .keepBoth
     /// What the person decided, path by path, for conflicts an earlier run left waiting.
@@ -259,12 +269,13 @@ final class TwoWaySyncEngine {
     /// shows what it would delete, together with the reason it would stop.
     func preview() async throws -> MirrorPreview {
         let (local, remote, _) = try await snapshot()
+        let contents = try await compareContents(local: local, remote: remote)
         var refused: String?
         let actions: [SyncAction]
-        do { actions = try TwoWayPlanner.plan(local: local, remote: remote, baseline: baseline, allowMassDeletion: allowMassDeletion, exclusions: exclusions) }
+        do { actions = try TwoWayPlanner.plan(local: local, remote: remote, baseline: baseline, allowMassDeletion: allowMassDeletion, exclusions: exclusions, contents: contents) }
         catch let error as MassDeletionRefused {
             refused = error.localizedDescription
-            actions = try TwoWayPlanner.plan(local: local, remote: remote, baseline: baseline, allowMassDeletion: true, exclusions: exclusions)
+            actions = try TwoWayPlanner.plan(local: local, remote: remote, baseline: baseline, allowMassDeletion: true, exclusions: exclusions, contents: contents)
         }
         return .twoWay(actions: actions, local: local, excluded: TwoWayPlanner.excludedItems(local: local, remote: remote, exclusions: exclusions), massDeletion: refused)
     }
@@ -273,7 +284,8 @@ final class TwoWaySyncEngine {
         report = SyncReport()
         resolvedConflicts = []; unresolvedConflicts = []
         var (local, remote, folders) = try await snapshot()
-        let plan = try TwoWayPlanner.plan(local: local, remote: remote, baseline: baseline, allowMassDeletion: allowMassDeletion, exclusions: exclusions)
+        let contents = try await compareContents(local: local, remote: remote)
+        let plan = try TwoWayPlanner.plan(local: local, remote: remote, baseline: baseline, allowMassDeletion: allowMassDeletion, exclusions: exclusions, contents: contents)
         lastPlan = plan
         var touchedRemote: Set<String> = []
         var stopped = false
@@ -364,6 +376,11 @@ final class TwoWaySyncEngine {
         return report
     }
 
+    private func compareContents(local: [String: FileStamp], remote: [String: CloudFile]) async throws -> ContentComparison.Result {
+        guard compareChecksums else { return .init() }
+        return try await ContentComparison.compare(ContentComparison.candidates(local: local, remote: remote, baseline: baseline),
+                                                   root: localRoot, local: local, remote: remote)
+    }
     private func download(_ file: CloudFile, to path: String) async throws {
         let target = localRoot.appendingPathComponent(path)
         try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)

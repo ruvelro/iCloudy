@@ -36,7 +36,8 @@ enum DownloadMirrorPlanner {
     /// `local` is the scan of the mirror's folder (everything, excluded items included), `remote` the cloud folder by
     /// relative path and `keys` the queue's tree key of each remote path.
     static func plan(local: [String: FileStamp], remote: [String: CloudFile], keys: [String: String], baseline: [String: SyncEntry],
-                     exclusions: SyncExclusionMatcher, exact: Bool = false, now: Date = Date()) -> DownloadMirrorPlan {
+                     exclusions: SyncExclusionMatcher, exact: Bool = false, now: Date = Date(),
+                     contents: ContentComparison.Result = .init()) -> DownloadMirrorPlan {
         var plan = DownloadMirrorPlan()
         let filtered = TwoWayPlanner.filteredFiles(local: local, remote: remote, exclusions: exclusions, now: now)
         func excluded(_ path: String, _ folder: Bool) -> Bool { exclusions.excludes(path, isFolder: folder) || filtered.contains(path) }
@@ -55,6 +56,12 @@ enum DownloadMirrorPlanner {
             let l = local[path], b = baseline[path]
             let entry = SyncEntry(local: nil, remoteID: file.id, remoteSize: file.size, remoteModified: file.modified, isFolder: false)
             plan.remote[path] = entry
+            if let l, contents.identical.contains(path) {
+                // The same bytes here already: nothing comes down, and the baseline catches up.
+                if b?.local != l || b?.remoteSignature != SyncEntry.signature(file) { var adopted = entry; adopted.local = l; plan.adopt[path] = adopted }
+                plan.completed.insert(key)
+                continue
+            }
             let remoteChanged = SyncEntry.signature(file) != b?.remoteSignature
             if !remoteChanged {
                 // Unchanged in the cloud. A local edit or deletion of a mirrored file is the Mac's business, unless the
@@ -73,7 +80,7 @@ enum DownloadMirrorPlanner {
                 plan.downloads.append(path); travelling.append(path)
             case (let l?, let b?) where l == b.local:
                 plan.owned.insert(key); plan.downloads.append(path); travelling.append(path)
-            case (let l?, nil) where l.size == file.size:
+            case (let l?, nil) where l.size == file.size && !contents.different.contains(path):
                 // A first sync into a folder that already has the same file: taken as the same rather than doubled.
                 var adopted = entry; adopted.local = l
                 plan.adopt[path] = adopted
@@ -195,8 +202,13 @@ extension MirrorManager {
         let rules = exclusions(of: mirror)
         let scan = try await blockingIO { try MirrorPlanner.scan(url, exclusions: rules) }
         let snapshot = try await RemoteTree.snapshot(api, root: mirror.remoteFolderID, exclusions: rules)
+        var contents = ContentComparison.Result()
+        if mirror.options.compareChecksums {
+            contents = try await ContentComparison.compare(ContentComparison.candidates(local: scan.all, remote: snapshot.files, baseline: mirror.baseline),
+                                                           root: url, local: scan.all, remote: snapshot.files)
+        }
         let plan = DownloadMirrorPlanner.plan(local: scan.all, remote: snapshot.files, keys: snapshot.keys, baseline: mirror.baseline,
-                                              exclusions: rules, exact: mirror.options.exact)
+                                              exclusions: rules, exact: mirror.options.exact, contents: contents)
         return (plan, snapshot, scan)
     }
 

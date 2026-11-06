@@ -51,10 +51,13 @@ struct FolderMirror: Identifiable, Codable {
     /// of each one looked like when it was planned. The baseline takes them as the job completes them.
     var pendingKeys: [String: String]?
     var pendingRemote: [String: SyncEntry]?
+    /// When the last verification pass ran, and what it found.
+    var lastVerified: Date?
+    var lastVerification: String?
 }
 
 extension FolderMirror {
-    enum CodingKeys: String, CodingKey { case id, mode, baseline, lastReport, accountID, remoteFolderID, remoteName, localURL, bookmark, stamps, pendingStamps, lastSync, activeTransferID, lastError, remoteEntries, exclusions, paused, changesWhilePaused, options, conflictDecisions, unresolvedConflicts, pendingKeys, pendingRemote }
+    enum CodingKeys: String, CodingKey { case id, mode, baseline, lastReport, accountID, remoteFolderID, remoteName, localURL, bookmark, stamps, pendingStamps, lastSync, activeTransferID, lastError, remoteEntries, exclusions, paused, changesWhilePaused, options, conflictDecisions, unresolvedConflicts, pendingKeys, pendingRemote, lastVerified, lastVerification }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
@@ -82,6 +85,8 @@ extension FolderMirror {
         unresolvedConflicts = try values.decodeIfPresent([String].self, forKey: .unresolvedConflicts) ?? []
         pendingKeys = try values.decodeIfPresent([String: String].self, forKey: .pendingKeys)
         pendingRemote = try values.decodeIfPresent([String: SyncEntry].self, forKey: .pendingRemote)
+        lastVerified = try values.decodeIfPresent(Date.self, forKey: .lastVerified)
+        lastVerification = try values.decodeIfPresent(String.self, forKey: .lastVerification)
     }
 }
 
@@ -576,6 +581,7 @@ final class MirrorManager {
             // An exact mirror first sends what was deleted here to the cloud's trash; the brake stops it all.
             let trashed = try await applyRemoteDeletions(id, current: current, excluded: scan.excluded)
             massDeletionAllowed.remove(id)
+            if mirror.options.compareChecksums { try await adoptUnchangedContents(id, current: current, root: url) }
             guard let position = mirrors.firstIndex(where: { $0.id == id }) else { return }
             var report = SyncReport(); report.deletedRemote = trashed.count
             mirrors[position].lastReport = report
@@ -646,6 +652,7 @@ final class MirrorManager {
         let engine = TwoWaySyncEngine(api: api, localRoot: url, remoteRoot: mirror.remoteFolderID, baseline: mirror.baseline)
         engine.exclusions = exclusions(of: mirror)
         engine.conflictPolicy = mirror.conflictPolicy
+        engine.compareChecksums = mirror.options.compareChecksums
         engine.decisions = mirror.conflictDecisions
         return engine
     }
