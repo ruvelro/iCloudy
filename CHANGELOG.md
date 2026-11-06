@@ -10,6 +10,10 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
 - **Ordenar por columna, en los dos sentidos.** Un clic en la cabecera ordena por esa columna y otro le da la vuelta;
   el menú de orden dice lo mismo («Más recientes primero», «De la Z a la A») y la cuadrícula sigue el mismo orden.
   Cada pestaña guarda el suyo. Las carpetas siguen arriba en cualquier sentido.
+- **Columnas a elegir**: además de Nombre, Modificado y Tamaño, la lista puede mostrar Tipo (con el nombre que da el
+  Mac a cada formato), la suma de comprobación que lista el proveedor y el estado (copia en este Mac, sin conexión).
+  Se muestran u ocultan desde el menú contextual de la cabecera o desde Visualización › Columnas, y su ancho y orden
+  se recuerdan.
 
 ### Robustez
 

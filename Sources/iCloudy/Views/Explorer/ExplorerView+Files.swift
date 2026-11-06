@@ -9,7 +9,10 @@ extension ExplorerView {
     func fileList(_ pane: Int) -> some View {
         let tab = model.tab(inPane: pane)
         // A click on a header sorts by that column, and a second one turns the direction round; the tab keeps both.
-        return Table(tab.visibleFiles, selection: model.selection(inPane: pane), sortOrder: model.sortOrder(inPane: pane)) {
+        // Which columns show, how wide and in what order is the table's own customization, kept in the settings: the
+        // header's context menu hides and shows them, and so does the View menu.
+        return Table(tab.visibleFiles, selection: model.selection(inPane: pane), sortOrder: model.sortOrder(inPane: pane),
+                     columnCustomization: Bindable(model.explorer).columns) {
             TableColumn("Nombre", value: \.name) { file in
                 HStack(spacing: 8) {
                     // Folders carry no cloud/Mac badge: iCloudy cannot claim that everything inside is present and
@@ -24,12 +27,23 @@ extension ExplorerView {
                     .overlay { if file.isFolder { MiddleClick { model.openInNewTab(file) } } }
                     .paneDragSource { model.paneDragProvider(for: file, pane: pane) }
             }.width(min: 200, ideal: 320)
+                .customizationID(FileColumn.name.rawValue).disabledCustomizationBehavior(.visibility)
             TableColumn("Modificado", value: \.sortDate) { file in
                 Text(file.modified?.formatted(date: .abbreviated, time: .omitted) ?? "—").foregroundStyle(.secondary)
-            }.width(125)
+            }.width(min: 90, ideal: 125).customizationID(FileColumn.modified.rawValue)
             TableColumn("Tamaño", value: \.sortSize) { file in
                 Text(file.size.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "—").foregroundStyle(.secondary)
-            }.width(85)
+            }.width(min: 60, ideal: 85).customizationID(FileColumn.size.rawValue)
+            TableColumn("Tipo", value: \.kindSortKey) { file in
+                Text(file.kindDescription).foregroundStyle(.secondary).lineLimit(1)
+            }.width(min: 80, ideal: 140).customizationID(FileColumn.kind.rawValue).defaultVisibility(.hidden)
+            TableColumn("Suma de comprobación") { file in
+                Text(file.checksumSummary ?? "—").foregroundStyle(.secondary).lineLimit(1).monospaced()
+                    .help(file.checksum.map { $0.algorithm.title + ": " + $0.value } ?? L("El proveedor no lista una suma para este elemento."))
+            }.width(min: 90, ideal: 170).customizationID(FileColumn.checksum.rawValue).defaultVisibility(.hidden)
+            TableColumn("Estado") { file in
+                Text(model.statusDescription(file, in: tab)).foregroundStyle(.secondary).lineLimit(1)
+            }.width(min: 90, ideal: 160).customizationID(FileColumn.status.rawValue).defaultVisibility(.hidden)
         }
         // A Table insets its own cells; this brings their text onto the margin shared by the title and the footer.
         .padding(.horizontal, Layout.tableCorrection)

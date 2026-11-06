@@ -76,4 +76,43 @@ final class ExplorerFeaturesTests: XCTestCase {
         model.sortAscending = false
         XCTAssertEqual(order.wrappedValue.first?.order, .reverse, "Menu and header show the same direction")
     }
+
+    // MARK: - Columns
+
+    func testColumnsStartWithTheThreeOfAlwaysAndRememberWhatIsShown() throws {
+        let settings = ExplorerSettings()
+        XCTAssertEqual(FileColumn.allCases.filter(settings.isVisible), [.name, .modified, .size])
+        settings.setVisible(.checksum, true)
+        settings.setVisible(.size, false)
+        settings.setVisible(.name, false)
+        XCTAssertTrue(settings.isVisible(.name), "The name column cannot be hidden")
+
+        let reopened = ExplorerSettings()
+        XCTAssertEqual(FileColumn.allCases.filter(reopened.isVisible), [.name, .modified, .checksum])
+        reopened.visibility(of: .status).wrappedValue = true
+        XCTAssertTrue(ExplorerSettings().isVisible(.status), "The View menu's toggle goes through the same record")
+
+        Prefs.defaults.set(Data("not json".utf8), forKey: ExplorerSettings.columnsKey)
+        XCTAssertEqual(FileColumn.allCases.filter(ExplorerSettings().isVisible), [.name, .modified, .size],
+                       "An unreadable layout falls back to the default columns")
+    }
+
+    func testTheKindAndChecksumColumnsSayWhatTheItemIs() {
+        XCTAssertEqual(file("Fotos", folder: true).kindDescription, L("Carpeta"))
+        XCTAssertFalse(file("informe.pdf").kindDescription.isEmpty)
+        XCTAssertEqual(file("Doc", mime: "application/vnd.google-apps.document").kindDescription, L("Documento de Google"))
+        var hashed = file("a.bin")
+        XCTAssertNil(hashed.checksumSummary)
+        hashed.checksum = ContentHash(algorithm: .sha256, value: "0123456789abcdef0123")
+        XCTAssertEqual(hashed.checksumSummary, "SHA-256 0123456789ab…")
+    }
+
+    func testTheStatusColumnNamesTheLocalCopy() throws {
+        let model = AppModel()
+        model.enableDemo()
+        let tab = model.workspace.current
+        let item = file("a.txt", size: 3)
+        XCTAssertEqual(model.statusDescription(item, in: tab), L("Solo en la nube"))
+        XCTAssertEqual(model.statusDescription(file("Carpeta", folder: true), in: tab), "")
+    }
 }

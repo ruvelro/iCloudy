@@ -86,6 +86,12 @@ struct iCloudyApp: App {
             CommandGroup(after: .toolbar) {
                 Button(model.isSplit ? "Cerrar el segundo panel" : "Dividir en dos paneles") { model.toggleSplit() }
                     .keyboardShortcut("d", modifiers: [.command, .shift])
+                // The same choice as the context menu of the list's header.
+                Menu("Columnas") {
+                    ForEach(FileColumn.allCases.filter(\.canHide)) { column in
+                        Toggle(column.title, isOn: model.explorer.visibility(of: column))
+                    }
+                }
                 Toggle("Mostrar iCloudy en la barra de menús", isOn: $menuBarEnabled)
             }
         }

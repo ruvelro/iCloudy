@@ -68,6 +68,8 @@ final class AppModel {
         get { workspace.current.search }
         set { workspace.current.search = newValue }
     }
+    /// How the lists are drawn: their columns, for every tab alike.
+    let explorer = ExplorerSettings()
     /// The favorites and their file. Read-only here: every change goes through the store, which saves it.
     let favoriteStore = FavoritesStore()
     var favorites: [Favorite] { favoriteStore.items }

@@ -1897,3 +1897,10 @@
 "Más recientes primero" = "Newest first";
 "Más pequeños primero" = "Smallest first";
 "Más grandes primero" = "Largest first";
+"Suma de comprobación" = "Checksum";
+"Columnas" = "Columns";
+"Hoja de cálculo de Google" = "Google spreadsheet";
+"Presentación de Google" = "Google presentation";
+"Archivo de Google" = "Google file";
+"Documento" = "Document";
+"El proveedor no lista una suma para este elemento." = "The provider lists no checksum for this item.";
