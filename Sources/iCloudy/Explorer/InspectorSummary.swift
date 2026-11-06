@@ -80,3 +80,13 @@ extension AppModel {
         NSPasteboard.general.setString(addressText(accountID: tab.accountID, path: tab.path, file: file), forType: .string)
     }
 }
+
+extension AppModel {
+    /// ⌘Y: shows the one selected file, or closes the preview that is showing, as Quick Look does.
+    func quickLookSelection() {
+        if preview.isVisible { preview.close(); return }
+        let chosen = selection(selectedIDs)
+        guard chosen.count == 1, let file = chosen.first, !file.isFolder else { return }
+        showPreview(file)
+    }
+}

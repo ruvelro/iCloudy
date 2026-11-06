@@ -110,6 +110,8 @@ struct iCloudyApp: App {
             CommandGroup(after: .toolbar) {
                 Button(model.isSplit ? "Cerrar el segundo panel" : "Dividir en dos paneles") { model.toggleSplit() }
                     .keyboardShortcut("d", modifiers: [.command, .shift])
+                // Quick Look's own shortcut, besides the space bar in the list.
+                Button("Vista rápida") { model.quickLookSelection() }.keyboardShortcut("y", modifiers: .command)
                 Button(model.ui.showInspector ? "Ocultar el inspector" : "Mostrar el inspector") { model.ui.showInspector.toggle() }
                     .keyboardShortcut("i", modifiers: .command)
                 // The same choice as the context menu of the list's header.

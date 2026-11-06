@@ -224,6 +224,7 @@ final class AppModel {
             Task { await self?.saveMany([file], targetAccount: account) }
         }
         preview.openBrowser = { [weak self] file in self?.openBrowser(file) }
+        preview.openWith = { [weak self] file, account, app in Task { await self?.openWith(file, application: app, in: account) } }
         preview.didSaveCopy = { [weak self] file, account, destination in
             self?.localCopies.record(LocalCopy(accountID: account.id, fileID: file.id, name: file.name, path: destination.path,
                                                bookmark: try? TransferQueue.bookmark(destination), size: file.size ?? 0,

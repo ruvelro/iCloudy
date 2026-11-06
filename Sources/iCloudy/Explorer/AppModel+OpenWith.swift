@@ -32,8 +32,8 @@ extension AppModel {
     /// Saves come back through `uploadEdits`, by hand or by themselves with the setting on. Opened again while it is
     /// already open, the same copy is handed to the app instead of a second one.
     @discardableResult
-    func openWith(_ file: CloudFile, application: URL? = nil) async -> EditSession.ID? {
-        guard let account else { return nil }
+    func openWith(_ file: CloudFile, application: URL? = nil, in other: Account? = nil) async -> EditSession.ID? {
+        guard let account = other ?? account else { return nil }
         if let reason = openWithLimitation(file) { error = reason; return nil }
         if let open = editor.session(accountID: account.id, fileID: file.id) {
             do { editor.attach(open.id, app: try await editor.launch(open.localURL, application)) }
@@ -41,8 +41,10 @@ extension AppModel {
             return open.id
         }
         let tab = workspace.current
-        // Only a real folder has somewhere for the changes to go back to.
-        let parent = tab.collection == .files ? tab.folderID : nil
+        // Only a real folder has somewhere for the changes to go back to, and only the focused tab's is known here: a
+        // file previewed from the global search opens without one.
+        let inTab = tab.accountID == account.id && tab.files.contains { $0.id == file.id }
+        let parent = tab.collection == .files && inTab ? tab.folderID : nil
         let session: EditSession
         do { session = try editor.begin(file: file, accountID: account.id, parentID: parent, destination: location) }
         catch { self.error = error.localizedDescription; return nil }

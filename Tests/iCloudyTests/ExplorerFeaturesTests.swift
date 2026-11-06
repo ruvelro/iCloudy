@@ -480,4 +480,33 @@ final class ExplorerFeaturesTests: XCTestCase {
         XCTAssertEqual(model.selectedIDs, [notes.id])
         XCTAssertFalse(model.columnRight(pane: 0) != nil, "→ on a file goes nowhere")
     }
+
+    // MARK: - Preview
+
+    func testThePictureViewerZoomsInStepsAndFitsTurnedPictures() {
+        XCTAssertEqual(ZoomableImage.step(1, by: 1), 1.5)
+        XCTAssertEqual(ZoomableImage.step(1, by: -1), 0.75)
+        XCTAssertEqual(ZoomableImage.step(8, by: 1), 8, "No further than the last step")
+        XCTAssertEqual(ZoomableImage.step(0.25, by: -1), 0.25)
+        XCTAssertEqual(ZoomableImage.step(1.2, by: 1), 1.5, "From between steps, to the next one")
+        let fitted = ZoomableImage.fitted(CGSize(width: 2000, height: 1000), turns: 0, in: CGSize(width: 500, height: 500))
+        XCTAssertEqual(fitted, CGSize(width: 500, height: 250))
+        let turned = ZoomableImage.fitted(CGSize(width: 2000, height: 1000), turns: 1, in: CGSize(width: 500, height: 500))
+        XCTAssertEqual(turned, CGSize(width: 500, height: 250), "Turned upright it is 250 wide and 500 high")
+        XCTAssertEqual(ZoomableImage.fitted(CGSize(width: 100, height: 50), turns: 0, in: CGSize(width: 500, height: 500)),
+                       CGSize(width: 100, height: 50), "A small picture is not blown up")
+    }
+
+    func testAFileOpenedFromOutsideTheTabHasNowhereToUploadTo() async throws {
+        let (model, _) = try await editingModel()
+        let other = try XCTUnwrap(model.files.first { $0.name == "Bienvenido.txt" })
+        model.search = "nada que coincida"
+        let opened = await model.openWith(other, application: nil, in: model.account)
+        let session = try XCTUnwrap(opened.flatMap { model.editor.session($0) })
+        XCTAssertTrue(session.canUpload, "Filtered out of view is still in the tab's folder")
+        model.stopEditing(session.id)
+        model.go(to: BrowserLocation(accountID: model.account?.id, collection: .recent))
+        let fromRecents = await model.openWith(other, application: nil, in: model.account)
+        XCTAssertEqual(fromRecents.flatMap { model.editor.session($0) }?.canUpload, false, "Recientes is a list, not a folder")
+    }
 }

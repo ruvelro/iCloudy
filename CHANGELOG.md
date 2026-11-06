@@ -38,6 +38,9 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
 - **Vista en columnas**, la tercera junto a la lista y los iconos: una columna por carpeta desde el principio de la
   cuenta, y la carpeta seleccionada enseña lo que tiene en la siguiente, como en el Finder. ← y → pasan de una columna
   a otra, ↑ y ↓ recorren la abierta e Intro abre. Un archivo seleccionado muestra su ficha en la última columna.
+- **La vista previa se acerca a Vista Rápida**: pantalla completa, botón de compartir, «Abrir con» (que abre la copia
+  vigilada de arriba) y, en las imágenes, zoom por pasos (⌘+, ⌘-, ⌘0 para ajustar) y giro a izquierda y derecha. ⌘Y
+  abre y cierra la vista previa de lo seleccionado, como en el Finder.
 
 ### Robustez
 
