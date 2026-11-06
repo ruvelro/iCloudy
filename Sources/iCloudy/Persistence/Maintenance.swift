@@ -13,6 +13,9 @@ enum Prefs {
     static let thumbnails = "thumbnailsEnabled"
     static let notifyTransfers = "notifyTransfersEnabled"
     static let dockIcon = "dockIconVisible"
+    static let automaticUpdateChecks = "automaticUpdateChecks"
+    static let lastUpdateCheck = "lastUpdateCheck"
+    static let skippedUpdateVersion = "skippedUpdateVersion"
 
     /// Where every preference is read and written. The test suite points it at a suite of its own per test, so a run
     /// never leaves anything in the defaults of whoever ran it; the app never changes it.

@@ -1889,3 +1889,32 @@
 "No se ha conectado la cuenta de %@ «%@». Si no era la tuya, cierra las pestañas del navegador que no reconozcas y vuelve a intentarlo." = "The %@ account “%@” was not connected. If it was not yours, close any browser tabs you do not recognise and try again.";
 "«%@» no está borrada: aparece en la papelera para que puedas abrirla y ver lo que se borró dentro." = "“%@” is not deleted: it appears in the bin so you can open it and see what was deleted inside.";
 "El servicio devolvió la misma página una y otra vez, así que se ha dejado de pedir más." = "The service returned the same page over and over, so iCloudy stopped asking for more.";
+
+/* 0.9 — Distribución */
+"Actualizaciones" = "Updates";
+"Buscar actualizaciones…" = "Check for Updates…";
+"Buscando actualizaciones…" = "Checking for updates…";
+"iCloudy está al día" = "iCloudy is up to date";
+"Tienes la versión %@, que es la más reciente publicada." = "You have version %@, the latest one released.";
+"No se ha podido comprobar si hay una versión nueva" = "Could not check for a new version";
+"Volver a buscar" = "Check again";
+"Hay una versión nueva" = "A new version is available";
+"iCloudy %@ está disponible; tienes la %@." = "iCloudy %@ is available; you have %@.";
+"Esta versión no lleva firma de Apple: la primera vez, macOS pedirá que confirmes que quieres abrirla (botón derecho › Abrir)." = "This version is not signed by Apple: the first time, macOS will ask you to confirm you want to open it (right-click › Open).";
+"Necesita macOS %@ o posterior, y este Mac tiene una versión anterior." = "It needs macOS %@ or later, and this Mac has an earlier version.";
+"SHA-256 de %@" = "SHA-256 of %@";
+"Copiar" = "Copy";
+"Compruébala en Terminal con «shasum -a 256» sobre el archivo descargado antes de abrirlo." = "Check it in Terminal with “shasum -a 256” on the downloaded file before opening it.";
+"iCloudy no se actualiza solo: descarga el archivo, comprueba la suma y sustituye la app en Aplicaciones. Tus cuentas y tu cola se conservan." = "iCloudy does not update itself: download the file, check the sum and replace the app in Applications. Your accounts and your queue are kept.";
+"Omitir esta versión" = "Skip This Version";
+"Ver la versión en GitHub" = "View the Release on GitHub";
+"Descargar" = "Download";
+"Buscar actualizaciones automáticamente" = "Check for updates automatically";
+"Una vez al día, iCloudy pide a GitHub la ficha de la última versión publicada. No envía nada más que esa petición, y nunca descarga ni instala nada: si hay una versión nueva, te lo dice y tú decides." = "Once a day, iCloudy asks GitHub for the description of the latest release. It sends nothing but that request, and never downloads or installs anything: if there is a new version, it tells you and you decide.";
+"Versión instalada" = "Installed version";
+"Última comprobación" = "Last check";
+"Buscar ahora" = "Check Now";
+"Todavía no hay ninguna versión publicada en GitHub." = "There is no version released on GitHub yet.";
+"GitHub respondió con el código %lld al pedir la última versión." = "GitHub answered with code %lld when asked for the latest version.";
+"La ficha de la última versión no se ha podido leer." = "The description of the latest version could not be read.";
+"La ficha de la última versión trae un enlace sin cifrar, así que no se ofrece." = "The description of the latest version has an unencrypted link, so it is not offered.";

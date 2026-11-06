@@ -38,6 +38,7 @@ struct iCloudyApp: App {
                     guard let id = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String else { return }
                     model.openSpotlightItem(identifier: id)
                 }
+                .modifier(UpdateCheckTrigger(checker: .shared))
         }
         .defaultSize(width: 1120, height: 740)
         .windowToolbarStyle(.unified(showsTitle: false))
@@ -88,10 +89,14 @@ struct iCloudyApp: App {
                     .keyboardShortcut("d", modifiers: [.command, .shift])
                 Toggle("Mostrar iCloudy en la barra de menús", isOn: $menuBarEnabled)
             }
+            UpdateCommands(checker: .shared)
         }
         MenuBarExtra("iCloudy", systemImage: "cloud.fill", isInserted: $menuBarEnabled) {
             MenuBarContent(model: model, queue: model.queue)
         }
         Settings { SettingsView(model: model) }
+        // «Buscar actualizaciones…» and the daily check (Integration/UpdateChecker.swift, docs/DISTRIBUCION.md).
+        Window("Actualizaciones", id: UpdateView.windowID) { UpdateView(checker: .shared) }
+            .windowResizability(.contentSize)
     }
 }
