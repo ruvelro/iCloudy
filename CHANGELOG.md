@@ -152,7 +152,9 @@ Lo necesario para que iCloudy se descargue y se abra sin Xcode. Todo funciona ya
 - **Trabajos guardados**: una transferencia con nombre (orígenes del Mac o de la nube, un destino y sus opciones:
   conflictos, filtros, verificar al terminar, llevar los borrados, no repetir lo idéntico) que se vuelve a lanzar desde
   la ventana «Trabajos guardados», desde la barra de menús o con su propia programación. Cada pasada es una tanda de la
-  cola, con plan, informe, «Reintentar solo lo pendiente», «Verificar lo copiado» e historial.
+  cola, con plan, informe, «Reintentar solo lo pendiente», «Verificar lo copiado» e historial. También desde Atajos
+  («Ejecutar un trabajo guardado») y desde la línea de órdenes: `icloudy jobs` los lista antes que los reflejos e
+  `icloudy jobs run <nombre>` los pone en la cola.
 - **Programación por reflejo y por trabajo**, cada cierto tiempo o cada día a una hora, además del horario general;
   lo que toca mientras la cola está retenida (fuera de horario, sin red o en una red cara) espera a que se pueda.
 - **Límite de velocidad por cuenta**, de subida y de bajada, que se suma al de toda la cola. También frena las

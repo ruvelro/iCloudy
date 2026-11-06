@@ -2396,3 +2396,8 @@
 "Las dos carpetas se mantienen iguales en los dos sentidos, con la misma línea base, papelera y freno de borrados que la sincronización con el Mac. Cada archivo que cambia pasa por este Mac, entero y de uno en uno, y la copia temporal se borra al momento. Un archivo cortado a medias se vuelve a copiar entero en la siguiente pasada, y la pasada no tiene informe por archivo; sí queda en el historial." = "Both folders are kept the same both ways, with the same baseline, trash and deletion brake as the sync with the Mac. Every file that changes goes through this Mac, whole and one at a time, and the temporary copy is deleted at once. A file cut short is copied whole again on the next pass, and the pass has no per-file report; it does reach the history.";
 "Primera carpeta" = "First folder";
 "Segunda carpeta" = "Second folder";
+"Trabajo guardado de iCloudy" = "iCloudy saved job";
+"Ejecutar un trabajo guardado de iCloudy" = "Run an iCloudy saved job";
+"Pone en la cola una pasada de un trabajo guardado, con su informe y su entrada en el historial." = "Queues one run of a saved job, with its report and its entry in the history.";
+"«%@» está en la cola." = "“%@” is in the queue.";
+"en marcha" = "running";

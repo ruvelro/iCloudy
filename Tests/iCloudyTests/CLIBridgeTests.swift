@@ -172,4 +172,23 @@ final class CLIBridgeTests: XCTestCase {
         let missing = try await run(bridge, model, "jobs", ["run", "Fotos"], token: token)
         XCTAssertEqual(message(missing)?.ok, false)
     }
+
+    func testSavedJobsAreListedFirstAndRunByName() async throws {
+        let model = try demoModel()
+        let bridge = CLIBridge()
+        bridge.approve = { _ in true }
+        let pairing = try await run(bridge, model, "pair", token: nil)
+        let token = try XCTUnwrap(message(pairing)?.token)
+        let file = try temporaryRoot().appendingPathComponent("informe.txt")
+        try Data("x".utf8).write(to: file)
+        let job = SavedJob(name: "Informe", sources: [.local(file, bookmark: nil)],
+                           destination: .remote(accountID: Account.demo.id, itemID: "root", name: "Demo", isFolder: true, location: "Demo"))
+        try model.jobs.add(job)
+        let list = try await run(bridge, model, "jobs", token: token)
+        XCTAssertEqual(message(list)?.lines?.first?.split(separator: "\t").dropFirst().first, "Informe")
+        let ran = try await run(bridge, model, "jobs", ["run", "informe"], token: token)
+        XCTAssertEqual(message(ran)?.ok, true, message(ran)?.lines?.joined() ?? "")
+        XCTAssertNotNil(model.jobs.job(job.id)?.lastBatchID)
+        XCTAssertTrue(model.queue.items.contains { $0.batchID == model.jobs.job(job.id)?.lastBatchID })
+    }
 }

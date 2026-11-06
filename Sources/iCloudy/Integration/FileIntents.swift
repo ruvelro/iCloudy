@@ -57,7 +57,7 @@ struct MirrorEntity: AppEntity {
     var displayRepresentation: DisplayRepresentation { DisplayRepresentation(title: "\(title)") }
     init(_ mirror: FolderMirror) {
         id = mirror.id
-        title = mirror.localURL.lastPathComponent + " → " + mirror.remoteName
+        title = mirror.title + " " + mirror.arrow + " " + mirror.remoteName
     }
 }
 
@@ -217,7 +217,7 @@ struct SyncMirrorIntent: AppIntent {
         }
         guard !found.paused else { throw CloudError.message(L("Ese reflejo está en pausa. Reanúdalo en iCloudy para sincronizarlo.")) }
         model.mirrors.syncNow(found.id)
-        return .result(dialog: IntentDialog(stringLiteral: L("Sincronizando «\(found.localURL.lastPathComponent)».")))
+        return .result(dialog: IntentDialog(stringLiteral: L("Sincronizando «\(found.title)».")))
     }
 }
 
