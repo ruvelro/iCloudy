@@ -16,6 +16,10 @@ struct TransferHistoryView: View {
                 Button("Vaciar historial") { history.clear() }.disabled(history.entries.isEmpty)
             }
             Text("Se conservan las \(history.limit) transferencias completadas más recientes, aunque se limpien del panel. No incluye las canceladas ni las fallidas.").font(.caption).foregroundStyle(.secondary)
+            if !history.entries.isEmpty {
+                Text("Datos transferidos en las dos últimas semanas").font(.caption.weight(.semibold))
+                DailyBytesChart(days: history.bytesPerDay(), height: 90)
+            }
             List(history.entries) { entry in
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: entry.direction == .download ? "arrow.down.circle" : (entry.direction == .transfer ? "cloud" : "arrow.up.circle")).foregroundStyle(.secondary)

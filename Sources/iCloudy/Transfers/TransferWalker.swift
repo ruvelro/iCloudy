@@ -15,6 +15,8 @@ final class TransferWalker {
     /// One remote listing per destination folder for the whole run. Before, every item listed its parent again,
     /// which made a folder of N files cost N listings of N items.
     private var siblings: [String: [CloudFile]] = [:]
+    /// The job's own rules, compiled once per run. A mirror's come from the queue instead, asked for every item.
+    private var ownRules: SyncExclusionMatcher??
 
     init(queue: TransferQueue, id: UUID) { self.queue = queue; self.id = id }
 
@@ -23,6 +25,25 @@ final class TransferWalker {
     /// The same, written to disk before returning, for a marker that must exist before a request is sent.
     private func commit(_ change: (inout Transfer) -> Void) async throws { try await queue.commit(id, change) }
     private func advance(_ bytes: Int64) { done += bytes; queue.mark(id, done: done) }
+
+    /// What an upload leaves out: the mirror's current rules, or the ones the job was saved with.
+    private func uploadRules() throws -> SyncExclusionMatcher? {
+        if let rules = queue.uploadExclusions?(id) { return rules }
+        if let ownRules { return ownRules }
+        let job = try job()
+        let compiled = job.options?.exclusions.map { $0.matcher(caseInsensitive: SyncExclusions.isCaseInsensitive(job.localURL)) }
+        ownRules = .some(compiled)
+        return compiled
+    }
+
+    /// The rules a download job was saved with, compiled once per run.
+    private func ownDownloadRules() throws -> SyncExclusionMatcher? {
+        if let ownRules { return ownRules }
+        let job = try job()
+        let compiled = job.options?.exclusions.map { $0.matcher(caseInsensitive: SyncExclusions.isCaseInsensitive(job.localURL)) }
+        ownRules = .some(compiled)
+        return compiled
+    }
 
     // MARK: Shared steps
 
@@ -51,7 +72,7 @@ final class TransferWalker {
     /// spelling it already has.
     private func resolveName(_ desired: String, key: String, parent: String, in api: CloudAPI, folder: Bool,
                              remembered: CloudFile? = nil, owns: ((CloudFile) -> Bool)? = nil,
-                             keepsMatchName: Bool = false) async throws -> NameDecision {
+                             keepsMatchName: Bool = false, incoming: Date? = nil) async throws -> NameDecision {
         if siblings[parent] == nil { siblings[parent] = try await api.list(parent: parent) }
         let room = NameClaims.remote(account: api.account.id, parent: parent)
         let existing = (siblings[parent] ?? []) + queue.claimed(room, by: id, besides: siblings[parent] ?? [])
@@ -59,11 +80,10 @@ final class TransferWalker {
         let matches = existing.filter { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame || $0.id == remembered?.id }
         guard let match = matches.first else { return .use(name, replacing: nil) }
         let choice: ConflictChoice
+        let canReplace = matches.count == 1 && match.isFolder == folder && !match.isGoogleDocument && !match.id.isEmpty
         if let owns, owns(match), matches.count == 1 { choice = .replace }
-        else {
-            choice = try await askConflict(name, replace: matches.count == 1 && match.isFolder == folder && !match.isGoogleDocument && !match.id.isEmpty,
-                                           folder: folder)
-        }
+        else if let decided = try policyChoice(incoming: incoming, existing: match.modified, canReplace: canReplace, folder: folder) { choice = decided }
+        else { choice = try await askConflict(name, replace: canReplace, folder: folder) }
         switch choice {
         case .skip: return .skip
         // Claimed again after the wait: another job may have taken a name while this one was asking.
@@ -73,20 +93,44 @@ final class TransferWalker {
     }
 
     /// Picks the local name of a downloaded item, against what is on disk and what other jobs are downloading.
-    private func resolveLocalName(_ name: String, in folder: URL, target: URL, room: String, isFolder: Bool) async throws -> (decision: NameDecision, target: URL) {
+    private func resolveLocalName(_ name: String, in folder: URL, target: URL, room: String, isFolder: Bool,
+                                  incoming: Date? = nil) async throws -> (decision: NameDecision, target: URL) {
         let exists = FileManager.default.fileExists(atPath: target.path)
         // A name another running job is downloading to is as taken as one already on disk, but there is nothing
         // there yet to replace.
         let claimed = queue.claims.others(in: room, excluding: id).contains { $0.localizedCaseInsensitiveCompare(target.lastPathComponent) == .orderedSame }
         guard exists || claimed else { return (.use(target.lastPathComponent, replacing: nil), target) }
-        let values = exists ? try target.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) : nil
-        switch try await askConflict(name, replace: !claimed && values?.isDirectory == isFolder && values?.isSymbolicLink != true, folder: isFolder) {
+        let values = exists ? try target.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .contentModificationDateKey]) : nil
+        let canReplace = !claimed && values?.isDirectory == isFolder && values?.isSymbolicLink != true
+        let choice: ConflictChoice
+        if let decided = try policyChoice(incoming: incoming, existing: values?.contentModificationDate, canReplace: canReplace, folder: isFolder) { choice = decided }
+        else { choice = try await askConflict(name, replace: canReplace, folder: isFolder) }
+        switch choice {
         case .skip: return (.skip, target)
         case .copy:
             let available = queue.available(in: folder, name: name, room: room, for: id)
             return (.use(available.lastPathComponent, replacing: nil), available)
         case .replace: return (.use(target.lastPathComponent, replacing: "local"), target)
         }
+    }
+
+    /// The answer of the job's conflict policy, nil when there is none or it says to ask. A folder that meets a
+    /// folder is merged into, whatever the policy: two copies of a folder tree is never what a sync meant.
+    private func policyChoice(incoming: Date?, existing: Date?, canReplace: Bool, folder: Bool) throws -> ConflictChoice? {
+        guard let policy = try job().options?.conflictPolicy else { return nil }
+        if folder, canReplace, policy != .ask { return .replace }
+        return policy.choice(incoming: incoming, existing: existing, canReplace: canReplace)
+    }
+
+    /// The file of that name at the destination when it already holds these exact bytes, judged by the checksum the
+    /// destination lists and the same digest of ours; nil when it differs or cannot be compared.
+    private func identicalAtDestination(name: String, parent: String, in api: CloudAPI, size: Int64?,
+                                        digest: (ContentHash.Algorithm) async throws -> String?) async throws -> CloudFile? {
+        if siblings[parent] == nil { siblings[parent] = try await api.list(parent: parent) }
+        guard let match = siblings[parent]?.first(where: { !$0.isFolder && $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }),
+              let checksum = match.checksum, match.size == nil || match.size == size else { return nil }
+        guard let mine = try await digest(checksum.algorithm), checksum.matches(mine) else { return nil }
+        return match
     }
 
     /// Waits for the person (or the batch's standing answer) when a name is taken.
@@ -124,12 +168,16 @@ final class TransferWalker {
 
     func upload(api: CloudAPI, local: URL, parent: String, key: String = ".") async throws {
         try Task.checkCancellation()
-        let values = try local.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey])
+        let values = try local.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey])
         let folder = values.isDirectory == true
         queue.inFlight[id] = ReportCursor(key: key, leaf: local.lastPathComponent, folder: folder)
         guard values.isSymbolicLink != true else { throw CloudError.message(L("No se admiten enlaces simbólicos.")) }
         // Excluded: never uploaded, never listed, never counted. The root itself is the mirror and is never excluded.
-        if key != ".", let rules = queue.uploadExclusions?(id), rules.excludes(String(key.dropFirst(2)), isFolder: folder) { return }
+        if key != ".", let rules = try uploadRules() {
+            let path = String(key.dropFirst(2))
+            if rules.excludes(path, isFolder: folder) { return }
+            if !folder, rules.filtersOut(size: values.fileSize.map(Int64.init), modified: values.contentModificationDate, now: Date()) { return }
+        }
         if try await alreadyCompleted(key, bytes: { try await blockingIO { try TransferQueue.localSize(local) } }) { return }
         // A mirror's own folder is never created remotely: its contents go into one that already exists, so its name
         // never reaches the provider. Judging it by the provider's rules stopped a mirror of "Fotos." from ever
@@ -141,6 +189,18 @@ final class TransferWalker {
             throw CloudError.message(L("No se puede subir «\(local.lastPathComponent)»: \(problem)"))
         }
         var current = try forgetUncertainFolder(key, parent: parent)
+        if !folder, current.options?.skipIdentical == true, current.names[key] == nil || current.replacements[key] != nil,
+           let same = try await identicalAtDestination(name: current.mirrorEntries?[key]?.name ?? current.names[key] ?? local.lastPathComponent, parent: parent,
+                                                       in: api, size: values.fileSize.map(Int64.init),
+                                                       digest: { algorithm in try await blockingIO { ContentComparison.hasBytesHere(local) ? try ContentHasher.digest(of: local, algorithm: algorithm).digest : nil } }) {
+            try edit(coalesce: true) {
+                $0.completedPaths.insert(key); $0.names[key] = same.name
+                $0.record(key, .verified, bytes: values.fileSize.map(Int64.init), reason: L("Ya estaba en el destino con la misma suma; no se ha vuelto a enviar."))
+                if $0.mirrorEntries != nil { $0.mirrorEntries?[key] = same }
+            }
+            advance(Int64(values.fileSize ?? 0))
+            return
+        }
         if current.names[key] == nil {
             let remembered = current.mirrorEntries?[key]
             let decision = try await resolveName(local.lastPathComponent, key: key, parent: parent, in: api, folder: folder,
@@ -149,7 +209,7 @@ final class TransferWalker {
                     old.id == match.id && old.name == match.name && old.isFolder == match.isFolder &&
                     (folder || (old.size != nil && old.modified != nil && old.size == match.size && old.modified == match.modified))
                 } ?? false
-            }, keepsMatchName: true)
+            }, keepsMatchName: true, incoming: values.contentModificationDate)
             guard case .use(let name, let replacing) = decision else {
                 try edit {
                     $0.completedPaths.insert(key)
@@ -232,8 +292,19 @@ final class TransferWalker {
         let localName = export.map { file.name + "." + $0.ext } ?? file.name
         if let problem = FileNames.problem(with: localName, for: target.account.cloud) { throw CloudError.message(L("No se puede enviar «\(localName)»: \(problem)")) }
         var current = try forgetUncertainFolder(key, parent: parent)
+        // Between clouds the source's listed checksum is the digest: nothing needs downloading to know.
+        if !file.isFolder, export == nil, current.options?.skipIdentical == true, current.names[key] == nil, let source = file.checksum,
+           let same = try await identicalAtDestination(name: localName, parent: parent, in: target, size: file.size,
+                                                       digest: { $0 == source.algorithm ? source.value : nil }) {
+            try edit(coalesce: true) {
+                $0.completedPaths.insert(key); $0.names[key] = same.name
+                $0.record(key, .verified, bytes: file.size, reason: L("Ya estaba en el destino con la misma suma; no se ha vuelto a enviar."))
+            }
+            advance(file.size ?? 0)
+            return
+        }
         if current.names[key] == nil {
-            guard case .use(let name, let replacing) = try await resolveName(localName, key: key, parent: parent, in: target, folder: file.isFolder) else {
+            guard case .use(let name, let replacing) = try await resolveName(localName, key: key, parent: parent, in: target, folder: file.isFolder, incoming: file.modified) else {
                 try edit { $0.completedPaths.insert(key); $0.recordSkip(key, leaf: localName, folder: file.isFolder, bytes: file.size) }
                 advance(file.size ?? 0)
                 return
@@ -314,18 +385,28 @@ final class TransferWalker {
 
     // MARK: Download
 
-    func download(api: CloudAPI, file: CloudFile, into folder: URL, key: String = ".") async throws {
+    /// `relative` is the item's path below the job's own item, by remote names, for the job's rules.
+    func download(api: CloudAPI, file: CloudFile, into folder: URL, key: String = ".", relative: String = "") async throws {
         try Task.checkCancellation()
         if try await alreadyCompleted(key, bytes: { file.size ?? 0 }) { return }
         queue.inFlight[id] = ReportCursor(key: key, leaf: file.name, folder: file.isFolder)
         var current = try job()
+        if key != ".", let rules = try ownDownloadRules() {
+            if rules.excludes(relative, isFolder: file.isFolder)
+                || (!file.isFolder && rules.filtersOut(size: file.size, modified: file.modified, now: Date())) {
+                try edit(coalesce: true) { $0.completedPaths.insert(key) }
+                return
+            }
+        }
+        // A mirror's folder is the copy of the remote one: the contents go straight in, under no new name.
+        let intoFolder = key == "." && current.options?.contentsOnly == true && file.isFolder
         let exporting = key == "." && current.exportMime != nil
         let name = FileNames.safe(file.name + (exporting ? "." + (current.exportExtension ?? "pdf") : (file.isGoogleDocument ? ".webloc" : "")))
-        var target = folder.appendingPathComponent(current.names[key] ?? name)
+        var target = intoFolder ? folder : folder.appendingPathComponent(current.names[key] ?? name)
         var replace = current.replacements[key] != nil
         let room = NameClaims.local(folder)
-        if current.names[key] == nil || (!file.isFolder && !replace && FileManager.default.fileExists(atPath: target.path)) {
-            let resolved = try await resolveLocalName(name, in: folder, target: target, room: room, isFolder: file.isFolder)
+        if !intoFolder, current.names[key] == nil || (!file.isFolder && !replace && FileManager.default.fileExists(atPath: target.path)) {
+            let resolved = try await resolveLocalName(name, in: folder, target: target, room: room, isFolder: file.isFolder, incoming: file.modified)
             guard case .use(let selectedName, let replacing) = resolved.decision else {
                 try edit { $0.completedPaths.insert(key); $0.recordSkip(key, leaf: name, folder: file.isFolder, bytes: file.size) }
                 advance(file.size ?? 0)
@@ -345,7 +426,10 @@ final class TransferWalker {
             let children = try await api.list(parent: file.id)
             let known = children.reduce(Int64(0)) { $0 + ($1.size ?? 0) }
             if known > 0 { try edit(coalesce: true) { $0.total += known } }
-            for child in children { try await download(api: api, file: child, into: target, key: key + "/" + child.id) }
+            for child in children {
+                try await download(api: api, file: child, into: target, key: key + "/" + child.id,
+                                   relative: relative.isEmpty ? child.name : relative + "/" + child.name)
+            }
         } else {
             // A provider that resumes by offset gets a partial named after the job and the item, which survives a
             // failed or paused attempt; every other one gets a fresh name that is always removed.

@@ -139,6 +139,9 @@ struct iCloudyApp: App {
             MenuBarContent(model: model, queue: model.queue)
         }
         Settings { SettingsView(model: model) }
+        // Saved transfer jobs, opened from the transfer panel and the menu bar.
+        Window("Trabajos guardados", id: "jobs") { JobsView(model: model) }
+            .defaultSize(width: 680, height: 460)
         // «Buscar actualizaciones…» and the daily check (Integration/UpdateChecker.swift, docs/DISTRIBUCION.md).
         Window("Actualizaciones", id: UpdateView.windowID) { UpdateView(checker: .shared) }
             .windowResizability(.contentSize)

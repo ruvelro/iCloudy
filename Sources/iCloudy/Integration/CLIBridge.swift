@@ -162,23 +162,32 @@ final class CLIBridge {
         }
     }
 
-    /// The jobs that exist today are the folder mirrors and two-way syncs: `jobs` lists them, `jobs run <nombre>`
-    /// starts one, by its local folder's name or by its id. When saved transfer jobs exist, this is where they go.
+    /// The saved transfer jobs and the folder mirrors: `jobs` lists both, saved jobs first, and `jobs run <nombre>`
+    /// starts one by its name or its id. A saved job of that name wins over a mirror of the same name.
     private func jobs(_ arguments: [String], model: AppModel, nonce: String, reply: (CLIMessage) async throws -> Void) async throws {
         let mirrors = model.mirrors.mirrors
+        let saved = model.jobs.jobs
         guard arguments.first == "run" else {
-            let paused = L("en pausa")
-            try await reply(CLIMessage(nonce: nonce, ok: true, lines: mirrors.map { mirror in
-                [mirror.id.uuidString, mirror.localURL.lastPathComponent, mirror.remoteName].joined(separator: "\t") + (mirror.paused ? "\t" + paused : "")
+            let paused = L("en pausa"), running = L("en marcha")
+            let jobLines = saved.map { job in
+                [job.id.uuidString, job.name, job.destination.title].joined(separator: "\t") + (job.running ? "\t" + running : "")
+            }
+            try await reply(CLIMessage(nonce: nonce, ok: true, lines: jobLines + mirrors.map { mirror in
+                [mirror.id.uuidString, mirror.title, mirror.remoteName].joined(separator: "\t") + (mirror.paused ? "\t" + paused : "")
             }))
             return
         }
         guard let name = arguments.dropFirst().first else { throw CloudError.message(L("Indica qué reflejo ejecutar.")) }
-        let matches = mirrors.filter { $0.id.uuidString.lowercased() == name.lowercased() || $0.localURL.lastPathComponent.localizedCaseInsensitiveCompare(name) == .orderedSame }
+        if let job = saved.first(where: { $0.id.uuidString.lowercased() == name.lowercased() }) ?? model.jobs.job(named: name) {
+            try await model.runJob(id: job.id)
+            try await reply(CLIMessage(nonce: nonce, ok: true, lines: [L("«\(job.name)» está en la cola.")]))
+            return
+        }
+        let matches = mirrors.filter { $0.id.uuidString.lowercased() == name.lowercased() || $0.title.localizedCaseInsensitiveCompare(name) == .orderedSame }
         guard let mirror = matches.first else { throw CloudError.message(L("No hay ningún reflejo llamado «\(name)».")) }
         guard matches.count == 1 else { throw CloudError.message(L("Hay varios reflejos llamados «\(name)». Usa su identificador.")) }
         guard !mirror.paused else { throw CloudError.message(L("Ese reflejo está en pausa. Reanúdalo en iCloudy para sincronizarlo.")) }
         model.mirrors.syncNow(mirror.id)
-        try await reply(CLIMessage(nonce: nonce, ok: true, lines: [L("Sincronizando «\(mirror.localURL.lastPathComponent)».")]))
+        try await reply(CLIMessage(nonce: nonce, ok: true, lines: [L("Sincronizando «\(mirror.title)».")]))
     }
 }

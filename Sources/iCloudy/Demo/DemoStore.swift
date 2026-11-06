@@ -13,6 +13,9 @@ final class DemoStore {
     /// Cuts the next download after this many bytes, the way a network drop does. Consumed by that download.
     var failDownloadAfter: Int64?
     var latency: Duration = .milliseconds(60)
+    /// Lists every file with a SHA-256 of its bytes, like a provider that publishes checksums. Off by default: the
+    /// demo has always listed none, and the checks that depend on one are tested with it on.
+    var listsChecksums = false
     private var entries: [String: Entry]
     private var indexURL: URL { directory.appendingPathComponent("index.json") }
 
@@ -42,8 +45,16 @@ final class DemoStore {
         case Collection.trash.rootID:
             return entries.values.filter { $0.trashedFrom != nil }.map(\.file).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         default:
-            return entries.values.filter { $0.parent == parent && $0.trashedFrom == nil }.map(\.file).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            return entries.values.filter { $0.parent == parent && $0.trashedFrom == nil }.map { described($0.file) }
+                .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         }
+    }
+    /// The entry as listed, with its checksum when the demo publishes them.
+    private func described(_ file: CloudFile) -> CloudFile {
+        guard listsChecksums, !file.isFolder, let digest = try? ContentHasher.digest(of: directory.appendingPathComponent(file.id), algorithm: .sha256) else { return file }
+        var listed = file
+        listed.checksum = ContentHash(algorithm: .sha256, value: digest.digest)
+        return listed
     }
     /// True for an entry in the bin and for everything below one, which stays attached to its folder while it waits.
     func isTrashed(_ id: String) -> Bool {
@@ -207,7 +218,7 @@ final class DemoStore {
         return id
     }
     /// The entry as it stands now, for the check that tells a changed file from a damaged download.
-    func file(_ id: String) -> CloudFile? { entries[id]?.file }
+    func file(_ id: String) -> CloudFile? { entries[id].map { described($0.file) } }
     func download(_ file: CloudFile, to target: URL, maxBytes: Int64? = nil, progress: (Int64, Int64) -> Void) async throws {
         try check()
         let source = directory.appendingPathComponent(file.id)

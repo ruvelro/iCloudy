@@ -99,6 +99,8 @@ final class AppModel {
     let planner = TransferPlanCoordinator()
     let connectivity = Connectivity()
     let mirrors = MirrorManager()
+    /// Saved transfer jobs; `runJob(id:)` and `runJob(named:)` run them.
+    let jobs = JobStore()
     let spotlight = SpotlightIndex()
     let localCopies = LocalCopyIndex()
     /// Managed offline copies ("Disponible sin conexión") and what keeps them current.
@@ -172,6 +174,7 @@ final class AppModel {
             }
             return try self.client(account)
         }
+        mirrors.didRecordRun = { [weak self] transfer in self?.history.record(transfer) }
         queue.didFinish = { [weak self] transfer in
             self?.history.record(transfer); self?.mirrors.handleFinished(transfer)
             self?.notifier.finished(transfer)
@@ -216,6 +219,8 @@ final class AppModel {
         mirrors.queue = queue
         configureTransferPolicy()
         mirrors.accountLookup = { [weak self] id in self?.accounts.first { $0.id == id } }
+        jobs.queue = queue
+        jobs.accountLookup = { [weak self] id in self?.accounts.first { $0.id == id } }
         directory.membershipChanged = { [weak self] in self?.syncFinderDomains() }
         o2.touch = { [weak self] account, answered in self?.refreshStorage(account, force: true, then: answered) }
         o2.didRenew = { [weak self] account in self?.reloadVisible(accountID: account.id) }

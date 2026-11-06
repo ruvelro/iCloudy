@@ -66,11 +66,13 @@ struct MirrorPreview {
 }
 
 extension TwoWayPlanner {
-    /// The outermost excluded items present on either side, which is what a dry run shows as left alone.
-    static func excludedItems(local: [String: FileStamp], remote: [String: CloudFile], exclusions: SyncExclusionMatcher) -> [(path: String, isFolder: Bool)] {
+    /// The outermost excluded items present on either side, which is what a dry run shows as left alone, and the
+    /// files the size and age filters leave out.
+    static func excludedItems(local: [String: FileStamp], remote: [String: CloudFile], exclusions: SyncExclusionMatcher, now: Date = Date()) -> [(path: String, isFolder: Bool)] {
         var found: [String: Bool] = [:]
-        for (path, stamp) in local where exclusions.excludes(path, isFolder: stamp.size == -1) { found[path] = stamp.size == -1 }
-        for (path, file) in remote where exclusions.excludes(path, isFolder: file.isFolder) { found[path] = found[path] ?? file.isFolder }
+        let filtered = filteredFiles(local: local, remote: remote, exclusions: exclusions, now: now)
+        for (path, stamp) in local where exclusions.excludes(path, isFolder: stamp.size == -1) || filtered.contains(path) { found[path] = stamp.size == -1 }
+        for (path, file) in remote where exclusions.excludes(path, isFolder: file.isFolder) || filtered.contains(path) { found[path] = found[path] ?? file.isFolder }
         let outermost = found.filter { entry in
             let parent = entry.key.split(separator: "/").dropLast().joined(separator: "/")
             return parent.isEmpty || !exclusions.excludes(parent, isFolder: true)

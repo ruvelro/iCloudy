@@ -148,6 +148,7 @@ extension ExplorerView {
             if !model.inEncryptedVault {
                 Button("Reflejar una carpeta local aquí…") { Task { await model.pickMirrorSource(for: file) } }
                 Button("Sincronizar en ambos sentidos con una carpeta local…") { Task { await model.pickMirrorSource(for: file, twoWay: true) } }
+                Button("Mantener una copia en una carpeta del Mac…") { Task { await model.pickDownloadMirror(for: file) } }
             }
             Button("Descargar carpeta…") { Task { await model.save(file) } }
             Button("Comparar con…") { model.openComparator(with: file) }

@@ -23,6 +23,7 @@ extension AppModel {
             // The demo account is local and may already be in the list.
             directory.accounts = stored + accounts.filter(\.isDemo)
             mirrors.start()
+            jobs.start()
             remoteCopies.client = queue.client
             remoteCopies.didComplete = queue.didComplete
             remoteCopies.resume()

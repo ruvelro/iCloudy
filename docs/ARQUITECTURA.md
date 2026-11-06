@@ -49,7 +49,8 @@ guarda estado suelto: lo reparte en subsistemas con dueño, y las propiedades qu
 | `ui: ExplorerPresentation` | Alertas, confirmaciones y hojas de la ventana (27 propiedades). | Las vistas leen `model.ui.…` y enlazan con `Bindable(model.ui)`. `model.error` y `model.info` reenvían a `ui`, porque el modelo informa por ahí. |
 | `favoriteStore: FavoritesStore` | Favoritos, su archivo y su publicación en Spotlight. | `toggle`, `remove`, `moved`, `apply(change)`; `model.favorites` es de solo lectura. |
 | `queue: TransferQueue` | La cola de transferencias. | `add`, `retry`, `cancel`…; cada trabajo se recorre con un `TransferWalker`. |
-| `mirrors: MirrorManager` | Reflejos de un sentido y sincronizaciones bidireccionales. | Un archivo por reflejo. |
+| `mirrors: MirrorManager` | Reflejos en un sentido (subida o descarga), sincronizaciones bidireccionales y pares de nubes. | Un archivo por reflejo. |
+| `jobs: JobStore` | Trabajos guardados y su programación. | `runJob(id:)`, `runJob(named:)`; `jobs.json`. |
 | `offline`, `localCopies`, `quotas`, `history`, `remoteCopies`, `spotlight`, `listings`, `cryptomator`, `planner`, `savedSearches`, `globalSearch`… | Copias sin conexión, copias locales, cuotas, historial, copias asíncronas de OneDrive, Spotlight, caché de listados, bóvedas, planes de transferencia y búsquedas. | Cada uno con su estado y su persistencia. |
 | `workspace: ExplorerWorkspace` | Paneles y pestañas, cada una con su lugar, su listado y su selección. | Las propiedades `files`, `path`, `selectedIDs`… del modelo reenvían a la pestaña activa del panel enfocado. Cada pestaña guarda también su orden (`sortMode` y `sortAscending`) y su modo de vista (lista, iconos o columnas). |
 | `explorer: ExplorerSettings` | Cómo se dibujan las listas: las columnas de la tabla (un `TableColumnCustomization`, que edita también el menú de su cabecera) y la agrupación, de las carpetas y de la búsqueda global. | En las preferencias (`Prefs.defaults`). |
@@ -130,6 +131,38 @@ que tiene los pasos comunes una sola vez: saltar lo completado, olvidar una carp
 resolver el nombre (preguntando por el conflicto o usando la respuesta del lote), reservarlo frente a otros trabajos
 (`NameClaims`) y crear la carpeta con la marca en disco antes de la petición. Los tres recorridos (`upload`,
 `download` y `copy` entre cuentas) solo añaden lo propio de cada uno.
+
+Un trabajo puede llevar `TransferOptions` (`Transfers/TransferOptions.swift`): política de conflictos (en un trabajo,
+«este lado» es el origen), exclusiones propias, no repetir lo que el destino ya tiene con la misma suma y, para los
+reflejos de descarga, escribir el contenido directamente en la carpeta (`contentsOnly`). El recorrido consulta la
+política antes de abrir el diálogo. Los límites de velocidad son cubos (`BandwidthLimiter`): uno por sentido para la
+cola y, si se configura, uno por sentido para cada cuenta; cada trabajo recibe un `TransferThrottle` con los de la cola
+y los de las cuentas a las que sube y de las que baja, y espera al más lento.
+
+### Reflejos
+
+`MirrorManager` (`FolderMirror.swift` y sus extensiones `DownloadMirror`, `ExactMirror`, `MirrorVerification`,
+`MirrorChecksums`, `SyncSchedule`, `CloudPair`) lleva cuatro modos:
+
+| Modo | Cómo corre |
+|---|---|
+| `upload` | FSEvents → escaneo → `MirrorPlanner.oneWayPlan` → un trabajo de subida de la cola con lo intacto ya marcado. |
+| `download` | Sondeo de la nube → `RemoteTree.snapshot` → `DownloadMirrorPlanner` contra una línea base → un trabajo de descarga de la cola (`contentsOnly`); la línea base absorbe lo completado al terminar o fallar. |
+| `twoWay` | `TwoWaySyncEngine` sobre `TwoWayPlanner`, fuera de la cola pero por sus cubos de velocidad. |
+| `cloudPair` | `CloudPairEngine`: el mismo `TwoWayPlanner`, con la primera carpeta como lado «local»; cada archivo pasa por la carpeta temporal de la cola. Experimental. |
+
+`MirrorOptions` guarda la política de conflictos, el espejo exacto (borrados a la papelera del destino, solo de lo que
+puso el reflejo, tras el freno de `ExactMirrorPlanner.checkMassDeletion`), la comparación por suma
+(`ContentComparison`), la verificación periódica, no repetir lo idéntico y la programación (`SyncSchedule`). Lo
+programado espera mientras la cola está retenida (`currentHold`) y arranca cuando se libera.
+
+### Trabajos guardados
+
+`JobStore` (`Transfers/SavedJobs.swift`, archivo `jobs.json` con sobre, escritura en segundo plano y archivo dañado
+apartado) guarda `SavedJob`: orígenes y destino (`JobEndpoint`), `JobOptions` y el resultado de la última pasada. Cada
+pasada es una tanda de la cola; al terminar, la tienda verifica lo copiado si se pidió y barre lo sobrante del destino
+(`ExtraneousSweep`) si el trabajo lleva los borrados. Las entradas para Atajos y la línea de órdenes son
+`AppModel.runJob(id:)` y `AppModel.runJob(named:)`.
 
 ## Concurrencia
 

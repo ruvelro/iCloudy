@@ -128,6 +128,43 @@ Lo necesario para que iCloudy se descargue y se abra sin Xcode. Todo funciona ya
   porcentaje y cada transferencia qué va adónde y cuánto lleva. Con «Reducir movimiento» las animaciones de la
   ventana se quitan, y con «Aumentar contraste» las migas, el campo y la fila elegida ganan borde.
 
+### Transferencias y sincronización
+
+- **Espejo de descarga, de la nube al Mac.** «Mantener una copia en una carpeta del Mac…» deja una carpeta como copia
+  de una de la nube: lo nuevo y lo cambiado allí se baja por la cola, comprobado por tamaño y suma como cualquier
+  descarga, con su informe; lo que cambies aquí se deja como está. Se pregunta a la nube cada cinco minutos o según
+  su programación.
+- **Espejo exacto**, en los dos sentidos de un sentido: lo que borres en el origen va a la papelera del destino. Solo
+  lo que puso allí el propio reflejo y nadie cambió después; el freno de borrados masivos se aplica igual que en la
+  sincronización bidireccional y «Cambios pendientes» enseña cada elemento que iría a la papelera.
+- **Política de conflictos por reflejo**: conservar las dos versiones (lo de siempre en ambos sentidos), gana la más
+  reciente, gana la del Mac, gana la de la nube o preguntar (lo de siempre en un sentido). En ambos sentidos,
+  «preguntar» deja el archivo quieto hasta que eliges en «Cambios pendientes»; la versión que pierde en el Mac va a
+  la Papelera.
+- **Filtros**: las exclusiones entienden `!` como en gitignore («*.log» y luego «!importante.log»), y cada reflejo
+  puede dejar fuera archivos por tamaño mínimo o máximo y por fecha (solo lo de los últimos N días, o nada de lo
+  modificado hace menos de unos minutos). Lo filtrado aparece en «Cambios pendientes» y no se borra en ningún lado.
+- **Comparar por suma de verificación**: un archivo con otra fecha pero el mismo contenido no se vuelve a copiar ni
+  cuenta como conflicto, donde el proveedor da suma. Y una **verificación** a petición o cada día o semana que mira
+  todo lo reflejado en los dos lados; en un sentido, lo que falte o no coincida se vuelve a copiar.
+- **No subir lo que ya está**: con la opción puesta, un archivo que el destino ya tiene con el mismo nombre, tamaño y
+  suma no se vuelve a enviar; entre dos nubes basta con comparar las dos sumas, sin descargar nada.
+- **Trabajos guardados**: una transferencia con nombre (orígenes del Mac o de la nube, un destino y sus opciones:
+  conflictos, filtros, verificar al terminar, llevar los borrados, no repetir lo idéntico) que se vuelve a lanzar desde
+  la ventana «Trabajos guardados», desde la barra de menús o con su propia programación. Cada pasada es una tanda de la
+  cola, con plan, informe, «Reintentar solo lo pendiente», «Verificar lo copiado» e historial. También desde Atajos
+  («Ejecutar un trabajo guardado») y desde la línea de órdenes: `icloudy jobs` los lista antes que los reflejos e
+  `icloudy jobs run <nombre>` los pone en la cola.
+- **Programación por reflejo y por trabajo**, cada cierto tiempo o cada día a una hora, además del horario general;
+  lo que toca mientras la cola está retenida (fuera de horario, sin red o en una red cara) espera a que se pueda.
+- **Límite de velocidad por cuenta**, de subida y de bajada, que se suma al de toda la cola. También frena las
+  sincronizaciones en ambos sentidos, que antes no pasaban por ningún límite.
+- **Gráficas**: la velocidad de los dos últimos minutos en el panel de transferencias y lo transferido cada día en el
+  historial, con Swift Charts.
+- **Sincronizar dos carpetas de nubes (experimental)**: dos carpetas, de la misma cuenta o de dos, se mantienen
+  iguales en los dos sentidos con la misma línea base, papelera y freno que la sincronización con el Mac. Cada archivo
+  pasa entero por el Mac; si se corta, se vuelve a copiar entero, y la pasada no tiene informe por archivo.
+
 ### Robustez
 
 - **La ventana ya no se traba guardando ni leyendo.** La cola, los reflejos, las copias sin conexión y locales, el

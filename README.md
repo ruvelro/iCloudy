@@ -118,7 +118,7 @@ cancelable y limpieza al cerrar.
 |  |  |
 |---|---|
 | **Nube o Mac, de un vistazo** | Cada archivo dice si solo está en la nube, si tienes copia en el Mac o si esa copia se ha quedado atrás. |
-| **Reflejos y sincronización** | Eliges una carpeta del Mac y se mantiene subida y al día, en un sentido y sin borrados; o en ambos sentidos, con línea base por archivo, papelera a cada lado para lo borrado, dos versiones cuando ambas cambian y un freno que pregunta antes de borrar la mayor parte de un lado. |
+| **Reflejos y sincronización** | Una carpeta del Mac subida y al día, o una de la nube copiada y al día en el Mac; en un sentido, con borrados a la papelera del destino solo si eliges «espejo exacto»; o en ambos sentidos, con línea base por archivo y papelera a cada lado. Política de conflictos por reflejo (las dos versiones, la más reciente, la del Mac, la de la nube o preguntar), exclusiones con `!`, filtros por tamaño y fecha, comparación por suma donde el proveedor la da, verificación periódica, programación propia y un freno que pregunta antes de borrar la mayor parte de un lado. Entre dos carpetas de nubes, en ambos sentidos: **experimental** (cada archivo pasa entero por el Mac, sin reanudar ni informe por archivo). |
 | **Modo sin conexión** | Se detecta la caída, se pausan las transferencias con el motivo a la vista y se sigue mostrando el último listado conocido. |
 | **Personalización por cuenta** | Alias, ocho colores e iconos propios, para distinguir la cuenta del trabajo de la de casa de un golpe de vista. |
 | **Iconos por tipo de archivo** | Un PDF es rojo, una hoja de cálculo verde, un vídeo índigo. El ojo encuentra el archivo antes de que el cerebro lea el nombre. |
@@ -132,7 +132,8 @@ cancelable y limpieza al cerrar.
 |  |  |
 |---|---|
 | **Pestañas y doble panel** | Varias ubicaciones abiertas en la misma ventana (⌘T, ⌘W, ⌘1…⌘9) y dos paneles lado a lado (⇧⌘D): F5 copia al otro panel y F6 mueve, también entre nubes distintas, quitando el original solo después de una copia verificada. |
-| **Cola en paralelo** | Varias transferencias a la vez, con límite global y por cuenta, límite de ancho de banda de subida y de bajada, prioridad, horario permitido y pausa en redes caras o limitadas. |
+| **Cola en paralelo** | Varias transferencias a la vez, con límite global y por cuenta, límite de ancho de banda de subida y de bajada para toda la cola y para cada cuenta, prioridad, horario permitido, pausa en redes caras o limitadas y una gráfica de la velocidad. |
+| **Trabajos guardados** | Transferencias con nombre que se repiten desde su ventana, la barra de menús o a una hora: orígenes del Mac o de la nube, un destino, política de conflictos, filtros, no repetir lo que ya está con la misma suma, verificar al terminar y, si se pide, llevar los borrados a la papelera del destino. Cada pasada va a la cola con su informe y su historial. |
 | **Plan e informe** | Antes de una transferencia grande, cuántos archivos y bytes son, el espacio que hace falta y los conflictos que ya existen. Al acabar, un informe archivo por archivo, exportable a CSV o JSON, con «Reintentar solo lo pendiente» y «Verificar lo copiado». |
 | **Descargas verificadas** | Cada descarga se comprueba contra el tamaño y la suma del proveedor (MD5, QuickXorHash, `content_hash`, SHA-1) antes de dejarla en su sitio. Si el archivo cambió mientras bajaba, se vuelve a pedir; si llegó dañado, no queda nada. |
 | **Disponible sin conexión** | Archivos y carpetas marcados se guardan en el Mac y se mantienen al día, dentro del espacio que elijas. |
