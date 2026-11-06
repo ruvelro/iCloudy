@@ -2199,3 +2199,7 @@
 "Dejar lo del destino" = "Leave what is at the destination";
 "Elegir «%@»" = "Choose “%@”";
 "Elegir esta carpeta" = "Choose this folder";
+"Velocidad de las transferencias en los últimos dos minutos" = "Transfer speed over the last two minutes";
+"Día" = "Day";
+"Datos transferidos por día" = "Data transferred per day";
+"Datos transferidos en las dos últimas semanas" = "Data transferred over the last two weeks";

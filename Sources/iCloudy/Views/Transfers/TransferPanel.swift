@@ -48,6 +48,8 @@ struct TransferPanel: View {
                 Label(hold.detail(window: queue.policy.window), systemImage: hold.symbol)
                     .font(.caption2).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
             }
+            if tab == .active, queue.speed.samples.count > 1, queue.speed.peak > 0 { SpeedChart(speed: queue.speed) }
+            if tab == .history, !history.entries.isEmpty { DailyBytesChart(days: history.bytesPerDay(), height: 56) }
             content.frame(maxHeight: .infinity)
             if let message = queue.persistenceError ?? (tab == .history ? history.persistenceError : nil) {
                 HStack(alignment: .top) {

@@ -75,6 +75,10 @@ final class TransferQueue {
     var runningIDs: Set<UUID> { Set(tasks.keys) }
     /// The bandwidth limits, one bucket per direction shared by every job of this queue.
     let uploadLimiter = BandwidthLimiter(), downloadLimiter = BandwidthLimiter()
+    /// The combined speed of the last two minutes, for the panel's chart.
+    let speed = SpeedHistory()
+    @ObservationIgnored var samplingTask: Task<Void, Never>?
+    var speedSampleInterval: Duration = .seconds(1)
     /// Each account's own buckets, made the first time the account has a limit or a job.
     @ObservationIgnored private var accountLimiters: [String: (upload: BandwidthLimiter, download: BandwidthLimiter)] = [:]
     private func limiters(for account: String) -> (upload: BandwidthLimiter, download: BandwidthLimiter) {
@@ -507,6 +511,7 @@ final class TransferQueue {
     }
     private func start(_ id: UUID) {
         guard let next = items.first(where: { $0.id == id }) else { return }
+        defer { startSampling() }
         // An upload sends to its account, a download reads from it, and a copy between clouds does both.
         let throttle = throttle(upload: next.direction == .upload ? next.accountID : next.targetAccountID,
                                 download: next.direction == .upload ? nil : next.accountID)
