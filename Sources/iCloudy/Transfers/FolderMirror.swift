@@ -54,10 +54,12 @@ struct FolderMirror: Identifiable, Codable {
     /// When the last verification pass ran, and what it found.
     var lastVerified: Date?
     var lastVerification: String?
+    /// When the schedule last started a run, so a run that found nothing to do is not started again at once.
+    var lastScheduledRun: Date?
 }
 
 extension FolderMirror {
-    enum CodingKeys: String, CodingKey { case id, mode, baseline, lastReport, accountID, remoteFolderID, remoteName, localURL, bookmark, stamps, pendingStamps, lastSync, activeTransferID, lastError, remoteEntries, exclusions, paused, changesWhilePaused, options, conflictDecisions, unresolvedConflicts, pendingKeys, pendingRemote, lastVerified, lastVerification }
+    enum CodingKeys: String, CodingKey { case id, mode, baseline, lastReport, accountID, remoteFolderID, remoteName, localURL, bookmark, stamps, pendingStamps, lastSync, activeTransferID, lastError, remoteEntries, exclusions, paused, changesWhilePaused, options, conflictDecisions, unresolvedConflicts, pendingKeys, pendingRemote, lastVerified, lastVerification, lastScheduledRun }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
@@ -87,6 +89,7 @@ extension FolderMirror {
         pendingRemote = try values.decodeIfPresent([String: SyncEntry].self, forKey: .pendingRemote)
         lastVerified = try values.decodeIfPresent(Date.self, forKey: .lastVerified)
         lastVerification = try values.decodeIfPresent(String.self, forKey: .lastVerification)
+        lastScheduledRun = try values.decodeIfPresent(Date.self, forKey: .lastScheduledRun)
     }
 }
 
@@ -229,6 +232,10 @@ final class MirrorManager {
         }
     }
     var accountLookup: ((String) -> Account?)?
+    /// The schedule's timer, the verification passes under way and the wait for the queue's hold to lift.
+    @ObservationIgnored var scheduleTimer: Task<Void, Never>?
+    @ObservationIgnored var verifying: Set<UUID> = []
+    @ObservationIgnored var holdSubscription: AnyCancellable?
     /// How an exact download mirror sends a local copy to the Trash; tests bypass the Finder.
     var trashLocally: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }
     /// Time to let a burst of file-system events settle before planning a sync.
@@ -361,6 +368,7 @@ final class MirrorManager {
     func start() {
         subscription = queue?.stateChanges.sink { [weak self] _ in self?.noteFailures() }
         for mirror in mirrors { watch(mirror); scheduleSync(mirror.id, immediate: true, resumeInterrupted: true) }
+        startSchedules()
     }
     func add(local: URL, account: Account, folder: CloudFile, path: [CloudFile], mode: FolderMirror.Mode = .upload) throws {
         let standardized = local.standardizedFileURL
@@ -460,8 +468,16 @@ final class MirrorManager {
     /// Replaces a mirror's settings. A change that alters what the next run would do runs it at once.
     func setOptions(_ options: MirrorOptions, for id: UUID) {
         guard let index = mirrors.firstIndex(where: { $0.id == id }), mirrors[index].options != options else { return }
+        let rescheduled = mirrors[index].options.schedule != options.schedule
         mirrors[index].options = options
         persist(id)
+        if rescheduled {
+            // The default poll gives way to a schedule, and comes back without one.
+            pollers.removeValue(forKey: id)?.cancel()
+            watchers.removeValue(forKey: id)?.stop()
+            watch(mirrors[index])
+            if scheduleTimer != nil { armSchedule() }
+        }
         scheduleSync(id, immediate: true)
     }
     /// Settles one conflict a two-way run left waiting for the person; the run it starts carries the decision out.
@@ -528,8 +544,9 @@ final class MirrorManager {
         if mirror.mode != .download {
             watchers[id] = FolderWatcher(url: url) { [weak self] paths in Task { @MainActor in self?.noteChanges(paths, for: id) } }
         }
-        // The cloud sends no events: a mirror that brings changes from it asks it now and then.
-        if mirror.mode != .upload, pollers[id] == nil {
+        // The cloud sends no events: a mirror that brings changes from it asks it now and then, unless it has a
+        // schedule of its own.
+        if mirror.mode != .upload, mirror.options.schedule == nil, pollers[id] == nil {
             let interval = remotePollInterval
             pollers[id] = Task { [weak self] in
                 while !Task.isCancelled {

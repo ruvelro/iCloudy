@@ -15,13 +15,15 @@ struct MirrorOptions: Codable, Equatable, Sendable {
     var verifyEvery: TimeInterval?
     /// Uploads only: a file the cloud already holds with the same checksum is not sent again.
     var skipIdentical = false
+    /// A run of its own every so often or once a day, besides what the folder's changes start.
+    var schedule: SyncSchedule?
 
     init(conflictPolicy: ConflictPolicy? = nil, exact: Bool = false, compareChecksums: Bool = false, verifyEvery: TimeInterval? = nil,
-         skipIdentical: Bool = false) {
+         skipIdentical: Bool = false, schedule: SyncSchedule? = nil) {
         self.conflictPolicy = conflictPolicy; self.exact = exact; self.compareChecksums = compareChecksums; self.verifyEvery = verifyEvery
-        self.skipIdentical = skipIdentical
+        self.skipIdentical = skipIdentical; self.schedule = schedule
     }
-    enum CodingKeys: String, CodingKey { case conflictPolicy, exact, compareChecksums, verifyEvery, skipIdentical }
+    enum CodingKeys: String, CodingKey { case conflictPolicy, exact, compareChecksums, verifyEvery, skipIdentical, schedule }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         conflictPolicy = (try? values.decodeIfPresent(String.self, forKey: .conflictPolicy)).flatMap { $0.flatMap(ConflictPolicy.init(rawValue:)) }
@@ -29,6 +31,8 @@ struct MirrorOptions: Codable, Equatable, Sendable {
         compareChecksums = try values.decodeIfPresent(Bool.self, forKey: .compareChecksums) ?? false
         verifyEvery = try values.decodeIfPresent(TimeInterval.self, forKey: .verifyEvery)
         skipIdentical = try values.decodeIfPresent(Bool.self, forKey: .skipIdentical) ?? false
+        // A kind of schedule added by a newer version is read as none.
+        schedule = (try? values.decodeIfPresent(SyncSchedule.self, forKey: .schedule)) ?? nil
     }
 }
 

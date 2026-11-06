@@ -50,6 +50,13 @@ struct MirrorSettingsSheet: View {
                     Text(verifyNote)
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
+                Section("Programación") {
+                    SyncScheduleField(title: "Sincronizar además", schedule: $options.schedule)
+                    Text(mirror.mode == .upload
+                         ? LocalizedStringKey("Los cambios de la carpeta se suben al momento igualmente; la programación añade una comparación completa a esa hora, que también recoge lo que no avisó el sistema.")
+                         : LocalizedStringKey("Sin programación se pregunta a la nube cada cinco minutos. El horario de transferencias, la pausa en redes caras y la falta de red siguen mandando: lo que toque durante una de ellas espera a que se pueda."))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
                 if mirror.mode != .twoWay {
                     Section("Borrados") {
                         Toggle("Espejo exacto: llevar también los borrados", isOn: $options.exact)

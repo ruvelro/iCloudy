@@ -1951,3 +1951,14 @@
 "Descarga" = "Download";
 "Se suma al límite de toda la cola: una transferencia va a la velocidad del más estricto. Una copia entre nubes cuenta como descarga de una cuenta y subida a la otra. También frena las sincronizaciones en ambos sentidos." = "It adds to the limit of the whole queue: a transfer goes at the pace of the stricter one. A copy between clouds counts as a download from one account and an upload to the other. It also holds back two-way syncs.";
 "KB/s" = "KB/s";
+"Cada %lld h" = "Every %lld h";
+"Cada %lld min" = "Every %lld min";
+"Cada día a las %@" = "Every day at %@";
+"Cada cierto tiempo" = "Every so often";
+"Cada día a una hora" = "Every day at a set time";
+"Intervalo" = "Interval";
+"Hora" = "Time";
+"Programación" = "Schedule";
+"Sincronizar además" = "Also sync";
+"Los cambios de la carpeta se suben al momento igualmente; la programación añade una comparación completa a esa hora, que también recoge lo que no avisó el sistema." = "Changes in the folder are still uploaded at once; the schedule adds a full comparison at that time, which also picks up what the system did not report.";
+"Sin programación se pregunta a la nube cada cinco minutos. El horario de transferencias, la pausa en redes caras y la falta de red siguen mandando: lo que toque durante una de ellas espera a que se pueda." = "Without a schedule the cloud is asked every five minutes. The transfer window, the pause on costly networks and being offline still rule: whatever falls due during one of them waits until it can run.";
