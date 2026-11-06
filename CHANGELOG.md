@@ -5,6 +5,25 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
 
 ## Sin publicar
 
+### Distribución
+
+Lo necesario para que iCloudy se descargue y se abra sin Xcode. Todo funciona ya sin cuenta de Apple, marcado como
+«sin firmar», y se firma y notariza solo en cuanto existan los secretos (`docs/DISTRIBUCION.md`).
+
+- **Avisa de las versiones nuevas, sin instalar nada.** «Buscar actualizaciones…», en el menú de la app, pide a
+  GitHub la ficha de la última versión y, si hay una más nueva, enseña sus notas, el enlace de descarga y la suma
+  SHA-256 para comprobarla. En Ajustes › Actualizaciones se puede pedir que lo mire una vez al día; viene apagado,
+  porque sería la primera petición a alguien que no es una de tus nubes.
+- **La versión se escribe en un solo sitio**, el archivo `VERSION`; el número de compilación es el de commits. Una
+  comprobación en la CI falla si el README o el registro de cambios dicen otra cosa.
+- **Paquetes `.zip` y `.dmg`** con su `SHA256SUMS.txt` (`scripts/package.sh`), firma Developer ID con *hardened
+  runtime* y notarización grapada (`scripts/notarize.sh`), que no hace nada y lo dice mientras no haya identidad.
+- **Cada etiqueta `v…` publica la versión en GitHub** con la sección de este registro como notas, los paquetes, las
+  sumas, el aviso de versiones y el cask de Homebrew relleno. La CI de cada PR empaqueta también, para que no se
+  rompa entre versiones.
+- **Mac App Store: no**, por la GPL-3.0, los clientes OAuth dentro del paquete y las API no documentadas de Mega y
+  O2. La decisión, razonada, está en `docs/DISTRIBUCION.md`.
+
 ### Robustez
 
 - **La ventana ya no se traba guardando ni leyendo.** La cola, los reflejos, las copias sin conexión y locales, el
