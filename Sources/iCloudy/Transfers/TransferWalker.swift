@@ -36,6 +36,15 @@ final class TransferWalker {
         return compiled
     }
 
+    /// The rules a download job was saved with, compiled once per run.
+    private func ownDownloadRules() throws -> SyncExclusionMatcher? {
+        if let ownRules { return ownRules }
+        let job = try job()
+        let compiled = job.options?.exclusions.map { $0.matcher(caseInsensitive: SyncExclusions.isCaseInsensitive(job.localURL)) }
+        ownRules = .some(compiled)
+        return compiled
+    }
+
     // MARK: Shared steps
 
     /// True when an earlier run already finished this item, whose bytes then count as done.
@@ -342,17 +351,27 @@ final class TransferWalker {
 
     // MARK: Download
 
-    func download(api: CloudAPI, file: CloudFile, into folder: URL, key: String = ".") async throws {
+    /// `relative` is the item's path below the job's own item, by remote names, for the job's rules.
+    func download(api: CloudAPI, file: CloudFile, into folder: URL, key: String = ".", relative: String = "") async throws {
         try Task.checkCancellation()
         if try await alreadyCompleted(key, bytes: { file.size ?? 0 }) { return }
         queue.inFlight[id] = ReportCursor(key: key, leaf: file.name, folder: file.isFolder)
         var current = try job()
+        if key != ".", let rules = try ownDownloadRules() {
+            if rules.excludes(relative, isFolder: file.isFolder)
+                || (!file.isFolder && rules.filtersOut(size: file.size, modified: file.modified, now: Date())) {
+                try edit(coalesce: true) { $0.completedPaths.insert(key) }
+                return
+            }
+        }
+        // A mirror's folder is the copy of the remote one: the contents go straight in, under no new name.
+        let intoFolder = key == "." && current.options?.contentsOnly == true && file.isFolder
         let exporting = key == "." && current.exportMime != nil
         let name = FileNames.safe(file.name + (exporting ? "." + (current.exportExtension ?? "pdf") : (file.isGoogleDocument ? ".webloc" : "")))
-        var target = folder.appendingPathComponent(current.names[key] ?? name)
+        var target = intoFolder ? folder : folder.appendingPathComponent(current.names[key] ?? name)
         var replace = current.replacements[key] != nil
         let room = NameClaims.local(folder)
-        if current.names[key] == nil || (!file.isFolder && !replace && FileManager.default.fileExists(atPath: target.path)) {
+        if !intoFolder, current.names[key] == nil || (!file.isFolder && !replace && FileManager.default.fileExists(atPath: target.path)) {
             let resolved = try await resolveLocalName(name, in: folder, target: target, room: room, isFolder: file.isFolder, incoming: file.modified)
             guard case .use(let selectedName, let replacing) = resolved.decision else {
                 try edit { $0.completedPaths.insert(key); $0.recordSkip(key, leaf: name, folder: file.isFolder, bytes: file.size) }
@@ -373,7 +392,10 @@ final class TransferWalker {
             let children = try await api.list(parent: file.id)
             let known = children.reduce(Int64(0)) { $0 + ($1.size ?? 0) }
             if known > 0 { try edit(coalesce: true) { $0.total += known } }
-            for child in children { try await download(api: api, file: child, into: target, key: key + "/" + child.id) }
+            for child in children {
+                try await download(api: api, file: child, into: target, key: key + "/" + child.id,
+                                   relative: relative.isEmpty ? child.name : relative + "/" + child.name)
+            }
         } else {
             let temporary = folder.appendingPathComponent(".icloudy-" + UUID().uuidString + ".part")
             defer { try? FileManager.default.removeItem(at: temporary) }

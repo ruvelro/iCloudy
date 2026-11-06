@@ -25,8 +25,9 @@ struct HistoryEntry: Identifiable, Codable {
         name = transfer.name; accountID = transfer.accountID; targetAccountID = transfer.targetAccountID; direction = transfer.direction
         destination = transfer.destination; parent = transfer.parent
         if transfer.direction == .download {
-            localURL = transfer.localURL.appendingPathComponent(transfer.names["."] ?? FileNames.safe(transfer.name))
-            bookmark = transfer.bookmark
+            // A mirror that downloads into its own folder has no item of its own inside it.
+            localURL = transfer.options?.contentsOnly == true ? transfer.localURL : transfer.localURL.appendingPathComponent(transfer.names["."] ?? FileNames.safe(transfer.name))
+            bookmark = transfer.options?.contentsOnly == true ? nil : transfer.bookmark
         } else { localURL = nil; bookmark = nil }
         bytes = max(transfer.bytes, transfer.total); self.finishedAt = finishedAt; summary = transfer.detail
     }

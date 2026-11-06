@@ -17,8 +17,8 @@ struct MirrorList: View {
         Text("REFLEJOS").font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
         ForEach(mirrors.mirrors) { (mirror: FolderMirror) in
             VStack(alignment: .leading, spacing: 2) {
-                Label(mirror.localURL.lastPathComponent, systemImage: mirror.paused ? "pause.circle" : (mirror.mode == .twoWay ? "arrow.left.arrow.right" : "arrow.triangle.2.circlepath")).lineLimit(1)
-                Text((mirror.mode == .twoWay ? "⇄ " : "→ ") + mirror.remoteName).font(.caption2).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                Label(mirror.localURL.lastPathComponent, systemImage: mirror.paused ? "pause.circle" : mirror.symbol).lineLimit(1)
+                Text(mirror.arrow + " " + mirror.remoteName).font(.caption2).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 Text(mirrors.status(of: mirror)).font(.caption2).foregroundStyle(mirror.lastError == nil ? Color.secondary : Color.red).lineLimit(2)
             }
             .padding(8).frame(maxWidth: .infinity, alignment: .leading)

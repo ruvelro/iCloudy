@@ -17,15 +17,37 @@ struct MirrorOptions: Codable, Equatable, Sendable {
 }
 
 extension FolderMirror {
+    /// The sidebar's icon and the arrow before the remote location, by direction.
+    var symbol: String {
+        switch mode {
+        case .upload: return "arrow.triangle.2.circlepath"
+        case .twoWay: return "arrow.left.arrow.right"
+        case .download: return "arrow.down.circle"
+        }
+    }
+    var arrow: String {
+        switch mode {
+        case .upload: return "→"
+        case .twoWay: return "⇄"
+        case .download: return "←"
+        }
+    }
     /// The policy in force: the one chosen, or the mode's default.
     var conflictPolicy: ConflictPolicy {
         if let chosen = options.conflictPolicy { return chosen }
         return mode == .twoWay ? .keepBoth : .ask
     }
-    /// The same policy in the terms of a one-way transfer, where "this side" is the source. nil asks.
+    /// The same policy in the terms of a one-way transfer, where "this side" is the source. A download mirror's
+    /// source is the cloud, so the Mac winning is the destination winning. nil asks.
     var transferPolicy: ConflictPolicy? {
         let policy = conflictPolicy
-        return policy == .ask ? nil : policy
+        guard policy != .ask else { return nil }
+        guard mode == .download else { return policy }
+        switch policy {
+        case .thisSideWins: return .otherSideWins
+        case .otherSideWins: return .thisSideWins
+        default: return policy
+        }
     }
 }
 

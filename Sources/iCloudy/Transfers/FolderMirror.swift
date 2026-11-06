@@ -11,12 +11,13 @@ struct FileStamp: Codable, Equatable {
 /// A local folder tied to a remote one. In its original, one-way form the contents are pushed into the cloud and
 /// deletions and renames are not mirrored: a removed local file stays in the cloud, a renamed one is uploaded under
 /// its new name. In two-way form (`TwoWaySync`) changes travel both ways, against a baseline that records what both
-/// sides looked like when they last agreed.
+/// sides looked like when they last agreed. In download form (`DownloadMirror`) the local folder is kept as a copy of
+/// the remote one, against a baseline of what each file looked like when it was last downloaded.
 struct FolderMirror: Identifiable, Codable {
-    enum Mode: String, Codable { case upload, twoWay }
+    enum Mode: String, Codable { case upload, twoWay, download }
     var id = UUID()
     var mode: Mode = .upload
-    /// Two-way only: what both sides looked like after the last sync, per relative path.
+    /// Two-way and download: what both sides looked like after the last sync, per relative path.
     var baseline: [String: SyncEntry] = [:]
     var lastReport: SyncReport?
     let accountID: String
@@ -46,10 +47,14 @@ struct FolderMirror: Identifiable, Codable {
     var conflictDecisions: [String: ConflictPolicy] = [:]
     /// Two-way, with the policy set to ask: conflicts the last run left alone waiting for a decision.
     var unresolvedConflicts: [String] = []
+    /// Download only, while its job runs: the relative path of each tree key the job walks, and what the remote side
+    /// of each one looked like when it was planned. The baseline takes them as the job completes them.
+    var pendingKeys: [String: String]?
+    var pendingRemote: [String: SyncEntry]?
 }
 
 extension FolderMirror {
-    enum CodingKeys: String, CodingKey { case id, mode, baseline, lastReport, accountID, remoteFolderID, remoteName, localURL, bookmark, stamps, pendingStamps, lastSync, activeTransferID, lastError, remoteEntries, exclusions, paused, changesWhilePaused, options, conflictDecisions, unresolvedConflicts }
+    enum CodingKeys: String, CodingKey { case id, mode, baseline, lastReport, accountID, remoteFolderID, remoteName, localURL, bookmark, stamps, pendingStamps, lastSync, activeTransferID, lastError, remoteEntries, exclusions, paused, changesWhilePaused, options, conflictDecisions, unresolvedConflicts, pendingKeys, pendingRemote }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
@@ -75,6 +80,8 @@ extension FolderMirror {
         conflictDecisions = ((try? values.decodeIfPresent([String: String].self, forKey: .conflictDecisions)) ?? nil)?
             .compactMapValues(ConflictPolicy.init(rawValue:)) ?? [:]
         unresolvedConflicts = try values.decodeIfPresent([String].self, forKey: .unresolvedConflicts) ?? []
+        pendingKeys = try values.decodeIfPresent([String: String].self, forKey: .pendingKeys)
+        pendingRemote = try values.decodeIfPresent([String: SyncEntry].self, forKey: .pendingRemote)
     }
 }
 
@@ -195,10 +202,11 @@ final class FolderWatcher {
 @MainActor
 @Observable
 final class MirrorManager {
-    private(set) var mirrors: [FolderMirror] = []
+    /// Changed only by this manager, here and in its extensions in the other mirror files.
+    var mirrors: [FolderMirror] = []
     var persistenceError: String?
     /// Mirrors whose folder changed while a sync was running or waiting for the debounce.
-    private(set) var pending: Set<UUID> = []
+    var pending: Set<UUID> = []
     /// Where every mirror used to live, in one file. Read once to move them into `directory`, then set aside.
     let storeURL: URL
     /// One file per mirror plus the order of the list. A two-way mirror rewrites its baseline after every step,
@@ -223,14 +231,14 @@ final class MirrorManager {
     /// How often a two-way mirror asks the cloud for changes nobody made from this Mac.
     var remotePollInterval: Duration = .seconds(300)
     /// Two-way syncs in progress, and the ones that must run once more because something changed meanwhile.
-    private(set) var running: Set<UUID> = []
+    var running: Set<UUID> = []
     private var pollers: [UUID: Task<Void, Never>] = [:]
     /// Set by "Sincronizar aplicando los borrados" for the next run only.
-    private var massDeletionAllowed: Set<UUID> = []
+    var massDeletionAllowed: Set<UUID> = []
     private var watchers: [UUID: FolderWatcher] = [:]
     private var scopedURLs: [UUID: URL] = [:]
     private var scheduled: [UUID: Task<Void, Never>] = [:]
-    private var dirty: Set<UUID> = []
+    var dirty: Set<UUID> = []
     private var subscription: AnyCancellable?
     /// Compiled rules per mirror, dropped whenever the rules change. Case sensitivity follows the local volume.
     private var matchers: [UUID: SyncExclusionMatcher] = [:]
@@ -298,7 +306,7 @@ final class MirrorManager {
     }
 
     /// Hands these mirrors, and the order of the list if it changed, to the background writer.
-    private func persist(_ ids: [UUID]) {
+    func persist(_ ids: [UUID]) {
         unsaved.subtract(ids)
         persistenceError = nil
         let failed: @MainActor @Sendable (Error) -> Void = { [weak self] error in
@@ -314,7 +322,7 @@ final class MirrorManager {
             StoreWriter.shared.later(StoreEnvelope(order), to: indexURL, failed: failed)
         }
     }
-    private func persist(_ id: UUID) { persist([id]) }
+    func persist(_ id: UUID) { persist([id]) }
 
     /// For the baseline of a running two-way sync: written at most once every `flushDelay`.
     private func persistSoon(_ id: UUID) {
@@ -484,11 +492,11 @@ final class MirrorManager {
         // The person's own locale: pinning es_ES here showed "hace 5 min" in the middle of an English interface.
         let formatter = RelativeDateTimeFormatter(); formatter.unitsStyle = .short
         let when = L("Sincronizado \(formatter.localizedString(for: last, relativeTo: Date()))")
-        if mirror.mode == .twoWay, let report = mirror.lastReport, !report.isEmpty { return when + " · " + report.summary }
+        if mirror.mode != .upload, let report = mirror.lastReport, !report.isEmpty { return when + " · " + report.summary }
         return when
     }
 
-    private func resolvedURL(_ mirror: FolderMirror) -> URL {
+    func resolvedURL(_ mirror: FolderMirror) -> URL {
         if let url = scopedURLs[mirror.id] { return url }
         var url = mirror.localURL
         var stale = false
@@ -509,9 +517,12 @@ final class MirrorManager {
         guard watching, watchers[mirror.id] == nil else { return }
         let url = resolvedURL(mirror)
         let id = mirror.id
-        watchers[id] = FolderWatcher(url: url) { [weak self] paths in Task { @MainActor in self?.noteChanges(paths, for: id) } }
-        // The cloud sends no events: a two-way mirror asks it now and then for what changed elsewhere.
-        if mirror.mode == .twoWay, pollers[id] == nil {
+        // A download mirror writes into its folder itself: watching it would run a sync for every file it brought.
+        if mirror.mode != .download {
+            watchers[id] = FolderWatcher(url: url) { [weak self] paths in Task { @MainActor in self?.noteChanges(paths, for: id) } }
+        }
+        // The cloud sends no events: a mirror that brings changes from it asks it now and then.
+        if mirror.mode != .upload, pollers[id] == nil {
             let interval = remotePollInterval
             pollers[id] = Task { [weak self] in
                 while !Task.isCancelled {
@@ -522,7 +533,7 @@ final class MirrorManager {
             }
         }
     }
-    private func scheduleSync(_ id: UUID, immediate: Bool, resumeInterrupted: Bool = false) {
+    func scheduleSync(_ id: UUID, immediate: Bool, resumeInterrupted: Bool = false) {
         // A paused mirror plans nothing: not on events, not on the remote poll and not on "sync now".
         guard let mirror = mirrors.first(where: { $0.id == id }), !mirror.paused else { return }
         pending.insert(id)
@@ -538,6 +549,7 @@ final class MirrorManager {
     private func sync(_ id: UUID, resumeInterrupted: Bool = false) async {
         guard let index = mirrors.firstIndex(where: { $0.id == id }), let queue else { return }
         if mirrors[index].mode == .twoWay { await syncTwoWay(id); return }
+        if mirrors[index].mode == .download { await syncDownload(id); return }
         if let active = mirrors[index].activeTransferID, let item = queue.items.first(where: { $0.id == active }) {
             if [.queued, .running].contains(item.state) {
                 // Let the running sync finish; its completion re-plans with whatever changed meanwhile.
@@ -641,6 +653,7 @@ final class MirrorManager {
             engine.allowMassDeletion = massDeletionAllowed.contains(id)
             return try await engine.preview()
         }
+        if mirror.mode == .download { return try await previewDownload(mirror) }
         let scan = try await blockingIO { try MirrorPlanner.scan(url, exclusions: rules) }
         guard let current = mirrors.first(where: { $0.id == id }) else { throw CloudError.message(L("Este reflejo ya no existe.")) }
         let (completed, nothingNew) = MirrorPlanner.oneWayPlan(current: scan.stamps, mirror: current)
@@ -653,6 +666,14 @@ final class MirrorManager {
     /// Hooked to the queue's `didFinish`: promotes the planned stamps and re-syncs if the folder changed meanwhile.
     func handleFinished(_ transfer: Transfer) {
         guard let index = mirrors.firstIndex(where: { $0.activeTransferID == transfer.id }) else { return }
+        if mirrors[index].mode == .download {
+            absorbDownload(transfer, at: index)
+            mirrors[index].lastSync = Date(); mirrors[index].activeTransferID = nil; mirrors[index].lastError = nil
+            let id = mirrors[index].id
+            persist(id)
+            if dirty.remove(id) != nil { scheduleSync(id, immediate: true) }
+            return
+        }
         let entries = transfer.mirrorEntries ?? [:]
         mirrors[index].remoteEntries = entries
         mirrors[index].stamps = (mirrors[index].pendingStamps ?? mirrors[index].stamps).filter { entries["./" + $0.key] != nil }
@@ -670,6 +691,8 @@ final class MirrorManager {
         for index in mirrors.indices {
             guard let active = mirrors[index].activeTransferID, let item = queue.items.first(where: { $0.id == active }), [.failed, .cancelled].contains(item.state) else { continue }
             mirrors[index].lastError = item.state == .failed ? item.detail : L("Sincronización cancelada")
+            // What a download got to before it stopped is this mirror's own already.
+            if mirrors[index].mode == .download { absorbDownload(item, at: index) }
             mirrors[index].activeTransferID = nil; mirrors[index].pendingStamps = nil
             changed.append(mirrors[index].id)
         }

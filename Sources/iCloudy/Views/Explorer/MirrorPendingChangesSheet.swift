@@ -32,6 +32,8 @@ struct MirrorPendingChangesSheet: View {
             Group {
                 if mirror.mode == .twoWay {
                     Text("Calculado ahora con la carpeta del Mac y la de la nube. No se ha cambiado nada en ninguno de los dos lados.")
+                } else if mirror.mode == .download {
+                    Text("Calculado ahora con la carpeta de la nube y la del Mac. Lo que haya en el Mac con el mismo nombre y no venga de este reflejo se preguntará al sincronizar, salvo que la política de conflictos diga otra cosa.")
                 } else {
                     Text("Calculado con la carpeta del Mac. Lo que ya exista en la nube y no haya subido este reflejo se preguntará al sincronizar.")
                 }
@@ -73,6 +75,8 @@ struct MirrorPendingChangesSheet: View {
                 }
                 if preview.isEmpty, mirror.mode == .twoWay {
                     Label("Nada pendiente: los dos lados coinciden.", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+                } else if preview.isEmpty, mirror.mode == .download {
+                    Label("Nada pendiente: el Mac ya tiene lo último de la nube.", systemImage: "checkmark.circle").foregroundStyle(.secondary)
                 } else if preview.isEmpty {
                     Label("Nada pendiente: la nube ya tiene lo último de esta carpeta.", systemImage: "checkmark.circle").foregroundStyle(.secondary)
                 }

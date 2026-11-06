@@ -1924,3 +1924,9 @@
 "Conflictos: ganará la versión de la nube" = "Conflicts: the cloud's version will win";
 "Conflictos: esperan tu decisión (clic secundario en cada uno)" = "Conflicts: waiting for your decision (secondary click on each)";
 "Conflictos: se preguntará en cada uno" = "Conflicts: you will be asked about each";
+"Mantener aquí" = "Keep here";
+"La carpeta elegida se mantendrá como copia de «%@»: lo nuevo y lo cambiado en la nube se baja y se comprueba. Solo en un sentido: nada del Mac se sube, y lo que cambies aquí se deja como está." = "The chosen folder will be kept as a copy of “%@”: what is new or changed in the cloud is downloaded and checked. One way only: nothing on the Mac is uploaded, and what you change here is left as it is.";
+"«%@» se mantiene como copia de «%@». La primera descarga está en marcha." = "“%@” is kept as a copy of “%@”. The first download is under way.";
+"Mantener una copia en una carpeta del Mac…" = "Keep a copy in a folder on the Mac…";
+"Calculado ahora con la carpeta de la nube y la del Mac. Lo que haya en el Mac con el mismo nombre y no venga de este reflejo se preguntará al sincronizar, salvo que la política de conflictos diga otra cosa." = "Worked out just now from the cloud folder and the Mac folder. Anything on the Mac with the same name that did not come from this mirror will be asked about when syncing, unless the conflict policy says otherwise.";
+"Nada pendiente: el Mac ya tiene lo último de la nube." = "Nothing pending: the Mac already has the latest from the cloud.";
