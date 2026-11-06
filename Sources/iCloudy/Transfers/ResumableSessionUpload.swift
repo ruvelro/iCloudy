@@ -55,7 +55,9 @@ struct ResumableSessionUpload {
         // A server that keeps accepting a block without moving the offset on would otherwise be asked for ever. It is
         // the shape an empty file can take when the answer is a 308 with no range in it.
         var stalled = 0
-        func finish(_ item: [String: Any]) throws -> UploadReceipt {
+        // Isolated explicitly: Swift 6.2 otherwise treats `item` as task-isolated and refuses to hand it to the
+        // verification closure, although both run here, one after the other.
+        @MainActor func finish(_ item: [String: Any]) throws -> UploadReceipt {
             cursor.offset = total
             cursor.complete = true
             let stamp = cursor.sourceStamp, verifier = hasher

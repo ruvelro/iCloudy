@@ -250,7 +250,9 @@ final class SFTPTests: XCTestCase {
         }
 
         do {
-            _ = try await SFTPAuthentication().signInSFTP(server: url.replacingOccurrences(of: "secreta", with: "mala"), username: "", password: "",
+            // The password is whatever the server was set up with (CI makes a random one), so it is replaced, not edited.
+            var wrong = try XCTUnwrap(URLComponents(string: url)); wrong.password = "mala-\(UUID().uuidString)"
+            _ = try await SFTPAuthentication().signInSFTP(server: try XCTUnwrap(wrong.string), username: "", password: "",
                                                           trustHostKey: { _ in true })
             XCTFail("Una contraseña incorrecta no inicia sesión")
         } catch { XCTAssertTrue(error.localizedDescription.contains("usuario o la contraseña"), error.localizedDescription) }

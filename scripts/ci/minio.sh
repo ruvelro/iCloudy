@@ -28,6 +28,14 @@ stop() {
 binary() {
     if [[ -n "${MINIO_BIN:-}" ]]; then echo "$MINIO_BIN"; return; fi
     if command -v minio >/dev/null 2>&1; then command -v minio; return; fi
+    # MinIO stopped publishing binaries (dl.min.io answers 410 Gone since late 2026). Homebrew still has a bottle of the
+    # last community release, deprecated but installable; the download below stays for a MINIO_URL mirror.
+    if [[ -z "${MINIO_URL:-}" ]] && command -v brew >/dev/null 2>&1; then
+        if HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install --quiet minio >&2 && command -v minio >/dev/null 2>&1; then
+            command -v minio; return
+        fi
+        echo "Homebrew could not install minio; trying the download." >&2
+    fi
     local arch url
     case "$(uname -m)" in
         arm64) arch=arm64 ;;

@@ -209,7 +209,8 @@ final class SSHHardeningTests: XCTestCase {
         }
         var signature = SSHWriter(); signature.string("rsa-sha2-256"); signature.string(Data(repeating: 1, count: 128))
         XCTAssertThrowsError(try SSHHostKey.verify(blob: blob(bits: 1024), signature: signature.data, message: Data("h".utf8))) {
-            XCTAssertTrue($0.localizedDescription.contains("2048"), $0.localizedDescription)
+            // The number is formatted for the locale: "2048" in Spanish, "2,048" in English.
+            XCTAssertTrue($0.localizedDescription.filter(\.isNumber).contains("2048"), $0.localizedDescription)
         }
         XCTAssertEqual(SSHHostKey.rsaBits(Data([0x00, 0x01, 0xFF])), 9)
         XCTAssertEqual(SSHHostKey.rsaBits(Data(repeating: 0xFF, count: 256)), 2048)
