@@ -106,6 +106,9 @@ struct CloudCapabilities {
     var asyncCopy = false
     /// Links are presigned URLs that expire, whose lifetime the person chooses. S3 has no other kind.
     var temporaryLinks = false
+    /// Large uploads go up in pieces that survive a dropped connection, and a retry carries on from the last piece the
+    /// server confirmed. Nextcloud's chunking v2 is the WebDAV case, set per account.
+    var chunkedUploads = false
     /// How many jobs the session runs at once, whatever the queue's setting. FTP has a single control connection,
     /// SFTP one channel, and Mega and O2 a session the server serialises (or drops requests from) when it is asked
     /// two things at once. A second job on them would only queue inside the session while showing as running.

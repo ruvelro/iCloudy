@@ -4,7 +4,9 @@ import Foundation
 /// under the configured base URL, and "root" is that base. There is no OAuth, no search and no recycle bin here.
 @MainActor
 final class WebDAVProvider: CloudSession, CloudProvider {
-    
+    /// Where Nextcloud's chunked upload starts, and the size of its chunks. Tests make both small.
+    var chunkedThreshold = WebDAVProvider.chunkedUploadThreshold
+    var chunkOverride: Int64?
 }
 
 extension WebDAVProvider {
@@ -186,11 +188,15 @@ extension WebDAVProvider {
         throw CloudError.message(L("El servidor no devolvió el enlace. Comprueba que compartir está habilitado."))
     }
 
-    /// WebDAV has no resumable protocol: a PUT either lands whole or is repeated. The file is streamed from disk.
+    /// Plain WebDAV has no resumable protocol: a PUT either lands whole or is repeated. The file is streamed from
+    /// disk. Nextcloud's chunked upload, which does resume, takes the large files (`WebDAVProvider+Chunking.swift`).
     func webdavUpload(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint,
                       save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
         let parentPath = Self.webdavNormalize(parent == "root" ? "/" : parent)
         let path = replacing ?? ((parentPath == "/" ? "" : parentPath) + "/" + name)
+        if usesChunkedUpload(cursor) {
+            return try await nextcloudChunkedUpload(local: local, path: path, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+        }
         var request = try await request(try webdavURL(path), method: "PUT")
         request.timeoutInterval = 3600
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
@@ -390,6 +396,13 @@ extension WebDAVProvider {
 }
 
 extension WebDAVProvider {
+    /// An upload collection of a cancelled chunked upload is deleted with the account's credentials; nothing else
+    /// is, whatever URL a checkpoint carries.
+    func abandonUploadSessions(urls: [URL], sessionIDs: [String]) async {
+        for url in urls where isNextcloudUploadCollection(url) {
+            _ = try? await webdavRequest(url, method: "DELETE")
+        }
+    }
     func identityChange(file: CloudFile, name: String, destination: String?) throws -> RemoteIdentityChange {
         let newID: String
 

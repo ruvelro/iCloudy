@@ -33,6 +33,8 @@ struct Account: Codable, Identifiable, Hashable {
         // And a bin: deleting moves things there, where they can be listed, restored and purged.
         if cloud == .webdav, flavor == "nextcloud" {
             base.reversibleTrash = true; base.trashListing = true; base.permanentDelete = true; base.emptyTrash = true
+            // And uploads in chunks, which resume where they stopped.
+            base.chunkedUploads = true
         }
         // "Recientes" and "Compartido conmigo" list the person's own activity, not a drive's. A shared drive or a
         // document library has neither, and asking for them inside one returns nothing or a refusal.

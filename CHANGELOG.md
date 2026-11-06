@@ -19,6 +19,10 @@ simulados y la documentación de cada uno. Se marca como 🆕 hasta que alguien 
   servidor, se entra con lo que pida (dos pasos, SSO, llave de seguridad) y Nextcloud entrega a iCloudy una contraseña
   de aplicación solo para él, revocable desde su seguridad. Los archivos se buscan bajo el id del usuario aunque se
   entre con el correo. El formulario de usuario y contraseña sigue a mano para los servidores que lo tengan apagado.
+- **Subidas grandes a Nextcloud por trozos que se reanudan** (chunking v2). Desde 32 MB, el archivo sube en trozos
+  numerados a una carpeta de subida propia y un MOVE final lo deja en su sitio de una vez. Si la conexión cae, el
+  reintento pregunta si la subida sigue en el servidor y continúa por el siguiente trozo; cancelar la borra. Antes
+  era un único PUT que volvía a empezar desde cero.
 
 ### Robustez
 
