@@ -13,12 +13,19 @@ enum Prefs {
     static let thumbnails = "thumbnailsEnabled"
     static let notifyTransfers = "notifyTransfersEnabled"
     static let dockIcon = "dockIconVisible"
+    static let automaticUpdateChecks = "automaticUpdateChecks"
+    static let lastUpdateCheck = "lastUpdateCheck"
+    static let skippedUpdateVersion = "skippedUpdateVersion"
+
+    /// Where every preference is read and written. The test suite points it at a suite of its own per test, so a run
+    /// never leaves anything in the defaults of whoever ran it; the app never changes it.
+    nonisolated(unsafe) static var defaults: UserDefaults = .standard
 
     static func bool(_ key: String, default value: Bool) -> Bool {
-        UserDefaults.standard.object(forKey: key) as? Bool ?? value
+        Prefs.defaults.object(forKey: key) as? Bool ?? value
     }
     static func int(_ key: String, default value: Int) -> Int {
-        let stored = UserDefaults.standard.integer(forKey: key)
+        let stored = Prefs.defaults.integer(forKey: key)
         return stored > 0 ? stored : value
     }
 }

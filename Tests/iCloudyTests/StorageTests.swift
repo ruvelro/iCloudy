@@ -78,8 +78,7 @@ final class StorageTests: XCTestCase {
             }
             // SFTP asks over SSH, not HTTP; SFTPTests covers it against a real server.
             if cloud == .sftp { continue }
-            let config = URLSessionConfiguration.ephemeral
-            config.protocolClasses = [StubProtocol.self]
+            let config = StubProtocol.configuration()
             let session = URLSession(configuration: config)
             defer { session.invalidateAndCancel() }
             let account = Account(id: "quota-test", cloud: cloud, name: "Test", email: "test@example.com", clientID: "test", clientSecret: nil,
@@ -149,7 +148,7 @@ final class StorageTests: XCTestCase {
                     return (200, [:], Data(#"{"result":0,"quota":100,"usedquota":40}"#.utf8))
                 case .ftp, .sftp, .volume:
                     XCTFail("\(cloud) no llega hasta aquí"); return (500, [:], Data())
-                case .s3:
+                case .s3, .azure:
                     XCTFail("\(cloud) no llega hasta aquí"); return (500, [:], Data())
                 case .webdav:
                     XCTAssertEqual(request.httpMethod, "PROPFIND")
@@ -200,7 +199,7 @@ final class StorageTests: XCTestCase {
         XCTAssertFalse(queue.hasActive(accountID: "other"))
         queue.cancel(transfer.id, pause: true)
         XCTAssertTrue(queue.hasActive(accountID: "busy"), "Cancellation must settle before disconnecting")
-        for _ in 0..<100 where queue.isWorking { try await Task.sleep(for: .milliseconds(10)) }
+        try await wait { !(queue.isWorking) }
         XCTAssertFalse(queue.isWorking)
         XCTAssertFalse(queue.hasActive(accountID: "busy"))
     }

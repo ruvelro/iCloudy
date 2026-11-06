@@ -49,7 +49,7 @@ extension AppModel {
     /// Shared by the search view, the menu bar and the Shortcuts action.
     func startGlobalSearch(_ term: String) {
         preview.close()
-        showGlobalSearch = true
+        ui.showGlobalSearch = true
         globalSearch.query = String(term.prefix(256))
         // Providers without a search API would only add an error row to every search.
         let submittedFilters = globalSearch.filters
@@ -64,7 +64,7 @@ extension AppModel {
     func openSpotlightItem(identifier: String) {
         guard !loadingAccounts else { pendingSpotlightItem = identifier; return }
         guard let decoded = SpotlightIndex.decode(identifier: identifier),
-              let entry = spotlight.items.first(where: { $0.accountID == decoded.accountID && $0.file.id == decoded.fileID }),
+              let entry = spotlight.entry(accountID: decoded.accountID, fileID: decoded.fileID),
               let account = accounts.first(where: { $0.id == decoded.accountID }) else {
             error = L("Ese resultado ya no está disponible en iCloudy. Vuelve a conectar la cuenta o búscalo de nuevo.")
             return
@@ -72,7 +72,7 @@ extension AppModel {
         NSApp.activate(ignoringOtherApps: true)
         if entry.file.isFolder { openFolder(accountID: account.id, folderID: entry.file.id) }
         else {
-            showGlobalSearch = false
+            ui.showGlobalSearch = false
             selectedAccountID = account.id
             do { preview.show(file: entry.file, account: account, client: try client(account)) }
             catch { self.error = error.localizedDescription }
@@ -81,7 +81,6 @@ extension AppModel {
 
     /// Where this file stands: only in the cloud, downloaded, or downloaded but behind the cloud.
     func localStatus(_ file: CloudFile) -> LocalCopyStatus {
-        _ = subsystems
         guard let account else { return .cloudOnly }
         return localCopies.status(for: file, accountID: account.id)
     }
@@ -99,12 +98,9 @@ extension AppModel {
         localCopies.forget(accountID: account.id, fileID: file.id)
     }
 
-    /// Republishes the favorites of the accounts that are actually connected. Favorites are kept when an account is
-    /// disconnected, on purpose, but publishing them again put back in the system's search exactly what disconnecting
-    /// had just removed from it.
+    /// Republishes the favorites of the accounts that are actually connected.
     func refreshSpotlightFavorites() {
-        let connected = Set(accounts.map(\.id))
-        spotlight.refreshFavorites(favorites.filter { connected.contains($0.accountID) }) { [weak self] id in
+        favoriteStore.publish(to: spotlight, connected: Set(accounts.map(\.id))) { [weak self] id in
             self?.accounts.first { $0.id == id }.map { self?.accountTitle($0) ?? $0.email } ?? id
         }
     }
@@ -179,20 +175,17 @@ extension AppModel {
         NSWorkspace.shared.open(url)
     }
 
-    func isFavorite(_ file: CloudFile) -> Bool { favoriteKeys.contains((selectedAccountID ?? "") + ":" + file.id) }
+    func isFavorite(_ file: CloudFile) -> Bool { favoriteStore.contains(accountID: selectedAccountID ?? "", fileID: file.id) }
 
     func toggleFavorite(_ file: CloudFile) {
         guard let account else { return }
-        if isFavorite(file) { favorites.removeAll { $0.accountID == account.id && $0.file.id == file.id } }
-        else { favorites.append(Favorite(accountID: account.id, file: file, path: path, collection: collection)) }
-        do { try LocalStore.save(favorites, to: favoritesURL) } catch { self.error = error.localizedDescription }
-        refreshSpotlightFavorites()
+        favoriteStore.toggle(file, accountID: account.id, path: path, collection: collection)
     }
 
     func openFavorite(_ favorite: Favorite) {
         guard accounts.contains(where: { $0.id == favorite.accountID }) else { error = L("Conecta la cuenta de este favorito."); return }
         preview.close()
-        showGlobalSearch = false; globalSearch.cancel()
+        ui.showGlobalSearch = false; globalSearch.cancel()
         go(to: BrowserLocation(accountID: favorite.accountID, collection: favorite.collection, path: favorite.path + (favorite.file.isFolder ? [favorite.file] : [])))
     }
 }

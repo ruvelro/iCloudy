@@ -249,6 +249,24 @@ actor SFTPClient {
             }
         } }
     }
+    /// Puts a finished upload in place of `path`. OpenSSH's posix-rename replaces the target in one step, as
+    /// rename(2) does; plain RENAME refuses an existing target, so on servers without the extension the old file is
+    /// removed first, which leaves a short moment with neither.
+    func replace(_ path: String, with temporary: String) async throws {
+        try await exclusive { try await self.withSession {
+            if await self.supports("posix-rename@openssh.com") {
+                try await self.status(try await self.request(Packet.extended) { $0.string("posix-rename@openssh.com"); $0.string(temporary); $0.string(path) })
+                return
+            }
+            var answer = try await self.response(try await self.request(Packet.stat) { $0.string(path) })
+            if answer.type == Packet.attrs {
+                try await self.status(try await self.request(Packet.remove) { $0.string(path) })
+            } else if answer.type == Packet.status, try answer.reader.uint32() != 2 {
+                throw SSHReader.Malformed()
+            }
+            try await self.status(try await self.request(Packet.rename) { $0.string(temporary); $0.string(path) })
+        } }
+    }
     /// Free and total bytes of the file system under `path`, when the server implements OpenSSH's extension.
     func statvfs(_ path: String) async throws -> (total: Int64, free: Int64)? {
         try await exclusive { try await self.withSession {
@@ -272,24 +290,34 @@ actor SFTPClient {
 
     /// Downloads with `inFlight` reads outstanding; the answers are consumed in the order they were asked for, so
     /// the file is written front to back whatever order the server chose.
-    func download(_ path: String, to destination: URL, maxBytes: Int64?, progress: @Sendable @escaping (Int64) -> Void) async throws {
+    /// With `start`, the bytes before it are already in `destination` and the read carries on from there; with
+    /// `keepPartial`, what arrived before a failure stays in `destination` for the next attempt to continue.
+    func download(_ path: String, to destination: URL, from start: Int64 = 0, keepPartial: Bool = false, maxBytes: Int64?,
+                  progress: @Sendable @escaping (Int64) -> Void) async throws {
         try await exclusive { try await self.withSession {
             let handle = try await self.handle(try await self.request(Packet.open) { $0.string(path); $0.uint32(1); $0.uint32(0) })
-            do { try await self.readFile(handle, to: destination, maxBytes: maxBytes, progress: progress) }
+            do { try await self.readFile(handle, to: destination, from: start, keepPartial: keepPartial, maxBytes: maxBytes, progress: progress) }
             catch { try? await self.closeHandle(handle); throw error }
             try await self.closeHandle(handle)
         } }
     }
-    private func readFile(_ handle: Data, to destination: URL, maxBytes: Int64?, progress: @Sendable @escaping (Int64) -> Void) async throws {
-            FileManager.default.createFile(atPath: destination.path, contents: nil)
+    private func readFile(_ handle: Data, to destination: URL, from start: Int64, keepPartial: Bool, maxBytes: Int64?,
+                          progress: @Sendable @escaping (Int64) -> Void) async throws {
+            if start == 0 || !FileManager.default.fileExists(atPath: destination.path) {
+                FileManager.default.createFile(atPath: destination.path, contents: nil)
+            }
             let file = try FileHandle(forWritingTo: destination)
             var complete = false
             defer {
                 try? file.close()
-                if !complete { try? FileManager.default.removeItem(at: destination) }
+                if !complete, !keepPartial { try? FileManager.default.removeItem(at: destination) }
             }
-            var written: Int64 = 0
-            var offset: UInt64 = 0
+            // Whatever lies past the resumed offset was never confirmed in order, so it is cut and fetched again.
+            try file.truncate(atOffset: UInt64(max(0, start)))
+            try file.seek(toOffset: UInt64(max(0, start)))
+            var written: Int64 = max(0, start)
+            var offset = UInt64(max(0, start))
+            if start > 0 { progress(written) }
             var outstanding: [UInt32] = []
             var finished = false
             for _ in 0..<Self.inFlight { outstanding.append(try await askRead(handle, at: offset)); offset += UInt64(Self.blockSize) }
@@ -325,26 +353,33 @@ actor SFTPClient {
     private func askRead(_ handle: Data, at offset: UInt64) async throws -> UInt32 {
         try await request(Packet.read) { $0.string(handle); $0.uint64(offset); $0.uint32(UInt32(Self.blockSize)) }
     }
-    /// Uploads with `inFlight` writes outstanding. The file is created or truncated first; a retry starts over.
-    func upload(_ source: URL, to path: String, progress: @Sendable @escaping (Int64) -> Void) async throws {
+    /// Uploads with `inFlight` writes outstanding. From the start, the file is created or truncated first. With
+    /// `start` and `length`, only that stretch of the source is written, at the same offset, into a file that already
+    /// holds what came before: that is how an interrupted upload carries on. When this returns, every byte of the
+    /// stretch has been confirmed by the server.
+    func upload(_ source: URL, to path: String, from start: Int64 = 0, length: Int64? = nil, progress: @Sendable @escaping (Int64) -> Void) async throws {
         try await exclusive { try await self.withSession {
             let stamp = try UploadSourceStamp(source)
-            // CREAT | TRUNC | WRITE
-            let handle = try await self.handle(try await self.request(Packet.open) { $0.string(path); $0.uint32(0x2 | 0x8 | 0x10); $0.uint32(0) })
-            do { try await self.writeFile(handle, from: source, stamp: stamp, progress: progress) }
+            // CREAT | TRUNC | WRITE from the start; WRITE | CREAT when continuing.
+            let flags: UInt32 = start == 0 ? 0x2 | 0x8 | 0x10 : 0x2 | 0x8
+            let handle = try await self.handle(try await self.request(Packet.open) { $0.string(path); $0.uint32(flags); $0.uint32(0) })
+            do { try await self.writeFile(handle, from: source, start: start, length: length, stamp: stamp, progress: progress) }
             catch { try? await self.closeHandle(handle); throw error }
             try await self.closeHandle(handle)
         } }
     }
-    private func writeFile(_ handle: Data, from source: URL, stamp: UploadSourceStamp, progress: @Sendable @escaping (Int64) -> Void) async throws {
+    private func writeFile(_ handle: Data, from source: URL, start: Int64, length: Int64?, stamp: UploadSourceStamp,
+                           progress: @Sendable @escaping (Int64) -> Void) async throws {
             let file = try FileHandle(forReadingFrom: source)
             defer { try? file.close() }
-            var offset: UInt64 = 0
+            try file.seek(toOffset: UInt64(max(0, start)))
+            var offset = UInt64(max(0, start))
+            let end = length.map { UInt64(max(0, start + $0)) } ?? UInt64.max
             var outstanding: [UInt32] = []
-            while true {
+            while offset < end {
                 try Task.checkCancellation()
                 try stamp.validate(source)
-                let chunk = try file.read(upToCount: Self.blockSize) ?? Data()
+                let chunk = try file.read(upToCount: Int(min(UInt64(Self.blockSize), end - offset))) ?? Data()
                 if chunk.isEmpty { break }
                 try await TransferThrottle.upload(chunk.count)
                 let at = offset

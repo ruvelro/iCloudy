@@ -11,14 +11,6 @@ final class TransferTests: XCTestCase {
         queue.client = { _ in CloudAPI(account: .demo, demo: demo) }
         return (root, demo, queue)
     }
-    private func wait(_ condition: () -> Bool) async throws {
-        for _ in 0..<500 {
-            if condition() { return }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        XCTFail("Timed out waiting for queue")
-        throw CloudError.message("Test timeout")
-    }
     private func upload(_ url: URL, batch: UUID = UUID()) -> Transfer {
         Transfer(batchID: batch, name: url.lastPathComponent, destination: "Demo", accountID: Account.demo.id, direction: .upload, localURL: url)
     }
@@ -360,9 +352,7 @@ final class TransferTests: XCTestCase {
         XCTAssertTrue(queue.items.allSatisfy { $0.status.contains("Sin conexión") })
         let late = root.appendingPathComponent("c"); try Data(repeating: 1, count: 1024).write(to: late)
         try queue.add([upload(late)])
-        try await Task.sleep(for: .milliseconds(100))
-        XCTAssertEqual(queue.items.last?.state, .queued, "Nothing starts while offline")
-        XCTAssertFalse(queue.isWorking)
+        try await assertStays({ queue.items.last?.state == .queued && !queue.isWorking }, for: .milliseconds(100), "Nothing starts while offline")
         queue.setOnline(true)
         try await wait { queue.items.allSatisfy { $0.state == .completed } }
         XCTAssertEqual(try demo.list("root").filter { ["a", "b", "c"].contains($0.name) }.count, 3)
@@ -392,8 +382,7 @@ final class TransferTests: XCTestCase {
         queue.cancel(job.id, pause: true)
         try await wait { !queue.isWorking }
         queue.setOnline(false); queue.setOnline(true)
-        try await Task.sleep(for: .milliseconds(100))
-        XCTAssertEqual(queue.items.first?.state, .paused, "Only network-paused jobs resume automatically")
+        try await assertStays({ queue.items.first?.state == .paused }, for: .milliseconds(100), "Only network-paused jobs resume automatically")
         XCTAssertEqual(queue.items.first?.status, "En pausa · Reanudar para continuar")
     }
 

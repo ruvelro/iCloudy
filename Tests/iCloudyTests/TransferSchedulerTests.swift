@@ -29,14 +29,6 @@ final class TransferSchedulerTests: XCTestCase {
         queue.client = { _ in CloudAPI(account: .demo, demo: demo) }
         return (demo, queue)
     }
-    private func wait(_ condition: () -> Bool) async throws {
-        for _ in 0..<1000 {
-            if condition() { return }
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        XCTFail("Timed out waiting for queue")
-        throw CloudError.message("Test timeout")
-    }
     private func file(_ name: String, size: Int) throws -> URL {
         let url = root.appendingPathComponent(name)
         try Data(repeating: 7, count: size).write(to: url)
@@ -216,8 +208,7 @@ final class TransferSchedulerTests: XCTestCase {
         XCTAssertEqual(queue.hold, .schedule)
         let job = upload(try file("night.dat", size: 2 * 1024 * 1024))
         try queue.add([job])
-        try await Task.sleep(for: .milliseconds(30))
-        XCTAssertFalse(queue.isWorking, "Nothing starts at noon")
+        try await assertStays({ !queue.isWorking }, for: .milliseconds(30), "Nothing starts at noon")
         XCTAssertEqual(queue.items.first?.state, .queued)
 
         clock = at(23, 30); queue.reevaluate()

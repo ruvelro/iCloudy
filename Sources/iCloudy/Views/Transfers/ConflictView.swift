@@ -4,7 +4,7 @@ import CoreSpotlight
 import UniformTypeIdentifiers
 
 struct ConflictView: View {
-    @ObservedObject var queue: TransferQueue
+    @Bindable var queue: TransferQueue
     let request: ConflictRequest
     @State private var applyToBatch = false
     var body: some View {

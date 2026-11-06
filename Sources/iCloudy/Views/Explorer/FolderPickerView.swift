@@ -46,7 +46,7 @@ struct CloudTargetPicker: View {
                 }.contentShape(Rectangle()).onTapGesture {
                     dismiss()
                     // Let the first sheet close before presenting the folder picker.
-                    Task { try? await Task.sleep(for: .milliseconds(350)); model.relocation = Relocation(files: request.files, kind: .transfer(from: request.source), account: account, origin: nil) }
+                    Task { try? await Task.sleep(for: .milliseconds(350)); model.ui.relocation = Relocation(files: request.files, kind: .transfer(from: request.source), account: account, origin: nil) }
                 }
             }.frame(minHeight: 160)
             HStack { Button("Cancelar") { dismiss() }.keyboardShortcut(.cancelAction); Spacer() }

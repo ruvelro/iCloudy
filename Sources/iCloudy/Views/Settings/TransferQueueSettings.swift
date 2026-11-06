@@ -34,6 +34,7 @@ struct TransferQueueSettings: View {
                 Text("Es un límite para toda la cola, repartido a partes iguales entre lo que esté en marcha. No frena la vista previa ni la copia entre volúmenes montados. El mínimo es de 32 KB/s.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
+            AccountBandwidthSettings(model: model)
             Section("Cuándo") {
                 Toggle("Transferir solo en un horario", isOn: $windowEnabled)
                 if windowEnabled {

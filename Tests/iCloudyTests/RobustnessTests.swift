@@ -20,6 +20,21 @@ final class RobustnessTests: XCTestCase {
         XCTAssertEqual(try LocalStore.read([String].self, from: url), ["ahora"], "Lo inmediato no lo pisa una escritura anterior")
     }
 
+    func testABusyStoreDoesNotHoldUpAnImmediateWriteOfAnotherOne() throws {
+        let slow = temporaryURL(), quick = temporaryURL()
+        defer { for url in [slow, quick] { try? FileManager.default.removeItem(at: url) } }
+        let writer = StoreWriter()
+        let release = DispatchSemaphore(value: 0)
+        writer.enqueue(on: slow) { release.wait() }
+        writer.later(["lento"], to: slow)
+        // With one queue for every file this waited for the semaphore forever.
+        try writer.now(["rápido"], to: quick)
+        XCTAssertEqual(try LocalStore.read([String].self, from: quick), ["rápido"])
+        release.signal()
+        writer.flush()
+        XCTAssertEqual(try LocalStore.read([String].self, from: slow), ["lento"], "Cada archivo conserva su orden")
+    }
+
     func testAFailedBackgroundWriteIsReported() async throws {
         let writer = StoreWriter()
         let blocked = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -76,17 +91,26 @@ final class RobustnessTests: XCTestCase {
 
     func testAViewRedrawsForWhatItReadsAndNothingElse() {
         let model = AppModel()
-        var transfersChanged = false, accountsChanged = false
-        withObservationTracking { _ = model.transfers } onChange: { transfersChanged = true }
-        withObservationTracking { _ = model.accounts } onChange: { accountsChanged = true }
+        let transfersChanged = Flag(), accountsChanged = Flag()
+        withObservationTracking { _ = model.transfers } onChange: { transfersChanged.set() }
+        withObservationTracking { _ = model.accounts } onChange: { accountsChanged.set() }
         model.queue.stateChanges.send()
-        XCTAssertTrue(transfersChanged, "Lo que lee la cola se entera de sus cambios")
-        XCTAssertFalse(accountsChanged, "Lo que solo lee las cuentas, no")
+        XCTAssertTrue(transfersChanged.isSet, "Lo que lee la cola se entera de sus cambios")
+        XCTAssertFalse(accountsChanged.isSet, "Lo que solo lee las cuentas, no")
 
-        var statusChanged = false
+        // The quotas and the queue no longer move a counter every badge of every row reads.
+        let badgeChanged = Flag()
+        let url = temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let copies = LocalCopyIndex(storeURL: url)
         let file = CloudFile(id: "a", name: "a.txt", mime: "text/plain", size: 1, modified: nil, webURL: nil, isFolder: false)
-        withObservationTracking { _ = model.localStatus(file) } onChange: { statusChanged = true }
-        model.localCopies.objectWillChange.send()
-        XCTAssertTrue(statusChanged, "Olvidar una copia local redibuja su marca")
+        copies.record(LocalCopy(accountID: "x", fileID: "a", name: "a.txt", path: url.path, bookmark: nil, size: 1,
+                                remoteModified: nil, savedAt: Date(), origin: .download))
+        withObservationTracking { _ = copies.status(for: file, accountID: "x") } onChange: { badgeChanged.set() }
+        model.queue.stateChanges.send()
+        XCTAssertFalse(badgeChanged.isSet, "Una transición de la cola no redibuja la marca de una fila")
+        copies.forget(accountID: "x", fileID: "a")
+        XCTAssertTrue(badgeChanged.isSet, "Olvidar una copia local redibuja su marca")
+        copies.flush()
     }
 }

@@ -4,7 +4,8 @@ import Combine
 /// Drives the plan sheet: counts in the background, shows itself only when counting takes a moment or the result
 /// deserves a look, and starts the transfer with the plan's seeds once the person agrees.
 @MainActor
-final class TransferPlanCoordinator: ObservableObject {
+@Observable
+final class TransferPlanCoordinator {
     struct Session: Identifiable {
         let id = UUID()
         let title: String
@@ -14,7 +15,7 @@ final class TransferPlanCoordinator: ObservableObject {
         /// False while a small enumeration may still finish unseen.
         var shown = false
     }
-    @Published private(set) var session: Session?
+    private(set) var session: Session?
     /// A plan that is still counting after this long shows its progress, so a slow listing is never silent.
     var revealDelay: Duration = .milliseconds(400)
     private var task: Task<Void, Never>?
@@ -55,7 +56,7 @@ final class TransferPlanCoordinator: ObservableObject {
         }
     }
     func confirm(dontAskAgain: Bool) {
-        if dontAskAgain { UserDefaults.standard.set(false, forKey: Prefs.transferPlan) }
+        if dontAskAgain { Prefs.defaults.set(false, forKey: Prefs.transferPlan) }
         finish(with: session?.plan)
     }
     /// After a failed enumeration: the transfer is still possible, just without a plan to seed its report.

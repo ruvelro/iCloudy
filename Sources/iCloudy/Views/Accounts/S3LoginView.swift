@@ -19,6 +19,8 @@ struct S3LoginView: View {
         case .cloudflare: return "Crea un token de API de R2 con acceso S3. El ID de cuenta está en el panel de R2, en la dirección del servicio."
         case .scaleway: return "Usa una clave de API de Scaleway con permiso sobre Object Storage."
         case .digitalocean: return "Crea una clave de acceso de Spaces en el panel de DigitalOcean."
+        case .storj: return "Genera credenciales S3 en el panel de Storj («Access keys», con la pasarela S3 alojada). La dirección es siempre gateway.storjshare.io."
+        case .idrive: return "Copia la dirección de tu región desde el panel de iDrive e2 (por ejemplo xyz1.ldn.idrivee2-11.com) y crea una clave de acceso allí."
         case .custom: return "Para MinIO, Garage, Ceph y otros servidores compatibles con S3. Escribe la dirección completa del servicio, con su puerto."
         }
     }
@@ -26,22 +28,21 @@ struct S3LoginView: View {
     private var complete: Bool {
         let filled = !form.accessKey.isEmpty && !form.secretKey.isEmpty
         switch form.service {
-        case .custom: return filled && !form.endpoint.isEmpty
         case .cloudflare: return filled && !form.accountID.isEmpty
         case .backblaze: return filled && !form.region.isEmpty
-        default: return filled
+        default: return filled && (!form.service.typesEndpoint || !form.endpoint.isEmpty)
         }
     }
 
     /// Reconnecting is about the keys: the service, region and bucket are known, and the access key is in the id.
     private func prefillForReconnect() {
-        guard form.accessKey.isEmpty, let account = model.reconnecting, account.cloud == .s3, let location = try? S3Location(account: account) else { return }
+        guard form.accessKey.isEmpty, let account = model.ui.reconnecting, account.cloud == .s3, let location = try? S3Location(account: account) else { return }
         form.service = location.service
         form.region = location.region
         form.bucket = location.bucket ?? ""
         form.addressing = location.addressing
         if let marker = account.id.lastIndex(of: "#") { form.accessKey = String(account.id[account.id.index(after: marker)...]) }
-        if location.service == .custom { form.endpoint = location.endpoint.url?.absoluteString ?? "" }
+        if location.service.typesEndpoint { form.endpoint = location.endpoint.url?.absoluteString ?? "" }
         if location.service == .cloudflare { form.accountID = location.endpoint.host?.components(separatedBy: ".").first ?? "" }
         showAdvanced = location.addressing != .automatic
     }
@@ -55,19 +56,19 @@ struct S3LoginView: View {
         if let home = getpwuid(getuid())?.pointee.pw_dir { panel.directoryURL = URL(fileURLWithPath: String(cString: home)).appendingPathComponent(".aws") }
         guard panel.runModal() == .OK, let url = panel.url, let text = try? String(contentsOf: url, encoding: .utf8) else { return }
         let found = AWSProfiles.parse(text)
-        model.connectionError = nil
-        guard !found.isEmpty else { model.connectionError = L("Ese archivo no tiene perfiles de AWS."); return }
+        model.ui.connectionError = nil
+        guard !found.isEmpty else { model.ui.connectionError = L("Ese archivo no tiene perfiles de AWS."); return }
         profiles = found
         use(found.first { $0.name == "default" && $0.hasKeys } ?? found.first(where: \.hasKeys) ?? found[0])
     }
     private func use(_ profile: AWSProfile) {
         if let why = profile.indirection, !profile.hasKeys {
-            model.connectionError = L("El perfil «\(profile.name)» \(why). iCloudy necesita las claves escritas en el archivo.")
+            model.ui.connectionError = L("El perfil «\(profile.name)» \(why). iCloudy necesita las claves escritas en el archivo.")
             return
         }
-        guard profile.hasKeys else { model.connectionError = L("El perfil «\(profile.name)» no tiene claves de acceso."); return }
+        guard profile.hasKeys else { model.ui.connectionError = L("El perfil «\(profile.name)» no tiene claves de acceso."); return }
         form.adopt(profile)
-        model.connectionError = nil
+        model.ui.connectionError = nil
     }
 
     var body: some View {
@@ -76,15 +77,18 @@ struct S3LoginView: View {
             Picker("Servicio", selection: $form.service) {
                 ForEach(S3Service.allCases) { service in Text(service.title).tag(service) }
             }
+            .onAppear { if let service = model.ui.serverPreset?.s3Service, model.ui.reconnecting == nil { form.service = service; form.region = service == .backblaze ? "" : service.defaultRegion } }
             .onChange(of: form.service) { _, service in
                 // The region of one service means nothing to another.
-                form.region = service.regions.isEmpty && service != .custom && service != .cloudflare ? "" : service.defaultRegion
+                form.region = service == .backblaze ? "" : service.defaultRegion
             }
             Text(explanation).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             switch form.service {
-            case .custom:
-                TextField("https://minio.ejemplo.com:9000", text: $form.endpoint).textFieldStyle(.roundedBorder)
+            case .custom, .idrive:
+                TextField(form.service == .idrive ? "xyz1.ldn.idrivee2-11.com" : "https://minio.ejemplo.com:9000", text: $form.endpoint).textFieldStyle(.roundedBorder)
                 TextField("Región (us-east-1 si el servidor no usa regiones)", text: $form.region).textFieldStyle(.roundedBorder)
+            case .storj:
+                EmptyView()
             case .cloudflare:
                 TextField("ID de cuenta de Cloudflare", text: $form.accountID).textFieldStyle(.roundedBorder)
             case .backblaze:
@@ -127,22 +131,22 @@ struct S3LoginView: View {
             } label: {
                 Text("Avanzado").font(.caption)
             }
-            if let error = model.connectionError {
+            if let error = model.ui.connectionError {
                 Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             }
             HStack {
-                Button("Cancelar") { model.serverLogin = nil; model.reconnecting = nil; dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancelar") { model.ui.serverLogin = nil; model.ui.reconnecting = nil; dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
-                if model.connecting { ProgressView().controlSize(.small) }
+                if model.ui.connecting { ProgressView().controlSize(.small) }
                 Button("Conectar") {
                     Task {
                         await model.connectS3(form)
                         form.secretKey = ""; form.sessionToken = ""
-                        if model.connectionError == nil { dismiss() }
+                        if model.ui.connectionError == nil { dismiss() }
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(model.connecting || !complete)
+                .disabled(model.ui.connecting || !complete)
             }
         }.padding(24).frame(width: 470)
     }
@@ -153,19 +157,19 @@ struct S3LoginView: View {
 struct TemporaryLinkDialog: ViewModifier {
     @Bindable var model: AppModel
     func body(content: Content) -> some View {
-        content.confirmationDialog("¿Crear un enlace temporal?", isPresented: Binding(get: { model.pendingTemporaryLink != nil },
-                                                                                        set: { if !$0 { model.pendingTemporaryLink = nil } }),
+        content.confirmationDialog("¿Crear un enlace temporal?", isPresented: Binding(get: { model.ui.pendingTemporaryLink != nil },
+                                                                                        set: { if !$0 { model.ui.pendingTemporaryLink = nil } }),
                                    titleVisibility: .visible) {
             Button("Válido durante 1 hora") { create(3600) }
             Button("Válido durante 1 día") { create(24 * 3600) }
             Button("Válido durante 7 días") { create(7 * 24 * 3600) }
-            Button("Cancelar", role: .cancel) { model.pendingTemporaryLink = nil }
+            Button("Cancelar", role: .cancel) { model.ui.pendingTemporaryLink = nil }
         } message: {
-            Text("Cualquier persona con el enlace podrá descargar «\(model.pendingTemporaryLink?.file.name ?? "")» hasta que caduque. No se puede revocar antes salvo desactivando la clave de acceso.")
+            Text("Cualquier persona con el enlace podrá descargar «\(model.ui.pendingTemporaryLink?.file.name ?? "")» hasta que caduque. No se puede revocar antes salvo desactivando la clave de acceso.")
         }
     }
     private func create(_ lifetime: Int) {
-        if let pending = model.pendingTemporaryLink { Task { await model.createTemporaryLink(pending.file, account: pending.account, lifetime: lifetime) } }
-        model.pendingTemporaryLink = nil
+        if let pending = model.ui.pendingTemporaryLink { Task { await model.createTemporaryLink(pending.file, account: pending.account, lifetime: lifetime) } }
+        model.ui.pendingTemporaryLink = nil
     }
 }

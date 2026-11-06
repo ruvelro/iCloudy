@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 /// Status-bar menu: what the queue is doing right now, plus the actions worth reaching without switching windows.
 struct MenuBarContent: View {
     @Bindable var model: AppModel
-    @ObservedObject var queue: TransferQueue
+    @Bindable var queue: TransferQueue
     @Environment(\.openWindow) private var openWindow
 
     private var running: [Transfer] { queue.items.filter { $0.state == .running } }
@@ -41,7 +41,7 @@ struct MenuBarContent: View {
         Button("Abrir iCloudy") { activate() }
         Button("Subir el portapapeles…") { activate(); model.uploadFromPasteboard() }
             .disabled(!model.canWrite)
-        Button("Buscar en todas las nubes") { activate(); model.preview.close(); model.showGlobalSearch = true }
+        Button("Buscar en todas las nubes") { activate(); model.preview.close(); model.ui.showGlobalSearch = true }
         if !model.savedSearches.items.isEmpty {
             Menu("Búsquedas guardadas") {
                 ForEach(model.savedSearches.items) { item in Button(item.name) { activate(); model.runSavedSearch(item) } }
@@ -52,6 +52,15 @@ struct MenuBarContent: View {
         if queue.resumableCount > 0 { Button("Reanudar todas") { _ = queue.resumeAll() } }
         if !model.mirrors.mirrors.isEmpty {
             Button("Sincronizar reflejos") { _ = model.syncAllMirrors() }
+        }
+        Menu("Trabajos guardados") {
+            ForEach(model.jobs.jobs) { job in
+                Button(job.name) {
+                    Task { do { try await model.runJob(id: job.id) } catch { model.error = error.localizedDescription } }
+                }.disabled(job.running)
+            }
+            if !model.jobs.jobs.isEmpty { Divider() }
+            Button("Gestionar trabajos…") { NSApp.activate(ignoringOtherApps: true); openWindow(id: "jobs") }
         }
         Divider()
         ForEach(model.accounts) { account in

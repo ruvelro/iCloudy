@@ -28,11 +28,11 @@ private final class LoopbackHTTP: @unchecked Sendable {
         listener.newConnectionHandler = { [weak self] connection in
             guard let self else { connection.cancel(); return }
             connection.start(queue: self.queue)
-            var bytes = Data()
-            func read() {
+            let bytes = Box(Data())
+            @Sendable func read() {
                 connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, complete, error in
-                    if let data { bytes.append(data) }
-                    let text = String(decoding: bytes, as: UTF8.self)
+                    if let data { bytes.value.append(data) }
+                    let text = String(decoding: bytes.value, as: UTF8.self)
                     if text.contains("\r\n\r\n") {
                         self.lock.withLock { self.requests.append(text) }
                         connection.send(content: Data(self.response(text).utf8), contentContext: .finalMessage, isComplete: true,

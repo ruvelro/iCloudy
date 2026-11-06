@@ -115,12 +115,32 @@ class CloudSession {
         return updated
     }
 
+    /// The `Authorization` value for one request. Most providers send the same bearer or Basic credential every time;
+    /// a provider whose scheme depends on the request (Digest hashes the method and the path) overrides this.
+    func authorization(method: String, url: URL) async throws -> String {
+        account.cloud.authorizationScheme + " " + (try await token())
+    }
+    /// After a 401, a new `Authorization` value that answers the server's challenge, or nil when this provider has no
+    /// answer to give and the usual renewal of the token applies.
+    func answer(_ refusal: HTTPURLResponse, method: String, url: URL) async throws -> String? { nil }
+    /// Sends `request` again with the answer to its 401, when there is one. A second 401 means the credentials
+    /// themselves are wrong.
+    private func answering<Result>(_ request: inout URLRequest, after response: URLResponse,
+                                   _ resend: (URLRequest) async throws -> (Result, URLResponse)) async throws -> (Result, URLResponse)? {
+        guard let http = response as? HTTPURLResponse, http.statusCode == 401, let url = request.url,
+              let header = try await answer(http, method: request.httpMethod ?? "GET", url: url) else { return nil }
+        request.setValue(header, forHTTPHeaderField: "Authorization")
+        let again = try await resend(request)
+        if (again.1 as? HTTPURLResponse)?.statusCode == 401 { expireSession(); throw CloudError.sessionExpired(nil) }
+        return again
+    }
+
     func request(_ url: URL, method: String = "GET", body: [String: Any]? = nil) async throws -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.timeoutInterval = 120
         Diagnostics.stamp(&request, account: account)
-        request.setValue(account.cloud.authorizationScheme + " " + (try await token()), forHTTPHeaderField: "Authorization")
+        request.setValue(try await authorization(method: method, url: url), forHTTPHeaderField: "Authorization")
         if let body {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -133,12 +153,17 @@ class CloudSession {
     func send(_ request: inout URLRequest) async throws -> (Data, URLResponse) {
         Diagnostics.stamp(&request, account: account)
         let (data, response) = try await session.data(for: request, delegate: RedirectGuard.shared)
-        // A self-hosted server asking for Digest is not rejecting the password: iCloudy only speaks Basic. Calling
-        // that an expired session sent people to re-type credentials that were right all along.
+        if let answered = try await answering(&request, after: response, { try await session.data(for: $0, delegate: RedirectGuard.shared) }) {
+            try expireIfScopeMissing(answered.1, answered.0)
+            return answered
+        }
+        // A self-hosted server asking for Digest of an account that cannot answer it (one signed in with a token) is
+        // not rejecting the password. Calling that an expired session sent people to re-type credentials that were
+        // right all along.
         if account.cloud.isSelfHosted, (response as? HTTPURLResponse)?.statusCode == 401,
            let challenge = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "WWW-Authenticate")?.lowercased(),
            challenge.contains("digest"), !challenge.contains("basic") {
-            throw CloudError.message(L("Este servidor pide autenticación Digest, que iCloudy todavía no habla. Habilita la autenticación Basic sobre HTTPS en el servidor, o usa una contraseña de aplicación si la ofrece."))
+            throw CloudError.message(L("Este servidor pide autenticación Digest, y esta cuenta está conectada con un token. Vuelve a conectarla con usuario y contraseña."))
         }
         try expireIfScopeMissing(response, data)
         guard (response as? HTTPURLResponse)?.statusCode == 401, tokenProvider == nil else { return (data, response) }
@@ -169,8 +194,51 @@ class CloudSession {
         guard let http = response as? HTTPURLResponse else { return nil }
         let idempotent = repeatable || ["GET", "HEAD", "PUT", "DELETE", "PATCH"].contains(method.uppercased())
         guard idempotent, http.statusCode == 429 || [500, 502, 503, 504].contains(http.statusCode) else { return nil }
-        let announced = Double(http.value(forHTTPHeaderField: "Retry-After") ?? "")
-        return min(max(1, announced ?? pow(2, Double(attempt))), 30)
+        return RetryAfter.delay(announced: RetryAfter.seconds(http), attempt: attempt)
+    }
+
+    /// `send` under the same retry policy as `json`, for callers that read the answer themselves (WebDAV's
+    /// multistatus, for instance). The last answer is returned as it came, so the caller still validates it.
+    func sendRetrying(_ request: inout URLRequest, repeatable: Bool = false) async throws -> (Data, URLResponse) {
+        let method = request.httpMethod ?? "GET"
+        var attempt = 0
+        while true {
+            try Task.checkCancellation()
+            let (data, response) = try await send(&request)
+            guard attempt < 3, let delay = Self.retryDelay(response, method: method, attempt: attempt, repeatable: repeatable) else {
+                return (data, response)
+            }
+            attempt += 1
+            Diagnostics.retrying(account, method: method, url: request.url, status: (response as? HTTPURLResponse)?.statusCode, attempt: attempt, delay: delay)
+            try await Task.sleep(for: .seconds(delay))
+        }
+    }
+
+    /// The wait before sending a block again. Tests set it to nothing.
+    var blockRetryDelay: (_ attempt: Int, _ response: URLResponse?) -> Double = { attempt, response in
+        RetryAfter.delay(announced: RetryAfter.seconds(response), attempt: attempt)
+    }
+    /// Sends one block of a chunked upload, and again after a transient failure (a 5xx, a 429, a dropped
+    /// connection), up to `ResumableSessionUpload.attemptsPerBlock` times. Only for blocks that are safe to repeat as
+    /// they are: Dropbox's append at an explicit offset (a repeat of one that landed is answered with the right offset),
+    /// Box's part with its range, a chunk to Mega's storage at its offset. One transient failure used to fail the
+    /// session, and the queue then started the file again from its checkpoint.
+    func sendBlock(_ send: () async throws -> (Data, URLResponse)) async throws -> (Data, URLResponse) {
+        var attempt = 0
+        while true {
+            try Task.checkCancellation()
+            let last = attempt + 1 >= ResumableSessionUpload.attemptsPerBlock
+            var response: URLResponse?
+            do {
+                let answer = try await send()
+                guard !last, ResumableSessionUpload.isTransient(status: (answer.1 as? HTTPURLResponse)?.statusCode ?? 0) else { return answer }
+                response = answer.1
+            } catch where !last && ResumableSessionUpload.isTransient(error) {}
+            Diagnostics.retrying(account, method: "PUT", url: response?.url, status: (response as? HTTPURLResponse)?.statusCode,
+                                 attempt: attempt + 1, delay: blockRetryDelay(attempt, response))
+            try await Task.sleep(for: .seconds(blockRetryDelay(attempt, response)))
+            attempt += 1
+        }
     }
 
     /// Tells the provider to forget upload sessions a cancelled transfer will never finish. Every failure here is
@@ -182,6 +250,9 @@ class CloudSession {
     func upload(_ request: inout URLRequest, from data: Data) async throws -> (Data, URLResponse) {
         Diagnostics.stamp(&request, account: account)
         let (body, response) = try await session.upload(for: request, from: data, delegate: RedirectGuard.shared)
+        if let answered = try await answering(&request, after: response, { try await session.upload(for: $0, from: data, delegate: RedirectGuard.shared) }) {
+            return answered
+        }
         try expireIfScopeMissing(response, body)
         guard (response as? HTTPURLResponse)?.statusCode == 401, tokenProvider == nil else { return (body, response) }
         request.setValue(account.cloud.authorizationScheme + " " + (try await token(force: true)), forHTTPHeaderField: "Authorization")
@@ -243,7 +314,12 @@ class CloudSession {
         var temporary: URL, response: URLResponse
         do {
             (temporary, response) = try await session.download(for: request, delegate: delegate)
-            if (response as? HTTPURLResponse)?.statusCode == 401, tokenProvider == nil {
+            if (response as? HTTPURLResponse)?.statusCode == 401, let http = response as? HTTPURLResponse, let url = request.url,
+               let header = try await answer(http, method: request.httpMethod ?? "GET", url: url) {
+                try? FileManager.default.removeItem(at: temporary)
+                request.setValue(header, forHTTPHeaderField: "Authorization")
+                (temporary, response) = try await session.download(for: request, delegate: delegate)
+            } else if (response as? HTTPURLResponse)?.statusCode == 401, tokenProvider == nil {
                 // Same policy as `send`: renew once, then treat a repeated 401 as a revoked session.
                 try? FileManager.default.removeItem(at: temporary)
                 request.setValue(account.cloud.authorizationScheme + " " + (try await token(force: true)), forHTTPHeaderField: "Authorization")

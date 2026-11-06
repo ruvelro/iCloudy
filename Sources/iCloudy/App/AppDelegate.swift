@@ -11,6 +11,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let services = ServicesProvider()
     /// Clicking the Dock icon with no window open must bring the explorer back, not just activate a headless process.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { true }
+    /// `icloudy://` links arrive as a Get URL Apple Event. Handling it here, before SwiftUI sees it, keeps a link from
+    /// opening a second window, and a link that launches the app waits for the accounts like any other request.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(handleGetURL(_:reply:)),
+                                                     forEventClass: AEEventClass(kInternetEventClass), andEventID: AEEventID(kAEGetURL))
+    }
+    @MainActor @objc func handleGetURL(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
+        guard let text = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue, let url = URL(string: text) else { return }
+        ColdStart.deliver { model in Task { await model.handle(url) } }
+    }
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         DockIcon.apply()
@@ -42,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         current?.queue.flush() // coalesced checkpoints still in memory
         current?.localCopies.flush() // and the index of what a finished transfer put on this Mac
         current?.offline.flush() // and the copies kept for offline use
+        current?.mirrors.flush() // and the baseline of a two-way sync that was running
         if let model = current { model.workspaceStore.save(model.workspace) } // tabs changed in the last second
         current?.preview.close()
         StoreWriter.shared.flush() // everything handed to the background writer reaches the disk before exiting

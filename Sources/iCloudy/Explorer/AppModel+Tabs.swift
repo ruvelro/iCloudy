@@ -5,12 +5,12 @@ import Combine
 /// Keeps the window's tabs and panes between launches.
 @MainActor
 final class WorkspaceStore {
-    /// Nil under XCTest, so a test never overwrites the tabs of whoever runs it.
+    /// Nil in the test suite, so a test never overwrites the tabs of whoever runs it.
     let url: URL?
     private var subscription: AnyCancellable?
     private var saved: Data?
 
-    init(url: URL? = NSClassFromString("XCTestCase") != nil ? nil : LocalStore.directory.appendingPathComponent("explorer-tabs.json")) {
+    init(url: URL? = AppEnvironment.isTesting ? nil : LocalStore.directory.appendingPathComponent("explorer-tabs.json")) {
         self.url = url
     }
 
@@ -18,7 +18,7 @@ final class WorkspaceStore {
     func load() -> ExplorerWorkspace? {
         guard let url, let data = try? Data(contentsOf: url) else { return nil }
         saved = data
-        return try? JSONDecoder().decode(ExplorerWorkspace.self, from: data)
+        return (try? JSONDecoder().decode(StoreEnvelope<ExplorerWorkspace>.self, from: data))?.items
     }
 
     /// Writes a second after the last change: a listing arriving page by page is not worth a write per page.
@@ -27,8 +27,8 @@ final class WorkspaceStore {
     }
 
     func save(_ workspace: ExplorerWorkspace) {
-        guard let url, let data = try? JSONEncoder().encode(workspace), data != saved else { return }
-        do { try LocalStore.save(workspace, to: url); saved = data } catch {}
+        guard let url, let data = try? JSONEncoder().encode(StoreEnvelope(workspace)), data != saved else { return }
+        do { try LocalStore.save(StoreEnvelope(workspace), to: url); saved = data } catch {}
     }
 }
 
@@ -46,7 +46,7 @@ extension AppModel {
     private func addTab(at place: BrowserLocation?, in pane: Int?) {
         let pane = pane ?? workspace.focusedPane
         guard workspace.panes.indices.contains(pane) else { return }
-        preview.close(); globalSearch.cancel(); showGlobalSearch = false
+        preview.close(); globalSearch.cancel(); ui.showGlobalSearch = false
         let id = workspace.panes[pane].addTab(at: place)
         workspace.focus(pane)
         reload(tab: id)
@@ -105,7 +105,7 @@ extension AppModel {
     }
 
     private func tabsDidSwitch() {
-        preview.close(); globalSearch.cancel(); showGlobalSearch = false
+        preview.close(); globalSearch.cancel(); ui.showGlobalSearch = false
         tabCameIntoView(workspace.current.id)
     }
 

@@ -10,10 +10,7 @@ final class PublicLinkTests: XCTestCase {
     override func tearDown() { StubProtocol.handler = nil }
 
     private func client(_ cloud: Cloud, options: [String: String] = [:]) -> CloudAPI {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        let account = Account(id: "test", cloud: cloud, name: "Test", email: "ana@example.com", clientID: "client", clientSecret: nil,
-                              serverURL: cloud == .webdav ? "https://nube.example.com/remote.php/dav/files/ana" : nil, bookmark: nil, options: options)
-        return CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "test-token" })
+        makeStubbedClient(cloud, email: "ana@example.com", server: cloud == .webdav ? "https://nube.example.com/remote.php/dav/files/ana" : nil, options: options)
     }
     private func item(_ id: String, folder: Bool = false, web: String? = nil) -> CloudFile {
         CloudFile(id: id, name: folder ? "Proyecto" : "informe.pdf", mime: folder ? "application/vnd.google-apps.folder" : "application/pdf",
@@ -77,15 +74,15 @@ final class PublicLinkTests: XCTestCase {
         let model = AppModel()
         let ftp = Account(id: "ftp:nas", cloud: .ftp, name: "nas", email: "ana@nas", clientID: "", clientSecret: nil, serverURL: "ftp://nas")
         model.requestPublicLinks(item("/a"), account: ftp)
-        XCTAssertNil(model.publicLinkManager); XCTAssertNotNil(model.error)
+        XCTAssertNil(model.ui.publicLinkManager); XCTAssertNotNil(model.error)
         model.error = nil
         model.requestLinkInventory(ftp)
-        XCTAssertNil(model.linkInventory)
+        XCTAssertNil(model.ui.linkInventory)
         let onedrive = Account(id: "ms", cloud: .microsoft, name: "OneDrive", email: "ana@example.com", clientID: "", clientSecret: nil)
         model.requestLinkInventory(onedrive)
-        XCTAssertEqual(model.linkInventory?.id, "ms", "OneDrive abre la lista para explicar por qué no la hay")
+        XCTAssertEqual(model.ui.linkInventory?.id, "ms", "OneDrive abre la lista para explicar por qué no la hay")
         model.requestPublicLinks(item("X"), account: onedrive)
-        XCTAssertEqual(model.publicLinkManager?.file.id, "X")
+        XCTAssertEqual(model.ui.publicLinkManager?.file.id, "X")
 
         let now = ISO8601DateFormatter().date(from: "2026-12-01T10:00:00Z")!
         let link = PublicLink(handle: "h", file: item("X"), url: nil, access: .edit, expires: expiry, hasPassword: true,
@@ -349,7 +346,7 @@ final class PublicLinkTests: XCTestCase {
     private func megaClient() -> CloudAPI {
         let store = MemoryCredentials()
         store.stored["mega:ana@ejemplo.com"] = Credential(accessToken: "sesión", refreshToken: "", expires: .distantFuture, secret: MegaCrypto.encode(masterKey))
-        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         let account = Account(id: "mega:ana@ejemplo.com", cloud: .mega, name: "Mega", email: "ana@ejemplo.com", clientID: "", clientSecret: nil)
         return CloudAPI(account: account, session: URLSession(configuration: configuration), credentials: store)
     }

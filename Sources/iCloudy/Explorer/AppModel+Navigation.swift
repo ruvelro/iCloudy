@@ -23,13 +23,14 @@ extension AppModel {
 
     static func selected(_ ids: Set<String>, among visible: [CloudFile]) -> [CloudFile] { visible.filter { ids.contains($0.id) } }
 
-    func select(_ id: String?) { preview.close(); globalSearch.cancel(); showGlobalSearch = false; go(to: BrowserLocation(accountID: id)) }
+    func select(_ id: String?) { preview.close(); globalSearch.cancel(); ui.showGlobalSearch = false; go(to: BrowserLocation(accountID: id)) }
 
     /// Takes a tab somewhere else, the focused one unless told otherwise. Everything that changes where a tab stands
     /// goes through here, so the listing, the filter and the selection of the old place never leak into the new one.
     func go(to target: BrowserLocation, tab id: BrowserState.ID? = nil) {
         let id = id ?? workspace.current.id
         workspace.update(id) { $0.open(target) }
+        recents.note(target)
         reload(tab: id)
     }
 
@@ -65,7 +66,7 @@ extension AppModel {
                 let trail = try await client(account).folderTrail(id: target)
                 try Task.checkCancellation()
                 guard isAwaited(request, by: tab) else { return }
-                preview.close(); globalSearch.cancel(); showGlobalSearch = false
+                preview.close(); globalSearch.cancel(); ui.showGlobalSearch = false
                 go(to: BrowserLocation(accountID: account.id, collection: .files, path: trail), tab: tab)
             } catch {
                 guard isAwaited(request, by: tab) else { return }
@@ -88,7 +89,8 @@ extension AppModel {
     func navigate(_ file: CloudFile) {
         // A binned folder is restored or purged whole; what hangs below it is not browsed, the way the providers'
         // own bins work, so the list never shows a place nothing can be uploaded to or moved within.
-        guard file.isFolder, let account, !inTrash else { return }
+        // A folder the bin itself offers for browsing (Dropbox) is the exception.
+        guard file.isFolder, let account, !inTrash || file.id.hasPrefix(Collection.trashFolderPrefix) else { return }
         noteForSpotlight(file, account: account)
         preview.close(); go(to: BrowserLocation(accountID: account.id, collection: collection, path: path + [file]))
     }
@@ -108,7 +110,8 @@ extension AppModel {
             moved = step(&tab) { place in place.accountID.map(connected.contains) ?? false }
         }
         guard moved else { return }
-        preview.close(); globalSearch.cancel(); showGlobalSearch = false
+        recents.note(workspace.current.location)
+        preview.close(); globalSearch.cancel(); ui.showGlobalSearch = false
         reload()
     }
 

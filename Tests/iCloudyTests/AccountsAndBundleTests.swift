@@ -65,17 +65,17 @@ final class AccountsAndBundleTests: XCTestCase {
         // SwiftUI presents one alert at a time, so an error and a piece of good news arriving together meant the
         // second never appeared. Sending files to the bin and reloading right after did exactly that.
         let model = AppModel()
-        XCTAssertNil(model.alertMessage)
+        XCTAssertNil(model.ui.alertMessage)
         model.info = "Enlace copiado"
-        XCTAssertEqual(model.alertMessage, "Enlace copiado")
-        XCTAssertEqual(model.alertTitle, L("iCloudy"))
+        XCTAssertEqual(model.ui.alertMessage, "Enlace copiado")
+        XCTAssertEqual(model.ui.alertTitle, L("iCloudy"))
         model.error = "No se pudo borrar"
-        XCTAssertEqual(model.alertMessage, "No se pudo borrar", "El error va primero")
-        XCTAssertEqual(model.alertTitle, L("No se pudo completar la operación"))
-        model.dismissAlert()
-        XCTAssertEqual(model.alertMessage, "Enlace copiado", "Y la otra espera su turno en vez de perderse")
-        model.dismissAlert()
-        XCTAssertNil(model.alertMessage)
+        XCTAssertEqual(model.ui.alertMessage, "No se pudo borrar", "El error va primero")
+        XCTAssertEqual(model.ui.alertTitle, L("No se pudo completar la operación"))
+        model.ui.dismissAlert()
+        XCTAssertEqual(model.ui.alertMessage, "Enlace copiado", "Y la otra espera su turno en vez de perderse")
+        model.ui.dismissAlert()
+        XCTAssertNil(model.ui.alertMessage)
     }
 
     func testTakingARunOfFilesWithShift() {
@@ -104,7 +104,7 @@ final class AccountsAndBundleTests: XCTestCase {
         // Dropping on the Dock icon only works when the app says what it opens; without CFBundleDocumentTypes the
         // Finder never calls application(_:open:). Shortcuts only lists intents when Metadata.appintents is in the
         // bundle, which `swift build` does not produce, so the build script has to.
-        let plist = try PropertyListSerialization.propertyList(from: Data(contentsOf: URL(fileURLWithPath: "Resources/Info.plist")), format: nil) as? [String: Any]
+        let plist = try PropertyListSerialization.propertyList(from: Data(contentsOf: repositoryURL("Resources/Info.plist")), format: nil) as? [String: Any]
         let types = try XCTUnwrap(plist?["CFBundleDocumentTypes"] as? [[String: Any]])
         let accepted = Set(types.flatMap { $0["LSItemContentTypes"] as? [String] ?? [] })
         XCTAssertTrue(accepted.isSuperset(of: ["public.item", "public.folder"]), accepted.description)
@@ -113,14 +113,16 @@ final class AccountsAndBundleTests: XCTestCase {
         XCTAssertFalse((plist?["NSHumanReadableCopyright"] as? String ?? "").contains("Google Drive y OneDrive"), "Nine providers, not two")
 
         // The version people read and the version the system reads have to be the same one, or a report about
-        // "0.5.0" is about a build nobody can identify.
-        let version = try XCTUnwrap(plist?["CFBundleShortVersionString"] as? String)
+        // "0.5.0" is about a build nobody can identify. VERSION is the one source; build-app.sh writes it into the
+        // bundle, so the Info.plist in the repository only carries a placeholder.
+        let version = try String(contentsOf: repositoryURL("VERSION"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(plist?["CFBundleShortVersionString"] as? String, "0.0.0", "The Info.plist must not be a second source of the version")
         let readme = try String(contentsOf: URL(fileURLWithPath: "README.md"), encoding: .utf8)
         XCTAssertTrue(readme.contains("versión-\(version)-"), "El distintivo del README dice otra versión")
         let changelog = try String(contentsOf: URL(fileURLWithPath: "CHANGELOG.md"), encoding: .utf8)
         XCTAssertTrue(changelog.contains("## \(version)"), "Esa versión no está contada en el registro de cambios")
 
-        let script = try String(contentsOf: URL(fileURLWithPath: "scripts/build-app.sh"), encoding: .utf8)
+        let script = try String(contentsOf: repositoryURL("scripts/build-app.sh"), encoding: .utf8)
         XCTAssertTrue(script.contains("appintentsmetadataprocessor"))
         XCTAssertTrue(script.contains("-emit-const-values"), "The processor reads the constant values the compiler extracts")
         XCTAssertTrue(script.contains("Metadata.appintents"))

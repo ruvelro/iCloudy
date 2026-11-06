@@ -6,11 +6,11 @@
 
 **Google Drive · OneDrive · Dropbox · Box · pCloud · S3 · Mega · Nextcloud · Synology · SFTP · FTP · SMB**
 
-[![versión](https://img.shields.io/badge/versión-0.7.0-6f9dff?style=flat-square)](https://github.com/ruvelro/iCloudy/releases)
+[![versión](https://img.shields.io/badge/versión-0.9.0-6f9dff?style=flat-square)](https://github.com/ruvelro/iCloudy/releases)
 [![macOS](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-6-F05138?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![SwiftUI](https://img.shields.io/badge/SwiftUI-nativo-0071e3?style=flat-square)](https://developer.apple.com/xcode/swiftui/)
-[![tests](https://img.shields.io/badge/tests-835%20✓-43c463?style=flat-square)](Tests)
+[![tests](https://img.shields.io/badge/tests-swift%20test-43c463?style=flat-square)](Tests)
 [![licencia](https://img.shields.io/badge/licencia-GPL--3.0-8a7ee0?style=flat-square)](LICENSE)
 
 </div>
@@ -31,7 +31,7 @@ No hay servidor intermedio. Tu Mac habla directamente con cada proveedor, y **na
 terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga lo que tú eliges.
 
 > [!NOTE]
-> **Versión 0.7** — La base es sólida y está probada, pero todavía no hay binario firmado. Los proveedores marcados
+> **Versión 0.9** — La base es sólida y está probada, y ya hay paquetes de cada versión, aunque sin firmar mientras no haya cuenta de desarrollador de Apple. Los proveedores marcados
 > como experimentales, y los nuevos de esta versión, no se han probado aún contra cuentas reales y pueden romperse sin aviso. Léete [estado y hoja de ruta](#-estado-y-hoja-de-ruta) antes de
 > confiarle nada importante.
 
@@ -53,6 +53,9 @@ terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga 
 | **O2 Cloud** | Sesión de Mi O2 | ✅⁸ | — | — | ✅ | — | 🧪 Experimental |
 | **pCloud** | OAuth | ✅⁸ | ✅ | — | ✅ | SHA-256 / SHA-1 | 🆕 Nuevo |
 | **S3 y compatibles**⁶ | Clave de acceso, STS o perfil de `~/.aws` | Prefijo | Temporales⁷ | — | — | MD5 (ETag) | 🆕 Nuevo |
+| **Azure Blob Storage** | Clave de la cuenta o token SAS | Prefijo | Temporales (SAS)⁷ | — | — | MD5 (`Content-MD5`) | 🆕 Sin probar con cuentas reales |
+| **iCloud Drive**¹⁰ | Carpeta del Mac | ✅ | — | — | ✅² | — | 🆕 Sin probar con cuentas reales |
+| **Más servidores**¹¹ | Según el protocolo | Según el protocolo | — | — | — | — | 🆕 Presets, sin probar con cuentas reales |
 
 <sub>
 ¹ Enlaces públicos y compartir con personas en Nextcloud y ownCloud, activando la API OCS al conectar.
@@ -60,10 +63,12 @@ terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga 
 ³ Cifrado de extremo a extremo: cada descarga se verifica contra el resumen que lleva dentro la clave del archivo.
 <br>⁴ En Mega, enlaces de archivo. Una carpeta se comparte con una clave aparte que iCloudy todavía no sabe crear, y lo dice.
 <br>⁵ Papelera navegable (restaurar, eliminar definitivamente, vaciar) en Drive, Box y Mega; en Dropbox se listan y restauran archivos, y el vaciado depende de la cuenta. En OneDrive se lista lo eliminado desde iCloudy en los últimos 30 días y se restaura (cuentas personales): Graph no deja ver la papelera entera. O2 y los volúmenes borran sin listar su papelera. pCloud lista, restaura y vacía la suya.
-<br>⁶ Amazon S3, Backblaze B2, Wasabi, Cloudflare R2, MinIO, Scaleway y DigitalOcean Spaces, con firma SigV4 propia y subidas multiparte reanudables — [guía](docs/S3.md).
+<br>⁶ Amazon S3, Backblaze B2, Wasabi, Cloudflare R2, Storj, iDrive e2, MinIO, Scaleway y DigitalOcean Spaces, con firma SigV4 propia y subidas multiparte reanudables — [guía](docs/S3.md).
 <br>⁷ URL prefirmadas de una hora, un día o siete días, solo de archivos.
 <br>⁹ En Nextcloud: la papelera se lista, se restaura, se purga y se vacía. WebDAV a secas no tiene.
 <br>⁸ Por nombre. El proveedor no tiene búsqueda propia: iCloudy recorre las carpetas (pCloud, con un solo listado recursivo).
+<br>¹⁰ La carpeta de iCloud Drive de este Mac, con el estado de cada archivo (solo en iCloud, bajando, descargado, subiendo), descarga bajo demanda y «Quitar la descarga». Sin cuota: macOS no deja leer la del plan.
+<br>¹¹ Hetzner Storage Box (SFTP y WebDAV), Koofr, Yandex Disk, kDrive, HiDrive, Fastmail Files, Seafile, ownCloud Infinite Scale y Nextcloud (con inicio de sesión en el navegador), más Storj e iDrive e2 en S3: dirección, puerto y ruta ya puestos sobre los proveedores WebDAV, SFTP y S3. Azure, en su [guía](docs/AZURE.md).
 </sub>
 
 **SFTP** cubre cualquier servidor SSH y la mayoría de NAS, cifrado y con la clave del servidor comprobada en cada sesión. **WebDAV** cubre Nextcloud, ownCloud, Synology y casi cualquier NAS. **Volúmenes** cubre SMB, AFP, NFS, discos
@@ -113,12 +118,12 @@ cancelable y limpieza al cerrar.
 |  |  |
 |---|---|
 | **Nube o Mac, de un vistazo** | Cada archivo dice si solo está en la nube, si tienes copia en el Mac o si esa copia se ha quedado atrás. |
-| **Reflejos y sincronización** | Eliges una carpeta del Mac y se mantiene subida y al día, en un sentido y sin borrados; o en ambos sentidos, con línea base por archivo, papelera a cada lado para lo borrado, dos versiones cuando ambas cambian y un freno que pregunta antes de borrar la mayor parte de un lado. |
+| **Reflejos y sincronización** | Una carpeta del Mac subida y al día, o una de la nube copiada y al día en el Mac; en un sentido, con borrados a la papelera del destino solo si eliges «espejo exacto»; o en ambos sentidos, con línea base por archivo y papelera a cada lado. Política de conflictos por reflejo (las dos versiones, la más reciente, la del Mac, la de la nube o preguntar), exclusiones con `!`, filtros por tamaño y fecha, comparación por suma donde el proveedor la da, verificación periódica, programación propia y un freno que pregunta antes de borrar la mayor parte de un lado. Entre dos carpetas de nubes, en ambos sentidos: **experimental** (cada archivo pasa entero por el Mac, sin reanudar ni informe por archivo). |
 | **Modo sin conexión** | Se detecta la caída, se pausan las transferencias con el motivo a la vista y se sigue mostrando el último listado conocido. |
 | **Personalización por cuenta** | Alias, ocho colores e iconos propios, para distinguir la cuenta del trabajo de la de casa de un golpe de vista. |
 | **Iconos por tipo de archivo** | Un PDF es rojo, una hoja de cálculo verde, un vídeo índigo. El ojo encuentra el archivo antes de que el cerebro lea el nombre. |
 | **Espacio de verdad** | Gráfico circular o barra, a tu gusto, con el desglose por cuenta: archivos, papelera y —en Google— el resto de servicios. Si el proveedor no da cuota, no se inventa un porcentaje. |
-| **Integrado en macOS** | Icono en la barra de menús, «Subir a iCloudy» en el menú Servicios, soltar en el Dock, Spotlight, Atajos y Automatizador. |
+| **Integrado en macOS** | Icono en la barra de menús, «Subir a iCloudy» en el menú Servicios, soltar en el Dock, Spotlight y Atajos (también desde Automator, con «Ejecutar atajo»). |
 | **Unidades compartidas** | Unidades compartidas de Google y bibliotecas de SharePoint, sin volver a iniciar sesión. |
 | **En dos idiomas** | Castellano e inglés, y añadir otro es soltar un `.lproj`. |
 
@@ -127,7 +132,8 @@ cancelable y limpieza al cerrar.
 |  |  |
 |---|---|
 | **Pestañas y doble panel** | Varias ubicaciones abiertas en la misma ventana (⌘T, ⌘W, ⌘1…⌘9) y dos paneles lado a lado (⇧⌘D): F5 copia al otro panel y F6 mueve, también entre nubes distintas, quitando el original solo después de una copia verificada. |
-| **Cola en paralelo** | Varias transferencias a la vez, con límite global y por cuenta, límite de ancho de banda de subida y de bajada, prioridad, horario permitido y pausa en redes caras o limitadas. |
+| **Cola en paralelo** | Varias transferencias a la vez, con límite global y por cuenta, límite de ancho de banda de subida y de bajada para toda la cola y para cada cuenta, prioridad, horario permitido, pausa en redes caras o limitadas y una gráfica de la velocidad. |
+| **Trabajos guardados** | Transferencias con nombre que se repiten desde su ventana, la barra de menús o a una hora: orígenes del Mac o de la nube, un destino, política de conflictos, filtros, no repetir lo que ya está con la misma suma, verificar al terminar y, si se pide, llevar los borrados a la papelera del destino. Cada pasada va a la cola con su informe y su historial. |
 | **Plan e informe** | Antes de una transferencia grande, cuántos archivos y bytes son, el espacio que hace falta y los conflictos que ya existen. Al acabar, un informe archivo por archivo, exportable a CSV o JSON, con «Reintentar solo lo pendiente» y «Verificar lo copiado». |
 | **Descargas verificadas** | Cada descarga se comprueba contra el tamaño y la suma del proveedor (MD5, QuickXorHash, `content_hash`, SHA-1) antes de dejarla en su sitio. Si el archivo cambió mientras bajaba, se vuelve a pedir; si llegó dañado, no queda nada. |
 | **Disponible sin conexión** | Archivos y carpetas marcados se guardan en el Mac y se mantienen al día, dentro del espacio que elijas. |
@@ -149,6 +155,32 @@ cancelable y limpieza al cerrar.
 | **Búsquedas guardadas** | Y búsqueda también en WebDAV, Nextcloud, FTP, SFTP, O2 y pCloud. |
 | **Notificaciones, inicio de sesión y Dock** | Aviso al acabar las transferencias, abrir al iniciar sesión y vivir solo en la barra de menús. |
 | **Más Atajos** | Listar, descargar, crear enlaces y copiar entre nubes desde la app Atajos. |
+
+### 🆕 Nuevo en el explorador
+
+|  |  |
+|---|---|
+| **Columnas a tu gusto** | Ordena con un clic en la cabecera, en los dos sentidos; añade Tipo, Suma de comprobación o Estado, y agrupa por tipo o por fecha. |
+| **Vista en columnas** | La tercera vista, como la del Finder, con ← y → entre columnas. |
+| **Ir a la carpeta (⇧⌘G)** | Escribe una ruta, en esta cuenta o en otra («Dropbox:/Fotos»), o escribe sobre las migas con ⌘L. |
+| **Recientes y favoritos** | Las veinte últimas carpetas, de cualquier cuenta; favoritos en el orden que quieras y a mano con ⌃1…⌃9. |
+| **Inspector (⌘I)** | Tipo, tamaño, fechas, ruta, suma, copia local, versiones y enlaces de lo seleccionado, o el total de varios. |
+| **Abrir con… y volver a subir** | Edita en cualquier app una copia vigilada; al guardar, sube los cambios por la cola verificada, y si la nube cambió mientras tanto conserva las dos versiones. |
+| **Vista previa como Vista Rápida** | Pantalla completa, compartir, zoom y giro en imágenes, ⌘Y. |
+| **Teclas del Finder** | ⌘D duplica, ⇧⌘N crea carpeta, ⌘E expulsa, y escribir un nombre lo selecciona. Barra lateral con teclado y VoiceOver. |
+
+### 🆕 Nuevo en proveedores e integración
+
+|  |  |
+|---|---|
+| **Nextcloud en el navegador** | Login Flow v2: inicias sesión en tu servidor, con dos pasos o SSO, y Nextcloud da a iCloudy una contraseña de aplicación propia. Las subidas grandes van por trozos (chunking v2) y se reanudan. |
+| **WebDAV Digest y tokens** | Servidores que solo aceptan Digest, sin que la contraseña viaje, y tokens de acceso OAuth para ownCloud Infinite Scale y similares. |
+| **SFTP que se reanuda** | Subidas y descargas que siguen desde el último byte confirmado, comprobando que el origen no ha cambiado. |
+| **Enlaces `icloudy://`** | `icloudy://open?account=Trabajo&path=/Fotos`, `reveal`, `search?q=…`; «Copiar enlace de iCloudy» en cada elemento. Un enlace solo enseña: nunca borra ni sube. |
+| **Línea de órdenes** | `icloudy ls`, `get`, `put`, `search`, `open`, `jobs run`, hablando con la app abierta. Va en `Contents/Helpers/icloudy`: `ln -s /Applications/iCloudy.app/Contents/Helpers/icloudy /usr/local/bin/icloudy` y después `icloudy pair`. |
+| **Más Atajos** | Subir a una ruta, crear carpetas, mover, enviar a la papelera (con confirmación), buscar devolviendo resultados, sincronizar un reflejo y enlaces con caducidad, con frases en castellano e inglés. |
+| **Spotlight completo** | Opcional por cuenta: los nombres de todo el árbol, hasta un límite, además de lo abierto y los favoritos. |
+| **AppleScript** | `list accounts`, `show "Dropbox:/Fotos"` y `search for "factura"`. |
 
 <br>
 
@@ -182,12 +214,18 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
   en copias de iCloud y solo se leen con la sesión desbloqueada. La excepción es O2: su acceso se hace en las páginas
   del operador y las cookies de ese acceso viven en el contenedor de WebKit, como en un navegador. Ahí es donde se
   renueva la sesión sin preguntar nada, y desconectar la cuenta las borra.
-- **OAuth con PKCE** y navegador externo. iCloudy nunca ve tu contraseña de Google, Microsoft, Dropbox ni Box.
-- **Borrar es reversible por defecto.** Suprimir envía a la papelera del proveedor, y en Drive, Box, Mega y Dropbox
-  la pestaña **Papelera** deja restaurar lo enviado. El borrado definitivo y «Vaciar papelera» existen, pero son
-  acciones aparte, con su propia confirmación que dice que nadie podrá deshacerlo. WebDAV y FTP no tienen papelera:
-  ahí borrar es definitivo, y el diálogo de confirmación lo dice antes de hacerlo.
-- **No se indexan contenidos.** Spotlight recibe nombres y ubicaciones, nunca lo que hay dentro de los archivos.
+- **OAuth con PKCE** y navegador externo. iCloudy nunca ve tu contraseña de Google, Microsoft, Dropbox ni Box. pCloud
+  no devuelve el `state` de OAuth, así que la cuenta que conecta se te enseña para que la confirmes antes de guardarla.
+- **SFTP sin confianza a ciegas.** La primera vez se muestra la huella `SHA256:` de la clave del servidor y no se
+  envía nada secreto hasta que la aceptas; la clave queda en el Llavero y una distinta corta la conexión.
+- **Borrar es reversible donde el proveedor lo permite.** Suprimir envía a la papelera del proveedor, y la pestaña
+  **Papelera** deja restaurar lo enviado en Drive, Box, Dropbox, pCloud, Mega y Nextcloud; en OneDrive, lo enviado
+  desde iCloudy en los últimos 30 días. O2 y los volúmenes usan su papelera pero no la listan. El borrado definitivo y
+  «Vaciar papelera» existen, pero son acciones aparte, con su propia confirmación que dice que nadie podrá
+  deshacerlo. FTP, SFTP y WebDAV sin Nextcloud no tienen papelera: ahí borrar es definitivo, y el diálogo de
+  confirmación lo dice antes de hacerlo.
+- **No se indexan contenidos.** Spotlight recibe el nombre y la ubicación de lo que abres y de tus favoritos, nunca
+  lo que hay dentro de los archivos.
 - **Sin telemetría.** Ninguna.
 
 <br>
@@ -203,13 +241,13 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 - [x] Reflejos de carpeta local → nube con FSEvents
 - [x] Vista previa Quick Look y exportación de documentos de Google
 - [x] Modo sin conexión y caché de listados
-- [x] Integración con Spotlight, Atajos, Automatizador, Servicios y Dock
+- [x] Integración con Spotlight, Atajos (también desde Automator, con «Ejecutar atajo»), Servicios y Dock
 - [x] Castellano e inglés
 - [x] Papelera navegable con restaurar, borrado definitivo y vaciado, donde el proveedor lo permite
 - [x] SFTP con SSH propio sobre CryptoKit, y FTPS explícito (`AUTH TLS`) — [cómo funciona](docs/FTP.md)
 - [x] Compartir con personas, con permiso de ver o editar, y revocar accesos: Drive, OneDrive, Dropbox, Box y Nextcloud
 - [x] Sincronización en ambos sentidos entre una carpeta del Mac y una de la nube, con línea base, conflictos que conservan las dos versiones y freno ante borrados masivos
-- [x] Extensión File Provider (`NSFileProviderReplicatedExtension`) sobre los mismos proveedores, con la app dividida en librería y lanzador para compartir el código
+
 - [x] pCloud y S3 con sus compatibles
 - [x] Pestañas, doble panel, cola en paralelo con límite de ancho de banda, plan e informe de transferencias
 - [x] Descargas verificadas, copias sin conexión, versiones, gestión de enlaces, comparador y buscador de duplicados
@@ -220,8 +258,8 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 
 **En camino**
 
-- [ ] **Binario firmado y notarizado**, con actualizaciones automáticas
-- [ ] **Extensión del Finder firmada y verificada**: el código está ([File Provider](docs/FILEPROVIDER.md)) y se empaqueta al indicar un App Group, pero cargarla en el Finder exige un identificador de equipo de Apple que todavía no hay
+- [ ] **Binario firmado y notarizado**: el empaquetado (`.zip`, `.dmg`, sumas SHA-256), la notarización, el aviso de versiones nuevas y el cask de Homebrew están listos y solo esperan un identificador de equipo de Apple — [distribución](docs/DISTRIBUCION.md). En el Mac App Store, no: [por qué](docs/DISTRIBUCION.md#mac-app-store-no)
+- [ ] **Extensión del Finder (File Provider)**: el código está (`NSFileProviderReplicatedExtension` sobre los mismos proveedores, [File Provider](docs/FILEPROVIDER.md)) y se empaqueta al indicar un App Group, pero nunca se ha cargado en el Finder: hace falta un identificador de equipo de Apple que todavía no hay, así que está sin verificar
 - [ ] **Mega**: probar el segundo factor y las cuentas anteriores a 2018 contra cuentas reales
 - [ ] **pCloud, S3 y bóvedas**: probarlos contra cuentas reales y contra una bóveda creada por Cryptomator
 - [ ] **Proton Drive**: necesita OpenPGP propio, y no se añadirá sin poder verificarlo contra cuentas reales
@@ -235,27 +273,30 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 |---|---|
 | [Detalles técnicos](docs/DETALLES.md) | La referencia larga: cada función, cada límite, cada decisión |
 | [OAuth](docs/OAUTH.md) | Registrar los clientes de Google, Microsoft, Dropbox, Box y pCloud |
+| [Distribución](docs/DISTRIBUCION.md) | Publicar una versión, firma y notarización, actualizaciones, Homebrew y el Mac App Store |
 | [Mega](docs/MEGA.md) | El protocolo, la criptografía y por qué es experimental |
 | [O2 Cloud](docs/O2.md) | Funambol OneMediaHub bajo la marca de O2 |
 | [FTP](docs/FTP.md) | Qué hay, qué falta y lo que costaría añadirlo |
 | [Vista previa](docs/PREVIEW.md) | Formatos, límites y consentimiento |
 | [S3](docs/S3.md) | Puntos de acceso, firma, subidas multiparte y verificación |
+| [Azure](docs/AZURE.md) | Shared Key y SAS, bloques reanudables, rangos y lo que falta |
 | [pCloud](docs/PCLOUD.md) | API, regiones y registro del cliente |
 | [Cifrado](docs/CIFRADO.md) | Bóvedas compatibles con Cryptomator: qué protege y qué no |
 | [Diagnóstico](docs/DIAGNOSTICO.md) | Niveles, qué se oculta y qué se exporta |
+| [Seguridad](SECURITY.md) | Qué criptografía es del sistema, cuál es propia y cómo avisar de un fallo |
 
 <br>
 
 ## 🛠️ Desarrollo
 
 ```bash
-swift test                       # 792 pruebas; HTTP simulado y servidores FTP locales
-swift run iCloudy                # iterar sobre la interfaz
+swift test                       # todas las pruebas; HTTP simulado y servidores FTP y SSH locales
+swift run iCloudyMain            # iterar sobre la interfaz
 python3 scripts/mockups/generar.py  # rehacer las maquetas del README
 swift scripts/render-mockups.swift  # y convertirlas en PNG
 ```
 
-La estructura del código y la compilación de depuración se describen en la [guía del refactor 0.5.0](docs/REFACTOR-0.5.0.md).
+La estructura del código (módulos, `AppModel` y sus subsistemas, proveedores y capacidades, persistencia y concurrencia) se describe en [ARQUITECTURA.md](docs/ARQUITECTURA.md).
 
 Sin dependencias externas: solo SwiftUI y las bibliotecas del sistema. Las pruebas cubren desde el flujo OAuth
 completo con un navegador simulado por TCP hasta la criptografía de Mega contrastada con OpenSSL.

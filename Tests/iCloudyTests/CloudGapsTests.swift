@@ -6,13 +6,9 @@ import XCTest
 @MainActor
 final class CloudGapsTests: XCTestCase {
     private func client(_ cloud: Cloud, server: String? = nil, flavor: String? = nil, credentials: CredentialStore? = nil, id: String = "gap") -> CloudAPI {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
         var options: [String: String] = cloud == .pcloud ? ["apiHost": "eapi.pcloud.com"] : [:]
         if let flavor { options["flavor"] = flavor }
-        let account = Account(id: id, cloud: cloud, name: "Prueba", email: "ana@example.com", clientID: "client", clientSecret: nil,
-                              serverURL: server, bookmark: nil, options: options)
-        if let credentials { return CloudAPI(account: account, session: URLSession(configuration: config), credentials: credentials) }
-        return CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "test-token" })
+        return makeStubbedClient(stubbedAccount(cloud, id: id, name: "Prueba", email: "ana@example.com", server: server, options: options), credentials: credentials)
     }
     private func file(_ id: String, _ name: String, folder: Bool = false, size: Int64? = 10) -> CloudFile {
         CloudFile(id: id, name: name, mime: folder ? "application/vnd.google-apps.folder" : "application/octet-stream", size: folder ? nil : size,
@@ -155,8 +151,8 @@ final class CloudGapsTests: XCTestCase {
     func testOneDriveListsWhatICloudyBinnedAndRestoresItByID() async throws {
         let journal = OneDriveBinJournal(url: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json"))
         let accountID = "onedrive-" + UUID().uuidString
-        journal.record(file("A1", "a.txt"), accountID: accountID, now: Date())
-        journal.record(file("B2", "viejo.txt"), accountID: accountID, now: Date().addingTimeInterval(-31 * 86_400))
+        try journal.record(file("A1", "a.txt"), accountID: accountID, now: Date())
+        try journal.record(file("B2", "viejo.txt"), accountID: accountID, now: Date().addingTimeInterval(-31 * 86_400))
         XCTAssertEqual(journal.items(accountID: accountID).map(\.file.id), ["A1"], "Lo de hace más de 30 días ya no está en la papelera")
 
         // The shared journal is what the provider uses; the test cleans up after itself.
@@ -195,7 +191,7 @@ final class CloudGapsTests: XCTestCase {
     private func s3(_ credential: Credential) -> CloudAPI {
         let account = S3Authentication.account(.aws, endpoint: URLComponents(string: "https://s3.eu-west-1.amazonaws.com")!, region: "eu-west-1",
                                                bucket: "fotos", addressing: .path, accessKey: credential.accessToken)
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let config = StubProtocol.configuration()
         return CloudAPI(account: account, session: URLSession(configuration: config), credentials: Keys(credential))
     }
 

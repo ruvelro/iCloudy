@@ -61,7 +61,7 @@ final class CryptomatorVaults: ObservableObject {
     nonisolated static func isVaultAccount(_ id: String) -> Bool { id.hasPrefix(accountPrefix) }
     static func accountID(base: String, folder: String) -> String { accountPrefix + base + "|" + folder }
 
-    nonisolated static var idleMinutes: Int { UserDefaults.standard.object(forKey: idlePreference) as? Int ?? defaultIdleMinutes }
+    nonisolated static var idleMinutes: Int { Prefs.defaults.object(forKey: idlePreference) as? Int ?? defaultIdleMinutes }
 
     func account(_ id: String?) -> Account? { unlocked.first { $0.id == id }?.account }
     func client(for id: String) -> CloudAPI? { unlocked.first { $0.id == id }?.client }
@@ -161,8 +161,8 @@ extension CloudCapabilities {
     /// links, no sharing and no copy, since all of them would hand out or duplicate ciphertext under its old name.
     static func cryptomatorVault(over cloud: Cloud) -> CloudCapabilities {
         let base = CloudCapabilities.of(cloud)
-        return CloudCapabilities(oauth: false, search: false, recents: false, sharedWithMe: false, publicLinks: false,
-                                 copy: false, move: true, quota: base.quota, exportsDocuments: false,
-                                 reversibleTrash: base.reversibleTrash, checksum: base.checksum)
+        return CloudCapabilities(search: false, recents: false, sharedWithMe: false, publicLinks: false,
+                                 copy: false, quota: base.quota, reversibleTrash: base.reversibleTrash,
+                                 undoesTrash: base.undoesTrash, sessionLimit: base.sessionLimit)
     }
 }

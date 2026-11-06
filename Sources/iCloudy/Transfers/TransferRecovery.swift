@@ -176,6 +176,8 @@ private final class DestinationChecker {
         var keys: [String] = []
         var current: String? = key
         while let k = current { keys.insert(k, at: 0); current = Transfer.parentKey(k) }
+        // Contents downloaded straight into the folder have no root item to step into.
+        if job.options?.contentsOnly == true { keys.removeFirst() }
         return keys.reduce(local) { url, k in url.appendingPathComponent(job.names[k] ?? FileNames.safe(job.name)) }
     }
     /// Hashes the local copy off the main thread, once and only in the algorithm the provider listed.

@@ -7,11 +7,8 @@ import AppKit
 /// undoing as redo, so a step registers its inverse synchronously as it starts and only then goes to the network. A
 /// step that fails clears the history: what is left in it describes a state that no longer exists.
 extension AppModel {
-    /// Providers whose bin gives an item back from its id alone. Dropbox needs the revision its bin lists, and the
-    /// Finder's Trash is out of reach of the sandbox.
-    static func undoesTrash(_ account: Account) -> Bool {
-        account.isDemo || [.google, .box, .pcloud, .mega].contains(account.cloud)
-    }
+    /// Providers whose bin gives an item back from its id alone: `CloudCapabilities.undoesTrash`.
+    static func undoesTrash(_ account: Account) -> Bool { account.capabilities.undoesTrash }
 
     func registerUndoable(_ name: String, account: Account, undo: @escaping (AppModel, CloudAPI) async throws -> Void,
                           redo: @escaping (AppModel, CloudAPI) async throws -> Void) {

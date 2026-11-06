@@ -131,6 +131,7 @@ struct Crumb: View {
     let current: Bool
     let action: () -> Void
     @State private var hovering = false
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         Button(action: action) {
@@ -143,14 +144,22 @@ struct Crumb: View {
             // The same height as the collection row above it and the filter field beside it, so the three read as
             // one band of chrome instead of three sizes of box.
             .padding(.horizontal, 10).frame(height: Layout.controlHeight)
-            .background(current ? Color.primary.opacity(0.10) : (hovering ? Color.primary.opacity(0.07) : .clear),
+            .background(current ? Color.primary.opacity(contrast == .increased ? 0.2 : 0.10) : (hovering ? Color.primary.opacity(0.07) : .clear),
                         in: RoundedRectangle(cornerRadius: 7))
+            .overlay {
+                // With Increase Contrast every crumb gets an edge, so the path reads as boxes without relying on tints.
+                if contrast == .increased { RoundedRectangle(cornerRadius: 7).strokeBorder(Color.primary.opacity(current ? 0.6 : 0.35)) }
+            }
             .contentShape(RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
         .disabled(current)
         .onHover { hovering = $0 && !current }
         .help(title)
+        .accessibilityLabel(title)
+        .accessibilityValue(current ? L("Carpeta actual") : "")
+        .accessibilityHint(current ? "" : L("Vuelve a esta carpeta"))
+        .accessibilityAddTraits(current ? [.isSelected] : [])
     }
 }
 
@@ -165,6 +174,7 @@ struct ChromeField: View {
     @Binding var text: String
     var onSubmit: () -> Void = {}
     @FocusState private var focused: Bool
+    @Environment(\.colorSchemeContrast) private var contrast
 
     init(_ placeholder: LocalizedStringKey, symbol: String = "magnifyingglass", text: Binding<String>, onSubmit: @escaping () -> Void = {}) {
         self.placeholder = placeholder; self.symbol = symbol; self._text = text; self.onSubmit = onSubmit
@@ -174,6 +184,8 @@ struct ChromeField: View {
             Image(systemName: symbol).font(.caption).foregroundStyle(.tertiary)
             TextField(placeholder, text: $text)
                 .textFieldStyle(.plain).focused($focused).onSubmit(onSubmit)
+                .accessibilityLabel(Text(placeholder))
+                .accessibilityValue(text)
             if !text.isEmpty {
                 Button { text = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
                     .accessibilityLabel("Borrar el filtro")
@@ -183,7 +195,7 @@ struct ChromeField: View {
         .padding(.horizontal, 8).frame(height: Layout.controlHeight)
         .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
         .overlay(RoundedRectangle(cornerRadius: 7)
-            .strokeBorder(focused ? Color.accentColor : Color.primary.opacity(0.13), lineWidth: focused ? 2 : 1))
+            .strokeBorder(focused ? Color.accentColor : Color.primary.opacity(contrast == .increased ? 0.5 : 0.13), lineWidth: focused ? 2 : 1))
         .contentShape(RoundedRectangle(cornerRadius: 7))
         .onTapGesture { focused = true }
     }
@@ -197,11 +209,15 @@ struct SidebarRow: ViewModifier {
     let selected: Bool
     let tint: Color
     @State private var hovering = false
+    @Environment(\.colorSchemeContrast) private var contrast
 
     func body(content: Content) -> some View {
         content
-            .background(selected ? tint.opacity(0.13) : (hovering ? Color.primary.opacity(0.06) : .clear),
+            .background(selected ? tint.opacity(contrast == .increased ? 0.3 : 0.13) : (hovering ? Color.primary.opacity(0.06) : .clear),
                         in: RoundedRectangle(cornerRadius: 9))
+            .overlay {
+                if contrast == .increased, selected { RoundedRectangle(cornerRadius: 9).strokeBorder(tint, lineWidth: 1.5) }
+            }
             .onHover { hovering = $0 }
     }
 }

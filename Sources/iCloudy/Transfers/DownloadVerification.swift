@@ -56,14 +56,14 @@ extension CloudAPI {
     func verifyDownload(_ file: CloudFile, at url: URL, exported: Bool, checksum: Bool) async throws -> DownloadVerification {
         // Drive generates an export on the fly: there is no listed size or checksum for that rendition.
         if exported || file.isGoogleDocument { return .exported }
-        guard demo != nil || provider.canVerifyDownload(of: file) else { return .unavailable }
+        guard provider.canVerifyDownload(of: file) else { return .unavailable }
         let local = url
         let size = try await blockingIO { Int64(truncatingIfNeeded: (try FileManager.default.attributesOfItem(atPath: local.path)[.size] as? NSNumber)?.int64Value ?? 0) }
         var problem: DownloadIntegrityError?
         var verification = DownloadVerification.unavailable
         if let expected = file.size, expected != size {
             problem = .sizeMismatch(name: file.name, expected: expected, actual: size)
-        } else if checksum, let listed = demo == nil ? provider.verifiableChecksum(of: file) : file.checksum {
+        } else if checksum, let listed = provider.verifiableChecksum(of: file) {
             let algorithm = listed.algorithm
             let (digest, _) = try await blockingIO { try ContentHasher.digest(of: local, algorithm: algorithm) }
             if listed.matches(digest) { verification = .verified } else { problem = .checksumMismatch(name: file.name) }
@@ -94,7 +94,6 @@ extension CloudAPI {
     }
 
     func currentMetadata(of file: CloudFile) async throws -> CloudFile? {
-        if let demo { return demo.file(file.id) }
         return try await provider.currentMetadata(of: file)
     }
 }
