@@ -14,6 +14,9 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
   Mac a cada formato), la suma de comprobación que lista el proveedor y el estado (copia en este Mac, sin conexión).
   Se muestran u ocultan desde el menú contextual de la cabecera o desde Visualización › Columnas, y su ancho y orden
   se recuerdan.
+- **Agrupar la lista** por tipo («Imágenes», «PDF», «Hojas de cálculo»…) o por fecha («Hoy», «Ayer», «Últimos 7
+  días»…), desde el menú de orden. La búsqueda global agrupa además por cuenta, para ver de qué nube viene cada
+  resultado sin leer la columna.
 
 ### Robustez
 

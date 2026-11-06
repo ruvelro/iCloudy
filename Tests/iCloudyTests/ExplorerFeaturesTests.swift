@@ -115,4 +115,46 @@ final class ExplorerFeaturesTests: XCTestCase {
         XCTAssertEqual(model.statusDescription(item, in: tab), L("Solo en la nube"))
         XCTAssertEqual(model.statusDescription(file("Carpeta", folder: true), in: tab), "")
     }
+
+    // MARK: - Grouping
+
+    func testGroupingByKindAndDateKeepsTheSortInsideEachHeading() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Europe/Madrid")!
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 11, day: 6, hour: 12)))
+        let day: TimeInterval = 86_400
+        let files = [file("Carpeta", folder: true, modified: now), file("b.pdf", modified: now.addingTimeInterval(-day)),
+                     file("a.jpg", modified: now.addingTimeInterval(-3 * day)), file("c.pdf", modified: now),
+                     file("viejo.txt", modified: now.addingTimeInterval(-400 * day)), file("x.bin")]
+        let sorted = BrowserState.visible(files, search: "", sortMode: "name")
+
+        let kinds = FileGrouping.kind.groups(sorted, file: { $0 }, now: now, calendar: calendar)
+        XCTAssertEqual(kinds.map(\.title), [L("Carpetas"), L("PDF"), L("Imágenes"), L("Texto"), L("Otros")])
+        XCTAssertEqual(kinds[1].items.map(\.name), ["b.pdf", "c.pdf"], "Inside a heading the rows keep the list's order")
+
+        let dates = FileGrouping.date.groups(sorted, file: { $0 }, now: now, calendar: calendar)
+        XCTAssertEqual(dates.map(\.title), [L("Hoy"), L("Ayer"), L("Últimos 7 días"), L("Antes"), L("Sin fecha")])
+        XCTAssertEqual(dates[0].items.map(\.name), ["Carpeta", "c.pdf"])
+
+        let none = FileGrouping.none.groups(sorted, file: { $0 })
+        XCTAssertEqual(none.count, 1)
+        XCTAssertEqual(none[0].items.map(\.name), sorted.map(\.name))
+    }
+
+    func testTheGlobalSearchGroupsByAccountInTheSidebarsOrder() throws {
+        let model = AppModel()
+        model.enableDemo()
+        let demo = try XCTUnwrap(model.accounts.first)
+        model.explorer.searchGrouping = .account
+        let hits = [SearchHit(accountID: "other", file: file("a"), parentID: nil),
+                    SearchHit(accountID: demo.id, file: file("b"), parentID: nil),
+                    SearchHit(accountID: demo.id, file: file("c"), parentID: nil)]
+        let groups = model.groupedHits(hits)
+        XCTAssertEqual(groups.map { $0.items.count }, [2, 1], "Connected accounts first, in the sidebar's order")
+        XCTAssertTrue(groups[0].title.contains(demo.email))
+        XCTAssertEqual(ExplorerSettings().searchGrouping, .account, "The choice is remembered")
+
+        Prefs.defaults.set(FileGrouping.account.rawValue, forKey: ExplorerSettings.groupingKey)
+        XCTAssertEqual(ExplorerSettings().grouping, .none, "A folder is never grouped by account")
+    }
 }

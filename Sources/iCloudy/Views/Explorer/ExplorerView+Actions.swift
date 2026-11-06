@@ -39,6 +39,10 @@ extension ExplorerView {
                         Text(key.directionTitle(ascending: true)).tag(true)
                         Text(key.directionTitle(ascending: false)).tag(false)
                     }.pickerStyle(.inline).labelsHidden()
+                    // Headings only make sense in the list; the grid and the columns keep a single run of items.
+                    Picker("Agrupar", selection: Bindable(model.explorer).grouping) {
+                        ForEach(FileGrouping.forFolders) { Text($0.title).tag($0) }
+                    }.pickerStyle(.inline).labelsHidden().disabled(model.viewMode != "list")
                 } label: { Image(systemName: "arrow.up.arrow.down") }
                 .accessibilityLabel("Ordenar la lista")
                     .help("Ordenar la lista")

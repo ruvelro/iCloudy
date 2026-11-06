@@ -11,7 +11,8 @@ extension ExplorerView {
         // A click on a header sorts by that column, and a second one turns the direction round; the tab keeps both.
         // Which columns show, how wide and in what order is the table's own customization, kept in the settings: the
         // header's context menu hides and shows them, and so does the View menu.
-        return Table(tab.visibleFiles, selection: model.selection(inPane: pane), sortOrder: model.sortOrder(inPane: pane),
+        let groups = model.groupedFiles(inPane: pane)
+        return Table(of: CloudFile.self, selection: model.selection(inPane: pane), sortOrder: model.sortOrder(inPane: pane),
                      columnCustomization: Bindable(model.explorer).columns) {
             TableColumn("Nombre", value: \.name) { file in
                 HStack(spacing: 8) {
@@ -44,6 +45,16 @@ extension ExplorerView {
             TableColumn("Estado") { file in
                 Text(model.statusDescription(file, in: tab)).foregroundStyle(.secondary).lineLimit(1)
             }.width(min: 90, ideal: 160).customizationID(FileColumn.status.rawValue).defaultVisibility(.hidden)
+        } rows: {
+            // Grouped, each heading is a section of the table; ungrouped there is a single, untitled one, drawn as
+            // the plain list it always was.
+            if model.explorer.grouping == .none {
+                ForEach(tab.visibleFiles) { TableRow($0) }
+            } else {
+                ForEach(groups) { group in
+                    Section(group.title) { ForEach(group.items) { TableRow($0) } }
+                }
+            }
         }
         // A Table insets its own cells; this brings their text onto the margin shared by the title and the footer.
         .padding(.horizontal, Layout.tableCorrection)

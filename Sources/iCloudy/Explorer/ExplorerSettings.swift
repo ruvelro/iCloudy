@@ -24,18 +24,24 @@ enum FileColumn: String, CaseIterable, Identifiable {
     var canHide: Bool { self != .name }
 }
 
-/// How the explorer's lists are drawn, for every tab and window alike: which columns show, how wide and in what order.
+/// How the explorer's lists are drawn, for every tab and window alike: which columns show, how wide and in what order,
+/// and the headings rows are grouped under.
 /// Kept in the preferences, like the view mode, because it is a matter of taste rather than of any one place.
 @MainActor
 @Observable
 final class ExplorerSettings {
     static let columnsKey = "explorerColumns"
+    static let groupingKey = "explorerGrouping"
+    static let searchGroupingKey = "searchGrouping"
 
     /// The table's own record of each column: visibility, width and order. The header's context menu edits it, and
     /// so does the View menu through `setVisible`.
     var columns: TableColumnCustomization<CloudFile> {
         didSet { if let data = try? JSONEncoder().encode(columns) { defaults.set(data, forKey: Self.columnsKey) } }
     }
+    /// The headings of the list view in folders, and those of the global search's results.
+    var grouping: FileGrouping { didSet { defaults.set(grouping.rawValue, forKey: Self.groupingKey) } }
+    var searchGrouping: FileGrouping { didSet { defaults.set(searchGrouping.rawValue, forKey: Self.searchGroupingKey) } }
     @ObservationIgnored private let defaults: UserDefaults
 
     init(defaults: UserDefaults = Prefs.defaults) {
@@ -43,6 +49,9 @@ final class ExplorerSettings {
         // A value written by another version, or by hand, costs the column layout and nothing else.
         columns = defaults.data(forKey: Self.columnsKey).flatMap { try? JSONDecoder().decode(TableColumnCustomization<CloudFile>.self, from: $0) }
             ?? TableColumnCustomization()
+        let grouping = defaults.string(forKey: Self.groupingKey).flatMap(FileGrouping.init(rawValue:)) ?? .none
+        self.grouping = FileGrouping.forFolders.contains(grouping) ? grouping : .none
+        searchGrouping = defaults.string(forKey: Self.searchGroupingKey).flatMap(FileGrouping.init(rawValue:)) ?? .none
     }
 
     func isVisible(_ column: FileColumn) -> Bool {
