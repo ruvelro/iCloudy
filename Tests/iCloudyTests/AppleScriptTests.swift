@@ -13,7 +13,7 @@ final class AppleScriptTests: XCTestCase {
         let classes = try document.nodes(forXPath: "//command/cocoa/@class").compactMap(\.stringValue)
         XCTAssertEqual(classes.count, 3)
         for name in classes {
-            let found = try XCTUnwrap(NSClassFromString(name), "\(name) is registered with the Objective-C runtime")
+            let found: AnyClass = try XCTUnwrap(NSClassFromString(name), "\(name) is registered with the Objective-C runtime")
             XCTAssertTrue(found.isSubclass(of: NSScriptCommand.self), name)
         }
         let codes = try document.nodes(forXPath: "//command/@code").compactMap(\.stringValue)
