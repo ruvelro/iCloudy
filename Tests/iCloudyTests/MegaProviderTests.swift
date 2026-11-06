@@ -928,7 +928,7 @@ extension MegaProviderTests {
         let stamp = try source.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
         var saved = UploadCheckpoint(total: Int64(payload.count), modified: stamp)
         let api = client()
-        (api.provider as! CloudSession).blockRetryDelay = { _, _ in 0 }
+        (api.provider as CloudSession).blockRetryDelay = { _, _ in 0 }
 
         do {
             _ = try await api.resumableUpload(local: source, parent: "root", name: "grande.bin", replacing: nil,

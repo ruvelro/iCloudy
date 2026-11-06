@@ -12,7 +12,7 @@ final class ChunkRetryTests: XCTestCase {
         let account = Account(id: "retry-" + cloud.rawValue, cloud: cloud, name: "Prueba", email: "ana@example.com", clientID: "client", clientSecret: nil,
                               serverURL: nil, bookmark: nil, options: [:])
         let api = CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "test-token" })
-        (api.provider as! CloudSession).blockRetryDelay = { _, _ in 0 }
+        (api.provider as CloudSession).blockRetryDelay = { _, _ in 0 }
         return api
     }
     private func source(_ payload: Data) throws -> (URL, UploadCheckpoint) {
@@ -81,7 +81,7 @@ final class ChunkRetryTests: XCTestCase {
     }
 
     func testOnlyTransientFailuresAreRepeatedAndOnlyAFewTimes() async throws {
-        let session = client(.box).provider as! CloudSession
+        let session = client(.box).provider as CloudSession
         let response = { (status: Int) in HTTPURLResponse(url: URL(string: "https://x")!, statusCode: status, httpVersion: nil, headerFields: nil)! as URLResponse }
         var calls = 0
         _ = try await session.sendBlock { calls += 1; return (Data(), response(409)) }
