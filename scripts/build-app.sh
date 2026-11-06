@@ -45,6 +45,11 @@ mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
 # The binary is the small `iCloudyMain` launcher; the app itself is the `iCloudy` library linked into it.
 cp "$binary_dir/iCloudyMain" "$app_dir/Contents/MacOS/iCloudy"
 cp Resources/Info.plist "$app_dir/Contents/Info.plist"
+# Version: the VERSION file is the only place it is written by hand; the build number counts commits, so it grows with
+# every release and two builds of one commit agree. scripts/release.py check keeps the README and CHANGELOG in step.
+short_version="$(scripts/version.sh)"; build_number="$(scripts/version.sh --build)"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${short_version}" \
+    -c "Set :CFBundleVersion ${build_number}" "$app_dir/Contents/Info.plist"
 if [[ -n "${ICLOUDY_BUNDLE_ID:-}" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${ICLOUDY_BUNDLE_ID}" "$app_dir/Contents/Info.plist"
 fi
@@ -131,4 +136,4 @@ if [[ "$build_configuration" == "debug" ]]; then
     trap 'rm -f "$entitlements"' EXIT
 fi
 codesign --force --options runtime --timestamp=none --entitlements "$entitlements" --sign "$identity" "$app_dir"
-echo "Aplicación creada: $app_dir (firma: ${identity})"
+echo "Aplicación creada: $app_dir (versión ${short_version} (${build_number}), firma: ${identity})"

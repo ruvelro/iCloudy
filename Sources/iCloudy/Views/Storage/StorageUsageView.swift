@@ -95,11 +95,15 @@ struct StorageUsageView: View {
                 .help(explanation + "\n" + quota.summary + (quota.breakdown.isEmpty ? "" : "\n" + quota.breakdown))
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Almacenamiento: \(quota.summary)")
+                .accessibilityValue(quota.fraction.map { $0.formatted(.percent.precision(.fractionLength(0))) } ?? "")
             case .unavailable(let message):
                 Label("Espacio no disponible", systemImage: "questionmark.circle")
                     .help(message + "\n" + L("Usa «Actualizar espacio» en el menú de la cuenta para reintentar."))
+                    .accessibilityLabel("Almacenamiento: espacio no disponible")
+                    .accessibilityValue(message)
             case .loading, nil:
                 Label("Consultando espacio…", systemImage: "chart.pie")
+                    .accessibilityLabel("Almacenamiento: consultando espacio…")
             }
         }.font(.caption2).foregroundStyle(.secondary)
     }

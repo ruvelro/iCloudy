@@ -5,6 +5,71 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
 
 ## Sin publicar
 
+### Distribución
+
+Lo necesario para que iCloudy se descargue y se abra sin Xcode. Todo funciona ya sin cuenta de Apple, marcado como
+«sin firmar», y se firma y notariza solo en cuanto existan los secretos (`docs/DISTRIBUCION.md`).
+
+- **Avisa de las versiones nuevas, sin instalar nada.** «Buscar actualizaciones…», en el menú de la app, pide a
+  GitHub la ficha de la última versión y, si hay una más nueva, enseña sus notas, el enlace de descarga y la suma
+  SHA-256 para comprobarla. En Ajustes › Actualizaciones se puede pedir que lo mire una vez al día; viene apagado,
+  porque sería la primera petición a alguien que no es una de tus nubes.
+- **La versión se escribe en un solo sitio**, el archivo `VERSION`; el número de compilación es el de commits. Una
+  comprobación en la CI falla si el README o el registro de cambios dicen otra cosa.
+- **Paquetes `.zip` y `.dmg`** con su `SHA256SUMS.txt` (`scripts/package.sh`), firma Developer ID con *hardened
+  runtime* y notarización grapada (`scripts/notarize.sh`), que no hace nada y lo dice mientras no haya identidad.
+- **Cada etiqueta `v…` publica la versión en GitHub** con la sección de este registro como notas, los paquetes, las
+  sumas, el aviso de versiones y el cask de Homebrew relleno. La CI de cada PR empaqueta también, para que no se
+  rompa entre versiones.
+- **Mac App Store: no**, por la GPL-3.0, los clientes OAuth dentro del paquete y las API no documentadas de Mega y
+  O2. La decisión, razonada, está en `docs/DISTRIBUCION.md`.
+
+### Explorador
+
+- **Ordenar por columna, en los dos sentidos.** Un clic en la cabecera ordena por esa columna y otro le da la vuelta;
+  el menú de orden dice lo mismo («Más recientes primero», «De la Z a la A») y la cuadrícula sigue el mismo orden.
+  Cada pestaña guarda el suyo. Las carpetas siguen arriba en cualquier sentido.
+- **Columnas a elegir**: además de Nombre, Modificado y Tamaño, la lista puede mostrar Tipo (con el nombre que da el
+  Mac a cada formato), la suma de comprobación que lista el proveedor y el estado (copia en este Mac, sin conexión).
+  Se muestran u ocultan desde el menú contextual de la cabecera o desde Visualización › Columnas, y su ancho y orden
+  se recuerdan.
+- **Agrupar la lista** por tipo («Imágenes», «PDF», «Hojas de cálculo»…) o por fecha («Hoy», «Ayer», «Últimos 7
+  días»…), desde el menú de orden. La búsqueda global agrupa además por cuenta, para ver de qué nube viene cada
+  resultado sin leer la columna.
+- **Ir a la carpeta… (⇧⌘G)**, en el nuevo menú Ir: una ruta escrita a mano, en la cuenta abierta o en otra si va su
+  nombre delante («Dropbox:/Fotos/2024»). Si la ruta acaba en un archivo, se abre su carpeta con el archivo
+  seleccionado. Las migas también se pueden escribir: el lápiz que hay a su derecha, o ⌘L, las convierte en un campo
+  de ruta; Intro va y Escape las devuelve.
+- **Carpetas recientes**: las veinte últimas carpetas abiertas, de cualquier pestaña, panel o cuenta, debajo de los
+  favoritos y en el menú Ir. Se guardan entre sesiones; una carpeta renombrada sigue en la lista con su nombre nuevo,
+  y una movida o borrada sale de ella. Las de una bóveda cifrada no se apuntan nunca.
+- **Favoritos en el orden que quieras**: se arrastran a su sitio en la barra lateral, o se mueven con «Mover arriba» y
+  «Mover abajo» de su menú contextual. Los nueve primeros se abren con ⌃1…⌃9, también desde el menú Ir.
+- **Abrir con… y volver a subir.** Un archivo se abre en cualquier aplicación del Mac desde una copia privada, que
+  iCloudy vigila: al guardar, una barra sobre el pie ofrece «Subir cambios» (o los sube solos, con el ajuste nuevo de
+  General). La subida pasa por la cola de siempre, con su comprobación. Si alguien cambió el archivo en la nube
+  mientras tanto, no se sobrescribe: tus cambios se suben al lado como «Nombre (mi versión)» y los siguientes van a
+  esa copia. Se deja de vigilar al cerrar la aplicación o con «Dejar de vigilar».
+- **Inspector (⌘I)**, un panel al lado de la lista con lo que se sabe de la selección: tipo, tamaño, fecha, cuenta,
+  ruta, la suma de comprobación y su algoritmo, si hay copia en este Mac o sin conexión, si está abierto en otra
+  aplicación, cuántas versiones guarda el proveedor y cuántos enlaces públicos tiene, donde se pueden consultar. Con
+  botones para copiar la ruta o el enlace, mostrar la copia local y abrirlo. Con varios elementos, suma el total.
+- **Vista en columnas**, la tercera junto a la lista y los iconos: una columna por carpeta desde el principio de la
+  cuenta, y la carpeta seleccionada enseña lo que tiene en la siguiente, como en el Finder. ← y → pasan de una columna
+  a otra, ↑ y ↓ recorren la abierta e Intro abre. Un archivo seleccionado muestra su ficha en la última columna.
+- **La vista previa se acerca a Vista Rápida**: pantalla completa, botón de compartir, «Abrir con» (que abre la copia
+  vigilada de arriba) y, en las imágenes, zoom por pasos (⌘+, ⌘-, ⌘0 para ajustar) y giro a izquierda y derecha. ⌘Y
+  abre y cierra la vista previa de lo seleccionado, como en el Finder.
+- **Las teclas del Finder**: ⌘D duplica en la misma carpeta (copia en el servidor, en Google Drive, Mega y la demo;
+  en los demás el menú dice por qué no), ⇧⌘N crea una carpeta, ⌘E bloquea la bóveda abierta o desconecta el volumen,
+  tras preguntar. «Añadir cuenta…» pasa a ⌥⌘N. Y escribir las primeras letras de un nombre lo selecciona, en la
+  lista, los iconos y las columnas.
+- **Accesibilidad**: las nubes de la barra lateral se alcanzan con el teclado (↑ y ↓ las recorren, Intro o Espacio
+  abren), igual que los favoritos y las recientes. VoiceOver lee el estado de cada fila (copia local, sin conexión,
+  favorito), las migas dicen cuál es la carpeta actual, el campo de filtro su contenido, el espacio de cada nube su
+  porcentaje y cada transferencia qué va adónde y cuánto lleva. Con «Reducir movimiento» las animaciones de la
+  ventana se quitan, y con «Aumentar contraste» las migas, el campo y la fila elegida ganan borde.
+
 ### Robustez
 
 - **La ventana ya no se traba guardando ni leyendo.** La cola, los reflejos, las copias sin conexión y locales, el

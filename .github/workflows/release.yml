@@ -1,0 +1,147 @@
+name: Release
+
+# Pushing a tag v<VERSION> builds the release bundle, packages it as .zip and .dmg, signs and notarizes them when
+# the Apple secrets exist, and publishes a GitHub release with the CHANGELOG section as notes, the SHA-256 sums, the
+# update feed (appcast.json, appcast.xml) and the filled Homebrew cask. Without the secrets the same files are
+# published with "-unsigned" in their names and a warning at the top of the notes. docs/DISTRIBUCION.md has the
+# whole procedure and the list of secrets.
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, sign and publish
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The build number is the commit count (scripts/version.sh); a shallow clone would count one.
+          fetch-depth: 0
+
+      - name: Toolchain
+        run: xcodebuild -version
+
+      - name: The tag, VERSION, CHANGELOG.md and README.md agree
+        run: python3 scripts/release.py check --tag "$TAG"
+
+      - name: OAuth configuration
+        # The OAuth client IDs of the published build. Without the secret the example configuration is used and only
+        # the providers that need no registration can be connected (docs/OAUTH.md).
+        env:
+          OAUTH_PLIST: ${{ secrets.ICLOUDY_OAUTH_PLIST }}
+        run: |
+          if [[ -n "$OAUTH_PLIST" ]]; then
+            printf '%s' "$OAUTH_PLIST" | base64 --decode > "$RUNNER_TEMP/OAuth.plist"
+            echo "ICLOUDY_OAUTH_CONFIG=$RUNNER_TEMP/OAuth.plist" >> "$GITHUB_ENV"
+          else
+            echo "::warning::ICLOUDY_OAUTH_PLIST is not set: the release carries the example OAuth configuration."
+          fi
+
+      - name: Signing identity
+        # A throwaway keychain with the Developer ID certificate, and the App Store Connect API key for notarytool.
+        env:
+          CERTIFICATE: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          if [[ -z "$CERTIFICATE" || -z "$IDENTITY" ]]; then
+            echo "::warning::No Developer ID secrets: this release is published unsigned and not notarized."
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(uuidgen)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" > /dev/null
+          # Put it first on the search list, keeping the login keychain behind it.
+          existing=()
+          while IFS= read -r line; do existing+=("$(echo "$line" | tr -d '" ')"); done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$keychain" "${existing[@]}"
+          {
+            echo "ICLOUDY_SIGNING_IDENTITY=$IDENTITY"
+            echo "ICLOUDY_DEVELOPER_ID=$IDENTITY"
+            echo "ICLOUDY_TEAM_ID=$TEAM_ID"
+            echo "SIGNING_KEYCHAIN=$keychain"
+          } >> "$GITHUB_ENV"
+          if [[ -n "$NOTARY_KEY" && -n "$NOTARY_KEY_ID" && -n "$NOTARY_ISSUER" ]]; then
+            printf '%s' "$NOTARY_KEY" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+            {
+              echo "ICLOUDY_NOTARY_KEY=$RUNNER_TEMP/notary.p8"
+              echo "ICLOUDY_NOTARY_KEY_ID=$NOTARY_KEY_ID"
+              echo "ICLOUDY_NOTARY_ISSUER=$NOTARY_ISSUER"
+            } >> "$GITHUB_ENV"
+          else
+            echo "::warning::No notarization secrets: the release is signed but not notarized, so it is marked unsigned."
+          fi
+
+      - name: Build the release bundle
+        env:
+          # The Finder extension is embedded only when the repository variable names an App Group; it needs the
+          # Team ID (docs/FILEPROVIDER.md, docs/DISTRIBUCION.md).
+          ICLOUDY_APP_GROUP: ${{ vars.ICLOUDY_APP_GROUP }}
+        run: bash scripts/build-app.sh
+
+      - name: Sign and notarize the app
+        run: scripts/notarize.sh app dist/iCloudy.app
+
+      - name: Package
+        # .zip, .dmg (signed and notarized too when the app is), SHA256SUMS.txt and package.env.
+        run: |
+          bash scripts/package.sh dist/iCloudy.app
+          cat dist/release/package.env >> "$GITHUB_ENV"
+
+      - name: Notes, update feed and cask
+        run: |
+          signed_flag=(); unsigned_flag=(--unsigned)
+          if [[ "$SIGNED" == "true" ]]; then signed_flag=(--signed); unsigned_flag=(); fi
+          # The app shows its own warning for unsigned builds, so the feed carries the CHANGELOG section alone.
+          python3 scripts/release.py notes "$VERSION" > "$RUNNER_TEMP/feed-notes.md"
+          python3 scripts/release.py notes "$VERSION" "${unsigned_flag[@]}" > "$RUNNER_TEMP/release-notes.md"
+          python3 scripts/release.py appcast --version "$VERSION" --build "$BUILD" --notes "$RUNNER_TEMP/feed-notes.md" \
+            --zip "$ZIP" --dmg "$DMG" --repo "$GITHUB_REPOSITORY" "${signed_flag[@]}" --out dist/release
+          python3 scripts/release.py cask --version "$VERSION" --zip "$ZIP" "${signed_flag[@]}" --out dist/release
+          python3 -c 'import json; json.load(open("dist/release/appcast.json"))'
+          (cd dist/release && shasum -a 256 -c SHA256SUMS.txt)
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="iCloudy $VERSION"
+          [[ "$SIGNED" == "true" ]] || title="$title (sin firmar)"
+          prerelease=()
+          [[ "$VERSION" == *-* ]] && prerelease=(--prerelease)
+          gh release create "$TAG" --verify-tag --title "$title" --notes-file "$RUNNER_TEMP/release-notes.md" "${prerelease[@]}" \
+            "$ZIP" "$DMG" dist/release/SHA256SUMS.txt dist/release/appcast.json dist/release/appcast.xml dist/release/icloudy.rb
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ github.ref_name }}
+          path: dist/release
+          retention-days: 30
+
+      - name: Clean up the signing material
+        if: always()
+        run: |
+          [[ -n "${SIGNING_KEYCHAIN:-}" ]] && security delete-keychain "$SIGNING_KEYCHAIN" || true
+          rm -f "$RUNNER_TEMP/notary.p8" "$RUNNER_TEMP/OAuth.plist"

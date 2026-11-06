@@ -113,8 +113,10 @@ final class AccountsAndBundleTests: XCTestCase {
         XCTAssertFalse((plist?["NSHumanReadableCopyright"] as? String ?? "").contains("Google Drive y OneDrive"), "Nine providers, not two")
 
         // The version people read and the version the system reads have to be the same one, or a report about
-        // "0.5.0" is about a build nobody can identify.
-        let version = try XCTUnwrap(plist?["CFBundleShortVersionString"] as? String)
+        // "0.5.0" is about a build nobody can identify. VERSION is the one source; build-app.sh writes it into the
+        // bundle, so the Info.plist in the repository only carries a placeholder.
+        let version = try String(contentsOf: repositoryURL("VERSION"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(plist?["CFBundleShortVersionString"] as? String, "0.0.0", "The Info.plist must not be a second source of the version")
         let readme = try String(contentsOf: URL(fileURLWithPath: "README.md"), encoding: .utf8)
         XCTAssertTrue(readme.contains("versión-\(version)-"), "El distintivo del README dice otra versión")
         let changelog = try String(contentsOf: URL(fileURLWithPath: "CHANGELOG.md"), encoding: .utf8)
