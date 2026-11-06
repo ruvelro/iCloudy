@@ -9,6 +9,7 @@ struct SettingsView: View {
             TransferSettings(model: model).tabItem { Label("Transferencias", systemImage: "arrow.up.arrow.down") }
             StorageSettings(model: model).tabItem { Label("Almacenamiento", systemImage: "internaldrive") }
             OfflineSettingsView(model: model, store: model.offline).tabItem { Label("Sin conexión", systemImage: "arrow.down.circle") }
+            SpotlightSettings(model: model).tabItem { Label("Spotlight", systemImage: "magnifyingglass") }
             DiagnosticsSettings(model: model).tabItem { Label("Diagnóstico", systemImage: "stethoscope") }
             CryptomatorSettings(model: model, vaults: model.cryptomator).tabItem { Label("Cifrado", systemImage: "lock.shield") }
             UpdateSettings(checker: .shared).tabItem { Label("Actualizaciones", systemImage: "arrow.down.app") }

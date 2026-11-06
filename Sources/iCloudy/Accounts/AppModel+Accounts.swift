@@ -29,6 +29,7 @@ extension AppModel {
             // Tabs restored from the last session may name accounts that are gone; they fall back to the first one.
             workspace.reconcile(with: accounts)
             refreshSpotlightFavorites()
+            refreshFullIndexIfDue()
             if let waiting = pendingSpotlightItem { pendingSpotlightItem = nil; openSpotlightItem(identifier: waiting) }
             reloadVisible()
             for account in accounts where account.id != selectedAccountID { refreshStorage(account) }
@@ -161,7 +162,8 @@ extension AppModel {
 
     /// Connects a server the user hosts: WebDAV or FTP. The password goes straight to the Keychain and never leaves
     /// this Mac except to that server.
-    func connectServer(cloud: Cloud, server: String, username: String, password: String, flavor: String? = nil, key: SFTPKeyMaterial? = nil) async {
+    func connectServer(cloud: Cloud, server: String, username: String, password: String, flavor: String? = nil, key: SFTPKeyMaterial? = nil,
+                       webdavAuth: WebDAVAuth = .basic) async {
         guard !ui.connecting else { return }
         ui.connectionError = nil; ui.connecting = true
         defer { ui.connecting = false }
@@ -169,7 +171,7 @@ extension AppModel {
             let result: (Account, Credential)
             switch cloud {
             case .webdav: result = try await WebDAVAuthentication().signInWebDAV(server: server, username: username, password: password,
-                                                                                    existing: accounts)
+                                                                                    auth: webdavAuth, existing: accounts)
             case .ftp: result = try await FTPAuthentication().signInFTP(server: server, username: username, password: password)
             case .sftp: result = try await SFTPAuthentication().signInSFTP(server: server, username: username, password: password, key: key)
             case .mega: result = try await MegaAuthentication().signInMega(email: username, password: password)
@@ -181,6 +183,20 @@ extension AppModel {
             ui.serverLogin = nil; ui.reconnecting = nil
             select(account.id); ui.showConnect = false
         } catch { ui.connectionError = error.localizedDescription }
+    }
+
+    /// Nextcloud's sign-in in the browser. The form waits while the person signs in there; cancelling the task (the
+    /// form's Cancel button, or closing it) stops the polling.
+    func connectNextcloud(server: String, flow: NextcloudLoginFlow = NextcloudLoginFlow()) async {
+        guard !ui.connecting else { return }
+        ui.connectionError = nil; ui.connecting = true
+        defer { ui.connecting = false }
+        do {
+            let (account, credential) = try await flow.signIn(server: server, existing: accounts)
+            try directory.adopt(account, credential: credential)
+            ui.serverLogin = nil; ui.reconnecting = nil
+            select(account.id); ui.showConnect = false
+        } catch is CancellationError {} catch { ui.connectionError = error.localizedDescription }
     }
 
     /// Starts the provider's sign-in for the same cloud; signing in with the same identity replaces the expired session.
@@ -235,6 +251,7 @@ extension AppModel {
         case .o2: return .pink
         case .pcloud: return .teal
         case .s3: return .orange
+        case .azure: return .blue
         }
     }
 

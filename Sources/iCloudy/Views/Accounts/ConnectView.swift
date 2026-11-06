@@ -7,6 +7,7 @@ struct ConnectView: View {
     @Bindable var model: AppModel
     private var sheets: Bindable<ExplorerPresentation> { Bindable(model.ui) }
     @State private var prompts = LoginPrompts.shared
+    @State private var showPresets = false
 
     var body: some View {
         ScrollView {
@@ -23,6 +24,8 @@ struct ConnectView: View {
                     providerButton(.pcloud, title: "Continuar con pCloud", subtitle: "Cuentas de pCloud en Europa o en Estados Unidos", icon: "cloud.circle")
                     providerButton(.mega, title: "Conectar Mega", subtitle: "Cifrado de extremo a extremo, con correo y contraseña", icon: "lock.icloud")
                     providerButton(.o2, title: "Conectar O2 Cloud", subtitle: "Inicias sesión en las páginas de O2, con tu móvil o tu NIF", icon: "antenna.radiowaves.left.and.right")
+                    connectRow(title: "Conectar iCloud Drive", subtitle: "La carpeta de iCloud Drive de este Mac, con los archivos que solo están en iCloud",
+                               icon: "icloud", tint: .blue, badge: "Nuevo", trailing: "chevron.right") { Task { await model.connectICloudDrive() } }
                 }.disabled(model.ui.connecting)
                 Text("TU PROPIO SERVIDOR").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 VStack(spacing: 10) {
@@ -34,6 +37,15 @@ struct ConnectView: View {
                 Text("ALMACENAMIENTO DE OBJETOS").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 providerButton(.s3, title: "Conectar S3", subtitle: "Amazon S3, Backblaze B2, Wasabi, Cloudflare R2, MinIO y compatibles", icon: "cylinder.split.1x2")
                     .disabled(model.ui.connecting)
+                providerButton(.azure, title: "Conectar Azure Blob Storage", subtitle: "Con la clave de la cuenta de almacenamiento o un token SAS", icon: "square.stack.3d.down.right")
+                    .disabled(model.ui.connecting)
+                DisclosureGroup(isExpanded: $showPresets) {
+                    VStack(spacing: 6) {
+                        ForEach(ServerPreset.all) { preset in presetButton(preset) }
+                    }.padding(.top, 6)
+                } label: {
+                    Text("MÁS SERVIDORES").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                }.disabled(model.ui.connecting)
                 Button("Conectar a un servidor en el Finder…") { model.openFinderConnect() }
                     .buttonStyle(.link).font(.caption)
                     .help("Monta el recurso de red y vuelve aquí para elegir su carpeta")
@@ -78,11 +90,40 @@ struct ConnectView: View {
                 Text("\(question.service) ha devuelto la cuenta «\(question.email)». Conéctala solo si es la que acabas de autorizar en el navegador.")
             }
             .onAppear { model.ui.connectionError = nil }
-            .sheet(item: sheets.serverLogin) { cloud in
-                if cloud == .s3 { S3LoginView(model: model) } else { ServerLoginView(model: model, cloud: cloud) }
+            .sheet(item: sheets.serverLogin, onDismiss: { model.ui.serverPreset = nil }) { cloud in
+                switch cloud {
+                case .s3: S3LoginView(model: model)
+                case .azure: AzureLoginView(model: model)
+                default: ServerLoginView(model: model, cloud: cloud)
+                }
             }
             .sheet(isPresented: sheets.showAdvanced) { AdvancedDriveView(model: model) }
             .sheet(item: sheets.o2Login) { request in O2WebLoginView(model: model, request: request) }
+    }
+
+    /// A row of the sheet for something that is not a `Cloud` of its own, such as iCloud Drive, a flavour of volume.
+    private func connectRow(title: LocalizedStringKey, subtitle: LocalizedStringKey, icon: String, tint: Color, badge: LocalizedStringKey?,
+                            trailing: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: icon).font(.title2).foregroundStyle(tint).frame(width: 30)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(title).font(.headline)
+                        if let badge {
+                            Text(badge).font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(.blue.opacity(0.15), in: Capsule()).foregroundStyle(.blue)
+                        }
+                    }
+                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: trailing).foregroundStyle(.secondary)
+            }.padding(14).frame(maxWidth: .infinity).contentShape(Rectangle())
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(.quaternary))
+        }.buttonStyle(.plain)
     }
 
     private func providerButton(_ cloud: Cloud, title: LocalizedStringKey, subtitle: LocalizedStringKey, icon: String) -> some View {
@@ -114,6 +155,23 @@ struct ConnectView: View {
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(.quaternary))
         }.buttonStyle(.plain)
     }
+    /// A service that speaks one of the protocols above, with its address already known.
+    private func presetButton(_ preset: ServerPreset) -> some View {
+        Button {
+            model.ui.connectionError = nil
+            model.ui.serverPreset = preset
+            model.ui.serverLogin = preset.cloud
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: ServerLoginView.symbol(for: preset.cloud)).foregroundStyle(tint(preset.cloud)).frame(width: 22)
+                Text(verbatim: preset.title).font(.callout)
+                Spacer()
+                Text(verbatim: preset.cloud.title).font(.caption2).foregroundStyle(.secondary)
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+            }.padding(.horizontal, 12).padding(.vertical, 8).frame(maxWidth: .infinity).contentShape(Rectangle())
+                .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+        }.buttonStyle(.plain).accessibilityLabel(Text(verbatim: preset.title + ", " + preset.cloud.title))
+    }
     private func tint(_ cloud: Cloud) -> Color {
         switch cloud {
         case .google: return .green
@@ -128,6 +186,7 @@ struct ConnectView: View {
         case .o2: return .mint
         case .pcloud: return .teal
         case .s3: return .orange
+        case .azure: return .blue
         }
     }
 }

@@ -312,6 +312,22 @@
 			<string>%lld no se pudieron comprobar</string>
 		</dict>
 	</dict>
+	<key>%lld resultados.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@.</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld resultado</string>
+			<key>other</key>
+			<string>%lld resultados</string>
+		</dict>
+	</dict>
 	<key>%lld se dejaron fuera a propósito.</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -470,6 +486,22 @@
 			<string>%lld cambio esperando</string>
 			<key>other</key>
 			<string>%lld cambios esperando</string>
+		</dict>
+	</dict>
+	<key>Enlace creado. Caduca en %lld días.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Enlace creado. Caduca en %#@n@.</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld día</string>
+			<key>other</key>
+			<string>%lld días</string>
 		</dict>
 	</dict>
 	<key>Quedan %lld por transferir o por comprobar.</key>

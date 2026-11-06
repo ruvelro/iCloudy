@@ -10,6 +10,8 @@ struct CloudFile: Identifiable, Hashable, Codable {
     let isFolder: Bool
     /// The content checksum the provider listed with the item, when it lists one. Downloads are checked against it.
     var checksum: ContentHash? = nil
+    /// For an item of iCloud Drive, whether its bytes are on this Mac. Read with the listing and never stored.
+    var ubiquity: UbiquityState? = nil
     var isGoogleDocument: Bool { mime.hasPrefix("application/vnd.google-apps.") && !isFolder }
     /// What a Google document becomes when it leaves Drive: an Office file it can round-trip, or PDF for drawings.
     var crossCloudExport: (mime: String, ext: String)? {

@@ -139,10 +139,10 @@ final class WebDAVProviderTests: XCTestCase {
     }
 
     func testADigestChallengeIsNotAWrongPassword() async throws {
-        // iCloudy only speaks Basic. Calling a Digest challenge an expired session sent people to re-type
-        // credentials that were right all along.
+        // An account signed in with a token cannot answer Digest (a password one does: WebDAVAuthTests). Calling the
+        // challenge an expired session sent people to re-type credentials that were right all along.
         StubProtocol.handler = { _ in (401, ["WWW-Authenticate": "Digest realm=\"nas\", nonce=\"abc\""], Data()) }
-        let api = client(.webdav)
+        let api = makeStubbedClient(.webdav, server: "https://dav.example.com/remote.php/dav/files/ana", options: ["auth": "bearer"])
         do { _ = try await api.list(parent: "root"); XCTFail("Debe explicar qué pasa") }
         catch { XCTAssertTrue(error.localizedDescription.contains("Digest"), error.localizedDescription) }
         XCTAssertFalse(api.sessionExpired, "No es una sesión caducada")
