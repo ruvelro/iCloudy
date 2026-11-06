@@ -15,6 +15,10 @@ simulados y la documentación de cada uno. Se marca como 🆕 hasta que alguien 
   puerto y la ruta ya puestos, lo que hay que saber antes (la contraseña de aplicación, el protocolo que hay que
   activar en su panel) y un enlace a sus instrucciones. En S3 se añaden Storj e iDrive e2 a Backblaze, Wasabi y R2.
   Por debajo son cuentas WebDAV, SFTP o S3 normales: una tabla de datos, no proveedores nuevos.
+- **Nextcloud inicia sesión en el navegador** (Login Flow v2): se escribe la dirección, se abre la página del propio
+  servidor, se entra con lo que pida (dos pasos, SSO, llave de seguridad) y Nextcloud entrega a iCloudy una contraseña
+  de aplicación solo para él, revocable desde su seguridad. Los archivos se buscan bajo el id del usuario aunque se
+  entre con el correo. El formulario de usuario y contraseña sigue a mano para los servidores que lo tengan apagado.
 
 ### Robustez
 

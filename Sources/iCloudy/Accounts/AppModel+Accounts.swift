@@ -183,6 +183,20 @@ extension AppModel {
         } catch { ui.connectionError = error.localizedDescription }
     }
 
+    /// Nextcloud's sign-in in the browser. The form waits while the person signs in there; cancelling the task (the
+    /// form's Cancel button, or closing it) stops the polling.
+    func connectNextcloud(server: String, flow: NextcloudLoginFlow = NextcloudLoginFlow()) async {
+        guard !ui.connecting else { return }
+        ui.connectionError = nil; ui.connecting = true
+        defer { ui.connecting = false }
+        do {
+            let (account, credential) = try await flow.signIn(server: server, existing: accounts)
+            try directory.adopt(account, credential: credential)
+            ui.serverLogin = nil; ui.reconnecting = nil
+            select(account.id); ui.showConnect = false
+        } catch is CancellationError {} catch { ui.connectionError = error.localizedDescription }
+    }
+
     /// Starts the provider's sign-in for the same cloud; signing in with the same identity replaces the expired session.
     /// Reconnecting has to take the same road the account was created by. Sending a provider that never used OAuth
     /// down the OAuth path produced a message about configuration that had nothing to do with the problem.

@@ -1914,3 +1914,11 @@
 "Con un token de API de R2 y el ID de la cuenta de Cloudflare." = "With an R2 API token and the Cloudflare account ID.";
 "Con credenciales S3 de la pasarela alojada de Storj (gateway.storjshare.io)." = "With S3 credentials for Storj’s hosted gateway (gateway.storjshare.io).";
 "Con la dirección de tu región y una clave de acceso, las dos en el panel de iDrive e2." = "With your region’s address and an access key, both in the iDrive e2 console.";
+"Escribe la dirección de tu Nextcloud, por ejemplo nube.ejemplo.com" = "Type the address of your Nextcloud, for example cloud.example.com";
+"Ese servidor no ofrece el inicio de sesión en el navegador de Nextcloud. Comprueba la dirección, o usa «Usuario y contraseña» con una contraseña de aplicación." = "That server does not offer Nextcloud’s browser sign-in. Check the address, or use “User and password” with an app password.";
+"El servidor propuso iniciar sesión en otra dirección (%@). Por seguridad no se ha abierto." = "The server proposed signing in at another address (%@). For safety it was not opened.";
+"El servidor terminó el inicio de sesión sin devolver una contraseña de aplicación." = "The server finished the sign-in without returning an app password.";
+"El inicio de sesión en el navegador caducó. Vuelve a intentarlo." = "The browser sign-in expired. Try again.";
+"Se abrirá tu Nextcloud en el navegador. Inicia sesión allí, también con verificación en dos pasos, y concede el acceso: iCloudy recibe una contraseña de aplicación propia, que puedes revocar desde la seguridad de tu cuenta." = "Your Nextcloud will open in the browser. Sign in there, two-step verification included, and grant access: iCloudy receives an app password of its own, which you can revoke from your account’s security settings.";
+"Usar usuario y contraseña" = "Use user and password";
+"Iniciar sesión en el navegador" = "Sign in in the browser";

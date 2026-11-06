@@ -35,6 +35,13 @@ struct ServerLoginView: View {
 
     /// The values typed for the preset's placeholders: the kDrive id, the address of the person's own server.
     @State private var presetValues: [ServerPreset.Placeholder: String] = [:]
+    /// Nextcloud signs in through its own page in the browser unless the person asks for the manual form.
+    @State private var manualNextcloud = false
+    @State private var browserLogin: Task<Void, Never>?
+    /// The server answers through the browser: only its address is asked for here.
+    private var usesBrowserLogin: Bool { cloud == .webdav && (preset?.flavor ?? (nextcloud ? "nextcloud" : nil)) == "nextcloud" && !manualNextcloud }
+    /// The installation to send the person to: the preset's server, or whatever address was typed.
+    private var nextcloudServer: String { preset == nil ? server : (presetValues[.server] ?? "") }
 
     /// The service chosen under «Más servidores», when it is one for this protocol.
     private var preset: ServerPreset? { model.ui.serverPreset.flatMap { $0.cloud == cloud && $0.s3Service == nil ? $0 : nil } }
@@ -152,6 +159,12 @@ struct ServerLoginView: View {
                 }
             }
             if needsServer { TextField(placeholder, text: $server).textFieldStyle(.roundedBorder) }
+            if usesBrowserLogin {
+                Text("Se abrirá tu Nextcloud en el navegador. Inicia sesión allí, también con verificación en dos pasos, y concede el acceso: iCloudy recibe una contraseña de aplicación propia, que puedes revocar desde la seguridad de tu cuenta.")
+                    .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .onAppear(perform: prefillForReconnect)
+                Button("Usar usuario y contraseña") { manualNextcloud = true }.buttonStyle(.link).font(.caption)
+            } else {
             TextField(needsServer ? "Usuario" : "Correo de la cuenta", text: $username).textFieldStyle(.roundedBorder)
                 .onAppear(perform: prefillForReconnect)
             SecureField(cloud == .sftp ? (keyText == nil ? "Contraseña" : "Contraseña (si el servidor la pide además)") : needsServer ? "Contraseña o contraseña de aplicación" : "Contraseña", text: $password).textFieldStyle(.roundedBorder)
@@ -173,6 +186,7 @@ struct ServerLoginView: View {
                  ? "Si tu servidor usa verificación en dos pasos, crea una contraseña de aplicación en su configuración."
                  : "Si la cuenta tiene verificación en dos pasos, iCloudy te pedirá el código después de comprobar la contraseña.")
                 .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             if cloud == .webdav, preset == nil {
                 DisclosureGroup(isExpanded: $showAdvanced) {
                     Toggle("Servidor Nextcloud u ownCloud", isOn: $nextcloud)
@@ -182,16 +196,26 @@ struct ServerLoginView: View {
                     Text("Avanzado").font(.caption)
                 }
             }
-            if preset != nil, !address.isEmpty {
+            if preset != nil, !usesBrowserLogin, !address.isEmpty {
                 Text(verbatim: address).font(.caption2.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
             }
             if let error = model.ui.connectionError {
                 Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             }
             HStack {
-                Button("Cancelar") { model.ui.serverLogin = nil; model.ui.reconnecting = nil; dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancelar") { browserLogin?.cancel(); model.ui.serverLogin = nil; model.ui.reconnecting = nil; dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
                 if model.ui.connecting { ProgressView().controlSize(.small) }
+                if usesBrowserLogin {
+                    Button("Iniciar sesión en el navegador") {
+                        browserLogin = Task {
+                            await model.connectNextcloud(server: nextcloudServer)
+                            if model.ui.connectionError == nil, model.ui.serverLogin == nil { dismiss() }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.ui.connecting || nextcloudServer.trimmingCharacters(in: .whitespaces).isEmpty)
+                } else {
                 Button("Conectar") {
                     Task {
                         await model.connectServer(cloud: cloud, server: address, username: username, password: password,
@@ -203,6 +227,7 @@ struct ServerLoginView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(model.ui.connecting || (needsServer && server.isEmpty) || (preset != nil && address.isEmpty) || username.isEmpty || (password.isEmpty && keyText == nil))
+                }
             }
         }.padding(24).frame(width: 470)
         .alert("¿Confías en este servidor?", isPresented: Binding(get: { prompts.hostKey != nil }, set: { if !$0 { prompts.answerHostKey(false) } }),
@@ -226,6 +251,6 @@ struct ServerLoginView: View {
             }
         }
         // A form closed halfway leaves no sign-in waiting for an answer nobody can give.
-        .onDisappear { prompts.answerHostKey(false); prompts.answerCode(nil) }
+        .onDisappear { prompts.answerHostKey(false); prompts.answerCode(nil); browserLogin?.cancel() }
     }
 }
