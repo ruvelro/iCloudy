@@ -250,4 +250,21 @@ final class ExplorerFeaturesTests: XCTestCase {
         model.openRecent(try XCTUnwrap(model.recents.items.first { !$0.path.isEmpty }))
         XCTAssertEqual(model.path.map(\.name), ["Proyectos 2026"])
     }
+
+    // MARK: - Favourites in order
+
+    func testFavouritesCanBeReorderedAndKeepTheirOrder() throws {
+        let url = try temporaryRoot().appendingPathComponent("favorites.json")
+        let store = FavoritesStore(url: url)
+        for name in ["A", "B", "C", "D"] { store.toggle(file(name, folder: true), accountID: "x", path: [], collection: .files) }
+        store.move("x:D", to: "x:A")
+        XCTAssertEqual(store.items.map(\.file.name), ["D", "A", "B", "C"], "Dragged onto the first, it becomes the first")
+        store.move("x:D", by: 1)
+        XCTAssertEqual(store.items.map(\.file.name), ["A", "D", "B", "C"])
+        XCTAssertFalse(store.canMove("x:A", by: -1))
+        store.move("x:A", by: -1)
+        XCTAssertEqual(store.items.first?.file.name, "A", "Nothing moves past the edge")
+        XCTAssertTrue(store.canMove("x:C", by: -1))
+        XCTAssertEqual(FavoritesStore(url: url).items.map(\.file.name), ["A", "D", "B", "C"], "The order is saved")
+    }
 }

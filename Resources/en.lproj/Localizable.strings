@@ -1942,3 +1942,6 @@
 "Conecta la cuenta de esta carpeta." = "Connect the account of this folder.";
 "No se pudieron leer las carpetas recientes: %@ La lista empieza vacía." = "The recent folders could not be read: %@ The list starts empty.";
 "No se pudieron guardar las carpetas recientes: %@" = "The recent folders could not be saved: %@";
+"Abre este favorito. Atajo: Control %lld." = "Opens this favourite. Shortcut: Control %lld.";
+"Abre este favorito." = "Opens this favourite.";
+"Abrir" = "Open";

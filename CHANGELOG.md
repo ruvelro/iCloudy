@@ -24,6 +24,8 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
 - **Carpetas recientes**: las veinte últimas carpetas abiertas, de cualquier pestaña, panel o cuenta, debajo de los
   favoritos y en el menú Ir. Se guardan entre sesiones; una carpeta renombrada sigue en la lista con su nombre nuevo,
   y una movida o borrada sale de ella. Las de una bóveda cifrada no se apuntan nunca.
+- **Favoritos en el orden que quieras**: se arrastran a su sitio en la barra lateral, o se mueven con «Mover arriba» y
+  «Mover abajo» de su menú contextual. Los nueve primeros se abren con ⌃1…⌃9, también desde el menú Ir.
 
 ### Robustez
 

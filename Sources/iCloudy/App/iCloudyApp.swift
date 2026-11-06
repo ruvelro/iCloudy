@@ -90,6 +90,14 @@ struct iCloudyApp: App {
                     if !model.recents.items.isEmpty { Divider() }
                     Button("Borrar el menú") { model.recents.clear() }.disabled(model.recents.items.isEmpty)
                 }
+                Divider()
+                // ⌃1 to ⌃9 open the first nine favourites, in the order the sidebar shows them.
+                Section("Favoritos") {
+                    ForEach(Array(model.favorites.prefix(9).enumerated()), id: \.element.id) { index, favorite in
+                        Button(favorite.file.name) { model.openFavorite(favorite) }
+                            .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .control)
+                    }
+                }
             }
             CommandGroup(after: .appInfo) {
                 Button("Añadir cuenta…") { model.ui.showConnect = true }.keyboardShortcut("n", modifiers: [.command, .shift])

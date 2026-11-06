@@ -10,6 +10,8 @@ import UniformTypeIdentifiers
 /// of them are connected, so the star gives way to the account's own icon.
 struct FavoritesList: View {
     @Bindable var model: AppModel
+    /// The favourite being dragged to a new place, if any.
+    @State private var dragging: Favorite.ID?
 
     private var empty: some View {
         VStack(spacing: 6) {
@@ -41,13 +43,51 @@ struct FavoritesList: View {
     var body: some View {
         VStack(spacing: 3) {
             if model.favorites.isEmpty { empty }
-            ForEach(model.favorites) { favorite in
-                Button { model.openFavorite(favorite) } label: { row(favorite) }
-                    .buttonStyle(.plain)
+            ForEach(Array(model.favorites.enumerated()), id: \.element.id) { index, favorite in
+                // A tap rather than a Button, for the same reason as the clouds: a button keeps the mouse from the
+                // moment it is pressed, and the drag that reorders the list would never start.
+                row(favorite)
                     .sidebarRow(selected: false)
+                    .onTapGesture { model.openFavorite(favorite) }
                     .help(model.accounts.first { $0.id == favorite.accountID }?.email ?? L("Cuenta desconectada"))
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityHint(index < 9 ? L("Abre este favorito. Atajo: Control \(index + 1).") : L("Abre este favorito."))
+                    .accessibilityAction { model.openFavorite(favorite) }
+                    .onDrag {
+                        dragging = favorite.id
+                        return NSItemProvider(object: favorite.id as NSString)
+                    }
+                    .onDrop(of: [.text], delegate: FavoriteReorder(target: favorite.id, dragging: $dragging, store: model.favoriteStore))
+                    .contextMenu {
+                        Button("Abrir") { model.openFavorite(favorite) }
+                        Divider()
+                        Button("Mover arriba") { model.favoriteStore.move(favorite.id, by: -1) }
+                            .disabled(!model.favoriteStore.canMove(favorite.id, by: -1))
+                        Button("Mover abajo") { model.favoriteStore.move(favorite.id, by: 1) }
+                            .disabled(!model.favoriteStore.canMove(favorite.id, by: 1))
+                        Divider()
+                        Button("Quitar de favoritos") {
+                            model.favoriteStore.remove(accountID: favorite.accountID, fileID: favorite.file.id, inside: false)
+                        }
+                    }
             }
             RecentLocationsList(model: model, store: model.recents)
         }
     }
+}
+
+/// Moves the dragged favourite as it passes over the others, so the list shows where it will land.
+struct FavoriteReorder: DropDelegate {
+    let target: Favorite.ID
+    @Binding var dragging: Favorite.ID?
+    let store: FavoritesStore
+
+    func dropEntered(info: DropInfo) {
+        guard let dragging, dragging != target else { return }
+        withAnimation(Motion.quick) { store.move(dragging, to: target) }
+    }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+    func validateDrop(info: DropInfo) -> Bool { dragging != nil }
+    func performDrop(info: DropInfo) -> Bool { dragging = nil; return true }
 }
