@@ -56,6 +56,10 @@ simulados y la documentación de cada uno. Se marca como 🆕 hasta que alguien 
   se conecta a ella para responder. Solo contesta a una copia emparejada: `icloudy pair` pregunta en la ventana y
   guarda un token en `~/.config/icloudy/token`; sin él no se lista ni se envía nada. Las descargas pasan la misma
   verificación que las de la ventana y las subidas van a la cola.
+- **Spotlight puede conocer una cuenta entera.** En Ajustes › Spotlight, por cuenta: iCloudy la recorre carpeta a
+  carpeta, sin prisa y hasta un límite (5000 elementos por omisión), y publica los nombres y las rutas, nunca el
+  contenido. Se repite una vez al día al abrir la app, vive aparte de lo abierto y los favoritos, y apagarlo lo quita
+  de Spotlight sin tocar lo demás.
 ### Distribución
 
 Lo necesario para que iCloudy se descargue y se abra sin Xcode. Todo funciona ya sin cuenta de Apple, marcado como

@@ -2241,3 +2241,10 @@
 "Espacio para la vista previa" = "Space for the preview";
 "favorito" = "favourite";
 "Abre esta nube. Las flechas pasan a la siguiente." = "Opens this cloud. The arrow keys move to the next one.";
+"Spotlight" = "Spotlight";
+"Spotlight encuentra siempre lo que has abierto y tus favoritos. Aquí puedes añadir los nombres de todo lo que hay en una cuenta, recorriéndola carpeta a carpeta hasta el límite. Nunca se indexa el contenido ni se descarga nada; se repite una vez al día al abrir iCloudy." = "Spotlight always finds what you opened and your favourites. Here you can add the names of everything in an account, walking it folder by folder up to the limit. Contents are never indexed and nothing is downloaded; it is repeated once a day when iCloudy opens.";
+"Como máximo %lld elementos por cuenta" = "At most %lld items per account";
+"Indexar la cuenta entera" = "Index the whole account";
+"%lld elementos (límite alcanzado) · %@" = "%lld items (limit reached) · %@";
+"%lld elementos · %@" = "%lld items · %@";
+"Reindexar" = "Reindex";

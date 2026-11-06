@@ -29,6 +29,7 @@ extension AppModel {
             // Tabs restored from the last session may name accounts that are gone; they fall back to the first one.
             workspace.reconcile(with: accounts)
             refreshSpotlightFavorites()
+            refreshFullIndexIfDue()
             if let waiting = pendingSpotlightItem { pendingSpotlightItem = nil; openSpotlightItem(identifier: waiting) }
             reloadVisible()
             for account in accounts where account.id != selectedAccountID { refreshStorage(account) }

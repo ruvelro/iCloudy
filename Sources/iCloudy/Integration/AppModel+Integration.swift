@@ -64,7 +64,7 @@ extension AppModel {
     func openSpotlightItem(identifier: String) {
         guard !loadingAccounts else { pendingSpotlightItem = identifier; return }
         guard let decoded = SpotlightIndex.decode(identifier: identifier),
-              let entry = spotlight.items.first(where: { $0.accountID == decoded.accountID && $0.file.id == decoded.fileID }),
+              let entry = spotlight.entry(accountID: decoded.accountID, fileID: decoded.fileID),
               let account = accounts.first(where: { $0.id == decoded.accountID }) else {
             error = L("Ese resultado ya no está disponible en iCloudy. Vuelve a conectar la cuenta o búscalo de nuevo.")
             return
