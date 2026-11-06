@@ -31,10 +31,13 @@ extension ExplorerView {
                 // the two buttons on its left — how this list is drawn — so it now sits in the same group.
                 Menu {
                     Picker("Orden", selection: $model.sortMode) {
-                        Label("Nombre", systemImage: "textformat").tag("name")
-                        Label("Más recientes", systemImage: "clock").tag("date")
-                        Label("Mayor tamaño", systemImage: "arrow.up.arrow.down").tag("size")
-                        Label("Tipo", systemImage: "square.stack.3d.up").tag("kind")
+                        ForEach(SortKey.allCases) { key in Label(key.title, systemImage: key.symbol).tag(key.rawValue) }
+                    }.pickerStyle(.inline).labelsHidden()
+                    // The same direction a second click on the column's header gives.
+                    Picker("Dirección", selection: $model.sortAscending) {
+                        let key = SortKey.of(model.sortMode)
+                        Text(key.directionTitle(ascending: true)).tag(true)
+                        Text(key.directionTitle(ascending: false)).tag(false)
                     }.pickerStyle(.inline).labelsHidden()
                 } label: { Image(systemName: "arrow.up.arrow.down") }
                 .accessibilityLabel("Ordenar la lista")

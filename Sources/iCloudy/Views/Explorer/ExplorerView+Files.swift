@@ -8,8 +8,9 @@ extension ExplorerView {
     /// a click in this one has already made it.
     func fileList(_ pane: Int) -> some View {
         let tab = model.tab(inPane: pane)
-        return Table(tab.visibleFiles, selection: model.selection(inPane: pane)) {
-            TableColumn("Nombre") { file in
+        // A click on a header sorts by that column, and a second one turns the direction round; the tab keeps both.
+        return Table(tab.visibleFiles, selection: model.selection(inPane: pane), sortOrder: model.sortOrder(inPane: pane)) {
+            TableColumn("Nombre", value: \.name) { file in
                 HStack(spacing: 8) {
                     // Folders carry no cloud/Mac badge: iCloudy cannot claim that everything inside is present and
                     // current. A folder kept offline is the exception, because then the refresh does know.
@@ -23,10 +24,10 @@ extension ExplorerView {
                     .overlay { if file.isFolder { MiddleClick { model.openInNewTab(file) } } }
                     .paneDragSource { model.paneDragProvider(for: file, pane: pane) }
             }.width(min: 200, ideal: 320)
-            TableColumn("Modificado") { file in
+            TableColumn("Modificado", value: \.sortDate) { file in
                 Text(file.modified?.formatted(date: .abbreviated, time: .omitted) ?? "—").foregroundStyle(.secondary)
             }.width(125)
-            TableColumn("Tamaño") { file in
+            TableColumn("Tamaño", value: \.sortSize) { file in
                 Text(file.size.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "—").foregroundStyle(.secondary)
             }.width(85)
         }

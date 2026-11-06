@@ -5,6 +5,12 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
 
 ## Sin publicar
 
+### Explorador
+
+- **Ordenar por columna, en los dos sentidos.** Un clic en la cabecera ordena por esa columna y otro le da la vuelta;
+  el menú de orden dice lo mismo («Más recientes primero», «De la Z a la A») y la cuadrícula sigue el mismo orden.
+  Cada pestaña guarda el suyo. Las carpetas siguen arriba en cualquier sentido.
+
 ### Robustez
 
 - **La ventana ya no se traba guardando ni leyendo.** La cola, los reflejos, las copias sin conexión y locales, el

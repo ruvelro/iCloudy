@@ -373,7 +373,6 @@
 "Los documentos de Google dentro de carpetas se guardan como enlaces. Si hay nombres repetidos, podrás decidir qué hacer." = "Google documents inside folders are saved as links. If names repeat, you will be able to decide what to do.";
 "Los filtros se aplican a los resultados recibidos. Si quedan páginas, carga más; si hubo errores, reintenta la cuenta." = "Filters apply to the results received. If pages remain, load more; if there were errors, retry the account.";
 "Marca una carpeta o un archivo con la estrella y aparecerá aquí, sea de la nube que sea." = "Star a folder or a file and it shows up here, whichever cloud it lives in.";
-"Mayor tamaño" = "Largest";
 "MB" = "MB";
 "Mega" = "Mega";
 "Mega comparte una carpeta con una clave de compartición aparte, un paso que iCloudy todavía no sabe dar. Crea el enlace de la carpeta desde mega.nz; los archivos sueltos sí se comparten desde aquí." = "Mega shares a folder with a sharing key of its own, a step iCloudy cannot take yet. Create the folder's link from mega.nz; single files are shared from here.";
@@ -419,7 +418,6 @@
 "Mover aquí" = "Move here";
 "Mover a…" = "Move to…";
 "Muestra al instante lo que había la última vez mientras el proveedor responde, y deja navegar sin conexión. Solo nombres y metadatos." = "Shows what was there last time straight away while the provider answers, and lets you browse offline. Names and metadata only.";
-"Más recientes" = "Most recent";
 "Nada en curso" = "Nothing in progress";
 "Nada finalizado" = "Nothing finished";
 "Nada ha fallado" = "Nothing failed";
@@ -1889,3 +1887,13 @@
 "No se ha conectado la cuenta de %@ «%@». Si no era la tuya, cierra las pestañas del navegador que no reconozcas y vuelve a intentarlo." = "The %@ account “%@” was not connected. If it was not yours, close any browser tabs you do not recognise and try again.";
 "«%@» no está borrada: aparece en la papelera para que puedas abrirla y ver lo que se borró dentro." = "“%@” is not deleted: it appears in the bin so you can open it and see what was deleted inside.";
 "El servicio devolvió la misma página una y otra vez, así que se ha dejado de pedir más." = "The service returned the same page over and over, so iCloudy stopped asking for more.";
+
+/* 0.9 — Explorador */
+"Fecha de modificación" = "Date modified";
+"Dirección" = "Direction";
+"De la A a la Z" = "A to Z";
+"De la Z a la A" = "Z to A";
+"Más antiguos primero" = "Oldest first";
+"Más recientes primero" = "Newest first";
+"Más pequeños primero" = "Smallest first";
+"Más grandes primero" = "Largest first";
