@@ -29,7 +29,7 @@ Un único paquete SwiftPM sin dependencias externas (`Package.swift`, `swift-too
 | `Models/` | Tipos de valor: `Account`, `Cloud` y `CloudCapabilities`, `CloudFile`, `Transfer`, `CloudError`… |
 | `Encryption/` | Bóvedas Cryptomator: criptografía propia (AES-SIV, scrypt…), el proveedor que cifra sobre otro y sus vistas. |
 | `Demo/` | `DemoStore` (archivos simulados en una carpeta local) y `DemoProvider`. |
-| `Compare/`, `Search/`, `Preview/`, `Integration/`, `Diagnostics/`, `FileProvider/`, `Utilities/` | Comparar carpetas y duplicados; búsqueda global y guardada; vista previa y miniaturas; Spotlight, menú, Atajos, notificaciones; registro de diagnóstico; el lado de la app del File Provider; utilidades. |
+| `Compare/`, `Search/`, `Preview/`, `Integration/`, `Diagnostics/`, `FileProvider/`, `Utilities/` | Comparar carpetas y duplicados; búsqueda global y guardada; vista previa y miniaturas; Spotlight, menú, Atajos, notificaciones, el aviso de versiones nuevas (`UpdateChecker`, ver [DISTRIBUCION.md](DISTRIBUCION.md)); registro de diagnóstico; el lado de la app del File Provider; utilidades. |
 | `Views/` | Las vistas SwiftUI, agrupadas por área. |
 
 `CloudAPI.swift` y sus extensiones, en la raíz, son la fachada que la app usa para hablar con un proveedor.

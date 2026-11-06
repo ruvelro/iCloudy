@@ -226,7 +226,7 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 
 **En camino**
 
-- [ ] **Binario firmado y notarizado**, con actualizaciones automáticas
+- [ ] **Binario firmado y notarizado**: el empaquetado (`.zip`, `.dmg`, sumas SHA-256), la notarización, el aviso de versiones nuevas y el cask de Homebrew están listos y solo esperan un identificador de equipo de Apple — [distribución](docs/DISTRIBUCION.md). En el Mac App Store, no: [por qué](docs/DISTRIBUCION.md#mac-app-store-no)
 - [ ] **Extensión del Finder (File Provider)**: el código está (`NSFileProviderReplicatedExtension` sobre los mismos proveedores, [File Provider](docs/FILEPROVIDER.md)) y se empaqueta al indicar un App Group, pero nunca se ha cargado en el Finder: hace falta un identificador de equipo de Apple que todavía no hay, así que está sin verificar
 - [ ] **Mega**: probar el segundo factor y las cuentas anteriores a 2018 contra cuentas reales
 - [ ] **pCloud, S3 y bóvedas**: probarlos contra cuentas reales y contra una bóveda creada por Cryptomator
@@ -241,6 +241,7 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 |---|---|
 | [Detalles técnicos](docs/DETALLES.md) | La referencia larga: cada función, cada límite, cada decisión |
 | [OAuth](docs/OAUTH.md) | Registrar los clientes de Google, Microsoft, Dropbox, Box y pCloud |
+| [Distribución](docs/DISTRIBUCION.md) | Publicar una versión, firma y notarización, actualizaciones, Homebrew y el Mac App Store |
 | [Mega](docs/MEGA.md) | El protocolo, la criptografía y por qué es experimental |
 | [O2 Cloud](docs/O2.md) | Funambol OneMediaHub bajo la marca de O2 |
 | [FTP](docs/FTP.md) | Qué hay, qué falta y lo que costaría añadirlo |
