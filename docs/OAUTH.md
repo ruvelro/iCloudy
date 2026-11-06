@@ -239,9 +239,13 @@ explicado arriba. **No se añade nada al almacén de confianza del sistema**: el
 
 Para quitarlo, abre Acceso a Llaveros, busca `iCloudy Development` y elimina el certificado y su clave. También puedes forzar otra identidad con `ICLOUDY_SIGNING_IDENTITY="Nombre exacto"` o volver a ad hoc con `ICLOUDY_SIGNING_IDENTITY=-`.
 
-Los certificados autofirmados no admiten sello de tiempo de Apple, por eso el script firma con `--timestamp=none`. Sirven para desarrollo; la distribución sigue requiriendo Developer ID o Mac App Store.
+Los certificados autofirmados no admiten sello de tiempo de Apple, por eso el script firma con `--timestamp=none`. Sirven para desarrollo; la distribución requiere Developer ID y notarización, que hace `scripts/notarize.sh` ([DISTRIBUCION.md](DISTRIBUCION.md)).
 
 ## Mac App Store
+
+> La decisión actual es **no publicar en el Mac App Store** (GPL-3.0, clientes OAuth dentro del paquete, API no
+> documentadas); se razona en [DISTRIBUCION.md](DISTRIBUCION.md#mac-app-store-no), junto con la firma Developer ID y
+> la notarización que sí se usan. Lo que sigue queda como referencia.
 
 Se incluye `Resources/iCloudy.entitlements` y el script lo usa al firmar: **App Sandbox**, red de salida, red de entrada para el callback exclusivo de loopback y acceso de lectura/escritura a archivos elegidos por el usuario. Los tests con respuestas simuladas no certifican el funcionamiento real en el sandbox. [App Sandbox de Apple](https://developer.apple.com/documentation/xcode/configuring-the-macos-app-sandbox).
 

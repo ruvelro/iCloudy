@@ -11,6 +11,19 @@ extension ExplorerView {
                 .onAppear { revealSelection(of: pane, proxy) }
                 // After a relaunch the selection comes back before the listing does.
                 .onChange(of: tab.visibleFiles.isEmpty) { _, empty in if !empty { revealSelection(of: pane, proxy) } }
+                // Type-select: the first letters of a name pick it, in the list, the icons and the columns alike.
+                .onKeyPress(characters: .alphanumerics.union(.punctuationCharacters).union(.symbols).union(.whitespaces), phases: .down) { press in
+                    guard press.modifiers.subtracting([.shift, .capsLock]).isEmpty, !press.characters.isEmpty else { return .ignored }
+                    // A space on its own is the preview's; inside a name being typed it is part of the name.
+                    if press.characters == " ", typeSelect.typed.isEmpty { return .ignored }
+                    let prefix = typeSelect.type(press.characters)
+                    let current = model.tab(inPane: pane)
+                    guard let hit = TypeSelect.match(prefix, in: current.visibleFiles) else { return .handled }
+                    model.workspace.update(current.id) { $0.selection = [hit.id] }
+                    cursor = hit.id; anchor = hit.id
+                    proxy.scrollTo(hit.id)
+                    return .handled
+                }
         }
         .id(tab.id)
     }

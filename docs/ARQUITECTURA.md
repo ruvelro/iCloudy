@@ -29,7 +29,7 @@ Un único paquete SwiftPM sin dependencias externas (`Package.swift`, `swift-too
 | `Models/` | Tipos de valor: `Account`, `Cloud` y `CloudCapabilities`, `CloudFile`, `Transfer`, `CloudError`… |
 | `Encryption/` | Bóvedas Cryptomator: criptografía propia (AES-SIV, scrypt…), el proveedor que cifra sobre otro y sus vistas. |
 | `Demo/` | `DemoStore` (archivos simulados en una carpeta local) y `DemoProvider`. |
-| `Compare/`, `Search/`, `Preview/`, `Integration/`, `Diagnostics/`, `FileProvider/`, `Utilities/` | Comparar carpetas y duplicados; búsqueda global y guardada; vista previa y miniaturas; Spotlight, menú, Atajos, notificaciones; registro de diagnóstico; el lado de la app del File Provider; utilidades. |
+| `Compare/`, `Search/`, `Preview/`, `Integration/`, `Diagnostics/`, `FileProvider/`, `Utilities/` | Comparar carpetas y duplicados; búsqueda global y guardada; vista previa y miniaturas; Spotlight, menú, Atajos, notificaciones, el aviso de versiones nuevas (`UpdateChecker`, ver [DISTRIBUCION.md](DISTRIBUCION.md)); registro de diagnóstico; el lado de la app del File Provider; utilidades. |
 | `Views/` | Las vistas SwiftUI, agrupadas por área. |
 
 `CloudAPI.swift` y sus extensiones, en la raíz, son la fachada que la app usa para hablar con un proveedor.
@@ -49,13 +49,22 @@ guarda estado suelto: lo reparte en subsistemas con dueño, y las propiedades qu
 | `queue: TransferQueue` | La cola de transferencias. | `add`, `retry`, `cancel`…; cada trabajo se recorre con un `TransferWalker`. |
 | `mirrors: MirrorManager` | Reflejos de un sentido y sincronizaciones bidireccionales. | Un archivo por reflejo. |
 | `offline`, `localCopies`, `quotas`, `history`, `remoteCopies`, `spotlight`, `listings`, `cryptomator`, `planner`, `savedSearches`, `globalSearch`… | Copias sin conexión, copias locales, cuotas, historial, copias asíncronas de OneDrive, Spotlight, caché de listados, bóvedas, planes de transferencia y búsquedas. | Cada uno con su estado y su persistencia. |
-| `workspace: ExplorerWorkspace` | Paneles y pestañas, cada una con su lugar, su listado y su selección. | Las propiedades `files`, `path`, `selectedIDs`… del modelo reenvían a la pestaña activa del panel enfocado. |
+| `workspace: ExplorerWorkspace` | Paneles y pestañas, cada una con su lugar, su listado y su selección. | Las propiedades `files`, `path`, `selectedIDs`… del modelo reenvían a la pestaña activa del panel enfocado. Cada pestaña guarda también su orden (`sortMode` y `sortAscending`) y su modo de vista (lista, iconos o columnas). |
+| `explorer: ExplorerSettings` | Cómo se dibujan las listas: las columnas de la tabla (un `TableColumnCustomization`, que edita también el menú de su cabecera) y la agrupación, de las carpetas y de la búsqueda global. | En las preferencias (`Prefs.defaults`). |
+| `recents: RecentLocationsStore` | Las veinte últimas carpetas de «Mis archivos» abiertas en cualquier pestaña. | `go(to:)` y atrás/adelante llaman a `note`; `recent-locations.json` con sobre y `StoreWriter.later`. |
+| `editor: ExternalEditor` | «Abrir con»: copias privadas en `Caches/iCloudy/Editing`, vigiladas con el `FolderWatcher` de los reflejos. | `AppModel.openWith` descarga por la fachada; `uploadEdits` encola una subida normal de una copia preparada, y conserva las dos versiones si la nube cambió. |
+| `columnListings: ColumnListings` | Los listados de las carpetas que la vista en columnas enseña por encima de la abierta. | `AppModel.columns(inPane:)` es puro; la vista pide los que faltan. |
 
 Observación: `TransferQueue`, `OfflineStore`, `LocalCopyIndex`, `StorageQuotaController`, `MirrorManager`,
 `SavedSearches` y `TransferPlanCoordinator` son `@Observable`. La cola expone además `structuralItems`, que solo cambia
 con transiciones de estado: el explorador (insignias, menús) lo lee para no redibujarse con cada bloque transferido;
 el panel de transferencias lee `items` y sí se redibuja con el progreso. Quedan en `ObservableObject` el historial,
 las copias de OneDrive, la búsqueda global, la vista previa, la conectividad, las bóvedas y `CompareCenter`.
+
+Para abrir un lugar por su ruta (Ir a la carpeta, la barra de ruta, y lo que llegue por URL o por Atajos) la entrada
+es `AppModel.open(path:in:tab:)`, que recorre la ruta como `FileShortcuts.resolve(path:in:)` y, si acaba en un
+archivo, abre su carpeta con él seleccionado; `goToFolder(_:defaultAccount:)` lee antes la forma `cuenta:/ruta`
+(`FolderAddress`). El inspector lee `inspectorSummary()`, que solo cuenta las filas visibles de la selección.
 
 ## Proveedores y capacidades
 

@@ -150,6 +150,19 @@ cancelable y limpieza al cerrar.
 | **Notificaciones, inicio de sesión y Dock** | Aviso al acabar las transferencias, abrir al iniciar sesión y vivir solo en la barra de menús. |
 | **Más Atajos** | Listar, descargar, crear enlaces y copiar entre nubes desde la app Atajos. |
 
+### 🆕 Nuevo en el explorador
+
+|  |  |
+|---|---|
+| **Columnas a tu gusto** | Ordena con un clic en la cabecera, en los dos sentidos; añade Tipo, Suma de comprobación o Estado, y agrupa por tipo o por fecha. |
+| **Vista en columnas** | La tercera vista, como la del Finder, con ← y → entre columnas. |
+| **Ir a la carpeta (⇧⌘G)** | Escribe una ruta, en esta cuenta o en otra («Dropbox:/Fotos»), o escribe sobre las migas con ⌘L. |
+| **Recientes y favoritos** | Las veinte últimas carpetas, de cualquier cuenta; favoritos en el orden que quieras y a mano con ⌃1…⌃9. |
+| **Inspector (⌘I)** | Tipo, tamaño, fechas, ruta, suma, copia local, versiones y enlaces de lo seleccionado, o el total de varios. |
+| **Abrir con… y volver a subir** | Edita en cualquier app una copia vigilada; al guardar, sube los cambios por la cola verificada, y si la nube cambió mientras tanto conserva las dos versiones. |
+| **Vista previa como Vista Rápida** | Pantalla completa, compartir, zoom y giro en imágenes, ⌘Y. |
+| **Teclas del Finder** | ⌘D duplica, ⇧⌘N crea carpeta, ⌘E expulsa, y escribir un nombre lo selecciona. Barra lateral con teclado y VoiceOver. |
+
 <br>
 
 ## 🚀 Instalación
@@ -226,7 +239,7 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 
 **En camino**
 
-- [ ] **Binario firmado y notarizado**, con actualizaciones automáticas
+- [ ] **Binario firmado y notarizado**: el empaquetado (`.zip`, `.dmg`, sumas SHA-256), la notarización, el aviso de versiones nuevas y el cask de Homebrew están listos y solo esperan un identificador de equipo de Apple — [distribución](docs/DISTRIBUCION.md). En el Mac App Store, no: [por qué](docs/DISTRIBUCION.md#mac-app-store-no)
 - [ ] **Extensión del Finder (File Provider)**: el código está (`NSFileProviderReplicatedExtension` sobre los mismos proveedores, [File Provider](docs/FILEPROVIDER.md)) y se empaqueta al indicar un App Group, pero nunca se ha cargado en el Finder: hace falta un identificador de equipo de Apple que todavía no hay, así que está sin verificar
 - [ ] **Mega**: probar el segundo factor y las cuentas anteriores a 2018 contra cuentas reales
 - [ ] **pCloud, S3 y bóvedas**: probarlos contra cuentas reales y contra una bóveda creada por Cryptomator
@@ -241,6 +254,7 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 |---|---|
 | [Detalles técnicos](docs/DETALLES.md) | La referencia larga: cada función, cada límite, cada decisión |
 | [OAuth](docs/OAUTH.md) | Registrar los clientes de Google, Microsoft, Dropbox, Box y pCloud |
+| [Distribución](docs/DISTRIBUCION.md) | Publicar una versión, firma y notarización, actualizaciones, Homebrew y el Mac App Store |
 | [Mega](docs/MEGA.md) | El protocolo, la criptografía y por qué es experimental |
 | [O2 Cloud](docs/O2.md) | Funambol OneMediaHub bajo la marca de O2 |
 | [FTP](docs/FTP.md) | Qué hay, qué falta y lo que costaría añadirlo |

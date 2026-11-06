@@ -28,6 +28,11 @@ ICLOUDY_BUILD_CONFIGURATION=debug bash scripts/build-app.sh
 open dist/debug/iCloudy.app
 ```
 
+Para empaquetar lo compilado como `.zip` y `.dmg`, `bash scripts/package.sh` (con la misma
+`ICLOUDY_BUILD_CONFIGURATION`); cómo se publica una versión está en [docs/DISTRIBUCION.md](docs/DISTRIBUCION.md). La
+versión se cambia solo en `VERSION`, y `python3 scripts/release.py check` comprueba que el README y el registro de
+cambios dicen lo mismo.
+
 Las credenciales OAuth propias se configuran con `swift scripts/configure-oauth.swift` (ver [docs/OAUTH.md](docs/OAUTH.md));
 se guardan en `Configuration/OAuth.local.plist`, que Git ignora. La extensión de Finder solo se empaqueta con
 `ICLOUDY_APP_GROUP` ([docs/FILEPROVIDER.md](docs/FILEPROVIDER.md)).

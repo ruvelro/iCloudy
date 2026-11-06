@@ -41,6 +41,25 @@ final class FavoritesStore {
         save()
     }
 
+    /// Drags a favourite to where another one is, the way the clouds and the tabs are reordered.
+    func move(_ id: Favorite.ID, to target: Favorite.ID) {
+        guard id != target, let from = items.firstIndex(where: { $0.id == id }),
+              let to = items.firstIndex(where: { $0.id == target }) else { return }
+        items.insert(items.remove(at: from), at: to)
+        save()
+    }
+
+    /// One place up (-1) or down (+1), for the keyboard and the context menu.
+    func move(_ id: Favorite.ID, by offset: Int) {
+        guard let from = items.firstIndex(where: { $0.id == id }), items.indices.contains(from + offset) else { return }
+        items.swapAt(from, from + offset)
+        save()
+    }
+
+    func canMove(_ id: Favorite.ID, by offset: Int) -> Bool {
+        items.firstIndex(where: { $0.id == id }).map { items.indices.contains($0 + offset) } ?? false
+    }
+
     /// The item is gone. `inside` also drops the favorites that live below it, which are gone with it.
     func remove(accountID: String, fileID: String, inside: Bool = true) {
         let before = items.count

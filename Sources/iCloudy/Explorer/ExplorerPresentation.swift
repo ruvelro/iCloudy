@@ -51,6 +51,14 @@ final class ExplorerPresentation {
     /// The account whose name and colour are being edited.
     var appearanceAccount: Account?
     var showGlobalSearch = false
+    /// The account waiting for confirmation before it is disconnected, from its menu or with ⌘E.
+    var pendingDisconnect: Account?
+    /// The inspector beside the list (⌘I).
+    var showInspector = false
+    /// «Ir a la carpeta…» (⇧⌘G).
+    var showGoToFolder = false
+    /// The pane whose breadcrumbs are being typed over as a path (⌘L), if any.
+    var editingPath: Int?
     /// The name sheet, for a new folder or a rename.
     var showNameDialog = false
     var editName = ""

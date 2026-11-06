@@ -125,21 +125,14 @@ extension AppModel {
         } catch { self.error = error.localizedDescription }
     }
 
-    /// Shows the folder `path` names, or the folder that holds the item it names. With `revealing` the item is also
-    /// selected; without, a file opens in the preview, as a Spotlight result does. This is the one place links,
-    /// the command line and the App Intents go through to show a place.
+    /// Shows the folder `path` names, or the folder that holds the item it names with the item selected, through
+    /// the explorer's own `open(path:in:)`, the one way in for anything that names a place by path. Without
+    /// `revealing`, a file also opens in the preview, as a Spotlight result does.
     func openLink(account: Account, path: [String], revealing: Bool) async throws {
-        let place = try await resolve(path: path.joined(separator: "/"), in: account)
-        preview.close(); globalSearch.cancel(); ui.showGlobalSearch = false
-        if let file = place.file, file.isFolder, !revealing {
-            go(to: BrowserLocation(accountID: account.id, collection: .files, path: place.trail))
-            return
-        }
-        let folderTrail = place.file?.isFolder == true ? Array(place.trail.dropLast()) : place.trail
-        go(to: BrowserLocation(accountID: account.id, collection: .files, path: folderTrail))
-        guard let file = place.file else { return }
-        if revealing { selectedIDs = [file.id] }
-        else { preview.show(file: file, account: account, client: try client(account)) }
+        let joined = path.joined(separator: "/")
+        try await open(path: joined, in: account)
+        guard !revealing, let file = try await resolve(path: joined, in: account).file, !file.isFolder else { return }
+        preview.show(file: file, account: account, client: try client(account))
     }
 
     /// The `icloudy://` link that reveals `file` in the open folder, for pasting into notes, scripts or a chat.
