@@ -167,8 +167,9 @@ final class CLIBridge {
     private func jobs(_ arguments: [String], model: AppModel, nonce: String, reply: (CLIMessage) async throws -> Void) async throws {
         let mirrors = model.mirrors.mirrors
         guard arguments.first == "run" else {
-            try await reply(CLIMessage(nonce: nonce, ok: true, lines: mirrors.map {
-                "\($0.id.uuidString)\t\($0.localURL.lastPathComponent)\t\($0.remoteName)\($0.paused ? "\t" + L("en pausa") : "")"
+            let paused = L("en pausa")
+            try await reply(CLIMessage(nonce: nonce, ok: true, lines: mirrors.map { mirror in
+                [mirror.id.uuidString, mirror.localURL.lastPathComponent, mirror.remoteName].joined(separator: "\t") + (mirror.paused ? "\t" + paused : "")
             }))
             return
         }
