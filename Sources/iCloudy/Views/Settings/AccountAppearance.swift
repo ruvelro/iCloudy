@@ -87,7 +87,7 @@ struct AccountIcon: View {
         case .webdav: return "server.rack"
         case .ftp: return "arrow.up.arrow.down.square.fill"
         case .sftp: return "lock.rectangle.stack.fill"
-        case .volume: return "externaldrive.connected.to.line.below.fill"
+        case .volume: return account.capabilities.ubiquitousItems ? "icloud.fill" : "externaldrive.connected.to.line.below.fill"
         case .mega: return "lock.icloud.fill"
         case .o2: return "antenna.radiowaves.left.and.right.circle.fill"
         case .pcloud: return "cloud.circle.fill"

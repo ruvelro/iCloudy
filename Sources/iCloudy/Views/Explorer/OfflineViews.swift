@@ -40,7 +40,11 @@ struct FileStateBadge: View {
     let offline: OfflineStatus?
     var size: CGFloat = 13
     var body: some View {
-        if let offline, file.isFolder || local == .cloudOnly { OfflineBadge(status: offline, size: size) }
+        // iCloud Drive says itself whether a file is here; that is the state worth showing, not iCloudy's copies.
+        if let state = file.ubiquity {
+            Image(systemName: state.symbol).font(.system(size: size)).foregroundStyle(state == .cloudOnly ? Color.secondary : Color.blue)
+                .help(state.help).accessibilityLabel(Text(verbatim: state.help))
+        } else if let offline, file.isFolder || local == .cloudOnly { OfflineBadge(status: offline, size: size) }
         else if file.isFolder { Color.clear }
         else { LocalCopyBadge(status: local, size: size) }
     }

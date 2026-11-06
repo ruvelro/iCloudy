@@ -145,6 +145,16 @@ extension ExplorerView {
         ForEach(file.exportOptions, id: \.ext) { option in
             Button("Exportar como \(option.title)…") { Task { await model.save(file, export: (option.mime, option.ext)) } }
         }
+        if let account = model.account, account.capabilities.ubiquitousItems {
+            Divider()
+            if file.isFolder || file.ubiquity == .cloudOnly {
+                Button("Descargar de iCloud a este Mac") { Task { await model.setUbiquitousDownload(file, downloaded: true) } }
+            }
+            if file.isFolder || file.ubiquity == .downloaded {
+                Button("Quitar la descarga (dejar solo en iCloud)") { Task { await model.setUbiquitousDownload(file, downloaded: false) } }
+                    .help("Libera el espacio de este Mac. El archivo sigue en iCloud y se vuelve a descargar al abrirlo.")
+            }
+        }
         Divider()
         offlineActions(file)
         // Offered for every file; where the provider keeps no history its help says why instead of hiding the action.

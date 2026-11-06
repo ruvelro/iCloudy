@@ -36,6 +36,9 @@ struct Account: Codable, Identifiable, Hashable {
             // And uploads in chunks, which resume where they stopped.
             base.chunkedUploads = true
         }
+        // iCloud Drive is a volume whose files may be only in iCloud. The free space the volume reports is this
+        // Mac's disk, not the iCloud plan's, and macOS gives apps no way to read the plan, so there is no quota.
+        if isICloudDrive { base.quota = false; base.ubiquitousItems = true }
         // "Recientes" and "Compartido conmigo" list the person's own activity, not a drive's. A shared drive or a
         // document library has neither, and asking for them inside one returns nothing or a refusal.
         if driveID != nil { base.recents = false; base.sharedWithMe = false }

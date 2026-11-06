@@ -112,6 +112,9 @@ struct CloudCapabilities {
     /// An interrupted download carries on from the bytes already on this Mac instead of starting over. SFTP reads at
     /// any offset; `ResumableDownload` keeps the partial between attempts and checks it belongs to the same version.
     var resumesDownloads = false
+    /// Items may be in the cloud only, with their bytes fetched on demand: iCloud Drive's dataless files. Listings
+    /// carry each file's state, reading one waits for its download, and an item can be downloaded or evicted.
+    var ubiquitousItems = false
     /// How many jobs the session runs at once, whatever the queue's setting. FTP has a single control connection,
     /// SFTP one channel, and Mega and O2 a session the server serialises (or drops requests from) when it is asked
     /// two things at once. A second job on them would only queue inside the session while showing as running.

@@ -31,6 +31,11 @@ simulados y la documentación de cada uno. Se marca como 🆕 hasta que alguien 
   en el parcial oculto (`.nombre.icloudy-part`) y el reintento sigue desde ahí, si el origen no ha cambiado. La
   descarga deja junto al destino un parcial con la versión que estaba bajando; si el archivo sigue igual en el
   servidor, se continúa, y si cambió, se empieza de cero. Cancelar borra los parciales.
+- **iCloud Drive** 🆕, como carpeta de este Mac: se confirma una vez su carpeta y la cuenta muestra, archivo a
+  archivo, si está solo en iCloud, bajando, descargado o subiendo. Abrir, previsualizar, descargar o copiar un archivo
+  que solo está en iCloud pide antes la descarga y espera, sin bloquear y con opción de cancelar, y lo lee coordinado
+  con iCloud. «Descargar de iCloud a este Mac» y «Quitar la descarga» están en el menú; «Mantener descargado» no,
+  porque macOS no lo ofrece a las apps. Por debajo es un volumen, sin cuota: la de iCloud no se puede leer.
 
 ### Robustez
 

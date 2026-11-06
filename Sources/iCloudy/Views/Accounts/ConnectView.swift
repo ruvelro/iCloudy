@@ -24,6 +24,8 @@ struct ConnectView: View {
                     providerButton(.pcloud, title: "Continuar con pCloud", subtitle: "Cuentas de pCloud en Europa o en Estados Unidos", icon: "cloud.circle")
                     providerButton(.mega, title: "Conectar Mega", subtitle: "Cifrado de extremo a extremo, con correo y contraseña", icon: "lock.icloud")
                     providerButton(.o2, title: "Conectar O2 Cloud", subtitle: "Inicias sesión en las páginas de O2, con tu móvil o tu NIF", icon: "antenna.radiowaves.left.and.right")
+                    connectRow(title: "Conectar iCloud Drive", subtitle: "La carpeta de iCloud Drive de este Mac, con los archivos que solo están en iCloud",
+                               icon: "icloud", tint: .blue, badge: "Nuevo", trailing: "chevron.right") { Task { await model.connectICloudDrive() } }
                 }.disabled(model.ui.connecting)
                 Text("TU PROPIO SERVIDOR").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 VStack(spacing: 10) {
@@ -91,6 +93,31 @@ struct ConnectView: View {
             }
             .sheet(isPresented: sheets.showAdvanced) { AdvancedDriveView(model: model) }
             .sheet(item: sheets.o2Login) { request in O2WebLoginView(model: model, request: request) }
+    }
+
+    /// A row of the sheet for something that is not a `Cloud` of its own, such as iCloud Drive, a flavour of volume.
+    private func connectRow(title: LocalizedStringKey, subtitle: LocalizedStringKey, icon: String, tint: Color, badge: LocalizedStringKey?,
+                            trailing: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: icon).font(.title2).foregroundStyle(tint).frame(width: 30)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(title).font(.headline)
+                        if let badge {
+                            Text(badge).font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(.blue.opacity(0.15), in: Capsule()).foregroundStyle(.blue)
+                        }
+                    }
+                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: trailing).foregroundStyle(.secondary)
+            }.padding(14).frame(maxWidth: .infinity).contentShape(Rectangle())
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(.quaternary))
+        }.buttonStyle(.plain)
     }
 
     private func providerButton(_ cloud: Cloud, title: LocalizedStringKey, subtitle: LocalizedStringKey, icon: String) -> some View {
