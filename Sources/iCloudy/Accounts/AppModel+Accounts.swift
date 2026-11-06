@@ -250,6 +250,7 @@ extension AppModel {
         case .o2: return .pink
         case .pcloud: return .teal
         case .s3: return .orange
+        case .azure: return .blue
         }
     }
 

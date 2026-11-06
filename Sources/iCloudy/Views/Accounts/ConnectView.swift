@@ -37,6 +37,8 @@ struct ConnectView: View {
                 Text("ALMACENAMIENTO DE OBJETOS").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 providerButton(.s3, title: "Conectar S3", subtitle: "Amazon S3, Backblaze B2, Wasabi, Cloudflare R2, MinIO y compatibles", icon: "cylinder.split.1x2")
                     .disabled(model.ui.connecting)
+                providerButton(.azure, title: "Conectar Azure Blob Storage", subtitle: "Con la clave de la cuenta de almacenamiento o un token SAS", icon: "square.stack.3d.down.right")
+                    .disabled(model.ui.connecting)
                 DisclosureGroup(isExpanded: $showPresets) {
                     VStack(spacing: 6) {
                         ForEach(ServerPreset.all) { preset in presetButton(preset) }
@@ -89,7 +91,11 @@ struct ConnectView: View {
             }
             .onAppear { model.ui.connectionError = nil }
             .sheet(item: sheets.serverLogin, onDismiss: { model.ui.serverPreset = nil }) { cloud in
-                if cloud == .s3 { S3LoginView(model: model) } else { ServerLoginView(model: model, cloud: cloud) }
+                switch cloud {
+                case .s3: S3LoginView(model: model)
+                case .azure: AzureLoginView(model: model)
+                default: ServerLoginView(model: model, cloud: cloud)
+                }
             }
             .sheet(isPresented: sheets.showAdvanced) { AdvancedDriveView(model: model) }
             .sheet(item: sheets.o2Login) { request in O2WebLoginView(model: model, request: request) }
@@ -180,6 +186,7 @@ struct ConnectView: View {
         case .o2: return .mint
         case .pcloud: return .teal
         case .s3: return .orange
+        case .azure: return .blue
         }
     }
 }

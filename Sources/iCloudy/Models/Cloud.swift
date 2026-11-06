@@ -4,6 +4,7 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
     case google, microsoft, dropbox, box, webdav, ftp, sftp, volume, mega, o2
     case pcloud
     case s3
+    case azure
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -19,6 +20,7 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
         case .o2: return L("O2 Cloud")
         case .pcloud: return L("pCloud")
         case .s3: return L("S3")
+        case .azure: return L("Azure Blob")
         }
     }
     var tokenURL: String { OAuthProviderSettings.settings(for: self)?.tokenEndpoint ?? "" }
@@ -38,7 +40,7 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
         case .dropbox: return "" // Dropbox addresses the root as an empty path
         case .box: return "0"
         case .pcloud: return "d0" // folders are "d" plus their folderid, and the top one is folder 0
-        case .s3: return "root"
+        case .s3, .azure: return "root"
         }
     }
     var capabilities: CloudCapabilities {
@@ -215,6 +217,14 @@ struct CloudCapabilities {
             // Versions exist on buckets with versioning on; the sheet explains how to switch it on otherwise.
             return CloudCapabilities(recents: false, sharedWithMe: false, quota: false,
                                      reversibleTrash: false, linksFolders: false, versions: true, deletesVersions: true, temporaryLinks: true, signIn: .password)
+        case .azure:
+            // Containers are the roots and folders are prefixes, as in S3. No bin iCloudy can list (soft delete is an
+            // account setting it cannot read back), no quota, prefix search only. Links are SAS URLs signed with the
+            // account key: temporary, and for blobs only. Blocks resume; downloads are checked against Content-MD5.
+            // The API is documented, so it is not `isExperimental`; the form says it has not met a real account yet.
+            return CloudCapabilities(recents: false, sharedWithMe: false, quota: false,
+                                     reversibleTrash: false, linksFolders: false, temporaryLinks: true, chunkedUploads: true,
+                                     signIn: .password)
         }
     }
 }

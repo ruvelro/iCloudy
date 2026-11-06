@@ -46,7 +46,7 @@ final class CapabilityTableTests: XCTestCase {
         XCTAssertEqual(Set(Cloud.allCases.filter { $0.capabilities.sessionLimit == 1 }), [.ftp, .sftp, .mega, .o2])
         XCTAssertEqual(Set(Cloud.allCases.filter { $0.capabilities.undoesTrash }), [.google, .box, .pcloud, .mega])
         XCTAssertEqual(Cloud.allCases.filter { $0.capabilities.asyncCopy }, [.microsoft])
-        XCTAssertEqual(Cloud.allCases.filter { $0.capabilities.temporaryLinks }, [.s3])
+        XCTAssertEqual(Cloud.allCases.filter { $0.capabilities.temporaryLinks }, [.s3, .azure])
         XCTAssertTrue(Account.demo.capabilities.undoesTrash)
         XCTAssertFalse(Account.demo.capabilities.asyncCopy, "La demo copia al momento aunque se presente como Google")
     }

@@ -36,6 +36,11 @@ simulados y la documentación de cada uno. Se marca como 🆕 hasta que alguien 
   que solo está en iCloud pide antes la descarga y espera, sin bloquear y con opción de cancelar, y lo lee coordinado
   con iCloud. «Descargar de iCloud a este Mac» y «Quitar la descarga» están en el menú; «Mantener descargado» no,
   porque macOS no lo ofrece a las apps. Por debajo es un volumen, sin cuota: la de iCloud no se puede leer.
+- **Azure Blob Storage** 🧪, con la clave de la cuenta (Shared Key, firmada en el Mac) o un token SAS. Los
+  contenedores son la raíz y las carpetas, prefijos; los listados siguen los marcadores; las subidas grandes van por
+  bloques con su MD5 y se reanudan; las descargas, por rangos fijados a una versión y comprobadas con `Content-MD5`;
+  copiar dentro de la cuenta espera a que Azure termine antes de borrar el origen al mover. Los enlaces son SAS
+  temporales de solo lectura. Cómo funciona, en [docs/AZURE.md](docs/AZURE.md).
 
 ### Robustez
 

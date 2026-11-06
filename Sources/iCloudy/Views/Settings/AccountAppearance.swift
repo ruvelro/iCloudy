@@ -92,6 +92,7 @@ struct AccountIcon: View {
         case .o2: return "antenna.radiowaves.left.and.right.circle.fill"
         case .pcloud: return "cloud.circle.fill"
         case .s3: return "cylinder.split.1x2.fill"
+        case .azure: return "square.stack.3d.down.right.fill"
         }
     }
     var body: some View {
