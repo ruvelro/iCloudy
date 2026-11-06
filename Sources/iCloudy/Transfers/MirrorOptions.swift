@@ -43,19 +43,25 @@ extension FolderMirror {
         case .upload: return "arrow.triangle.2.circlepath"
         case .twoWay: return "arrow.left.arrow.right"
         case .download: return "arrow.down.circle"
+        case .cloudPair: return "cloud"
         }
     }
+    /// The name the sidebar and the sheets give it: the local folder, or for a pair of clouds the first folder.
+    var title: String { mode == .cloudPair ? (peerName ?? remoteName) : localURL.lastPathComponent }
+    /// Changes travel both ways: two-way syncs and pairs of clouds.
+    var isTwoWay: Bool { mode == .twoWay || mode == .cloudPair }
     var arrow: String {
         switch mode {
         case .upload: return "→"
         case .twoWay: return "⇄"
         case .download: return "←"
+        case .cloudPair: return "⇄"
         }
     }
     /// The policy in force: the one chosen, or the mode's default.
     var conflictPolicy: ConflictPolicy {
         if let chosen = options.conflictPolicy { return chosen }
-        return mode == .twoWay ? .keepBoth : .ask
+        return isTwoWay ? .keepBoth : .ask
     }
     /// The same policy in the terms of a one-way transfer, where "this side" is the source. A download mirror's
     /// source is the cloud, so the Mac winning is the destination winning. nil asks.

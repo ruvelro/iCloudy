@@ -19,14 +19,14 @@ struct MirrorSettingsSheet: View {
     }
 
     private var verifyNote: LocalizedStringKey {
-        mirror.mode == .twoWay
+        mirror.isTwoWay
             ? "La verificación compara cada archivo de los dos lados por tamaño y suma, y avisa de lo que no coincide sin tocarlo."
             : "La verificación compara cada archivo de los dos lados por tamaño y suma; lo que falte o no coincida se vuelve a copiar en la siguiente pasada."
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Ajustes de «\(mirror.localURL.lastPathComponent)»").font(.headline)
+            Text("Ajustes de «\(mirror.title)»").font(.headline)
             Form {
                 Section("Conflictos") {
                     Picker("Si un archivo cambió en los dos lados", selection: policy) {
@@ -57,7 +57,7 @@ struct MirrorSettingsSheet: View {
                          : LocalizedStringKey("Sin programación se pregunta a la nube cada cinco minutos. El horario de transferencias, la pausa en redes caras y la falta de red siguen mandando: lo que toque durante una de ellas espera a que se pueda."))
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
-                if mirror.mode != .twoWay {
+                if !mirror.isTwoWay {
                     Section("Borrados") {
                         Toggle("Espejo exacto: llevar también los borrados", isOn: $options.exact)
                         Text(mirror.mode == .download
@@ -84,7 +84,7 @@ extension FolderMirror {
     func title(of policy: ConflictPolicy) -> String { policy.title }
     /// What the policy does for this kind of mirror, in a sentence.
     func explanation(of policy: ConflictPolicy) -> String {
-        switch (mode, policy) {
+        switch (isTwoWay ? Mode.twoWay : mode, policy) {
         case (.twoWay, .keepBoth): return L("La versión del Mac se renombra con «conflicto» y la fecha, y las dos quedan en los dos lados.")
         case (.twoWay, .ask): return L("El archivo se deja como está en los dos lados hasta que elijas qué hacer en «Cambios pendientes».")
         case (_, .keepBoth): return L("La que llega se guarda con otro nombre, «(2)», junto a la que ya estaba.")

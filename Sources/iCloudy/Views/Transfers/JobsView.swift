@@ -7,6 +7,7 @@ struct JobsView: View {
     @Bindable var store: JobStore
     @State private var editing: SavedJob?
     @State private var creating = false
+    @State private var pairing = false
     @State private var deleting: SavedJob?
     @State private var reporting: [Transfer]?
     @State private var failure: String?
@@ -21,6 +22,9 @@ struct JobsView: View {
             HStack {
                 Text("Trabajos guardados").font(.title2)
                 Spacer()
+                Button { pairing = true } label: { Label("Sincronizar dos nubes…", systemImage: "cloud") }
+                    .help("Mantener iguales dos carpetas de nubes, en los dos sentidos (experimental)")
+                    .disabled(model.accounts.isEmpty)
                 Button { creating = true } label: { Label("Nuevo trabajo…", systemImage: "plus") }
             }
             Text("Una transferencia con nombre que se vuelve a lanzar cuando quieras, a una hora o desde Atajos. Cada pasada va a la cola como cualquier otra, con su informe y su entrada en el historial.")
@@ -38,6 +42,7 @@ struct JobsView: View {
         .padding(20)
         .frame(minWidth: 620, minHeight: 400)
         .sheet(isPresented: $creating) { JobEditor(model: model, job: nil) }
+        .sheet(isPresented: $pairing) { CloudPairEditor(model: model) }
         .sheet(item: $editing) { job in JobEditor(model: model, job: job) }
         .sheet(isPresented: Binding(get: { reporting != nil }, set: { if !$0 { reporting = nil } })) {
             if let reporting { TransferReportView(model: model, queue: model.queue, batchID: reporting[0].batchID) }

@@ -22,6 +22,7 @@ extension MirrorManager {
     @discardableResult
     func verify(_ id: UUID, now: Date = Date()) async throws -> VerificationSummary {
         guard let mirror = mirrors.first(where: { $0.id == id }) else { throw CloudError.message(L("Este reflejo ya no existe.")) }
+        guard mirror.mode != .cloudPair else { throw CloudError.message(L("La verificación todavía no está disponible entre dos nubes.")) }
         guard let api = try queue?.client?(mirror.accountID) else { throw CloudError.message(L("Vuelve a conectar la cuenta de este reflejo.")) }
         let url = resolvedURL(mirror)
         guard FileManager.default.fileExists(atPath: url.path) else { throw CloudError.message(L("La carpeta local ya no existe en \(url.path).")) }
@@ -32,7 +33,7 @@ extension MirrorManager {
         var agreed: [String] = []
         switch mirror.mode {
         case .upload: agreed = mirror.stamps.filter { $0.value.size != -1 && scan.stamps[$0.key] == $0.value }.map(\.key)
-        case .download, .twoWay: agreed = mirror.baseline.filter { !$0.value.isFolder && $0.value.local != nil && scan.stamps[$0.key] == $0.value.local }.map(\.key)
+        case .download, .twoWay, .cloudPair: agreed = mirror.baseline.filter { !$0.value.isFolder && $0.value.local != nil && scan.stamps[$0.key] == $0.value.local }.map(\.key)
         }
         var summary = VerificationSummary()
         var wrong: [String] = []
@@ -54,7 +55,7 @@ extension MirrorManager {
                 // The copy here is still what the mirror wrote, so forgetting the cloud's side makes the next run
                 // replace it without asking.
                 case .download: mirrors[index].baseline[path]?.remoteID = nil
-                case .twoWay: break
+                case .twoWay, .cloudPair: break
                 }
             }
         }

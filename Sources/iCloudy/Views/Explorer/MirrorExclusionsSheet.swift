@@ -33,7 +33,7 @@ struct MirrorExclusionsSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Exclusiones de «\(mirror.localURL.lastPathComponent)»").font(.headline)
+            Text("Exclusiones de «\(mirror.title)»").font(.headline)
             VStack(alignment: .leading, spacing: 4) {
                 Toggle("Excluir los archivos del sistema y de bloqueo habituales", isOn: $rules.useDefaults)
                 Text(verbatim: defaultsList).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)

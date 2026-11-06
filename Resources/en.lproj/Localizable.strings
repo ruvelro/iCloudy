@@ -2203,3 +2203,14 @@
 "Día" = "Day";
 "Datos transferidos por día" = "Data transferred per day";
 "Datos transferidos en las dos últimas semanas" = "Data transferred over the last two weeks";
+"La verificación todavía no está disponible entre dos nubes." = "Verification is not available between two clouds yet.";
+"Entre dos nubes · experimental" = "Between two clouds · experimental";
+"Sincronizar dos nubes…" = "Sync two clouds…";
+"Mantener iguales dos carpetas de nubes, en los dos sentidos (experimental)" = "Keep two cloud folders the same, both ways (experimental)";
+"Esas dos carpetas ya se sincronizan." = "Those two folders are already synced.";
+"Vuelve a conectar las cuentas de esta sincronización." = "Reconnect the accounts of this sync.";
+"Sincronización · %@" = "Sync · %@";
+"Sincronizar dos carpetas de nubes" = "Sync two cloud folders";
+"Las dos carpetas se mantienen iguales en los dos sentidos, con la misma línea base, papelera y freno de borrados que la sincronización con el Mac. Cada archivo que cambia pasa por este Mac, entero y de uno en uno, y la copia temporal se borra al momento. Un archivo cortado a medias se vuelve a copiar entero en la siguiente pasada, y la pasada no tiene informe por archivo; sí queda en el historial." = "Both folders are kept the same both ways, with the same baseline, trash and deletion brake as the sync with the Mac. Every file that changes goes through this Mac, whole and one at a time, and the temporary copy is deleted at once. A file cut short is copied whole again on the next pass, and the pass has no per-file report; it does reach the history.";
+"Primera carpeta" = "First folder";
+"Segunda carpeta" = "Second folder";

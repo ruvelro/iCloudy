@@ -14,7 +14,11 @@ struct FileStamp: Codable, Equatable {
 /// sides looked like when they last agreed. In download form (`DownloadMirror`) the local folder is kept as a copy of
 /// the remote one, against a baseline of what each file looked like when it was last downloaded.
 struct FolderMirror: Identifiable, Codable {
-    enum Mode: String, Codable { case upload, twoWay, download }
+    enum Mode: String, Codable {
+        case upload, twoWay, download
+        /// Two cloud folders kept in step with each other (`CloudPairEngine`). Experimental.
+        case cloudPair
+    }
     var id = UUID()
     var mode: Mode = .upload
     /// Two-way and download: what both sides looked like after the last sync, per relative path.
@@ -56,10 +60,15 @@ struct FolderMirror: Identifiable, Codable {
     var lastVerification: String?
     /// When the schedule last started a run, so a run that found nothing to do is not started again at once.
     var lastScheduledRun: Date?
+    /// Pair of clouds only: the second folder. `accountID`, `remoteFolderID` and `peerName` are the first one;
+    /// `remoteName` is the second one's location, and `localURL` the scratch folder its copies go through.
+    var peerAccountID: String?
+    var peerFolderID: String?
+    var peerName: String?
 }
 
 extension FolderMirror {
-    enum CodingKeys: String, CodingKey { case id, mode, baseline, lastReport, accountID, remoteFolderID, remoteName, localURL, bookmark, stamps, pendingStamps, lastSync, activeTransferID, lastError, remoteEntries, exclusions, paused, changesWhilePaused, options, conflictDecisions, unresolvedConflicts, pendingKeys, pendingRemote, lastVerified, lastVerification, lastScheduledRun }
+    enum CodingKeys: String, CodingKey { case id, mode, baseline, lastReport, accountID, remoteFolderID, remoteName, localURL, bookmark, stamps, pendingStamps, lastSync, activeTransferID, lastError, remoteEntries, exclusions, paused, changesWhilePaused, options, conflictDecisions, unresolvedConflicts, pendingKeys, pendingRemote, lastVerified, lastVerification, lastScheduledRun, peerAccountID, peerFolderID, peerName }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
@@ -90,6 +99,9 @@ extension FolderMirror {
         lastVerified = try values.decodeIfPresent(Date.self, forKey: .lastVerified)
         lastVerification = try values.decodeIfPresent(String.self, forKey: .lastVerification)
         lastScheduledRun = try values.decodeIfPresent(Date.self, forKey: .lastScheduledRun)
+        peerAccountID = try values.decodeIfPresent(String.self, forKey: .peerAccountID)
+        peerFolderID = try values.decodeIfPresent(String.self, forKey: .peerFolderID)
+        peerName = try values.decodeIfPresent(String.self, forKey: .peerName)
     }
 }
 
@@ -236,6 +248,8 @@ final class MirrorManager {
     @ObservationIgnored var scheduleTimer: Task<Void, Never>?
     @ObservationIgnored var verifying: Set<UUID> = []
     @ObservationIgnored var holdSubscription: AnyCancellable?
+    /// Receives two-way and pair runs that moved something, as transfers for the history.
+    @ObservationIgnored var didRecordRun: ((Transfer) -> Void)?
     /// How an exact download mirror sends a local copy to the Trash; tests bypass the Finder.
     var trashLocally: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }
     /// Time to let a burst of file-system events settle before planning a sync.
@@ -339,7 +353,7 @@ final class MirrorManager {
     func persist(_ id: UUID) { persist([id]) }
 
     /// For the baseline of a running two-way sync: written at most once every `flushDelay`.
-    private func persistSoon(_ id: UUID) {
+    func persistSoon(_ id: UUID) {
         unsaved.insert(id)
         guard flushTask == nil else { return }
         flushTask = Task { [weak self] in
@@ -541,7 +555,8 @@ final class MirrorManager {
         let url = resolvedURL(mirror)
         let id = mirror.id
         // A download mirror writes into its folder itself: watching it would run a sync for every file it brought.
-        if mirror.mode != .download {
+        // A pair of clouds has no folder of its own to watch.
+        if mirror.mode == .upload || mirror.mode == .twoWay {
             watchers[id] = FolderWatcher(url: url) { [weak self] paths in Task { @MainActor in self?.noteChanges(paths, for: id) } }
         }
         // The cloud sends no events: a mirror that brings changes from it asks it now and then, unless it has a
@@ -574,6 +589,7 @@ final class MirrorManager {
         guard let index = mirrors.firstIndex(where: { $0.id == id }), let queue else { return }
         if mirrors[index].mode == .twoWay { await syncTwoWay(id); return }
         if mirrors[index].mode == .download { await syncDownload(id); return }
+        if mirrors[index].mode == .cloudPair { await syncPair(id); return }
         if let active = mirrors[index].activeTransferID, let item = queue.items.first(where: { $0.id == active }) {
             if [.queued, .running].contains(item.state) {
                 // Let the running sync finish; its completion re-plans with whatever changed meanwhile.
@@ -653,6 +669,7 @@ final class MirrorManager {
             mirrors[position].lastReport = report
             for path in engine.resolvedConflicts { mirrors[position].conflictDecisions[path] = nil }
             mirrors[position].unresolvedConflicts = engine.unresolvedConflicts
+            if report.bytes > 0 || !report.isEmpty { didRecordRun?(mirrors[position].historyRecord(report)) }
             mirrors[position].lastSync = Date()
             mirrors[position].lastError = nil
             persist(id)
@@ -679,6 +696,11 @@ final class MirrorManager {
     /// written anywhere. A two-way preview lists the cloud, which a one-way one never needs to.
     func preview(_ id: UUID) async throws -> MirrorPreview {
         guard let mirror = mirrors.first(where: { $0.id == id }) else { throw CloudError.message(L("Este reflejo ya no existe.")) }
+        if mirror.mode == .cloudPair {
+            let engine = try makePairEngine(mirror)
+            engine.allowMassDeletion = massDeletionAllowed.contains(id)
+            return try await engine.preview()
+        }
         let url = resolvedURL(mirror)
         guard FileManager.default.fileExists(atPath: url.path) else { throw CloudError.message(L("La carpeta local ya no existe en \(url.path).")) }
         let rules = exclusions(of: mirror)

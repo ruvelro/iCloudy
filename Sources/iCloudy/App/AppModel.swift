@@ -174,6 +174,7 @@ final class AppModel {
             }
             return try self.client(account)
         }
+        mirrors.didRecordRun = { [weak self] transfer in self?.history.record(transfer) }
         queue.didFinish = { [weak self] transfer in
             self?.history.record(transfer); self?.mirrors.handleFinished(transfer)
             self?.notifier.finished(transfer)

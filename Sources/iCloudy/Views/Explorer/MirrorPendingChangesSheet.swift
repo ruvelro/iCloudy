@@ -13,7 +13,7 @@ struct MirrorPendingChangesSheet: View {
 
     private var current: FolderMirror { manager.mirrors.first { $0.id == mirror.id } ?? mirror }
     /// Two-way syncs set to ask leave each conflict for the person, who settles it from here.
-    private var decides: Bool { current.mode == .twoWay && current.conflictPolicy == .ask }
+    private var decides: Bool { current.isTwoWay && current.conflictPolicy == .ask }
 
     @ViewBuilder private func decisionMenu(_ path: String) -> some View {
         let decided = current.conflictDecisions[path]
@@ -28,9 +28,9 @@ struct MirrorPendingChangesSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Cambios pendientes de «\(mirror.localURL.lastPathComponent)»").font(.headline)
+            Text("Cambios pendientes de «\(mirror.title)»").font(.headline)
             Group {
-                if mirror.mode == .twoWay {
+                if mirror.isTwoWay {
                     Text("Calculado ahora con la carpeta del Mac y la de la nube. No se ha cambiado nada en ninguno de los dos lados.")
                 } else if mirror.mode == .download {
                     Text("Calculado ahora con la carpeta de la nube y la del Mac. Lo que haya en el Mac con el mismo nombre y no venga de este reflejo se preguntará al sincronizar, salvo que la política de conflictos diga otra cosa.")
@@ -73,7 +73,7 @@ struct MirrorPendingChangesSheet: View {
                     Label("Hay una subida de este reflejo a medias en la cola: se reanudará esa antes de volver a comparar.", systemImage: "arrow.clockwise")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                if preview.isEmpty, mirror.mode == .twoWay {
+                if preview.isEmpty, mirror.isTwoWay {
                     Label("Nada pendiente: los dos lados coinciden.", systemImage: "checkmark.circle").foregroundStyle(.secondary)
                 } else if preview.isEmpty, mirror.mode == .download {
                     Label("Nada pendiente: el Mac ya tiene lo último de la nube.", systemImage: "checkmark.circle").foregroundStyle(.secondary)
