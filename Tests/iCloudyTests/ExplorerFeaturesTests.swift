@@ -157,4 +157,41 @@ final class ExplorerFeaturesTests: XCTestCase {
         Prefs.defaults.set(FileGrouping.account.rawValue, forKey: ExplorerSettings.groupingKey)
         XCTAssertEqual(ExplorerSettings().grouping, .none, "A folder is never grouped by account")
     }
+
+    // MARK: - Go to Folder
+
+    func testAnAddressNamesItsAccountOnlyWhenTheNameIsOneOfThem() {
+        let accounts = [stubbedAccount(.dropbox, id: "d", name: "Trabajo", email: "yo@example.com"),
+                        stubbedAccount(.google, id: "g", name: "Personal", email: "otro@example.com")]
+        let title: (Account) -> String = { $0.id == "d" ? "Oficina" : $0.name }
+        XCTAssertEqual(FolderAddress.parse("Oficina:/Fotos/2024/", accounts: accounts, title: title), FolderAddress(accountID: "d", path: "Fotos/2024"))
+        XCTAssertEqual(FolderAddress.parse("dropbox:Fotos", accounts: accounts, title: title).accountID, "d", "The provider's name counts")
+        XCTAssertEqual(FolderAddress.parse("otro@example.com:/", accounts: accounts, title: title), FolderAddress(accountID: "g", path: ""))
+        XCTAssertEqual(FolderAddress.parse("  /Documentos//Facturas ", accounts: accounts, title: title), FolderAddress(accountID: nil, path: "Documentos/Facturas"))
+        XCTAssertEqual(FolderAddress.parse("~/Notas", accounts: accounts, title: title).path, "Notas")
+        XCTAssertEqual(FolderAddress.parse("Notas: 2024/a", accounts: accounts, title: title), FolderAddress(accountID: nil, path: "Notas: 2024/a"),
+                       "A colon that names no account is part of the path")
+    }
+
+    func testGoToFolderOpensAFolderOrTheFolderOfAFileWithItSelected() async throws {
+        let model = AppModel()
+        model.enableDemo()
+        model.demo?.latency = .milliseconds(1)
+        let demo = try XCTUnwrap(model.accounts.first)
+        try await model.goToFolder("proyectos")
+        XCTAssertEqual(model.path.map(\.name), ["Proyectos"], "Matched ignoring case")
+        XCTAssertEqual(model.pathText(for: model.workspace.current), "Proyectos")
+
+        try await model.goToFolder(model.accountTitle(demo) + ":/Proyectos/Notas.txt")
+        XCTAssertEqual(model.path.map(\.name), ["Proyectos"])
+        try await wait(until: { model.files.contains { $0.name == "Notas.txt" } }, "The folder was listed")
+        XCTAssertEqual(model.selection(model.selectedIDs).map(\.name), ["Notas.txt"], "The file is selected in its folder")
+        XCTAssertEqual(model.addressText(accountID: demo.id, path: model.path, file: model.files.first), model.accountTitle(demo) + ":/Proyectos/Notas.txt")
+
+        try await model.goToFolder("/")
+        XCTAssertTrue(model.path.isEmpty, "An empty path is the top of the account")
+        do { try await model.goToFolder("Proyectos/No existe"); XCTFail("A missing step is an error") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("No existe")) }
+        XCTAssertTrue(model.path.isEmpty, "A failed jump stays where it was")
+    }
 }

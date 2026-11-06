@@ -17,6 +17,10 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
 - **Agrupar la lista** por tipo («Imágenes», «PDF», «Hojas de cálculo»…) o por fecha («Hoy», «Ayer», «Últimos 7
   días»…), desde el menú de orden. La búsqueda global agrupa además por cuenta, para ver de qué nube viene cada
   resultado sin leer la columna.
+- **Ir a la carpeta… (⇧⌘G)**, en el nuevo menú Ir: una ruta escrita a mano, en la cuenta abierta o en otra si va su
+  nombre delante («Dropbox:/Fotos/2024»). Si la ruta acaba en un archivo, se abre su carpeta con el archivo
+  seleccionado. Las migas también se pueden escribir: el lápiz que hay a su derecha, o ⌘L, las convierte en un campo
+  de ruta; Intro va y Escape las devuelve.
 
 ### Robustez
 

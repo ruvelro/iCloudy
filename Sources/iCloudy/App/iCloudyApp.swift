@@ -75,6 +75,14 @@ struct iCloudyApp: App {
                     Button("Última pestaña") { model.showTab(number: 9) }.keyboardShortcut("9", modifiers: .command)
                 }
             }
+            // The Finder's Go menu: places by path, and (below) the recent ones and the favourites.
+            CommandMenu("Ir") {
+                Button("Ir a la carpeta…") { model.preview.close(); model.ui.showGoToFolder = true }
+                    .keyboardShortcut("g", modifiers: [.command, .shift]).disabled(model.accounts.isEmpty)
+                Button("Escribir la ruta") { model.ui.editingPath = model.workspace.focusedPane }
+                    .keyboardShortcut("l", modifiers: .command)
+                    .disabled(model.account == nil || model.collection != .files || model.ui.showGlobalSearch)
+            }
             CommandGroup(after: .appInfo) {
                 Button("Añadir cuenta…") { model.ui.showConnect = true }.keyboardShortcut("n", modifiers: [.command, .shift])
                 Button("Subir archivos…") { Task { await model.pickUpload() } }.disabled(!model.canWrite)

@@ -1922,3 +1922,14 @@
 "Tipos de letra" = "Fonts";
 "Imágenes de disco" = "Disk images";
 "Sin cuenta" = "No account";
+"Ir a la carpeta…" = "Go to Folder…";
+"Carpeta/Subcarpeta" = "Folder/Subfolder";
+"Escribe la ruta desde el principio de la cuenta. Para otra cuenta, pon su nombre delante, como «Dropbox:/Fotos»." = "Type the path from the top of the account. For another account, put its name in front, as in “Dropbox:/Photos”.";
+"Escribe la ruta desde el principio de la cuenta. Para otra cuenta, pon su nombre delante, como «Dropbox:/Fotos». Si la ruta acaba en un archivo, se abre su carpeta con el archivo seleccionado." = "Type the path from the top of the account. For another account, put its name in front, as in “Dropbox:/Photos”. If the path ends in a file, its folder opens with the file selected.";
+"Ir" = "Go";
+"Ruta de la carpeta" = "Folder path";
+"Escribe una ruta y pulsa Intro para ir. Escape vuelve a las migas." = "Type a path and press Return to go there. Escape brings the breadcrumbs back.";
+"Escribir una ruta (⌘L)" = "Type a path (⌘L)";
+"Escribir una ruta" = "Type a path";
+"Escribir la ruta" = "Type the Path";
+"Elige una cuenta o escribe su nombre delante de la ruta, como «Dropbox:/Fotos»." = "Choose an account or type its name in front of the path, as in “Dropbox:/Photos”.";

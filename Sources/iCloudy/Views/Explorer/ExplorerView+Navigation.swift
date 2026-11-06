@@ -307,15 +307,24 @@ extension ExplorerView {
                 Button { model.back(to: max(0, model.path.count - 1)) } label: { Image(systemName: "chevron.left") }
                     .accessibilityLabel("Volver a la carpeta anterior").help("Volver a la carpeta anterior")
                     .keyboardShortcut(keys ? KeyboardShortcut(.upArrow, modifiers: .command) : nil).disabled(tab.path.isEmpty)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 5) {
-                        Crumb(title: tab.collection == .files ? L("Inicio") : tab.collection.title,
-                              symbol: tab.collection.icon, current: tab.path.isEmpty) { model.back(to: 0) }
-                        ForEach(Array(tab.path.enumerated()), id: \.element.id) { index, folder in
-                            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
-                            Crumb(title: folder.name, symbol: nil, current: index == tab.path.count - 1) { model.back(to: index + 1) }
-                        }
-                    }.padding(.vertical, 1)
+                if model.ui.editingPath == pane {
+                    EditablePathBar(model: model, pane: pane) { model.ui.editingPath = nil }
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 5) {
+                            Crumb(title: tab.collection == .files ? L("Inicio") : tab.collection.title,
+                                  symbol: tab.collection.icon, current: tab.path.isEmpty) { model.back(to: 0) }
+                            ForEach(Array(tab.path.enumerated()), id: \.element.id) { index, folder in
+                                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary).accessibilityHidden(true)
+                                Crumb(title: folder.name, symbol: nil, current: index == tab.path.count - 1) { model.back(to: index + 1) }
+                            }
+                        }.padding(.vertical, 1)
+                    }
+                    // The crumbs as text, to type a path over them. Only "Mis archivos" has paths to type.
+                    if tab.collection == .files, paneAccount != nil {
+                        Button { model.focusPane(pane); model.ui.editingPath = pane } label: { Image(systemName: "pencil") }
+                            .buttonStyle(.borderless).help("Escribir una ruta (⌘L)").accessibilityLabel("Escribir una ruta")
+                    }
                 }
                 ChromeField("Filtrar esta carpeta", symbol: "line.3.horizontal.decrease", text: model.search(inPane: pane)).frame(width: model.isSplit ? 150 : 210)
             }

@@ -64,6 +64,7 @@ struct ExplorerView: View {
             }.padding(24).frame(width: 390)
         }
         .sheet(item: sheets.relocation) { request in FolderPickerView(model: model, request: request) }
+        .sheet(isPresented: sheets.showGoToFolder) { GoToFolderView(model: model) }
         .sheet(item: sheets.batchRename) { request in BatchRenameView(model: model, request: request) }
         .sheet(item: sheets.crossCloud) { request in CloudTargetPicker(model: model, request: request) }
         .sheet(item: sheets.sharing) { request in SharingView(model: model, request: request) }
