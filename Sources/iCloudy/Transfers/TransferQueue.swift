@@ -53,6 +53,15 @@ final class TransferQueue {
         didSet {
             uploadLimiter.bytesPerSecond = policy.uploadLimit
             downloadLimiter.bytesPerSecond = policy.downloadLimit
+            // An account's buckets outlive a change of its limit, so the lanes of its running jobs keep working.
+            for (account, buckets) in accountLimiters where policy.accountLimits[account] == nil {
+                buckets.upload.bytesPerSecond = nil; buckets.download.bytesPerSecond = nil
+            }
+            for (account, limit) in policy.accountLimits {
+                let buckets = limiters(for: account)
+                buckets.upload.bytesPerSecond = limit.upload
+                buckets.download.bytesPerSecond = limit.download
+            }
             reevaluate()
         }
     }
@@ -66,6 +75,20 @@ final class TransferQueue {
     var runningIDs: Set<UUID> { Set(tasks.keys) }
     /// The bandwidth limits, one bucket per direction shared by every job of this queue.
     let uploadLimiter = BandwidthLimiter(), downloadLimiter = BandwidthLimiter()
+    /// Each account's own buckets, made the first time the account has a limit or a job.
+    @ObservationIgnored private var accountLimiters: [String: (upload: BandwidthLimiter, download: BandwidthLimiter)] = [:]
+    private func limiters(for account: String) -> (upload: BandwidthLimiter, download: BandwidthLimiter) {
+        if let known = accountLimiters[account] { return known }
+        let made = (upload: BandwidthLimiter(), download: BandwidthLimiter())
+        accountLimiters[account] = made
+        return made
+    }
+    /// The lanes for work that sends to `upload` and reads from `download`: the queue's buckets and those accounts'.
+    /// Mirrors that run outside the queue go through the same ones.
+    func throttle(upload: String?, download: String?) -> TransferThrottle {
+        TransferThrottle(upload: [uploadLimiter] + (upload.map { [limiters(for: $0).upload] } ?? []),
+                         download: [downloadLimiter] + (download.map { [limiters(for: $0).download] } ?? []))
+    }
     private var costlyNetwork = false
     @ObservationIgnored private var windowTimer: Task<Void, Never>?
     let storeURL: URL
@@ -484,7 +507,9 @@ final class TransferQueue {
     }
     private func start(_ id: UUID) {
         guard let next = items.first(where: { $0.id == id }) else { return }
-        let throttle = TransferThrottle(upload: uploadLimiter, download: downloadLimiter)
+        // An upload sends to its account, a download reads from it, and a copy between clouds does both.
+        let throttle = throttle(upload: next.direction == .upload ? next.accountID : next.targetAccountID,
+                                download: next.direction == .upload ? nil : next.accountID)
         tasks[id] = Task {
             // A pause or cancel can land between scheduling and this first line; never overwrite what the user chose.
             guard (try? job(id))?.state == .queued else { finish(id); return }

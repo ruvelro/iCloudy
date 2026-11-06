@@ -13,6 +13,30 @@ extension Prefs {
     static let transferWindowStart = "transferWindowStart"
     static let transferWindowEnd = "transferWindowEnd"
     static let pauseOnCostlyNetwork = "pauseOnCostlyNetwork"
+    /// JSON of `[accountID: AccountBandwidth]`.
+    static let accountBandwidthLimits = "accountBandwidthLimits"
+}
+
+/// One account's own limit in each direction, in bytes per second, on top of the queue's.
+struct AccountBandwidth: Codable, Equatable, Sendable {
+    var upload: Int64?
+    var download: Int64?
+    var isEmpty: Bool { upload == nil && download == nil }
+
+    /// What the settings keep, decoded leniently: a damaged value limits nothing rather than stopping the queue.
+    static func stored(in defaults: UserDefaults = Prefs.defaults) -> [String: AccountBandwidth] {
+        guard let data = defaults.data(forKey: Prefs.accountBandwidthLimits),
+              let limits = try? JSONDecoder().decode([String: AccountBandwidth].self, from: data) else { return [:] }
+        return limits.mapValues { limit in
+            AccountBandwidth(upload: limit.upload.flatMap { $0 > 0 ? max($0, TransferPolicy.minimumLimit) : nil },
+                             download: limit.download.flatMap { $0 > 0 ? max($0, TransferPolicy.minimumLimit) : nil })
+        }.filter { !$0.value.isEmpty }
+    }
+    static func store(_ limits: [String: AccountBandwidth], in defaults: UserDefaults = Prefs.defaults) {
+        let kept = limits.filter { !$0.value.isEmpty }
+        if kept.isEmpty { defaults.removeObject(forKey: Prefs.accountBandwidthLimits); return }
+        defaults.set(try? JSONEncoder().encode(kept), forKey: Prefs.accountBandwidthLimits)
+    }
 }
 
 /// Units offered for the bandwidth limit. Decimal, like the speeds `ByteCountFormatter` shows on every card, so a
@@ -79,6 +103,8 @@ struct TransferPolicy: Equatable {
     var downloadLimit: Int64?
     var window: TransferWindow?
     var pauseOnCostlyNetwork = false
+    /// Per account, on top of the limits above.
+    var accountLimits: [String: AccountBandwidth] = [:]
 
     static let concurrencyRange = 1...8
     static let perAccountRange = 1...4
@@ -103,6 +129,7 @@ struct TransferPolicy: Equatable {
                                            end: (int(Prefs.transferWindowEnd) ?? 7 * 60) % day)
         }
         policy.pauseOnCostlyNetwork = bool(Prefs.pauseOnCostlyNetwork)
+        policy.accountLimits = AccountBandwidth.stored(in: defaults)
         return policy
     }
 }

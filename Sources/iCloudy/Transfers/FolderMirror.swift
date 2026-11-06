@@ -628,7 +628,9 @@ final class MirrorManager {
                 self.mirrors[position].baseline = baseline
                 self.persistSoon(id)
             }
-            let report = try await engine.run()
+            // Through the same bandwidth buckets as the queue, the account's own included.
+            let throttle = queue?.throttle(upload: mirror.accountID, download: mirror.accountID)
+            let report = try await TransferThrottle.$active.withValue(throttle) { try await engine.run() }
             guard let position = mirrors.firstIndex(where: { $0.id == id }) else { return }
             mirrors[position].baseline = engine.baseline
             mirrors[position].lastReport = report
