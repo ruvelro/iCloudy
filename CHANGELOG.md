@@ -26,6 +26,11 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
   y una movida o borrada sale de ella. Las de una bóveda cifrada no se apuntan nunca.
 - **Favoritos en el orden que quieras**: se arrastran a su sitio en la barra lateral, o se mueven con «Mover arriba» y
   «Mover abajo» de su menú contextual. Los nueve primeros se abren con ⌃1…⌃9, también desde el menú Ir.
+- **Abrir con… y volver a subir.** Un archivo se abre en cualquier aplicación del Mac desde una copia privada, que
+  iCloudy vigila: al guardar, una barra sobre el pie ofrece «Subir cambios» (o los sube solos, con el ajuste nuevo de
+  General). La subida pasa por la cola de siempre, con su comprobación. Si alguien cambió el archivo en la nube
+  mientras tanto, no se sobrescribe: tus cambios se suben al lado como «Nombre (mi versión)» y los siguientes van a
+  esa copia. Se deja de vigilar al cerrar la aplicación o con «Dejar de vigilar».
 
 ### Robustez
 

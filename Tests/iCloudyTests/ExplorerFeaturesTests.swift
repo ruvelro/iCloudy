@@ -267,4 +267,127 @@ final class ExplorerFeaturesTests: XCTestCase {
         XCTAssertTrue(store.canMove("x:C", by: -1))
         XCTAssertEqual(FavoritesStore(url: url).items.map(\.file.name), ["A", "D", "B", "C"], "The order is saved")
     }
+
+    // MARK: - Open With and re-upload
+
+    /// The demo with its listing in place and an editor that opens nothing, writing its copies in a test folder.
+    private func editingModel() async throws -> (AppModel, DemoStore) {
+        let model = AppModel()
+        model.enableDemo()
+        let demo = try XCTUnwrap(model.demo)
+        demo.latency = .milliseconds(1)
+        model.editor.root = try temporaryRoot("icloudy-editing")
+        model.editor.launch = { _, _ in nil }
+        model.editor.settle = .milliseconds(20)
+        try await wait(until: { model.files.contains { $0.name == "Bienvenido.txt" } }, "The demo folder was listed")
+        return (model, demo)
+    }
+
+    private func upload(_ data: Data, named name: String, replacing model: AppModel) async throws {
+        let source = try temporaryRoot().appendingPathComponent(name)
+        try data.write(to: source)
+        var job = Transfer(name: name, destination: "", accountID: Account.demo.id, direction: .upload, localURL: source,
+                           bookmark: try TransferQueue.bookmark(source), parent: "root")
+        job.batchChoice = .replace
+        try model.queue.add([job])
+        try await wait(until: { !model.queue.isWorking && model.queue.items.first { $0.id == job.id }?.finished == true })
+    }
+
+    func testASaveInTheOtherAppIsNoticedAndUploadedOverTheOriginal() async throws {
+        let (model, demo) = try await editingModel()
+        let original = try XCTUnwrap(model.files.first { $0.name == "Bienvenido.txt" })
+        let opened = await model.openWith(original); let id = try XCTUnwrap(opened)
+        let session = try XCTUnwrap(model.editor.session(id))
+        XCTAssertEqual(session.state, .watching)
+        XCTAssertTrue(session.localURL.path.hasPrefix(model.editor.root.path), "The copy is private to iCloudy")
+        XCTAssertEqual(try Data(contentsOf: session.localURL), try Data(contentsOf: demo.directory.appendingPathComponent(original.id)))
+        XCTAssertEqual(model.statusDescription(original, in: model.workspace.current), session.stateTitle)
+
+        // Opening it again hands over the same copy.
+        let again = await model.openWith(original)
+        XCTAssertEqual(again, id)
+        XCTAssertEqual(model.editor.sessions.count, 1)
+
+        // A save that changes nothing is not a change.
+        try Data(contentsOf: session.localURL).write(to: session.localURL, options: .atomic)
+        try await assertStays({ model.editor.session(id)?.state == .watching }, for: .milliseconds(300))
+
+        let edited = Data("Editado en otra aplicación.\n".utf8)
+        try edited.write(to: session.localURL, options: .atomic)
+        try await wait(until: { model.editor.session(id)?.state == .changed }, "The save was noticed")
+
+        await model.uploadEdits(id)
+        try await wait(until: { model.editor.session(id)?.state == .watching && !model.queue.isWorking }, "The change went up")
+        let files = try demo.list("root")
+        XCTAssertEqual(files.filter { $0.name.hasPrefix("Bienvenido") }.count, 1, "The original was replaced, not duplicated")
+        let remote = try XCTUnwrap(files.first { $0.name == "Bienvenido.txt" })
+        XCTAssertEqual(try Data(contentsOf: demo.directory.appendingPathComponent(remote.id)), edited)
+        XCTAssertEqual(model.queue.items.last?.verifiedFiles, 1, "Through the queue, with its check")
+        XCTAssertEqual(model.editor.session(id)?.file.size, Int64(edited.count), "The session knows the new version")
+
+        model.stopEditing(id)
+        XCTAssertNil(model.editor.session(id))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: session.localURL.path), "Closing removes the private copy")
+    }
+
+    func testWhenTheCloudChangedMeanwhileBothVersionsAreKept() async throws {
+        let (model, demo) = try await editingModel()
+        let original = try XCTUnwrap(model.files.first { $0.name == "Bienvenido.txt" })
+        let opened = await model.openWith(original); let id = try XCTUnwrap(opened)
+        let local = try XCTUnwrap(model.editor.session(id)?.localURL)
+
+        let theirs = Data("Cambiado por otra persona, más largo que antes.\n".utf8)
+        try await upload(theirs, named: "Bienvenido.txt", replacing: model)
+
+        let mine = Data("Mi versión.\n".utf8)
+        try mine.write(to: local, options: .atomic)
+        try await wait(until: { model.editor.session(id)?.state == .changed })
+        await model.uploadEdits(id)
+        try await wait(until: { model.editor.session(id)?.state == .watching && !model.queue.isWorking }, "The copy went up")
+
+        let files = try demo.list("root")
+        let kept = try XCTUnwrap(files.first { $0.name == "Bienvenido (mi versión).txt" }, "Mine is kept beside theirs: \(files.map(\.name))")
+        let other = try XCTUnwrap(files.first { $0.name == "Bienvenido.txt" })
+        XCTAssertEqual(try Data(contentsOf: demo.directory.appendingPathComponent(other.id)), theirs, "Their version is untouched")
+        XCTAssertEqual(try Data(contentsOf: demo.directory.appendingPathComponent(kept.id)), mine)
+        XCTAssertEqual(model.editor.session(id)?.keptAs, kept.name, "Later saves go to my copy")
+        XCTAssertNotNil(model.info, "The person is told why there are two files now")
+
+        // A second save replaces my copy, not theirs.
+        let more = Data("Mi versión, segunda vez.\n".utf8)
+        try more.write(to: local, options: .atomic)
+        try await wait(until: { model.editor.session(id)?.state == .changed })
+        await model.uploadEdits(id)
+        try await wait(until: { model.editor.session(id)?.state == .watching && !model.queue.isWorking })
+        let after = try demo.list("root")
+        XCTAssertEqual(after.filter { $0.name.hasPrefix("Bienvenido") }.count, 2)
+        XCTAssertEqual(try Data(contentsOf: demo.directory.appendingPathComponent(try XCTUnwrap(after.first { $0.name == kept.name }).id)), more)
+        XCTAssertEqual(try Data(contentsOf: demo.directory.appendingPathComponent(other.id)), theirs)
+    }
+
+    func testWithTheSettingOnSavesGoUpByThemselves() async throws {
+        let (model, demo) = try await editingModel()
+        Prefs.defaults.set(true, forKey: ExternalEditor.autoUploadKey)
+        let original = try XCTUnwrap(model.files.first { $0.name == "Bienvenido.txt" })
+        let opened = await model.openWith(original); let id = try XCTUnwrap(opened)
+        let local = try XCTUnwrap(model.editor.session(id)?.localURL)
+        let edited = Data("Subido solo.\n".utf8)
+        try edited.write(to: local, options: .atomic)
+        try await wait(until: {
+            (try? Data(contentsOf: demo.directory.appendingPathComponent(original.id))) == edited && model.editor.session(id)?.state == .watching
+        }, "The save went up without asking")
+    }
+
+    func testFoldersAndGoogleDocumentsAreNotOpenedWithAnotherApp() throws {
+        let model = AppModel()
+        model.enableDemo()
+        XCTAssertNotNil(model.openWithLimitation(file("Carpeta", folder: true)))
+        XCTAssertNotNil(model.openWithLimitation(file("Doc", mime: "application/vnd.google-apps.document")))
+        XCTAssertNil(model.openWithLimitation(file("a.txt")))
+        XCTAssertEqual(ExternalEditor.keptName(for: "Informe.docx", existing: ["Informe.docx"]), "Informe (mi versión).docx")
+        XCTAssertNotEqual(ExternalEditor.keptName(for: "Informe.docx", existing: ["Informe (mi versión).docx"]), "Informe (mi versión).docx")
+        let a = file("a", size: 3, modified: Date(timeIntervalSince1970: 10))
+        XCTAssertTrue(ExternalEditor.sameVersion(a, a))
+        XCTAssertFalse(ExternalEditor.sameVersion(a, file("a", size: 4, modified: Date(timeIntervalSince1970: 10))))
+    }
 }

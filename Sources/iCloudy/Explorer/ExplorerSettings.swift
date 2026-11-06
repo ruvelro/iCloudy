@@ -105,6 +105,7 @@ extension AppModel {
         let local = localStatus(file, in: tab)
         if !file.isFolder, local != .cloudOnly { parts.append(local.label) }
         if let offline = offlineStatus(file, in: tab) { parts.append(offline.label) }
+        if let id = tab.accountID, let session = editor.session(accountID: id, fileID: file.id) { parts.append(session.stateTitle) }
         return parts.isEmpty ? (file.isFolder ? "" : L("Solo en la nube")) : parts.joined(separator: " · ")
     }
 }

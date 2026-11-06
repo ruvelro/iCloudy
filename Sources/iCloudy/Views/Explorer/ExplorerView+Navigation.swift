@@ -155,6 +155,10 @@ extension ExplorerView {
                             .transition(.move(edge: .trailing))
                     }
                 }
+                if !model.editor.sessions.isEmpty {
+                    Divider()
+                    EditingBar(model: model, editor: model.editor)
+                }
                 Divider()
                 HStack {
                     Text(model.visibleFiles.count == 1 ? L("1 elemento") : L("\(model.visibleFiles.count) elementos"))

@@ -68,6 +68,8 @@ final class AppModel {
         get { workspace.current.search }
         set { workspace.current.search = newValue }
     }
+    /// Files open in other apps from private copies, and their way back to the cloud.
+    let editor = ExternalEditor()
     /// The last folders visited, in any tab.
     let recents = RecentLocationsStore()
     /// How the lists are drawn: their columns, for every tab alike.
@@ -172,6 +174,7 @@ final class AppModel {
             self?.history.record(transfer); self?.mirrors.handleFinished(transfer)
             self?.notifier.finished(transfer)
             self?.finishPaneMove(transfer)
+            self?.editingTransferFinished(transfer)
         }
         thumbnails.client = { [weak self] account in
             guard let self else { throw CancellationError() }
@@ -197,10 +200,17 @@ final class AppModel {
         subscription = queue.stateChanges.sink { [weak self] _ in
             guard let self else { return }
             notifier.queueChanged(active: queue.hasActive)
+            editingQueueChanged()
         }
         if let message = queue.persistenceError { error = message }
         listings.enabled = Prefs.bool(Prefs.listingCache, default: true)
         queue.cleanScratch()
+        editor.didChange = { [weak self] id in
+            guard let self, editor.autoUpload else { return }
+            Task { await self.uploadEdits(id) }
+        }
+        // Copies left by an earlier run are not watched by anyone any more; those a paused upload reads stay.
+        if !AppEnvironment.isTesting { editor.removeLeftovers(protecting: queue.protectedLocalURLs) }
         mirrors.queue = queue
         configureTransferPolicy()
         mirrors.accountLookup = { [weak self] id in self?.accounts.first { $0.id == id } }

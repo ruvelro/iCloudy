@@ -147,6 +147,7 @@ extension ExplorerView {
             CryptomatorFolderActions(model: model, folder: file)
         } else if !file.isGoogleDocument {
             Button("Descargar…") { Task { await model.save(file) } }
+            openWithMenu(file)
         }
         if file.webURL != nil { Button("Abrir en navegador") { model.openBrowser(file) } }
         ForEach(file.exportOptions, id: \.ext) { option in
@@ -188,5 +189,22 @@ extension ExplorerView {
                 .disabled(model.limitation(.permanentDelete, for: [file]) != nil)
                 .help(model.limitation(.permanentDelete, for: [file]) ?? "")
         }
+    }
+
+    /// «Abrir con»: the apps that open this kind of file, the default one first, and any other. The copy they get is
+    /// private and watched; its saves come back to the cloud.
+    @ViewBuilder func openWithMenu(_ file: CloudFile) -> some View {
+        Menu("Abrir con") {
+            let apps = model.applications(toOpen: file)
+            ForEach(apps, id: \.self) { app in
+                Button(FileManager.default.displayName(atPath: app.path)) { Task { await model.openWith(file, application: app) } }
+            }
+            if !apps.isEmpty { Divider() }
+            Button("Otra…") {
+                Task { if let app = await model.chooseApplication() { await model.openWith(file, application: app) } }
+            }
+        }
+        .disabled(model.openWithLimitation(file) != nil)
+        .help(model.openWithLimitation(file) ?? L("Abre una copia en otra aplicación y sube los cambios que guardes."))
     }
 }
