@@ -46,6 +46,10 @@ simulados y la documentación de cada uno. Se marca como 🆕 hasta que alguien 
   `icloudy://cuenta/ruta` es la forma corta de `open`. La cuenta se nombra por su identificador, su alias, su nombre o
   su correo. Un enlace solo enseña: nunca borra, mueve ni sube nada, y una ruta con `..` se rechaza. «Copiar enlace de
   iCloudy» en el menú de cada elemento da el enlace que lo vuelve a mostrar.
+- **Más Atajos**: subir a una carpeta concreta de una cuenta, crear carpetas, mover o renombrar, enviar a la papelera
+  (siempre pregunta antes, y avisa si en esa nube es definitivo), buscar devolviendo los elementos encontrados para
+  usarlos en el atajo («Abrir en iCloudy» los muestra), sincronizar un reflejo concreto y crear un enlace con
+  caducidad. Las frases para Siri y Spotlight van en castellano y en inglés.
 
 ### Robustez
 

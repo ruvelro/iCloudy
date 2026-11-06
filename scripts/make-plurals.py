@@ -65,6 +65,10 @@ TABLE = [
      "%#@n@ already at the destination (%@).", [("n", "%lld file is", "%lld files are")]),
     ("En pausa · %lld cambios esperando", "En pausa · %#@n@", [("n", "%lld cambio esperando", "%lld cambios esperando")],
      "Paused · %#@n@", [("n", "%lld change waiting", "%lld changes waiting")]),
+    # 0.9 — Proveedores e integración
+    ("%lld resultados.", "%#@n@.", [("n", "%lld resultado", "%lld resultados")], "%#@n@.", [("n", "%lld result", "%lld results")]),
+    ("Enlace creado. Caduca en %lld días.", "Enlace creado. Caduca en %#@n@.", [("n", "%lld día", "%lld días")],
+     "Link created. It expires in %#@n@.", [("n", "%lld day", "%lld days")]),
 ]
 
 def entry(format_key, variables):
