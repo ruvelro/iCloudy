@@ -6,9 +6,10 @@ import XCTest
 /// Lightweight view tests: the main windows are laid out for real in an off-screen NSHostingView over the demo
 /// account, drawn into a bitmap, and their accessibility tree is read back. No golden images: what is checked is that
 /// each view renders without crashing, draws something, and still offers the controls VoiceOver users reach it by.
+/// The helpers are internal so ExplorerAccessibilityTests can extend this class with the explorer's 0.9 views.
 @MainActor
 final class ViewRenderingTests: XCTestCase {
-    private var model: AppModel!
+    var model: AppModel!
     private var windows: [NSWindow] = []
 
     override func setUp() async throws {
@@ -29,7 +30,7 @@ final class ViewRenderingTests: XCTestCase {
         model = nil
     }
 
-    private struct Rendered {
+    struct Rendered {
         let hosting: NSView
         let labels: [String]
         let bitmap: NSBitmapImageRep?
@@ -37,7 +38,7 @@ final class ViewRenderingTests: XCTestCase {
 
     /// Lays `view` out in a window that is never shown, lets the main actor settle (the demo answers in a
     /// millisecond), draws it and collects every accessibility label and title below it.
-    private func render<V: View>(_ view: V, size: NSSize = NSSize(width: 1100, height: 760),
+    func render<V: View>(_ view: V, size: NSSize = NSSize(width: 1100, height: 760),
                                  until ready: (([String]) -> Bool)? = nil) async throws -> Rendered {
         let hosting = NSHostingView(rootView: view.defaultAppStorage(Prefs.defaults))
         hosting.frame = NSRect(origin: .zero, size: size)
@@ -66,7 +67,7 @@ final class ViewRenderingTests: XCTestCase {
     }
 
     /// From the window, so a toolbar SwiftUI puts in the title bar is included.
-    private static func accessibilityText(of root: NSWindow) -> [String] {
+    static func accessibilityText(of root: NSWindow) -> [String] {
         var found: [String] = []
         var pending: [Any] = [root]
         var visited = 0
@@ -98,7 +99,7 @@ final class ViewRenderingTests: XCTestCase {
         return found
     }
 
-    private func assertDrawn(_ rendered: Rendered, file: StaticString = #filePath, line: UInt = #line) {
+    func assertDrawn(_ rendered: Rendered, file: StaticString = #filePath, line: UInt = #line) {
         guard let bitmap = rendered.bitmap else { return XCTFail("Nothing to draw into", file: file, line: line) }
         XCTAssertGreaterThan(bitmap.pixelsWide, 0, file: file, line: line)
         XCTAssertGreaterThan(bitmap.pixelsHigh, 0, file: file, line: line)
@@ -111,7 +112,7 @@ final class ViewRenderingTests: XCTestCase {
         XCTAssertGreaterThan(colours.count, 1, "The view drew nothing", file: file, line: line)
     }
 
-    private func assertOffers(_ expected: [String], in rendered: Rendered, file: StaticString = #filePath, line: UInt = #line) {
+    func assertOffers(_ expected: [String], in rendered: Rendered, file: StaticString = #filePath, line: UInt = #line) {
         for label in expected {
             XCTAssertTrue(rendered.labels.contains { $0 == label || $0.contains(label) },
                           "No accessibility element says «\(label)». Found: \(Array(Set(rendered.labels)).sorted().prefix(80))", file: file, line: line)

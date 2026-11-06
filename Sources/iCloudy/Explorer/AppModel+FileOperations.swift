@@ -206,6 +206,7 @@ extension AppModel {
     private func forgetLocally(_ file: CloudFile, account: Account) {
         spotlight.forget(accountID: account.id, fileID: file.id)
         favoriteStore.remove(accountID: account.id, fileID: file.id)
+        recents.forget(accountID: account.id, fileID: file.id)
         offline.itemDeleted(file, accountID: account.id)
     }
 
@@ -221,6 +222,7 @@ extension AppModel {
                 spotlight.forget(accountID: account.id, fileID: file.id)
                 offline.itemDeleted(file, accountID: account.id)
                 favoriteStore.remove(accountID: account.id, fileID: file.id)
+                recents.forget(accountID: account.id, fileID: file.id)
             }
             registerTrashUndo(files, account: account)
             if !account.capabilities.reversibleTrash, !account.isDemo {
@@ -246,6 +248,8 @@ extension AppModel {
     func applyIdentityChange(_ change: RemoteIdentityChange, account: Account, destinationPath: [CloudFile]? = nil) throws {
         let previousParent = path.map(\.name)
         favoriteStore.apply(change, accountID: account.id, destinationPath: destinationPath)
+        // A renamed folder keeps its place in the recents; a moved one leaves it, its old path no longer leads there.
+        if destinationPath != nil { recents.forget(accountID: account.id, fileID: change.oldID) } else { recents.apply(change, accountID: account.id) }
         // Every tab showing the item, or with it in its history, follows it; not only the one with the focus.
         workspace.updateAll { $0.remap(change, accountID: account.id) }
         listings.removeAll(accountID: account.id)

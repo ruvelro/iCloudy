@@ -46,13 +46,17 @@ struct GlobalSearchView: View {
                         Text("Todas las cuentas").tag("")
                         ForEach(model.accounts) { Text(model.accountTitle($0) + " · " + $0.email).tag($0.id) }
                     }.controlSize(.large).frame(maxWidth: 360)
+                    // Results from six clouds read better under the name of the one each came from.
+                    Picker("Agrupar", selection: Bindable(model.explorer).searchGrouping) {
+                        ForEach(FileGrouping.allCases) { Text($0.title).tag($0) }
+                    }.controlSize(.large).fixedSize()
                     Button("Quitar filtros") { search.filters = SearchFilters() }.buttonStyle(.link)
                     Spacer()
                     if !search.submittedQuery.isEmpty { Text("Resultados para «\(search.submittedQuery)»").font(.caption).lineLimit(1) }
                 }
             }.padding(22)
             Divider()
-            Table(search.visibleHits, selection: $selected) {
+            Table(of: SearchHit.self, selection: $selected) {
                 TableColumn("Nombre") { hit in HStack(spacing: 7) { FileIcon(file: hit.file); Text(hit.file.name).lineLimit(1) } }.width(min: 180, ideal: 280)
                 TableColumn("Cuenta") { hit in
                     if let account = model.accounts.first(where: { $0.id == hit.accountID }) {
@@ -67,6 +71,14 @@ struct GlobalSearchView: View {
                 }.width(min: 120, ideal: 200)
                 TableColumn("Modificado") { hit in Text(hit.file.modified?.formatted(date: .abbreviated, time: .omitted) ?? "—").foregroundStyle(.secondary) }.width(115)
                 TableColumn("Tamaño") { hit in Text(hit.file.size.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "—").foregroundStyle(.secondary) }.width(80)
+            } rows: {
+                if model.explorer.searchGrouping == .none {
+                    ForEach(search.visibleHits) { TableRow($0) }
+                } else {
+                    ForEach(model.groupedHits(search.visibleHits)) { group in
+                        Section(group.title) { ForEach(group.items) { TableRow($0) } }
+                    }
+                }
             }
             .contextMenu(forSelectionType: SearchHit.ID.self) { ids in
                 if ids.count == 1, let hit = search.visibleHits.first(where: { ids.contains($0.id) }) { actions(hit) }

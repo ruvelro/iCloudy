@@ -30,6 +30,7 @@ extension AppModel {
     func go(to target: BrowserLocation, tab id: BrowserState.ID? = nil) {
         let id = id ?? workspace.current.id
         workspace.update(id) { $0.open(target) }
+        recents.note(target)
         reload(tab: id)
     }
 
@@ -109,6 +110,7 @@ extension AppModel {
             moved = step(&tab) { place in place.accountID.map(connected.contains) ?? false }
         }
         guard moved else { return }
+        recents.note(workspace.current.location)
         preview.close(); globalSearch.cancel(); ui.showGlobalSearch = false
         reload()
     }

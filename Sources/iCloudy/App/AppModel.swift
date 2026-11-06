@@ -68,6 +68,14 @@ final class AppModel {
         get { workspace.current.search }
         set { workspace.current.search = newValue }
     }
+    /// The folders the column view shows above the open one.
+    let columnListings = ColumnListings()
+    /// Files open in other apps from private copies, and their way back to the cloud.
+    let editor = ExternalEditor()
+    /// The last folders visited, in any tab.
+    let recents = RecentLocationsStore()
+    /// How the lists are drawn: their columns, for every tab alike.
+    let explorer = ExplorerSettings()
     /// The favorites and their file. Read-only here: every change goes through the store, which saves it.
     let favoriteStore = FavoritesStore()
     var favorites: [Favorite] { favoriteStore.items }
@@ -150,6 +158,8 @@ final class AppModel {
         do { let store = try AppearanceStore(); appearanceStore = store; appearances = store.values }
         catch { self.error = L("No se pudo cargar la personalización: \(error.localizedDescription)") }
         if let problem = favoriteStore.loadError { self.error = problem }
+        if let problem = recents.loadError { self.error = problem }
+        recents.saveFailed = { [weak self] message in self?.error = message }
         favoriteStore.saveFailed = { [weak self] message in self?.error = message }
         favoriteStore.didChange = { [weak self] in self?.refreshSpotlightFavorites() }
         // The tabs of the last session, put right against the accounts once those have been read.
@@ -166,6 +176,7 @@ final class AppModel {
             self?.history.record(transfer); self?.mirrors.handleFinished(transfer)
             self?.notifier.finished(transfer)
             self?.finishPaneMove(transfer)
+            self?.editingTransferFinished(transfer)
         }
         thumbnails.client = { [weak self] account in
             guard let self else { throw CancellationError() }
@@ -191,10 +202,17 @@ final class AppModel {
         subscription = queue.stateChanges.sink { [weak self] _ in
             guard let self else { return }
             notifier.queueChanged(active: queue.hasActive)
+            editingQueueChanged()
         }
         if let message = queue.persistenceError { error = message }
         listings.enabled = Prefs.bool(Prefs.listingCache, default: true)
         queue.cleanScratch()
+        editor.didChange = { [weak self] id in
+            guard let self, editor.autoUpload else { return }
+            Task { await self.uploadEdits(id) }
+        }
+        // Copies left by an earlier run are not watched by anyone any more; those a paused upload reads stay.
+        if !AppEnvironment.isTesting { editor.removeLeftovers(protecting: queue.protectedLocalURLs) }
         mirrors.queue = queue
         configureTransferPolicy()
         mirrors.accountLookup = { [weak self] id in self?.accounts.first { $0.id == id } }
@@ -206,6 +224,7 @@ final class AppModel {
             Task { await self?.saveMany([file], targetAccount: account) }
         }
         preview.openBrowser = { [weak self] file in self?.openBrowser(file) }
+        preview.openWith = { [weak self] file, account, app in Task { await self?.openWith(file, application: app, in: account) } }
         preview.didSaveCopy = { [weak self] file, account, destination in
             self?.localCopies.record(LocalCopy(accountID: account.id, fileID: file.id, name: file.name, path: destination.path,
                                                bookmark: try? TransferQueue.bookmark(destination), size: file.size ?? 0,

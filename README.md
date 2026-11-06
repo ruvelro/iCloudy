@@ -150,6 +150,19 @@ cancelable y limpieza al cerrar.
 | **Notificaciones, inicio de sesión y Dock** | Aviso al acabar las transferencias, abrir al iniciar sesión y vivir solo en la barra de menús. |
 | **Más Atajos** | Listar, descargar, crear enlaces y copiar entre nubes desde la app Atajos. |
 
+### 🆕 Nuevo en el explorador
+
+|  |  |
+|---|---|
+| **Columnas a tu gusto** | Ordena con un clic en la cabecera, en los dos sentidos; añade Tipo, Suma de comprobación o Estado, y agrupa por tipo o por fecha. |
+| **Vista en columnas** | La tercera vista, como la del Finder, con ← y → entre columnas. |
+| **Ir a la carpeta (⇧⌘G)** | Escribe una ruta, en esta cuenta o en otra («Dropbox:/Fotos»), o escribe sobre las migas con ⌘L. |
+| **Recientes y favoritos** | Las veinte últimas carpetas, de cualquier cuenta; favoritos en el orden que quieras y a mano con ⌃1…⌃9. |
+| **Inspector (⌘I)** | Tipo, tamaño, fechas, ruta, suma, copia local, versiones y enlaces de lo seleccionado, o el total de varios. |
+| **Abrir con… y volver a subir** | Edita en cualquier app una copia vigilada; al guardar, sube los cambios por la cola verificada, y si la nube cambió mientras tanto conserva las dos versiones. |
+| **Vista previa como Vista Rápida** | Pantalla completa, compartir, zoom y giro en imágenes, ⌘Y. |
+| **Teclas del Finder** | ⌘D duplica, ⇧⌘N crea carpeta, ⌘E expulsa, y escribir un nombre lo selecciona. Barra lateral con teclado y VoiceOver. |
+
 <br>
 
 ## 🚀 Instalación

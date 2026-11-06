@@ -17,11 +17,20 @@ struct BrowserState: Identifiable {
     var collection: Collection = .files
     var path: [CloudFile] = []
     var selection: Set<CloudFile.ID> = []
-    var sortMode = "name" { didSet { updateVisibleFiles() } }
+    /// One of `SortKey`'s raw values. Choosing another key starts it in that key's own direction, as the Finder does:
+    /// names A to Z, dates newest first.
+    var sortMode = "name" {
+        didSet {
+            if sortMode != oldValue { sortAscending = SortKey.of(sortMode).defaultAscending }
+            updateVisibleFiles()
+        }
+    }
+    /// The direction of `sortMode`. Folders stay on top either way.
+    var sortAscending = true { didSet { updateVisibleFiles() } }
     var viewMode = "list"
     var search = "" { didSet { updateVisibleFiles() } }
     var files: [CloudFile] = [] { didSet { updateVisibleFiles() } }
-    /// Filtered and sorted once per change of `files`, `search` or `sortMode`, not on every render.
+    /// Filtered and sorted once per change of `files`, `search`, `sortMode` or `sortAscending`, not on every render.
     private(set) var visibleFiles: [CloudFile] = []
     var loading = false
     /// True while the list shows the last known listing instead of a fresh answer from the provider.
@@ -38,9 +47,16 @@ struct BrowserState: Identifiable {
     var stale = false
 
     init(id: UUID = UUID(), accountID: String? = nil, collection: Collection = .files, path: [CloudFile] = [],
-         sortMode: String = "name", viewMode: String = "list") {
+         sortMode: String = "name", sortAscending: Bool? = nil, viewMode: String = "list") {
         self.id = id; self.accountID = accountID; self.collection = collection; self.path = path
         self.sortMode = sortMode; self.viewMode = viewMode
+        self.sortAscending = sortAscending ?? SortKey.of(sortMode).defaultAscending
+    }
+
+    /// Sorts by `mode` in the given direction, or in that key's own direction when none is given.
+    mutating func sort(by mode: String, ascending: Bool? = nil) {
+        sortMode = mode
+        if let ascending { sortAscending = ascending }
     }
 
     var folderID: String { path.last?.id ?? collection.rootID }
@@ -102,18 +118,16 @@ struct BrowserState: Identifiable {
         path = path.map(change.file); files = files.map(change.file)
     }
 
-    mutating func updateVisibleFiles() { visibleFiles = Self.visible(files, search: search, sortMode: sortMode) }
+    mutating func updateVisibleFiles() { visibleFiles = Self.visible(files, search: search, sortMode: sortMode, ascending: sortAscending) }
 
-    static func visible(_ files: [CloudFile], search term: String, sortMode mode: String) -> [CloudFile] {
-        files.filter { term.isEmpty || $0.name.localizedCaseInsensitiveContains(term) }.sorted { a, b in
+    /// `ascending` nil sorts in the key's own direction. Folders come first whatever the direction, and items that
+    /// tie on the key fall back to their names, A to Z, so the order never depends on the provider's.
+    static func visible(_ files: [CloudFile], search term: String, sortMode mode: String, ascending: Bool? = nil) -> [CloudFile] {
+        let key = SortKey.of(mode), ascending = ascending ?? key.defaultAscending
+        return files.filter { term.isEmpty || $0.name.localizedCaseInsensitiveContains(term) }.sorted { a, b in
             if a.isFolder != b.isFolder { return a.isFolder }
-            if mode == "size", a.size != b.size { return (a.size ?? 0) > (b.size ?? 0) }
-            if mode == "date", a.modified != b.modified { return (a.modified ?? .distantPast) > (b.modified ?? .distantPast) }
-            if mode == "kind" {
-                if a.kind != b.kind { return a.kind.rank < b.kind.rank }
-                let extensions = ((a.name as NSString).pathExtension.lowercased(), (b.name as NSString).pathExtension.lowercased())
-                if extensions.0 != extensions.1 { return extensions.0 < extensions.1 }
-            }
+            let order = key.compare(a, b)
+            if order != .orderedSame { return ascending ? order == .orderedAscending : order == .orderedDescending }
             return a.name.localizedStandardCompare(b.name) == .orderedAscending
         }
     }
@@ -142,7 +156,7 @@ struct ExplorerPane: Identifiable {
     @discardableResult mutating func addTab(at place: BrowserLocation? = nil) -> BrowserState.ID {
         let model = current
         var tab = BrowserState(accountID: model.accountID, collection: model.collection, path: model.path,
-                               sortMode: model.sortMode, viewMode: model.viewMode)
+                               sortMode: model.sortMode, sortAscending: model.sortAscending, viewMode: model.viewMode)
         if let place { tab.location = place }
         tabs.insert(tab, at: activeTab + 1)
         activeTab += 1
@@ -222,7 +236,8 @@ struct ExplorerWorkspace {
         if on, panes.count < 2 {
             let model = panes[0].current
             panes.append(ExplorerPane(tabs: [BrowserState(accountID: model.accountID, collection: model.collection, path: model.path,
-                                                          sortMode: model.sortMode, viewMode: model.viewMode)]))
+                                                          sortMode: model.sortMode, sortAscending: model.sortAscending,
+                                                          viewMode: model.viewMode)]))
         }
         split = on
         if !on { focusedPane = 0 }
@@ -305,7 +320,7 @@ extension ExplorerWorkspace {
 /// history. The listing itself is not kept; it is asked for again. Every field is optional on the way in, so a file
 /// written by another version still opens.
 extension BrowserState: Codable {
-    enum CodingKeys: String, CodingKey { case id, accountID, collection, path, selection, sortMode, viewMode, back, forward }
+    enum CodingKeys: String, CodingKey { case id, accountID, collection, path, selection, sortMode, sortAscending, viewMode, back, forward }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -314,6 +329,8 @@ extension BrowserState: Codable {
                   collection: (try? values.decodeIfPresent(String.self, forKey: .collection)).flatMap(Collection.init(rawValue:)) ?? .files,
                   path: (try? values.decodeIfPresent([CloudFile].self, forKey: .path)) ?? [],
                   sortMode: (try? values.decodeIfPresent(String.self, forKey: .sortMode)) ?? "name",
+                  // A file from before the direction existed sorts each key its own way, as it did then.
+                  sortAscending: (try? values.decodeIfPresent(Bool.self, forKey: .sortAscending)) ?? nil,
                   viewMode: (try? values.decodeIfPresent(String.self, forKey: .viewMode)) ?? "list")
         selection = (try? values.decodeIfPresent(Set<CloudFile.ID>.self, forKey: .selection)) ?? []
         back = Array(((try? values.decodeIfPresent([BrowserLocation].self, forKey: .back)) ?? []).suffix(Self.historyLimit))
@@ -328,6 +345,7 @@ extension BrowserState: Codable {
         try values.encode(path, forKey: .path)
         try values.encode(selection, forKey: .selection)
         try values.encode(sortMode, forKey: .sortMode)
+        try values.encode(sortAscending, forKey: .sortAscending)
         try values.encode(viewMode, forKey: .viewMode)
         try values.encode(back, forKey: .back)
         try values.encode(forward, forKey: .forward)
