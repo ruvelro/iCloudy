@@ -8,8 +8,9 @@ actual.
 ## Requisitos
 
 - macOS 14 o posterior.
-- Xcode 16 o posterior (Swift 6). La CI compila con Xcode 16.2 en macOS 14 y con Xcode 16.4 en macOS 15; si usas una
-  versión más nueva, comprueba antes de abrir la PR que no dependes de nada que esas dos no tengan.
+- Xcode 26 o posterior (Swift 6.2). Xcode 16 no compila el proyecto: Swift 6.1 rechaza código que Swift 6.2 acepta.
+  La CI prueba con Xcode 26.3 en macOS 15 y con Xcode 26.6 en macOS 26, y pasa el lint con Xcode 27.2. Si usas una
+  versión más nueva, comprueba antes de abrir la PR que no dependes de nada que Xcode 26.3 no tenga.
 - Nada más: el paquete no tiene dependencias externas.
 
 ## Compilar

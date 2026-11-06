@@ -15,12 +15,14 @@ permissions:
 jobs:
   lint:
     name: Lint and localization
-    runs-on: macos-15
+    # swift-format reads .swift-format strictly, and older versions reject keys the newer ones added. Linting runs
+    # with the swift-format the configuration was written for, which ships with Xcode 27.
+    runs-on: xcode-27
     timeout-minutes: 15
     env:
-      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Toolchain
         run: |
           xcodebuild -version
@@ -45,15 +47,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The oldest macOS the app declares. Its image defaults to Xcode 15.4, which cannot read
-          # swift-tools-version 6.0, so the newest Xcode 16 it carries is pinned instead.
-          - os: macos-14
-            xcode: "16.2"
-            integration: false
           # Pinned, not "the newest installed": a toolchain that changes by itself makes failures unreproducible.
+          # Xcode 26 (Swift 6.2) is the oldest toolchain supported: Swift 6.1 rejects sending non-Sendable results
+          # out of nonisolated async calls that 6.2's region analysis accepts, all over the providers.
+          # macOS 14 runners are retired, so macOS 15 is the oldest system tested.
           - os: macos-15
-            xcode: "16.4"
+            xcode: "26.3"
             integration: true
+          - os: macos-26
+            xcode: "26.6"
+            integration: false
     env:
       DEVELOPER_DIR: /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
       # A crash prints its backtrace in the log instead of only "unexpected signal".
@@ -61,7 +64,7 @@ jobs:
       # Per-test watchdog (Tests/iCloudyTests/TestSupport.swift); generous for a loaded runner.
       ICLOUDY_TEST_TIMEOUT: "300"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Toolchain
         run: |
           if [[ ! -d "$DEVELOPER_DIR" ]]; then
@@ -69,7 +72,7 @@ jobs:
           fi
           xcodebuild -version
           swift --version
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .build
           # The build folder depends on the toolchain as much as on the sources. restore-keys reuses the closest
@@ -101,7 +104,7 @@ jobs:
       - name: Coverage
         if: success() || failure()
         run: scripts/ci/coverage.sh coverage.lcov
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: success() || failure()
         with:
           name: coverage-${{ matrix.os }}-xcode${{ matrix.xcode }}
@@ -134,12 +137,13 @@ jobs:
 
   bundle:
     name: Release build and bundles
-    runs-on: macos-15
+    # The same runner and Xcode as the release workflow.
+    runs-on: macos-26
     timeout-minutes: 30
     env:
-      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Toolchain
         run: xcodebuild -version
       - name: Strict concurrency

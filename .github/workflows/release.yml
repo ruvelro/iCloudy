@@ -19,13 +19,13 @@ permissions:
 jobs:
   release:
     name: Build, sign and publish
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 90
     env:
-      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
       TAG: ${{ github.ref_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The build number is the commit count (scripts/version.sh); a shallow clone would count one.
           fetch-depth: 0
@@ -134,7 +134,7 @@ jobs:
           gh release create "$TAG" --verify-tag --title "$title" --notes-file "$RUNNER_TEMP/release-notes.md" "${prerelease[@]}" \
             "$ZIP" "$DMG" dist/release/SHA256SUMS.txt dist/release/appcast.json dist/release/appcast.xml dist/release/icloudy.rb
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-${{ github.ref_name }}
           path: dist/release
