@@ -7,6 +7,7 @@ struct ConnectView: View {
     @Bindable var model: AppModel
     private var sheets: Bindable<ExplorerPresentation> { Bindable(model.ui) }
     @State private var prompts = LoginPrompts.shared
+    @State private var showPresets = false
 
     var body: some View {
         ScrollView {
@@ -34,6 +35,13 @@ struct ConnectView: View {
                 Text("ALMACENAMIENTO DE OBJETOS").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 providerButton(.s3, title: "Conectar S3", subtitle: "Amazon S3, Backblaze B2, Wasabi, Cloudflare R2, MinIO y compatibles", icon: "cylinder.split.1x2")
                     .disabled(model.ui.connecting)
+                DisclosureGroup(isExpanded: $showPresets) {
+                    VStack(spacing: 6) {
+                        ForEach(ServerPreset.all) { preset in presetButton(preset) }
+                    }.padding(.top, 6)
+                } label: {
+                    Text("MÁS SERVIDORES").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                }.disabled(model.ui.connecting)
                 Button("Conectar a un servidor en el Finder…") { model.openFinderConnect() }
                     .buttonStyle(.link).font(.caption)
                     .help("Monta el recurso de red y vuelve aquí para elegir su carpeta")
@@ -78,7 +86,7 @@ struct ConnectView: View {
                 Text("\(question.service) ha devuelto la cuenta «\(question.email)». Conéctala solo si es la que acabas de autorizar en el navegador.")
             }
             .onAppear { model.ui.connectionError = nil }
-            .sheet(item: sheets.serverLogin) { cloud in
+            .sheet(item: sheets.serverLogin, onDismiss: { model.ui.serverPreset = nil }) { cloud in
                 if cloud == .s3 { S3LoginView(model: model) } else { ServerLoginView(model: model, cloud: cloud) }
             }
             .sheet(isPresented: sheets.showAdvanced) { AdvancedDriveView(model: model) }
@@ -113,6 +121,23 @@ struct ConnectView: View {
                 .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(.quaternary))
         }.buttonStyle(.plain)
+    }
+    /// A service that speaks one of the protocols above, with its address already known.
+    private func presetButton(_ preset: ServerPreset) -> some View {
+        Button {
+            model.ui.connectionError = nil
+            model.ui.serverPreset = preset
+            model.ui.serverLogin = preset.cloud
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: ServerLoginView.symbol(for: preset.cloud)).foregroundStyle(tint(preset.cloud)).frame(width: 22)
+                Text(verbatim: preset.title).font(.callout)
+                Spacer()
+                Text(verbatim: preset.cloud.title).font(.caption2).foregroundStyle(.secondary)
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+            }.padding(.horizontal, 12).padding(.vertical, 8).frame(maxWidth: .infinity).contentShape(Rectangle())
+                .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+        }.buttonStyle(.plain).accessibilityLabel(Text(verbatim: preset.title + ", " + preset.cloud.title))
     }
     private func tint(_ cloud: Cloud) -> Color {
         switch cloud {

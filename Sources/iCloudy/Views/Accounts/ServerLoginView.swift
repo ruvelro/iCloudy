@@ -33,16 +33,23 @@ struct ServerLoginView: View {
     @State private var prompts = LoginPrompts.shared
     @State private var typedCode = ""
 
-    /// WebDAV and FTP need a full server address; Mega has only one.
-    private var needsServer: Bool { cloud != .mega }
-    private var icon: String {
+    /// The values typed for the preset's placeholders: the kDrive id, the address of the person's own server.
+    @State private var presetValues: [ServerPreset.Placeholder: String] = [:]
+
+    /// The service chosen under «Más servidores», when it is one for this protocol.
+    private var preset: ServerPreset? { model.ui.serverPreset.flatMap { $0.cloud == cloud && $0.s3Service == nil ? $0 : nil } }
+    /// WebDAV and FTP need a full server address; Mega has only one, and a preset knows it already.
+    private var needsServer: Bool { cloud != .mega && preset == nil }
+    static func symbol(for cloud: Cloud) -> String {
         switch cloud {
         case .webdav: return "server.rack"
         case .mega: return "lock.icloud"
         case .sftp: return "lock.rectangle.stack"
+        case .s3: return "cylinder.split.1x2"
         default: return "arrow.up.arrow.down.square"
         }
     }
+    private var icon: String { Self.symbol(for: cloud) }
     private var placeholder: String {
         cloud == .webdav ? "https://nube.ejemplo.com/remote.php/dav/files/ana" : "servidor.ejemplo.com/carpeta"
     }
@@ -55,6 +62,7 @@ struct ServerLoginView: View {
         }
     }
     private var address: String {
+        if let preset { return preset.address(user: username, values: presetValues) ?? "" }
         let clean = server.trimmingCharacters(in: .whitespacesAndNewlines)
         if cloud == .sftp { return "sftp://" + clean.replacingOccurrences(of: "sftp://", with: "") }
         guard cloud == .ftp else { return server }
@@ -106,14 +114,25 @@ struct ServerLoginView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
-                Label(cloud.title, systemImage: icon).font(.title2)
+                if let preset { Label { Text(verbatim: preset.title) } icon: { Image(systemName: icon) }.font(.title2) }
+                else { Label(cloud.title, systemImage: icon).font(.title2) }
                 if cloud.isExperimental {
                     Text("Experimental").font(.caption2.weight(.semibold))
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(.orange.opacity(0.18), in: Capsule()).foregroundStyle(.orange)
                 }
             }
-            Text(explanation).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if let preset {
+                Text(verbatim: preset.notes).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Link("Instrucciones de \(preset.title)", destination: preset.docs).font(.caption)
+                ForEach(preset.extraPlaceholders, id: \.self) { placeholder in
+                    TextField(placeholder == .drive ? "ID del kDrive, por ejemplo 123456" : "Dirección del servidor, por ejemplo nube.ejemplo.com",
+                              text: Binding(get: { presetValues[placeholder] ?? "" }, set: { presetValues[placeholder] = $0 }))
+                        .textFieldStyle(.roundedBorder)
+                }
+            } else {
+                Text(explanation).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             if cloud.isExperimental {
                 Label("Mega no publica su API ni se compromete a mantenerla. Puede dejar de funcionar sin aviso.", systemImage: "flask")
                     .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
@@ -154,7 +173,7 @@ struct ServerLoginView: View {
                  ? "Si tu servidor usa verificación en dos pasos, crea una contraseña de aplicación en su configuración."
                  : "Si la cuenta tiene verificación en dos pasos, iCloudy te pedirá el código después de comprobar la contraseña.")
                 .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            if cloud == .webdav {
+            if cloud == .webdav, preset == nil {
                 DisclosureGroup(isExpanded: $showAdvanced) {
                     Toggle("Servidor Nextcloud u ownCloud", isOn: $nextcloud)
                     Text("Habilita «Crear enlace público» usando su API de compartición, que WebDAV por sí solo no tiene. Déjalo desactivado si no sabes qué servidor es.")
@@ -162,6 +181,9 @@ struct ServerLoginView: View {
                 } label: {
                     Text("Avanzado").font(.caption)
                 }
+            }
+            if preset != nil, !address.isEmpty {
+                Text(verbatim: address).font(.caption2.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
             }
             if let error = model.ui.connectionError {
                 Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
@@ -173,14 +195,14 @@ struct ServerLoginView: View {
                 Button("Conectar") {
                     Task {
                         await model.connectServer(cloud: cloud, server: address, username: username, password: password,
-                                                  flavor: cloud == .webdav && nextcloud ? "nextcloud" : nil,
+                                                  flavor: preset?.flavor ?? (cloud == .webdav && nextcloud ? "nextcloud" : nil),
                                                   key: cloud == .sftp ? keyText.map { SFTPKeyMaterial(key: $0, passphrase: passphrase) } : nil)
                         password = ""; passphrase = ""
                         if model.ui.connectionError == nil { dismiss() }
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(model.ui.connecting || (needsServer && server.isEmpty) || username.isEmpty || (password.isEmpty && keyText == nil))
+                .disabled(model.ui.connecting || (needsServer && server.isEmpty) || (preset != nil && address.isEmpty) || username.isEmpty || (password.isEmpty && keyText == nil))
             }
         }.padding(24).frame(width: 470)
         .alert("¿Confías en este servidor?", isPresented: Binding(get: { prompts.hostKey != nil }, set: { if !$0 { prompts.answerHostKey(false) } }),

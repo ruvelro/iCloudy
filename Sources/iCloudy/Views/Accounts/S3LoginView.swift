@@ -19,6 +19,8 @@ struct S3LoginView: View {
         case .cloudflare: return "Crea un token de API de R2 con acceso S3. El ID de cuenta está en el panel de R2, en la dirección del servicio."
         case .scaleway: return "Usa una clave de API de Scaleway con permiso sobre Object Storage."
         case .digitalocean: return "Crea una clave de acceso de Spaces en el panel de DigitalOcean."
+        case .storj: return "Genera credenciales S3 en el panel de Storj («Access keys», con la pasarela S3 alojada). La dirección es siempre gateway.storjshare.io."
+        case .idrive: return "Copia la dirección de tu región desde el panel de iDrive e2 (por ejemplo xyz1.ldn.idrivee2-11.com) y crea una clave de acceso allí."
         case .custom: return "Para MinIO, Garage, Ceph y otros servidores compatibles con S3. Escribe la dirección completa del servicio, con su puerto."
         }
     }
@@ -26,10 +28,9 @@ struct S3LoginView: View {
     private var complete: Bool {
         let filled = !form.accessKey.isEmpty && !form.secretKey.isEmpty
         switch form.service {
-        case .custom: return filled && !form.endpoint.isEmpty
         case .cloudflare: return filled && !form.accountID.isEmpty
         case .backblaze: return filled && !form.region.isEmpty
-        default: return filled
+        default: return filled && (!form.service.typesEndpoint || !form.endpoint.isEmpty)
         }
     }
 
@@ -41,7 +42,7 @@ struct S3LoginView: View {
         form.bucket = location.bucket ?? ""
         form.addressing = location.addressing
         if let marker = account.id.lastIndex(of: "#") { form.accessKey = String(account.id[account.id.index(after: marker)...]) }
-        if location.service == .custom { form.endpoint = location.endpoint.url?.absoluteString ?? "" }
+        if location.service.typesEndpoint { form.endpoint = location.endpoint.url?.absoluteString ?? "" }
         if location.service == .cloudflare { form.accountID = location.endpoint.host?.components(separatedBy: ".").first ?? "" }
         showAdvanced = location.addressing != .automatic
     }
@@ -76,15 +77,18 @@ struct S3LoginView: View {
             Picker("Servicio", selection: $form.service) {
                 ForEach(S3Service.allCases) { service in Text(service.title).tag(service) }
             }
+            .onAppear { if let service = model.ui.serverPreset?.s3Service, model.ui.reconnecting == nil { form.service = service; form.region = service == .backblaze ? "" : service.defaultRegion } }
             .onChange(of: form.service) { _, service in
                 // The region of one service means nothing to another.
-                form.region = service.regions.isEmpty && service != .custom && service != .cloudflare ? "" : service.defaultRegion
+                form.region = service == .backblaze ? "" : service.defaultRegion
             }
             Text(explanation).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             switch form.service {
-            case .custom:
-                TextField("https://minio.ejemplo.com:9000", text: $form.endpoint).textFieldStyle(.roundedBorder)
+            case .custom, .idrive:
+                TextField(form.service == .idrive ? "xyz1.ldn.idrivee2-11.com" : "https://minio.ejemplo.com:9000", text: $form.endpoint).textFieldStyle(.roundedBorder)
                 TextField("Región (us-east-1 si el servidor no usa regiones)", text: $form.region).textFieldStyle(.roundedBorder)
+            case .storj:
+                EmptyView()
             case .cloudflare:
                 TextField("ID de cuenta de Cloudflare", text: $form.accountID).textFieldStyle(.roundedBorder)
             case .backblaze:

@@ -31,7 +31,7 @@ struct S3Authentication {
     /// The endpoint the form describes, normalised: https unless typed otherwise, no trailing slash, no default port.
     static func endpoint(for form: S3SignIn, region: String) throws -> URLComponents {
         let typed: String
-        if form.service == .custom {
+        if form.service.typesEndpoint {
             let trimmed = form.endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
             typed = trimmed.contains("://") ? trimmed : "https://" + trimmed
         } else if form.service == .cloudflare {
@@ -100,7 +100,7 @@ struct S3Authentication {
     /// are two accounts; signing in again with all three the same replaces the stored secret.
     static func account(_ service: S3Service, endpoint: URLComponents, region: String, bucket: String, addressing: S3Addressing, accessKey: String) -> Account {
         let host = (endpoint.host ?? "") + (endpoint.port.map { ":" + String($0) } ?? "") + endpoint.path
-        let place = service == .custom ? host : [service.title, region == "auto" ? nil : region].compactMap { $0 }.joined(separator: " · ")
+        let place = service.typesEndpoint ? host : [service.title, region == "auto" ? nil : region].compactMap { $0 }.joined(separator: " · ")
         var account = Account(id: "s3:" + host + "/" + bucket + "#" + accessKey, cloud: .s3,
                               name: bucket.isEmpty ? service.title : bucket, email: place,
                               clientID: "", clientSecret: nil, serverURL: endpoint.url?.absoluteString)

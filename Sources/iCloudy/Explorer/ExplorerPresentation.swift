@@ -61,6 +61,8 @@ final class ExplorerPresentation {
     var showConnect = false
     /// Self-hosted provider whose credentials form is open, if any.
     var serverLogin: Cloud?
+    /// The service picked under «Más servidores», which fills that form in. Nil for the plain protocol.
+    var serverPreset: ServerPreset?
     /// The account that form was opened to reconnect, so it arrives with its address and user already written.
     /// Retyping a NAS address from memory to fix a session is a poor way to ask somebody for a password.
     var reconnecting: Account?

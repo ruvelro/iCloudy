@@ -1889,3 +1889,28 @@
 "No se ha conectado la cuenta de %@ «%@». Si no era la tuya, cierra las pestañas del navegador que no reconozcas y vuelve a intentarlo." = "The %@ account “%@” was not connected. If it was not yours, close any browser tabs you do not recognise and try again.";
 "«%@» no está borrada: aparece en la papelera para que puedas abrirla y ver lo que se borró dentro." = "“%@” is not deleted: it appears in the bin so you can open it and see what was deleted inside.";
 "El servicio devolvió la misma página una y otra vez, así que se ha dejado de pedir más." = "The service returned the same page over and over, so iCloudy stopped asking for more.";
+
+/* 0.9 — Proveedores e integración */
+"Storj" = "Storj";
+"iDrive e2" = "iDrive e2";
+"Genera credenciales S3 en el panel de Storj («Access keys», con la pasarela S3 alojada). La dirección es siempre gateway.storjshare.io." = "Generate S3 credentials in the Storj console (“Access keys”, with the hosted S3 gateway). The address is always gateway.storjshare.io.";
+"Copia la dirección de tu región desde el panel de iDrive e2 (por ejemplo xyz1.ldn.idrivee2-11.com) y crea una clave de acceso allí." = "Copy your region’s address from the iDrive e2 console (for example xyz1.ldn.idrivee2-11.com) and create an access key there.";
+"MÁS SERVIDORES" = "MORE SERVERS";
+"Instrucciones de %@" = "%@ instructions";
+"ID del kDrive, por ejemplo 123456" = "kDrive ID, for example 123456";
+"Dirección del servidor, por ejemplo nube.ejemplo.com" = "Server address, for example cloud.example.com";
+"Inicia sesión en el navegador con tu servidor, también con verificación en dos pasos: Nextcloud crea una contraseña de aplicación solo para iCloudy." = "Sign in to your server in the browser, two-step verification included: Nextcloud creates an app password just for iCloudy.";
+"oCIS inicia sesión con OpenID Connect. Usa una contraseña de aplicación si tu servidor las tiene, o un token de acceso en «Avanzado»; la autenticación básica está desactivada por omisión." = "oCIS signs in with OpenID Connect. Use an app password if your server offers them, or an access token under “Advanced”; basic authentication is off by default.";
+"SeafDAV tiene que estar activado en el servidor. Cada biblioteca aparece como una carpeta; las bibliotecas cifradas no se ven por WebDAV." = "SeafDAV has to be enabled on the server. Each library shows as a folder; encrypted libraries are not visible over WebDAV.";
+"El usuario es el de la Storage Box (u123456). Activa «SSH Support» en Robot; el puerto 23 da SFTP completo y el 22, uno más limitado." = "The user is the Storage Box’s (u123456). Turn on “SSH Support” in Robot; port 23 gives full SFTP and port 22 a more limited one.";
+"Activa «WebDAV» en los ajustes de la Storage Box en Robot. El usuario es el de la Storage Box (u123456)." = "Turn on “WebDAV” in the Storage Box settings in Robot. The user is the Storage Box’s (u123456).";
+"Crea una contraseña de aplicación en Koofr (Preferencias › Contraseñas) y úsala con tu correo; la contraseña de la cuenta no sirve para WebDAV." = "Create an app password in Koofr (Preferences › Passwords) and use it with your e-mail; the account password does not work for WebDAV.";
+"Yandex pide una contraseña de aplicación del tipo «Archivos» (WebDAV). Puede limitar la velocidad de las subidas por WebDAV." = "Yandex asks for an app password of the “Files” (WebDAV) kind. It may throttle uploads over WebDAV.";
+"El ID del kDrive es el número que aparece en su dirección web (ksuite.infomaniak.com/…/kdrive/app/drive/123456). Usuario: tu correo; con verificación en dos pasos, una contraseña de aplicación." = "The kDrive ID is the number in its web address (ksuite.infomaniak.com/…/kdrive/app/drive/123456). User: your e-mail; with two-step verification, an app password.";
+"WebDAV tiene que estar activado para el usuario en la administración de HiDrive, y no está en todos los planes. Las cuentas antiguas de STRATO usan webdav.hidrive.strato.com." = "WebDAV has to be enabled for the user in HiDrive’s administration, and not every plan has it. Older STRATO accounts use webdav.hidrive.strato.com.";
+"Crea una contraseña de aplicación con acceso a «Files (WebDAV)» en Ajustes › Privacidad y seguridad. El usuario es tu dirección de Fastmail." = "Create an app password with access to “Files (WebDAV)” in Settings › Privacy & Security. The user is your Fastmail address.";
+"Con una clave de aplicación. La región está en la dirección S3 del bucket." = "With an application key. The region is in the bucket’s S3 address.";
+"Con una clave de acceso de Wasabi y la región del bucket." = "With a Wasabi access key and the bucket’s region.";
+"Con un token de API de R2 y el ID de la cuenta de Cloudflare." = "With an R2 API token and the Cloudflare account ID.";
+"Con credenciales S3 de la pasarela alojada de Storj (gateway.storjshare.io)." = "With S3 credentials for Storj’s hosted gateway (gateway.storjshare.io).";
+"Con la dirección de tu región y una clave de acceso, las dos en el panel de iDrive e2." = "With your region’s address and an access key, both in the iDrive e2 console.";

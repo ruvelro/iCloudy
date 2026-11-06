@@ -5,6 +5,17 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
 
 ## Sin publicar
 
+### Proveedores e integración
+
+Lo nuevo de esta sección no se ha probado contra cuentas reales de cada servicio: lo cubren las pruebas con servidores
+simulados y la documentación de cada uno. Se marca como 🆕 hasta que alguien lo use de verdad.
+
+- **«Más servidores» al añadir una nube.** Hetzner Storage Box (SFTP y WebDAV), Koofr, Yandex Disk, Infomaniak
+  kDrive, IONOS HiDrive, Fastmail Files, Seafile, ownCloud Infinite Scale y Nextcloud llegan con la dirección, el
+  puerto y la ruta ya puestos, lo que hay que saber antes (la contraseña de aplicación, el protocolo que hay que
+  activar en su panel) y un enlace a sus instrucciones. En S3 se añaden Storj e iDrive e2 a Backblaze, Wasabi y R2.
+  Por debajo son cuentas WebDAV, SFTP o S3 normales: una tabla de datos, no proveedores nuevos.
+
 ### Robustez
 
 - **La ventana ya no se traba guardando ni leyendo.** La cola, los reflejos, las copias sin conexión y locales, el
