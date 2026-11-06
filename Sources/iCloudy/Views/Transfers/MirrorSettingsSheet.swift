@@ -29,6 +29,15 @@ struct MirrorSettingsSheet: View {
                     Text(verbatim: mirror.explanation(of: policy.wrappedValue))
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
+                if mirror.mode != .twoWay {
+                    Section("Borrados") {
+                        Toggle("Espejo exacto: llevar también los borrados", isOn: $options.exact)
+                        Text(mirror.mode == .download
+                             ? LocalizedStringKey("Lo que se borre en la nube se envía también a la Papelera del Mac, y lo que cambies aquí vuelve a quedar como en la nube (tu versión va a la Papelera). Solo se toca lo que trajo este reflejo y nadie cambió aquí después; lo que añadas tú se queda. Si fuera a borrar la mayor parte de la carpeta, se detiene y pregunta.")
+                             : LocalizedStringKey("Lo que borres en el Mac se envía también a la papelera de la nube. Solo se borra lo que subió este reflejo y nadie cambió allí después; lo demás de la carpeta remota se queda. Si fuera a borrar la mayor parte, se detiene y pregunta. Revisa «Cambios pendientes» antes de activarlo."))
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
             .formStyle(.grouped)
             HStack {

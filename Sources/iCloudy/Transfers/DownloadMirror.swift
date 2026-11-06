@@ -21,6 +21,12 @@ struct DownloadMirrorPlan {
     /// Relative path of every key the job may complete, and the remote side each one had when planned.
     var keys: [String: String] = [:]
     var remote: [String: SyncEntry] = [:]
+    /// Exact mirrors only: local copies edited here that come back from the cloud. The edited version goes to the
+    /// Trash first, so the download replaces nothing.
+    var restore: [String] = []
+    /// Exact mirrors only: what the cloud no longer has and this mirror put here, to the Trash.
+    var trash: [String] = []
+    var trashFolders: [String] = []
     /// Excluded or filtered items, outermost first, for the dry run.
     var excluded: [(path: String, isFolder: Bool)] = []
     var nothingToDo: Bool { downloads.isEmpty && conflicts.isEmpty }
@@ -30,7 +36,7 @@ enum DownloadMirrorPlanner {
     /// `local` is the scan of the mirror's folder (everything, excluded items included), `remote` the cloud folder by
     /// relative path and `keys` the queue's tree key of each remote path.
     static func plan(local: [String: FileStamp], remote: [String: CloudFile], keys: [String: String], baseline: [String: SyncEntry],
-                     exclusions: SyncExclusionMatcher, now: Date = Date()) -> DownloadMirrorPlan {
+                     exclusions: SyncExclusionMatcher, exact: Bool = false, now: Date = Date()) -> DownloadMirrorPlan {
         var plan = DownloadMirrorPlan()
         let filtered = TwoWayPlanner.filteredFiles(local: local, remote: remote, exclusions: exclusions, now: now)
         func excluded(_ path: String, _ folder: Bool) -> Bool { exclusions.excludes(path, isFolder: folder) || filtered.contains(path) }
@@ -51,8 +57,14 @@ enum DownloadMirrorPlanner {
             plan.remote[path] = entry
             let remoteChanged = SyncEntry.signature(file) != b?.remoteSignature
             if !remoteChanged {
-                // Unchanged in the cloud. A local edit or deletion of a mirrored file is the Mac's business.
-                plan.completed.insert(key)
+                // Unchanged in the cloud. A local edit or deletion of a mirrored file is the Mac's business, unless the
+                // mirror is exact: then the folder is put back as the cloud has it.
+                if exact, let b, l != b.local {
+                    plan.keys[key] = path; plan.downloads.append(path); travelling.append(path)
+                    if l != nil { plan.restore.append(path) }
+                } else {
+                    plan.completed.insert(key)
+                }
                 continue
             }
             plan.keys[key] = path
@@ -77,6 +89,9 @@ enum DownloadMirrorPlanner {
             if local[path]?.size == -1, !travelling.contains(where: { $0.hasPrefix(path + "/") }) { plan.completed.insert(key) }
         }
         for (path, entry) in baseline where remote[path] == nil && !entry.isFolder && !excluded(path, false) { plan.forget.append(path) }
+        if exact {
+            (plan.trash, plan.trashFolders) = ExactMirrorPlanner.localDeletions(local: local, remote: remote, baseline: baseline, exclusions: exclusions, now: now)
+        }
         plan.excluded = TwoWayPlanner.excludedItems(local: [:], remote: remote, exclusions: exclusions, now: now)
         plan.downloads.sort(); plan.conflicts.sort(); plan.forget.sort()
         return plan
@@ -133,13 +148,21 @@ extension MirrorManager {
         let url = resolvedURL(mirror)
         do {
             guard FileManager.default.fileExists(atPath: url.path) else { throw CloudError.message(L("La carpeta local ya no existe en \(url.path).")) }
-            let (plan, snapshot, _) = try await downloadPlan(mirror, url: url)
+            let (plan, snapshot, scan) = try await downloadPlan(mirror, url: url)
+            if mirror.options.exact {
+                let localFiles = scan.stamps.values.filter { $0.size != -1 }.count
+                try ExactMirrorPlanner.checkMassDeletion(plan.trash.count, of: localFiles, side: L("la carpeta del Mac"), allowed: massDeletionAllowed.remove(id) != nil)
+            }
+            let rules = exclusions(of: mirror)
+            _ = try trashLocal(plan.restore, folders: [], in: url, rules: rules)
+            let deleted = try trashLocal(plan.trash, folders: plan.trashFolders, in: url, rules: rules)
             guard let position = mirrors.firstIndex(where: { $0.id == id }) else { return }
+            var report = SyncReport(); report.deletedLocal = deleted
+            mirrors[position].lastReport = report
             for (path, entry) in plan.adopt { mirrors[position].baseline[path] = entry }
             for path in plan.forget { mirrors[position].baseline[path] = nil }
             if plan.nothingToDo {
                 mirrors[position].lastSync = Date(); mirrors[position].lastError = nil
-                mirrors[position].lastReport = SyncReport()
                 persist(id); return
             }
             let root = CloudFile(id: mirror.remoteFolderID, name: url.lastPathComponent, mime: "application/vnd.google-apps.folder",
@@ -172,7 +195,8 @@ extension MirrorManager {
         let rules = exclusions(of: mirror)
         let scan = try await blockingIO { try MirrorPlanner.scan(url, exclusions: rules) }
         let snapshot = try await RemoteTree.snapshot(api, root: mirror.remoteFolderID, exclusions: rules)
-        let plan = DownloadMirrorPlanner.plan(local: scan.all, remote: snapshot.files, keys: snapshot.keys, baseline: mirror.baseline, exclusions: rules)
+        let plan = DownloadMirrorPlanner.plan(local: scan.all, remote: snapshot.files, keys: snapshot.keys, baseline: mirror.baseline,
+                                              exclusions: rules, exact: mirror.options.exact)
         return (plan, snapshot, scan)
     }
 
@@ -182,7 +206,7 @@ extension MirrorManager {
         guard let keys = mirrors[index].pendingKeys, let planned = mirrors[index].pendingRemote else { return }
         let url = resolvedURL(mirrors[index])
         let stamps = (try? MirrorPlanner.scan(url, exclusions: exclusions(of: mirrors[index])).all) ?? [:]
-        var report = SyncReport()
+        var report = mirrors[index].lastReport ?? SyncReport()
         for (key, path) in keys where transfer.completedPaths.contains(key) {
             guard var entry = planned[path] else { continue }
             entry.local = stamps[path]
@@ -197,9 +221,16 @@ extension MirrorManager {
     /// The dry run of a download mirror.
     func previewDownload(_ mirror: FolderMirror) async throws -> MirrorPreview {
         let url = resolvedURL(mirror)
-        let (plan, _, _) = try await downloadPlan(mirror, url: url)
+        let (plan, _, scan) = try await downloadPlan(mirror, url: url)
         var preview = MirrorPreview(oneWay: true)
+        if mirror.options.exact {
+            let localFiles = scan.stamps.values.filter { $0.size != -1 }.count
+            do { try ExactMirrorPlanner.checkMassDeletion(plan.trash.count, of: localFiles, side: L("la carpeta del Mac"), allowed: massDeletionAllowed.contains(mirror.id)) }
+            catch { preview.massDeletion = error.localizedDescription }
+        }
         preview.changes = plan.downloads.map { PendingChange(kind: .download, path: $0, isFolder: false) }
+            + (plan.restore + plan.trash).map { PendingChange(kind: .trashLocal, path: $0, isFolder: false) }
+            + plan.trashFolders.map { PendingChange(kind: .trashLocal, path: $0, isFolder: true) }
             + plan.conflicts.map { PendingChange(kind: .conflict, path: $0, isFolder: false) }
             + plan.excluded.map { PendingChange(kind: .excluded, path: $0.path, isFolder: $0.isFolder) }
         preview.changes.sort { ($0.kind.rawValue, $0.path) < ($1.kind.rawValue, $1.path) }

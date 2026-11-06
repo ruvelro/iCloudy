@@ -24,7 +24,7 @@ struct MirrorList: View {
             .padding(8).frame(maxWidth: .infinity, alignment: .leading)
             .contextMenu {
                 Button("Sincronizar ahora") { mirrors.syncNow(mirror.id) }.disabled(mirror.paused)
-                if mirror.mode == .twoWay {
+                if mirror.mode == .twoWay || mirror.options.exact {
                     Button("Sincronizar aplicando los borrados") { mirrors.syncNow(mirror.id, applyingMassDeletion: true) }
                         .help("Solo hace falta cuando la sincronización se detuvo por borrar la mayor parte de un lado")
                         .disabled(mirror.paused)

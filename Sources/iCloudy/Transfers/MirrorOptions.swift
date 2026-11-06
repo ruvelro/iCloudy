@@ -5,14 +5,18 @@ import Foundation
 struct MirrorOptions: Codable, Equatable, Sendable {
     /// nil is the mode's own default: keep both in two-way syncs, ask in one-way mirrors.
     var conflictPolicy: ConflictPolicy?
+    /// One-way only, "espejo exacto": what is deleted at the source goes to the destination's trash too, as long as
+    /// the mirror put it there and nobody changed it there since.
+    var exact = false
 
-    init(conflictPolicy: ConflictPolicy? = nil) {
-        self.conflictPolicy = conflictPolicy
+    init(conflictPolicy: ConflictPolicy? = nil, exact: Bool = false) {
+        self.conflictPolicy = conflictPolicy; self.exact = exact
     }
-    enum CodingKeys: String, CodingKey { case conflictPolicy }
+    enum CodingKeys: String, CodingKey { case conflictPolicy, exact }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         conflictPolicy = (try? values.decodeIfPresent(String.self, forKey: .conflictPolicy)).flatMap { $0.flatMap(ConflictPolicy.init(rawValue:)) }
+        exact = try values.decodeIfPresent(Bool.self, forKey: .exact) ?? false
     }
 }
 

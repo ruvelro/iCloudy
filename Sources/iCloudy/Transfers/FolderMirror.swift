@@ -224,6 +224,8 @@ final class MirrorManager {
         }
     }
     var accountLookup: ((String) -> Account?)?
+    /// How an exact download mirror sends a local copy to the Trash; tests bypass the Finder.
+    var trashLocally: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }
     /// Time to let a burst of file-system events settle before planning a sync.
     var debounce: Duration = .seconds(3)
     /// Tests turn this off: FSEvents on a temporary folder would race the assertions.
@@ -569,11 +571,18 @@ final class MirrorManager {
         do {
             guard FileManager.default.fileExists(atPath: url.path) else { throw CloudError.message(L("La carpeta local ya no existe en \(url.path).")) }
             let rules = exclusions(of: mirror)
-            let current = try await blockingIO { try MirrorPlanner.scan(url, exclusions: rules).stamps }
+            let scan = try await blockingIO { try MirrorPlanner.scan(url, exclusions: rules) }
+            let current = scan.stamps
+            // An exact mirror first sends what was deleted here to the cloud's trash; the brake stops it all.
+            let trashed = try await applyRemoteDeletions(id, current: current, excluded: scan.excluded)
+            massDeletionAllowed.remove(id)
             guard let position = mirrors.firstIndex(where: { $0.id == id }) else { return }
+            var report = SyncReport(); report.deletedRemote = trashed.count
+            mirrors[position].lastReport = report
             let (unchanged, nothingNew) = MirrorPlanner.oneWayPlan(current: current, mirror: mirrors[position])
             if nothingNew {
                 // Nothing new since the last sync: no transfer, no network.
+                if !trashed.isEmpty { mirrors[position].lastSync = Date() }
                 mirrors[position].lastError = nil; persist(id); return
             }
             var job = Transfer(batchID: UUID(), name: L("Reflejo · \(url.lastPathComponent)"), destination: mirror.remoteName, accountID: mirror.accountID, direction: .upload, localURL: url, bookmark: mirror.bookmark, parent: mirror.remoteFolderID)
@@ -658,6 +667,16 @@ final class MirrorManager {
         guard let current = mirrors.first(where: { $0.id == id }) else { throw CloudError.message(L("Este reflejo ya no existe.")) }
         let (completed, nothingNew) = MirrorPlanner.oneWayPlan(current: scan.stamps, mirror: current)
         var preview = MirrorPreview.oneWay(current: scan.stamps, completed: completed, nothingNew: nothingNew, remoteEntries: current.remoteEntries, excluded: scan.excluded)
+        if current.options.exact {
+            let (files, folders) = ExactMirrorPlanner.remoteDeletions(entries: current.remoteEntries, current: scan.stamps, excluded: scan.excluded, exclusions: rules)
+            do {
+                try ExactMirrorPlanner.checkMassDeletion(files.count, of: current.remoteEntries.values.filter { !$0.isFolder }.count,
+                                                         side: L("la nube"), allowed: massDeletionAllowed.contains(id))
+            } catch { preview.massDeletion = error.localizedDescription }
+            preview.changes += files.map { PendingChange(kind: .trashRemote, path: $0, isFolder: false) }
+                + folders.map { PendingChange(kind: .trashRemote, path: $0, isFolder: true) }
+            preview.changes.sort { ($0.kind.rawValue, $0.path) < ($1.kind.rawValue, $1.path) }
+        }
         if let active = current.activeTransferID, let item = queue?.items.first(where: { $0.id == active }), item.mirrorEntries != nil, [.queued, .running, .paused].contains(item.state) {
             preview.resumesQueuedUpload = true
         }
