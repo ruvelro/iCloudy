@@ -86,6 +86,25 @@ final class JobsTests: XCTestCase {
         XCTAssertEqual(try f.demo.list(f.folder).map(\.name).sorted(), ["Fotos", "suelto.txt"])
     }
 
+    func testAnUploadRunIsPlannedSoItsReportListsEveryFileButTheExcludedOnes() async throws {
+        let f = try fixture()
+        f.store.accountLookup = { _ in .demo }
+        let folder = f.root.appendingPathComponent("Plan")
+        try write("a", to: folder.appendingPathComponent("a.txt"))
+        try write("x", to: folder.appendingPathComponent("x.log"))
+        let job = SavedJob(name: "Plan", sources: [.local(folder, bookmark: nil)], destination: remote(f),
+                           options: JobOptions(exclusions: SyncExclusions(patterns: ["*.log"])))
+        try f.store.add(job)
+        let batch = try await f.store.run(job.id)
+        let transfer = try XCTUnwrap(f.queue.items.first { $0.batchID == batch })
+        XCTAssertTrue(transfer.planned)
+        XCTAssertEqual(Set(transfer.report.keys), ["./a.txt"])
+        try await finished(f, job.id)
+        let done = try XCTUnwrap(f.queue.items.first { $0.batchID == batch })
+        XCTAssertEqual(done.report["./a.txt"]?.outcome.isCopied, true)
+        XCTAssertEqual(TransferReport(jobs: [done]).outstanding, 0)
+    }
+
     func testRunningAgainUsesThePolicyAndCarriesDeletionsBehindTheBrake() async throws {
         let f = try fixture()
         let folder = f.root.appendingPathComponent("Docs")

@@ -192,6 +192,17 @@ final class JobStore {
             case (.upload, .local(let url, let bookmark), .remote(let account, let folder, _, _, let location)):
                 transfer = Transfer(batchID: batch, name: url.lastPathComponent, destination: location, accountID: account, direction: .upload,
                                     localURL: url, bookmark: bookmark, parent: folder)
+                // The local side is cheap to walk: the plan seeds the report, so a run that stops early still lists
+                // every file it did not reach, and "Reintentar solo lo pendiente" knows them.
+                // Files the rules leave out are taken out of it, or the end of the run would call them missing; with
+                // an age filter the plan cannot tell, so there is none.
+                if job.options.exclusions.maxAge == nil, job.options.exclusions.minAge == nil, let cloud = accountLookup?(account)?.cloud,
+                   let plan = try? await TransferPlanner.uploads([url], to: cloud, existing: [], quota: nil), let seed = plan.seeds.first {
+                    let rules = job.options.exclusions.matcher(caseInsensitive: SyncExclusions.isCaseInsensitive(url))
+                    transfer.seed(seed.filter { key, record in
+                        key == "." || !rules.excludesFile(String(key.dropFirst(2)), size: record.bytes, modified: nil, now: Date())
+                    })
+                }
             case (.download, .remote(let account, let item, let name, let isFolder, _), .local(let folder, let bookmark)):
                 let file = try await currentItem(client(account), id: item, name: name, isFolder: isFolder)
                 transfer = Transfer(batchID: batch, name: file.name, destination: folder.path, accountID: account, direction: .download,
