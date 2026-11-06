@@ -42,8 +42,10 @@ extension AppModel {
         let request = CryptomatorVaults.Request(base: account, folder: folder, tab: workspace.current.id)
         guard let remembered = cryptomator.rememberedPassphrase(base: account.id, folder: folder.id) else { cryptomator.unlocking = request; return }
         Task {
-            if let problem = await unlockVault(request, passphrase: remembered, remember: false) {
-                if problem == CryptomatorError.invalidPassphrase.errorDescription {
+            do { try await unlockVault(request, passphrase: remembered, remember: false) }
+            catch {
+                // A remembered passphrase that no longer opens the vault is forgotten; any other failure keeps it.
+                if error as? CryptomatorError == .invalidPassphrase {
                     cryptomator.forgetPassphrase(CryptomatorVaults.accountID(base: account.id, folder: folder.id))
                 }
                 cryptomator.unlocking = request
@@ -57,23 +59,21 @@ extension AppModel {
         requestVaultUnlock(folder)
     }
 
-    /// Returns what went wrong, for the sheet to show beside the passphrase, or nil once the vault is open on screen.
-    func unlockVault(_ request: CryptomatorVaults.Request, passphrase: String, remember: Bool) async -> String? {
+    /// Opens the vault on screen, or throws what went wrong for the sheet to show beside the passphrase. A sheet
+    /// action throws and the sheet shows `localizedDescription`; the caller can still tell one failure from another.
+    func unlockVault(_ request: CryptomatorVaults.Request, passphrase: String, remember: Bool) async throws {
         wireVaults()
         do {
             let entry = try await cryptomator.unlock(folder: request.folder, base: request.base, provider: vaultStorage(request.base),
                                                      passphrase: passphrase, remember: remember)
             showVault(entry.id, in: request.tab)
-            return nil
-        } catch is CancellationError {
-            return nil
-        } catch { return error.localizedDescription }
+        } catch is CancellationError {}
     }
 
     /// Opens an unlocked vault in the tab that asked for it, or in the focused one when that tab has been closed.
     private func showVault(_ id: String, in tab: UUID?) {
         guard let tab, workspace.tab(tab) != nil else { select(id); return }
-        preview.close(); globalSearch.cancel(); showGlobalSearch = false
+        preview.close(); globalSearch.cancel(); ui.showGlobalSearch = false
         go(to: BrowserLocation(accountID: id), tab: tab)
     }
 
@@ -85,21 +85,19 @@ extension AppModel {
         cryptomator.creating = CryptomatorVaults.Request(base: account, folder: folder, tab: workspace.current.id)
     }
 
-    /// Creates the vault, then opens it. Returns what went wrong, or nil once the new vault is on screen.
-    func createVault(_ request: CryptomatorVaults.Request, name: String, passphrase: String, remember: Bool) async -> String? {
+    /// Creates the vault, then opens it, or throws what went wrong for the sheet.
+    func createVault(_ request: CryptomatorVaults.Request, name: String, passphrase: String, remember: Bool) async throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let problem = FileNames.problem(with: trimmed, for: request.base.cloud) { return problem }
-        do {
-            let api = try client(request.base)
-            let siblings = try await api.list(parent: request.folder.id)
-            guard !siblings.contains(where: { $0.name.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }) else {
-                return L("Ya existe un elemento con ese nombre. Elige otro.")
-            }
-            let folder = try await CryptomatorVault.create(named: trimmed, in: request.folder.id, provider: api.provider, passphrase: passphrase)
-            let vault = CloudFile(id: folder, name: trimmed, mime: CryptomatorProvider.folderMime, size: nil, modified: Date(), webURL: nil, isFolder: true)
-            reloadAfterWrite(to: request.base)
-            return await unlockVault(CryptomatorVaults.Request(base: request.base, folder: vault, tab: request.tab), passphrase: passphrase, remember: remember)
-        } catch { return error.localizedDescription }
+        if let problem = FileNames.problem(with: trimmed, for: request.base.cloud) { throw CloudError.refused(problem) }
+        let api = try client(request.base)
+        let siblings = try await api.list(parent: request.folder.id)
+        guard !siblings.contains(where: { $0.name.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }) else {
+            throw CloudError.conflict(L("Ya existe un elemento con ese nombre. Elige otro."))
+        }
+        let folder = try await CryptomatorVault.create(named: trimmed, in: request.folder.id, provider: api.provider, passphrase: passphrase)
+        let vault = CloudFile(id: folder, name: trimmed, mime: CryptomatorProvider.folderMime, size: nil, modified: Date(), webURL: nil, isFolder: true)
+        reloadAfterWrite(to: request.base)
+        try await unlockVault(CryptomatorVaults.Request(base: request.base, folder: vault, tab: request.tab), passphrase: passphrase, remember: remember)
     }
 
     /// "Bloquear". Refused while the vault has transfers in flight, like disconnecting an account.

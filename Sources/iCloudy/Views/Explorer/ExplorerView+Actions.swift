@@ -59,12 +59,12 @@ extension ExplorerView {
     var selectedCount: Int { model.visibleFiles.reduce(0) { selected.contains($1.id) ? $0 + 1 : $0 } }
 
     var trashTitle: String {
-        guard let files = model.pendingTrash else { return "" }
+        guard let files = model.ui.pendingTrash else { return "" }
         return files.count == 1 ? L("¿Enviar «\(files[0].name)» a la papelera?") : L("¿Enviar \(files.count) elementos a la papelera?")
     }
 
     var purgeTitle: String {
-        guard let files = model.pendingPurge else { return "" }
+        guard let files = model.ui.pendingPurge else { return "" }
         return files.count == 1 ? L("¿Eliminar «\(files[0].name)» definitivamente?") : L("¿Eliminar \(files.count) elementos definitivamente?")
     }
 

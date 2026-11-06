@@ -186,11 +186,11 @@ final class O2CloudTests: XCTestCase {
             XCTAssertFalse(cloud.needsKeepAlive, "\(cloud) no necesita que se le hable sin motivo")
         }
         // Medido contra el servidor real: dejó pasar 68 minutos y rechazó a los 80.
-        XCTAssertLessThan(AppModel.keepAliveInterval, 30 * 60, "Con margen para varias rondas perdidas")
-        XCTAssertGreaterThan(AppModel.keepAliveInterval, 5 * 60, "Sin machacar un servidor ajeno")
+        XCTAssertLessThan(O2SessionKeeper.keepAliveInterval, 30 * 60, "Con margen para varias rondas perdidas")
+        XCTAssertGreaterThan(O2SessionKeeper.keepAliveInterval, 5 * 60, "Sin machacar un servidor ajeno")
         // El sistema estira los temporizadores de una app en segundo plano: una espera de veinte minutos llegó a los
         // cuarenta. Por eso se mira más a menudo de lo que se toca, y se decide por el reloj.
-        XCTAssertLessThan(AppModel.keepAliveCheck, AppModel.keepAliveInterval / 2,
+        XCTAssertLessThan(O2SessionKeeper.keepAliveCheck, O2SessionKeeper.keepAliveInterval / 2,
                           "Mirar más veces de las que hace falta es lo que sobrevive a que el reloj se estire")
     }
 
@@ -1068,8 +1068,7 @@ final class O2CloudTests: XCTestCase {
         XCTAssertTrue(o2.reversibleTrash, "El borrado es suave y la papelera de O2 lo conserva")
         XCTAssertTrue(o2.search, "La plataforma no expone búsqueda; iCloudy recorre el árbol")
         XCTAssertFalse(o2.copy)
-        XCTAssertFalse(o2.checksum)
-        XCTAssertFalse(o2.oauth)
+        XCTAssertEqual(o2.signIn, .web)
         XCTAssertTrue(Cloud.o2.isExperimental)
         XCTAssertFalse(Cloud.o2.usesPasswordLogin, "No hay formulario de contraseña: se inicia sesión en las páginas de O2")
         XCTAssertTrue(Cloud.o2.usesWebLogin)

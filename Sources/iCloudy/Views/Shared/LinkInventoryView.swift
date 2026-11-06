@@ -65,7 +65,7 @@ struct LinkInventoryView: View {
             }
             HStack {
                 Spacer()
-                Button("Cerrar") { model.linkInventory = nil; dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cerrar") { model.ui.linkInventory = nil; dismiss() }.keyboardShortcut(.cancelAction)
             }
         }
         .padding(24).frame(width: 600)

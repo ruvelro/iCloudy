@@ -3,7 +3,7 @@ import SwiftUI
 /// What the next sync of a mirror would do, worked out by the sync's own planner and without changing anything.
 struct MirrorPendingChangesSheet: View {
     let mirror: FolderMirror
-    @ObservedObject var manager: MirrorManager
+    @Bindable var manager: MirrorManager
     @Environment(\.dismiss) private var dismiss
     @State private var preview: MirrorPreview?
     @State private var error: String?

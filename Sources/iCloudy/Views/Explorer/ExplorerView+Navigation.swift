@@ -13,10 +13,10 @@ extension ExplorerView {
                 Label("iCloudy", systemImage: "cloud.fill")
                     .font(.system(size: 24, weight: .semibold))
                     .frame(maxWidth: .infinity, alignment: .center).padding(.top, 20)
-                Button { model.preview.close(); model.showGlobalSearch = true } label: {
+                Button { model.preview.close(); model.ui.showGlobalSearch = true } label: {
                     Label("Buscar en todas las nubes", systemImage: "magnifyingglass").frame(maxWidth: .infinity, alignment: .leading).padding(Layout.sidebarInner)
                         .contentShape(Rectangle())
-                        .sidebarRow(selected: model.showGlobalSearch)
+                        .sidebarRow(selected: model.ui.showGlobalSearch)
                 }.buttonStyle(.plain)
                 Picker("", selection: $sidebarTab) {
                     ForEach(SidebarTab.allCases) { tab in
@@ -45,7 +45,7 @@ extension ExplorerView {
                                 }
                                 Spacer(minLength: 0)
                             }.padding(Layout.sidebarInner).contentShape(Rectangle())
-                                .sidebarRow(selected: model.selectedAccountID == account.id && !model.showGlobalSearch,
+                                .sidebarRow(selected: model.selectedAccountID == account.id && !model.ui.showGlobalSearch,
                                             tint: model.appearance(for: account).tint.color)
                                 .onTapGesture { model.select(account.id) }
                                 .accessibilityElement(children: .combine)
@@ -59,10 +59,10 @@ extension ExplorerView {
                                 .onDrop(of: [.text], delegate: AccountReorder(target: account.id, dragging: $draggingAccount, model: model))
                                 .contextMenu {
                                     if model.isExpired(account) {
-                                        Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.connecting)
+                                        Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.ui.connecting)
                                         Divider()
                                     }
-                                    Button("Personalizar nube…") { model.appearanceAccount = account }
+                                    Button("Personalizar nube…") { model.ui.appearanceAccount = account }
                                     Button("Actualizar espacio") { model.refreshStorage(account, force: true) }
                                     if account.capabilities.links.manage {
                                         Button("Enlaces compartidos…") { model.requestLinkInventory(account) }
@@ -102,7 +102,7 @@ extension ExplorerView {
                 // sidebar rather than as one more row of it. Configuración used to sit here too, which said the
                 // same thing twice: the toolbar carries it, and the toolbar is where it stays.
                 Divider().padding(.top, 4)
-                Button { model.showConnect = true } label: {
+                Button { model.ui.showConnect = true } label: {
                     Label("Añadir cuenta", systemImage: "plus.circle").font(.callout)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).padding(.vertical, 5)
                         .contentShape(Rectangle())
@@ -123,7 +123,7 @@ extension ExplorerView {
             .clipped().opacity(sidebarVisible ? 1 : 0)
             .accessibilityHidden(!sidebarVisible).allowsHitTesting(sidebarVisible)
             Group {
-            if model.showGlobalSearch {
+            if model.ui.showGlobalSearch {
                 GlobalSearchView(model: model, search: model.globalSearch, saved: model.savedSearches)
             } else {
             VStack(spacing: 0) {
@@ -209,7 +209,7 @@ extension ExplorerView {
             ToolbarItemGroup(placement: .primaryAction) {
                 SettingsLink { Label("Configuración", systemImage: "gearshape") }
                     .help("Abrir Configuración (⌘,)")
-                if !model.showGlobalSearch { explorerActions }
+                if !model.ui.showGlobalSearch { explorerActions }
             }
         }
     }
@@ -226,7 +226,7 @@ extension ExplorerView {
                         } description: {
                             Text("Conecta una nube para explorar tus carpetas y transferir archivos cuando lo necesites.")
                         } actions: {
-                            Button("Conectar una cuenta") { model.showConnect = true }.buttonStyle(.borderedProminent)
+                            Button("Conectar una cuenta") { model.ui.showConnect = true }.buttonStyle(.borderedProminent)
                             Button("Explorar demo sin cuenta") { model.enableDemo() }
                         }.frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
@@ -264,7 +264,7 @@ extension ExplorerView {
                                 }
                                 Spacer()
                                 if model.isRenewing(account) { ProgressView().controlSize(.small) }
-                                else { Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.connecting) }
+                                else { Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.ui.connecting) }
                             }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
                         }
                         CryptomatorBanner(model: model, pane: pane)

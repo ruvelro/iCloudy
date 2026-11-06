@@ -5,15 +5,15 @@ extension AppModel {
     /// Connects an S3 account once its keys have listed what they claim to reach. The secret key is stored in the
     /// Keychain with the access key and is never sent anywhere: it only derives the signature of each request.
     func connectS3(_ form: S3SignIn) async {
-        guard !connecting else { return }
-        connectionError = nil; connecting = true
-        defer { connecting = false }
+        guard !ui.connecting else { return }
+        ui.connectionError = nil; ui.connecting = true
+        defer { ui.connecting = false }
         do {
             let (account, credential) = try await S3Authentication().signIn(form)
             try adopt(account, credential: credential)
-            serverLogin = nil; reconnecting = nil
-            select(account.id); showConnect = false
-        } catch { connectionError = error.localizedDescription }
+            ui.serverLogin = nil; ui.reconnecting = nil
+            select(account.id); ui.showConnect = false
+        } catch { ui.connectionError = error.localizedDescription }
     }
 
     /// Copies a presigned link that stops working after `lifetime` seconds. S3 has no public links of its own, so

@@ -65,17 +65,17 @@ final class AccountsAndBundleTests: XCTestCase {
         // SwiftUI presents one alert at a time, so an error and a piece of good news arriving together meant the
         // second never appeared. Sending files to the bin and reloading right after did exactly that.
         let model = AppModel()
-        XCTAssertNil(model.alertMessage)
+        XCTAssertNil(model.ui.alertMessage)
         model.info = "Enlace copiado"
-        XCTAssertEqual(model.alertMessage, "Enlace copiado")
-        XCTAssertEqual(model.alertTitle, L("iCloudy"))
+        XCTAssertEqual(model.ui.alertMessage, "Enlace copiado")
+        XCTAssertEqual(model.ui.alertTitle, L("iCloudy"))
         model.error = "No se pudo borrar"
-        XCTAssertEqual(model.alertMessage, "No se pudo borrar", "El error va primero")
-        XCTAssertEqual(model.alertTitle, L("No se pudo completar la operación"))
-        model.dismissAlert()
-        XCTAssertEqual(model.alertMessage, "Enlace copiado", "Y la otra espera su turno en vez de perderse")
-        model.dismissAlert()
-        XCTAssertNil(model.alertMessage)
+        XCTAssertEqual(model.ui.alertMessage, "No se pudo borrar", "El error va primero")
+        XCTAssertEqual(model.ui.alertTitle, L("No se pudo completar la operación"))
+        model.ui.dismissAlert()
+        XCTAssertEqual(model.ui.alertMessage, "Enlace copiado", "Y la otra espera su turno en vez de perderse")
+        model.ui.dismissAlert()
+        XCTAssertNil(model.ui.alertMessage)
     }
 
     func testTakingARunOfFilesWithShift() {

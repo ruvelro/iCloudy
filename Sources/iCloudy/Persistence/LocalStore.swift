@@ -20,11 +20,36 @@ enum LocalStore {
         try FileManager.default.moveItem(at: url, to: backup)
         return backup
     }
-    /// Waits first for any write the background writer still holds, so what was saved in this process is what is
-    /// read back, whichever store wrote it.
+    /// Waits first for any write of this file the background writer still holds, so what was saved in this process is
+    /// what is read back.
     static func read<T: Decodable>(_ type: T.Type, from url: URL) throws -> T? {
-        StoreWriter.shared.flush()
+        StoreWriter.shared.flush(url)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         return try JSONDecoder().decode(type, from: Data(contentsOf: url))
+    }
+}
+
+/// A store's contents with the version of their layout, so a later version can tell an old file from a new one
+/// instead of guessing from which fields are missing. Files written before the field existed are the bare contents
+/// and read as version 1.
+struct StoreEnvelope<Items: Codable & Sendable>: Codable, Sendable {
+    static var currentVersion: Int { 1 }
+    var schemaVersion: Int
+    var items: Items
+
+    init(_ items: Items, schemaVersion: Int = StoreEnvelope.currentVersion) {
+        self.items = items; self.schemaVersion = schemaVersion
+    }
+
+    private enum CodingKeys: String, CodingKey { case schemaVersion, items }
+
+    init(from decoder: Decoder) throws {
+        if let container = try? decoder.container(keyedBy: CodingKeys.self), container.contains(.items) {
+            schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+            items = try container.decode(Items.self, forKey: .items)
+        } else {
+            schemaVersion = 1
+            items = try Items(from: decoder)
+        }
     }
 }

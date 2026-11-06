@@ -6,10 +6,6 @@ extension CloudAPI {
     /// Returns whether the provider's checksum matched a hash computed from the very bytes that were sent.
     @discardableResult
     func resumableUpload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
-        if let demo {
-            let id = try await demo.upload(local: local, parent: parent, name: name, replacing: replacing, checkpoint: checkpoint, save: save, progress: progress)
-            return UploadReceipt(remoteID: id, verification: .verified)
-        }
         // Once Mega committed a new node, retry only its pending retirement step. The local source
         // (or a cross-cloud staging file) may no longer exist, and uploading again would duplicate it.
         if let receipt = try await provider.resumeCommittedUpload(local: local, parent: parent, name: name, replacing: replacing, checkpoint: checkpoint, save: save, progress: progress) { return receipt }

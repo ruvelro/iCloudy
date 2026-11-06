@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 struct ConnectView: View {
     @Bindable var model: AppModel
+    private var sheets: Bindable<ExplorerPresentation> { Bindable(model.ui) }
     @State private var prompts = LoginPrompts.shared
 
     var body: some View {
@@ -22,23 +23,23 @@ struct ConnectView: View {
                     providerButton(.pcloud, title: "Continuar con pCloud", subtitle: "Cuentas de pCloud en Europa o en Estados Unidos", icon: "cloud.circle")
                     providerButton(.mega, title: "Conectar Mega", subtitle: "Cifrado de extremo a extremo, con correo y contraseña", icon: "lock.icloud")
                     providerButton(.o2, title: "Conectar O2 Cloud", subtitle: "Inicias sesión en las páginas de O2, con tu móvil o tu NIF", icon: "antenna.radiowaves.left.and.right")
-                }.disabled(model.connecting)
+                }.disabled(model.ui.connecting)
                 Text("TU PROPIO SERVIDOR").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 VStack(spacing: 10) {
                     providerButton(.webdav, title: "Conectar WebDAV", subtitle: "Nextcloud, ownCloud, Synology y otros NAS", icon: "server.rack")
                     providerButton(.sftp, title: "Conectar SFTP", subtitle: "Servidores SSH y NAS, cifrado y con la clave del servidor comprobada", icon: "lock.rectangle.stack")
                     providerButton(.ftp, title: "Conectar FTP", subtitle: "FTP, FTPS explícito e implícito, con usuario y contraseña", icon: "arrow.up.arrow.down.square")
                     providerButton(.volume, title: "Conectar un volumen o carpeta", subtitle: "SMB, AFP, NFS, discos externos y carpetas del Mac", icon: "externaldrive.connected.to.line.below")
-                }.disabled(model.connecting)
+                }.disabled(model.ui.connecting)
                 Text("ALMACENAMIENTO DE OBJETOS").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 providerButton(.s3, title: "Conectar S3", subtitle: "Amazon S3, Backblaze B2, Wasabi, Cloudflare R2, MinIO y compatibles", icon: "cylinder.split.1x2")
-                    .disabled(model.connecting)
+                    .disabled(model.ui.connecting)
                 Button("Conectar a un servidor en el Finder…") { model.openFinderConnect() }
                     .buttonStyle(.link).font(.caption)
                     .help("Monta el recurso de red y vuelve aquí para elegir su carpeta")
                 Text("AVANZADOS").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 Button {
-                    model.connectionError = nil; model.showAdvanced = true
+                    model.ui.connectionError = nil; model.ui.showAdvanced = true
                 } label: {
                     HStack(spacing: 14) {
                         Image(systemName: "person.2.badge.gearshape").font(.title2).foregroundStyle(.secondary).frame(width: 30)
@@ -51,23 +52,23 @@ struct ConnectView: View {
                     }.padding(14).frame(maxWidth: .infinity).contentShape(Rectangle())
                         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
                         .overlay(RoundedRectangle(cornerRadius: 12).stroke(.quaternary))
-                }.buttonStyle(.plain).disabled(model.driveHosts.isEmpty || model.connecting)
+                }.buttonStyle(.plain).disabled(model.driveHosts.isEmpty || model.ui.connecting)
                 if model.driveHosts.isEmpty {
                     Text("Conecta antes una cuenta de Google o de Microsoft.").font(.caption2).foregroundStyle(.secondary)
                 }
-                Button("Probar demo local sin iniciar sesión") { model.enableDemo() }.disabled(model.connecting)
-                if let error = model.connectionError, model.serverLogin == nil {
+                Button("Probar demo local sin iniciar sesión") { model.enableDemo() }.disabled(model.ui.connecting)
+                if let error = model.ui.connectionError, model.ui.serverLogin == nil {
                     Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
                 }
-                if model.connecting { HStack { ProgressView().controlSize(.small); Text("Esperando el inicio de sesión en el navegador…").font(.caption) } }
+                if model.ui.connecting { HStack { ProgressView().controlSize(.small); Text("Esperando el inicio de sesión en el navegador…").font(.caption) } }
                 Text("Con Google, Microsoft, Dropbox y Box tu contraseña se introduce únicamente en la web del proveedor. Las credenciales de un servidor propio las escribes aquí y se guardan en el Llavero de este Mac.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 HStack {
-                    Button("Cancelar") { model.oauth.cancel(); model.showConnect = false }.keyboardShortcut(.cancelAction)
+                    Button("Cancelar") { model.oauth.cancel(); model.ui.showConnect = false }.keyboardShortcut(.cancelAction)
                     Spacer()
                 }
             }.padding(30)
-        }.frame(width: 470, height: 640).interactiveDismissDisabled(model.connecting)
+        }.frame(width: 470, height: 640).interactiveDismissDisabled(model.ui.connecting)
             // pCloud comes back without `state`, so the account it connected is named before it is kept.
             .alert("¿Es esta tu cuenta?", isPresented: Binding(get: { prompts.account != nil }, set: { if !$0 { prompts.answerAccount(false) } }),
                    presenting: prompts.account) { _ in
@@ -76,20 +77,20 @@ struct ConnectView: View {
             } message: { question in
                 Text("\(question.service) ha devuelto la cuenta «\(question.email)». Conéctala solo si es la que acabas de autorizar en el navegador.")
             }
-            .onAppear { model.connectionError = nil }
-            .sheet(item: $model.serverLogin) { cloud in
+            .onAppear { model.ui.connectionError = nil }
+            .sheet(item: sheets.serverLogin) { cloud in
                 if cloud == .s3 { S3LoginView(model: model) } else { ServerLoginView(model: model, cloud: cloud) }
             }
-            .sheet(isPresented: $model.showAdvanced) { AdvancedDriveView(model: model) }
-            .sheet(item: $model.o2Login) { request in O2WebLoginView(model: model, request: request) }
+            .sheet(isPresented: sheets.showAdvanced) { AdvancedDriveView(model: model) }
+            .sheet(item: sheets.o2Login) { request in O2WebLoginView(model: model, request: request) }
     }
 
     private func providerButton(_ cloud: Cloud, title: LocalizedStringKey, subtitle: LocalizedStringKey, icon: String) -> some View {
         Button {
             // A self-hosted provider needs an address and credentials before anything can be attempted.
             if cloud == .volume { Task { await model.connectVolume() } }
-            else if cloud.usesWebLogin { model.connectionError = nil; model.o2Login = O2LoginRequest(host: "cloud.o2online.es") }
-            else if cloud.usesPasswordLogin { model.connectionError = nil; model.serverLogin = cloud }
+            else if cloud.usesWebLogin { model.ui.connectionError = nil; model.ui.o2Login = O2LoginRequest(host: "cloud.o2online.es") }
+            else if cloud.usesPasswordLogin { model.ui.connectionError = nil; model.ui.serverLogin = cloud }
             else { Task { await model.connect(cloud: cloud) } }
         } label: {
             HStack(spacing: 14) {

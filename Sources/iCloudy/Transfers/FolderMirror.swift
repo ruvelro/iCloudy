@@ -180,12 +180,22 @@ final class FolderWatcher {
 }
 
 @MainActor
-final class MirrorManager: ObservableObject {
-    @Published private(set) var mirrors: [FolderMirror] = []
-    @Published var persistenceError: String?
+@Observable
+final class MirrorManager {
+    private(set) var mirrors: [FolderMirror] = []
+    var persistenceError: String?
     /// Mirrors whose folder changed while a sync was running or waiting for the debounce.
-    @Published private(set) var pending: Set<UUID> = []
+    private(set) var pending: Set<UUID> = []
+    /// Where every mirror used to live, in one file. Read once to move them into `directory`, then set aside.
     let storeURL: URL
+    /// One file per mirror plus the order of the list. A two-way mirror rewrites its baseline after every step,
+    /// and with all mirrors in one file that was the whole file, with every baseline in it, on the main thread.
+    let directory: URL
+    /// Delay before the baseline a two-way run keeps updating reaches the disk. The end of the run writes at once.
+    var flushDelay: Duration = .seconds(2)
+    @ObservationIgnored private var writtenOrder: [UUID]?
+    @ObservationIgnored private var unsaved: Set<UUID> = []
+    @ObservationIgnored private var flushTask: Task<Void, Never>?
     weak var queue: TransferQueue? {
         didSet {
             queue?.uploadExclusions = { [weak self] transfer in self?.exclusions(forTransfer: transfer) }
@@ -216,8 +226,108 @@ final class MirrorManager: ObservableObject {
 
     init(storeURL: URL = LocalStore.directory.appendingPathComponent("mirrors.json")) {
         self.storeURL = storeURL
-        do { mirrors = try LocalStore.read([FolderMirror].self, from: storeURL) ?? [] }
-        catch { persistenceError = L("No se pudieron leer los reflejos: \(error.localizedDescription)") }
+        directory = storeURL.deletingPathExtension()
+        load()
+    }
+
+    // MARK: Persistence
+
+    private var indexURL: URL { directory.appendingPathComponent("index.json") }
+    private func fileURL(_ id: UUID) -> URL { directory.appendingPathComponent(id.uuidString + ".json") }
+
+    private func load() {
+        // A file whose first write is still queued would not be listed yet.
+        StoreWriter.shared.flush()
+        let manager = FileManager.default
+        if !manager.fileExists(atPath: indexURL.path), manager.fileExists(atPath: storeURL.path) { migrateSingleFile(); return }
+        let order = (try? LocalStore.read(StoreEnvelope<[UUID]>.self, from: indexURL))?.items ?? []
+        let files = ((try? manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "json" && $0.lastPathComponent != indexURL.lastPathComponent }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        var loaded: [FolderMirror] = []
+        for file in files {
+            do { if let mirror = try LocalStore.read(StoreEnvelope<FolderMirror>.self, from: file)?.items { loaded.append(mirror) } }
+            catch {
+                // One damaged mirror is set aside on its own; the others are unaffected, which one file could not do.
+                let kept = try? LocalStore.setAside(file)
+                persistenceError = L("No se pudieron leer los reflejos: \(error.localizedDescription)")
+                    + (kept.map { " " + L("El archivo original se conserva en \($0.path).") } ?? "")
+            }
+        }
+        let position = Dictionary(order.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+        mirrors = loaded.enumerated().sorted { a, b in
+            (position[a.element.id] ?? order.count + a.offset, a.offset) < (position[b.element.id] ?? order.count + b.offset, b.offset)
+        }.map(\.element)
+        writtenOrder = order
+    }
+
+    /// Moves the mirrors of the single file of earlier versions into a file each, before anything else writes.
+    /// The old file is kept beside itself, renamed, once every mirror is safely in its own.
+    private func migrateSingleFile() {
+        let legacy: [FolderMirror]
+        do { legacy = try LocalStore.read([FolderMirror].self, from: storeURL) ?? [] }
+        catch {
+            let kept = try? LocalStore.setAside(storeURL)
+            persistenceError = L("No se pudieron leer los reflejos: \(error.localizedDescription)")
+                + (kept.map { " " + L("El archivo original se conserva en \($0.path).") } ?? "")
+            return
+        }
+        mirrors = legacy
+        do {
+            for mirror in legacy { try StoreWriter.shared.now(StoreEnvelope(mirror), to: fileURL(mirror.id)) }
+            // The order goes last: without it the next launch migrates again rather than trust a half-written folder.
+            try StoreWriter.shared.now(StoreEnvelope(legacy.map(\.id)), to: indexURL)
+            writtenOrder = legacy.map(\.id)
+            try FileManager.default.moveItem(at: storeURL, to: storeURL.appendingPathExtension("migrated"))
+        } catch {
+            persistenceError = L("No se pudieron guardar los reflejos: \(error.localizedDescription)")
+        }
+    }
+
+    /// Hands these mirrors, and the order of the list if it changed, to the background writer.
+    private func persist(_ ids: [UUID]) {
+        unsaved.subtract(ids)
+        persistenceError = nil
+        let failed: @MainActor @Sendable (Error) -> Void = { [weak self] error in
+            self?.persistenceError = L("No se pudieron guardar los reflejos: \(error.localizedDescription)")
+        }
+        for id in ids {
+            guard let mirror = mirrors.first(where: { $0.id == id }) else { continue }
+            StoreWriter.shared.later(StoreEnvelope(mirror), to: fileURL(id), failed: failed)
+        }
+        let order = mirrors.map(\.id)
+        if order != writtenOrder {
+            writtenOrder = order
+            StoreWriter.shared.later(StoreEnvelope(order), to: indexURL, failed: failed)
+        }
+    }
+    private func persist(_ id: UUID) { persist([id]) }
+
+    /// For the baseline of a running two-way sync: written at most once every `flushDelay`.
+    private func persistSoon(_ id: UUID) {
+        unsaved.insert(id)
+        guard flushTask == nil else { return }
+        flushTask = Task { [weak self] in
+            guard let delay = self?.flushDelay else { return }
+            try? await Task.sleep(for: delay)
+            guard let self, !Task.isCancelled else { return }
+            flushTask = nil
+            flush()
+        }
+    }
+
+    /// Writes whatever is waiting. Called at the end of a run and before the process exits.
+    func flush() {
+        flushTask?.cancel(); flushTask = nil
+        guard !unsaved.isEmpty else { return }
+        persist(Array(unsaved))
+    }
+
+    private func deleteFile(_ id: UUID) {
+        unsaved.remove(id)
+        let url = fileURL(id)
+        // In the file's own turn, after any write of it still queued.
+        StoreWriter.shared.enqueue(on: url) { try? FileManager.default.removeItem(at: url) }
     }
     /// Called once the queue exists: watches every folder and runs a cheap catch-up sync for each mirror.
     func start() {
@@ -235,7 +345,7 @@ final class MirrorManager: ObservableObject {
         var mirror = FolderMirror(accountID: account.id, remoteFolderID: folder.id, remoteName: ([account.email] + path.map(\.name) + [folder.name]).joined(separator: " / "), localURL: standardized, bookmark: try? TransferQueue.bookmark(local))
         mirror.mode = mode
         mirrors.append(mirror)
-        try persist()
+        persist(mirror.id)
         watch(mirror)
         scheduleSync(mirror.id, immediate: true)
     }
@@ -247,14 +357,15 @@ final class MirrorManager: ObservableObject {
         pollers.removeValue(forKey: id)?.cancel(); running.remove(id); massDeletionAllowed.remove(id); matchers[id] = nil
         mirrors.removeAll { $0.id == id }
         if let transfer { queue?.cancel(transfer) }
-        do { try persist() } catch { persistenceError = error.localizedDescription }
+        deleteFile(id)
+        persist([])
     }
     func remap(_ change: RemoteIdentityChange, accountID: String) throws {
         for i in mirrors.indices where mirrors[i].accountID == accountID {
             mirrors[i].remoteFolderID = change.id(mirrors[i].remoteFolderID)
             mirrors[i].remoteEntries = mirrors[i].remoteEntries.mapValues(change.file)
         }
-        try persist()
+        persist(mirrors.filter { $0.accountID == accountID }.map(\.id))
     }
     func removeAll(accountID: String) { for mirror in mirrors where mirror.accountID == accountID { remove(mirror.id) } }
     /// Pausing stops planning, puts a running upload on hold in the queue and lets a two-way run finish only the
@@ -271,7 +382,7 @@ final class MirrorManager: ObservableObject {
         } else {
             mirrors[index].changesWhilePaused = []
         }
-        do { try persist() } catch { persistenceError = error.localizedDescription }
+        persist(id)
         if !paused { scheduleSync(id, immediate: true) }
     }
     func isPaused(_ id: UUID) -> Bool { mirrors.first { $0.id == id }?.paused == true }
@@ -299,7 +410,7 @@ final class MirrorManager: ObservableObject {
         }
         guard changes != mirror.changesWhilePaused else { return }
         mirrors[index].changesWhilePaused = changes
-        do { try persist() } catch { persistenceError = error.localizedDescription }
+        persist(id)
     }
     func syncNow(_ id: UUID, applyingMassDeletion: Bool = false) {
         // A permission granted to a paused mirror would wait for the resume and apply to a run nobody asked for.
@@ -315,7 +426,7 @@ final class MirrorManager: ObservableObject {
         guard mirrors[index].exclusions != rules else { return }
         mirrors[index].exclusions = rules
         matchers[id] = nil
-        try persist()
+        persist(id)
         scheduleSync(id, immediate: true)
     }
     func exclusions(of mirror: FolderMirror) -> SyncExclusionMatcher {
@@ -350,10 +461,6 @@ final class MirrorManager: ObservableObject {
         return when
     }
 
-    private func persist() throws {
-        do { try LocalStore.save(mirrors, to: storeURL); persistenceError = nil }
-        catch { persistenceError = L("No se pudieron guardar los reflejos: \(error.localizedDescription)"); throw error }
-    }
     private func resolvedURL(_ mirror: FolderMirror) -> URL {
         if let url = scopedURLs[mirror.id] { return url }
         var url = mirror.localURL
@@ -367,7 +474,7 @@ final class MirrorManager: ObservableObject {
         // folder no longer exists when it is sitting right there.
         if stale, let renewed = try? TransferQueue.bookmark(url), let index = mirrors.firstIndex(where: { $0.id == mirror.id }) {
             mirrors[index].bookmark = renewed
-            try? persist()
+            persist(mirror.id)
         }
         return url
     }
@@ -428,7 +535,7 @@ final class MirrorManager: ObservableObject {
             let (unchanged, nothingNew) = MirrorPlanner.oneWayPlan(current: current, mirror: mirrors[position])
             if nothingNew {
                 // Nothing new since the last sync: no transfer, no network.
-                mirrors[position].lastError = nil; try persist(); return
+                mirrors[position].lastError = nil; persist(id); return
             }
             var job = Transfer(batchID: UUID(), name: L("Reflejo · \(url.lastPathComponent)"), destination: mirror.remoteName, accountID: mirror.accountID, direction: .upload, localURL: url, bookmark: mirror.bookmark, parent: mirror.remoteFolderID)
             // The root receives the contents. Only unchanged remote identities previously written by this mirror
@@ -441,9 +548,9 @@ final class MirrorManager: ObservableObject {
             mirrors[position].activeTransferID = job.id
             mirrors[position].pendingStamps = current
             mirrors[position].lastError = nil
-            try persist()
+            persist(id)
         } catch {
-            if let position = mirrors.firstIndex(where: { $0.id == id }) { mirrors[position].lastError = error.localizedDescription; try? persist() }
+            if let position = mirrors.firstIndex(where: { $0.id == id }) { mirrors[position].lastError = error.localizedDescription; persist(id) }
         }
     }
     /// A two-way run: plan against the baseline, carry it out, write the baseline down after every step. One run
@@ -460,10 +567,11 @@ final class MirrorManager: ObservableObject {
             let engine = try makeEngine(mirror, account: account, url: url)
             engine.shouldStop = { [weak self] in self?.isPaused(id) ?? true }
             engine.allowMassDeletion = massDeletionAllowed.remove(id) != nil
+            // Every step updates the baseline in memory; the disk gets it every `flushDelay` and when the run ends.
             engine.persist = { [weak self] baseline in
                 guard let self, let position = self.mirrors.firstIndex(where: { $0.id == id }) else { return }
                 self.mirrors[position].baseline = baseline
-                try self.persist()
+                self.persistSoon(id)
             }
             let report = try await engine.run()
             guard let position = mirrors.firstIndex(where: { $0.id == id }) else { return }
@@ -471,13 +579,13 @@ final class MirrorManager: ObservableObject {
             mirrors[position].lastReport = report
             mirrors[position].lastSync = Date()
             mirrors[position].lastError = nil
-            try persist()
+            persist(id)
         } catch {
             if let position = mirrors.firstIndex(where: { $0.id == id }) {
                 // Paused halfway: every finished step is in the baseline already, so that is not an error.
                 if error is SyncPaused { mirrors[position].lastError = nil }
                 else { mirrors[position].lastError = (error as? CancellationError) == nil ? error.localizedDescription : L("Sincronización cancelada") }
-                try? persist()
+                persist(id)
             }
         }
         if dirty.remove(id) != nil { scheduleSync(id, immediate: true) }
@@ -520,19 +628,19 @@ final class MirrorManager: ObservableObject {
         mirrors[index].lastSync = Date()
         mirrors[index].activeTransferID = nil
         mirrors[index].lastError = nil
-        do { try persist() } catch { persistenceError = error.localizedDescription }
         let id = mirrors[index].id
+        persist(id)
         if dirty.remove(id) != nil { scheduleSync(id, immediate: true) }
     }
     private func noteFailures() {
         guard let queue else { return }
-        var changed = false
+        var changed: [UUID] = []
         for index in mirrors.indices {
             guard let active = mirrors[index].activeTransferID, let item = queue.items.first(where: { $0.id == active }), [.failed, .cancelled].contains(item.state) else { continue }
             mirrors[index].lastError = item.state == .failed ? item.detail : L("Sincronización cancelada")
             mirrors[index].activeTransferID = nil; mirrors[index].pendingStamps = nil
-            changed = true
+            changed.append(mirrors[index].id)
         }
-        if changed { try? persist(); objectWillChange.send() }
+        if !changed.isEmpty { persist(changed) }
     }
 }

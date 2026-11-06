@@ -343,14 +343,13 @@ final class FTPTests: XCTestCase {
 
     func testCapabilitiesHideWhatFTPCannotDo() {
         let ftp = Cloud.ftp.capabilities
-        XCTAssertFalse(ftp.oauth)
+        XCTAssertEqual(ftp.signIn, .password)
         XCTAssertTrue(ftp.search, "Sin búsqueda propia: iCloudy recorre el árbol")
         XCTAssertFalse(ftp.publicLinks)
         XCTAssertFalse(ftp.copy, "FTP no copia en el servidor")
         XCTAssertFalse(ftp.quota)
         XCTAssertFalse(ftp.reversibleTrash, "DELE es definitivo")
-        XCTAssertFalse(ftp.checksum)
-        XCTAssertTrue(ftp.move, "RNFR/RNTO sí mueve")
+        XCTAssertEqual(ftp.sessionLimit, 1, "Una sola conexión de control")
         XCTAssertTrue(Cloud.ftp.isSelfHosted)
         XCTAssertTrue(Cloud.webdav.isSelfHosted)
         XCTAssertFalse(Cloud.google.isSelfHosted)

@@ -62,7 +62,7 @@ final class PCloudTests: XCTestCase {
     func testTheProviderDeclaresWhatPCloudOffers() {
         let capabilities = Cloud.pcloud.capabilities
         XCTAssertEqual(Cloud.pcloud.title, "pCloud")
-        XCTAssertTrue(capabilities.oauth)
+        XCTAssertEqual(capabilities.signIn, .oauth)
         XCTAssertTrue(capabilities.search, "Sin método de búsqueda, pero con un listado recursivo en una sola llamada")
         XCTAssertFalse(capabilities.recents)
         XCTAssertFalse(capabilities.sharedWithMe)
@@ -70,7 +70,6 @@ final class PCloudTests: XCTestCase {
         XCTAssertTrue(capabilities.permanentDelete)
         XCTAssertTrue(capabilities.emptyTrash)
         XCTAssertTrue(capabilities.reversibleTrash)
-        XCTAssertTrue(capabilities.checksum)
         XCTAssertTrue(capabilities.copiesFolders)
         XCTAssertFalse(capabilities.memberSharing)
         XCTAssertFalse(Cloud.pcloud.isSelfHosted)
@@ -438,7 +437,7 @@ final class PCloudTests: XCTestCase {
 
     func testCancellingAnUploadDeletesItsSession() async {
         serve { _, _, _ in (200, self.json(#"{"result":0}"#)) }
-        await client().abandonUploadSessions(urls: [], boxSessions: ["77"])
+        await client().abandonUploadSessions(urls: [], sessionIDs: ["77"])
         XCTAssertEqual(methods, ["upload_delete"])
         XCTAssertEqual(seen.first?.parameters, ["uploadid": "77"])
     }

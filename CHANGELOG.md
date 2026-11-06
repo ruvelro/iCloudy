@@ -80,6 +80,29 @@ Lo que encontró la revisión del 5 de noviembre (`docs/REVISION-2026-11-05.md`)
   regresión de OpenBSD para bcrypt_pbkdf.
 - Un **servidor SSH falso** en las pruebas ejercita todo lo anterior sin red.
 
+### Arquitectura
+
+- **Los favoritos ya no se pierden si su archivo se estropea.** Antes, un `favorites.json` ilegible empezaba con la
+  lista vacía y la primera estrella la escribía encima de todos los demás; ahora se aparta como `.corrupt-<fecha>` y
+  se avisa, como ya hacía la lista sin conexión. Todos los cambios de favoritos pasan por un único `FavoritesStore`
+  y se guardan en segundo plano.
+- **Menos tirones mientras se transfiere.** La cola ya no espera en el hilo principal a que se escriba su archivo
+  tras cada cambio de estado (un árbol de F carpetas eran al menos 2F escrituras síncronas), y cada almacén se
+  escribe en su propia cola, así que uno grande no retrasa a los demás.
+- **Las sincronizaciones bidireccionales dejan de reescribir todos los reflejos tras cada paso.** Cada reflejo tiene
+  su archivo y su línea base se guarda cada dos segundos y al terminar. El `mirrors.json` de versiones anteriores se
+  migra solo y se conserva como `mirrors.json.migrated`.
+- **Las insignias de las filas ya no se redibujan con cada bloque transferido** ni cuando llega una cuota: la cola,
+  las cuotas y las copias locales y sin conexión usan Observation y cada fila depende solo de lo que muestra.
+- **La demo es un proveedor como los demás**, así que pasa por los mismos puntos de control de subida y las mismas
+  comprobaciones de descarga, en lugar de un camino aparte con 34 excepciones.
+- Por dentro: las cuentas y su escritura en el Llavero tienen un solo dueño (`AccountDirectory`); el ciclo de vida de
+  O2 sale del modelo a `O2SessionKeeper`, con pruebas sobre un reloj simulado; las 27 hojas y alertas viven en
+  `model.ui`; los tres recorridos de la cola son uno (`TransferWalker`); las capacidades de cada proveedor están en
+  una sola tabla, sin cuatro indicadores muertos; los errores tienen clase (`CloudError.kind`); cada almacén JSON
+  lleva `schemaVersion`; y las pruebas dicen que lo son en lugar de que la app lo adivine buscando `XCTestCase`.
+  Todo se describe en [ARQUITECTURA.md](docs/ARQUITECTURA.md).
+
 ## 0.7.0 — 12 de octubre de 2026
 
 El Llavero deja de preguntar por cada nube, una tanda de mejoras para el uso diario y lo que le faltaba a cada

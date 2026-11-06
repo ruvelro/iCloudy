@@ -373,18 +373,18 @@ final class TabsAndPanesTests: XCTestCase {
         model.workspace.current.files = [file]
         model.selectedIDs = ["f"]
         model.sendSelectionToOtherPane(move: true)
-        let request = model.pendingPaneMove
+        let request = model.ui.pendingPaneMove
         XCTAssertEqual(request?.files.map(\.id), ["f"])
         XCTAssertEqual(request?.source.id, left.id)
         XCTAssertEqual(request?.target.id, right.id)
         XCTAssertEqual(request?.parent, "x", "Al otro panel: su carpeta, no la de este")
         XCTAssertEqual(request?.destinationPath.map(\.id), ["x"])
         XCTAssertTrue(model.queue.items.allSatisfy { $0.file?.id != "f" }, "Nada se pone en cola antes de confirmar")
-        model.pendingPaneMove = nil
+        model.ui.pendingPaneMove = nil
         model.selectedIDs = []
         model.sendSelectionToOtherPane(move: false)
         XCTAssertEqual(model.error, L("Selecciona lo que quieras copiar o mover al otro panel."))
-        XCTAssertNil(model.pendingPaneMove)
+        XCTAssertNil(model.ui.pendingPaneMove)
     }
 
     func testDroppingOnTheOtherPane() {
@@ -407,7 +407,7 @@ final class TabsAndPanesTests: XCTestCase {
         XCTAssertFalse(model.dropOnPane("icloudy-pane:otro", pane: 1, modifiers: .command), "Un arrastre que no es este no hace nada")
         XCTAssertFalse(model.dropOnPane(token, pane: 0, modifiers: .command), "Soltar en el mismo panel no hace nada")
         XCTAssertTrue(model.dropOnPane(token, pane: 1, modifiers: .command))
-        XCTAssertEqual(model.pendingPaneMove?.target.id, right.id)
+        XCTAssertEqual(model.ui.pendingPaneMove?.target.id, right.id)
         XCTAssertNil(model.paneTransfers.drag, "Cada arrastre se usa una vez")
         XCTAssertFalse(model.dropOnPane(token, pane: 1, modifiers: .command))
     }

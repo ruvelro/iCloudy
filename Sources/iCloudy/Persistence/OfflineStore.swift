@@ -143,12 +143,13 @@ enum OfflineError: LocalizedError, Equatable {
 /// are only ever written by the verified download path. Nothing here is synchronised back: editing goes through
 /// a two-way sync, not through these copies.
 @MainActor
-final class OfflineStore: ObservableObject {
-    @Published private(set) var pins: [OfflinePin] = []
-    @Published private(set) var entries: [String: OfflineEntry] = [:]
+@Observable
+final class OfflineStore {
+    private(set) var pins: [OfflinePin] = []
+    private(set) var entries: [String: OfflineEntry] = [:]
     /// Pins whose refresh is running now.
-    @Published private(set) var refreshing: Set<String> = []
-    @Published var notices: [OfflineNotice] = []
+    private(set) var refreshing: Set<String> = []
+    var notices: [OfflineNotice] = []
     let root: URL
     let indexURL: URL
     /// The budget in bytes, or nil for no limit. A closure so tests can set it without touching the user's defaults.
@@ -165,7 +166,7 @@ final class OfflineStore: ObservableObject {
         self.root = root
         self.indexURL = indexURL
         do {
-            if let snapshot = try LocalStore.read(Snapshot.self, from: indexURL) {
+            if let snapshot = try LocalStore.read(StoreEnvelope<Snapshot>.self, from: indexURL)?.items {
                 pins = snapshot.pins
                 entries = Dictionary(snapshot.entries.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
             }
@@ -448,7 +449,7 @@ final class OfflineStore: ObservableObject {
     }
     /// Encoded and written off the main thread. A failure is reported when it happens.
     private func write() {
-        StoreWriter.shared.later(Snapshot(pins: pins, entries: Array(entries.values)), to: indexURL) { [weak self] error in
+        StoreWriter.shared.later(StoreEnvelope(Snapshot(pins: pins, entries: Array(entries.values))), to: indexURL) { [weak self] error in
             // Said once per kind of failure: a full disk fails every write, and one notice is enough.
             let text = L("No se pudo guardar la lista de copias sin conexión: \(error.localizedDescription) Los cambios se perderán al cerrar iCloudy.")
             guard let self, text != writeProblem else { return }

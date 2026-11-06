@@ -262,7 +262,7 @@ python3 scripts/mockups/generar.py  # rehacer las maquetas del README
 swift scripts/render-mockups.swift  # y convertirlas en PNG
 ```
 
-La estructura del código y la compilación de depuración se describen en la [guía del refactor 0.5.0](docs/REFACTOR-0.5.0.md).
+La estructura del código (módulos, `AppModel` y sus subsistemas, proveedores y capacidades, persistencia y concurrencia) se describe en [ARQUITECTURA.md](docs/ARQUITECTURA.md).
 
 Sin dependencias externas: solo SwiftUI y las bibliotecas del sistema. Las pruebas cubren desde el flujo OAuth
 completo con un navegador simulado por TCP hasta la criptografía de Mega contrastada con OpenSSL.

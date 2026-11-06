@@ -399,7 +399,7 @@ final class S3ProviderTests: XCTestCase {
         var aborted: URLRequest?
         StubProtocol.handler = { request in aborted = request; return (204, [:], Data()) }
         let (api, _) = client()
-        await api.abandonUploadSessions(urls: [], boxSessions: [S3UploadSession(uploadID: "up-7", objectID: "fotos/a b/grande.bin").raw, "basura"])
+        await api.abandonUploadSessions(urls: [], sessionIDs: [S3UploadSession(uploadID: "up-7", objectID: "fotos/a b/grande.bin").raw, "basura"])
         let request = try XCTUnwrap(aborted)
         XCTAssertEqual(request.httpMethod, "DELETE")
         XCTAssertEqual(request.url?.path, "/fotos/a b/grande.bin")
@@ -700,7 +700,6 @@ final class S3ProviderTests: XCTestCase {
         XCTAssertFalse(capabilities.reversibleTrash, "No bin: deleting is final and the confirmation says so")
         XCTAssertFalse(capabilities.quota)
         XCTAssertTrue(capabilities.search)
-        XCTAssertTrue(capabilities.checksum)
         XCTAssertFalse(capabilities.linksFolders)
         XCTAssertFalse(capabilities.trashListing || capabilities.permanentDelete || capabilities.memberSharing)
         XCTAssertTrue(Cloud.s3.usesPasswordLogin)

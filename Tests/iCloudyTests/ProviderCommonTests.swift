@@ -50,12 +50,15 @@ final class ProviderCommonTests: XCTestCase {
     }
 
     func testCapabilitiesDescribeWhatEachProviderCanDo() {
-        XCTAssertTrue(Cloud.google.capabilities.exportsDocuments)
-        XCTAssertFalse(Cloud.dropbox.capabilities.exportsDocuments)
         XCTAssertTrue(Cloud.dropbox.capabilities.reversibleTrash, "Dropbox keeps deleted files recoverable")
         XCTAssertFalse(Cloud.webdav.capabilities.reversibleTrash, "Plain WebDAV deletes for good")
         XCTAssertTrue(Cloud.webdav.capabilities.search, "iCloudy recorre el árbol")
-        XCTAssertFalse(Cloud.webdav.capabilities.oauth)
+        XCTAssertEqual(Cloud.webdav.capabilities.signIn, .password)
+        XCTAssertEqual(Cloud.volume.capabilities.signIn, .folder)
+        XCTAssertTrue(Cloud.microsoft.capabilities.asyncCopy, "OneDrive acepta la copia y la termina después")
+        XCTAssertTrue(Cloud.s3.capabilities.temporaryLinks)
+        XCTAssertEqual(Cloud.ftp.capabilities.sessionLimit, 1)
+        XCTAssertNil(Cloud.google.capabilities.sessionLimit)
         XCTAssertFalse(Cloud.box.capabilities.recents)
         XCTAssertTrue(Cloud.microsoft.capabilities.sharedWithMe)
         XCTAssertEqual(Cloud.box.rootAlias, "0")

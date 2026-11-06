@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 /// Sidebar section with every mirrored folder and its state; observes the manager so status lines stay current.
 struct MirrorList: View {
     let model: AppModel
-    @ObservedObject var mirrors: MirrorManager
+    @Bindable var mirrors: MirrorManager
     @State private var removing: FolderMirror?
     @State private var editingExclusions: FolderMirror?
     @State private var previewing: FolderMirror?

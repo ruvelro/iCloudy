@@ -28,7 +28,7 @@ final class RemoteCopies: ObservableObject {
     init(storeURL: URL = LocalStore.directory.appendingPathComponent("remote-copies.json")) {
         self.storeURL = storeURL
         do {
-            items = try LocalStore.read([RemoteCopy].self, from: storeURL) ?? []
+            items = try LocalStore.read(StoreEnvelope<[RemoteCopy]>.self, from: storeURL)?.items ?? []
             for i in items.indices where items[i].state == .starting {
                 items[i].state = .uncertain
                 items[i].detail = L("La copia se interrumpió sin confirmación. Comprueba el destino antes de repetirla.")
@@ -37,7 +37,7 @@ final class RemoteCopies: ObservableObject {
     }
     private func persist() throws {
         if let loadError { throw loadError }
-        do { try LocalStore.save(items, to: storeURL); persistenceError = nil }
+        do { try LocalStore.save(StoreEnvelope(items), to: storeURL); persistenceError = nil }
         catch { persistenceError = L("No se pudieron guardar las copias en curso de OneDrive: \(error.localizedDescription)"); throw error }
     }
     func start(file: CloudFile, destination: String, api: CloudAPI) async throws {

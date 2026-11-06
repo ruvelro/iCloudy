@@ -373,7 +373,7 @@ final class CompareCenter: NSObject, ObservableObject, NSWindowDelegate {
                     try await model.client(account).trash(file: file)
                     touched.insert(account.id)
                     model.spotlight.forget(accountID: account.id, fileID: file.id)
-                    model.favorites.removeAll { $0.accountID == account.id && $0.file.id == file.id }
+                    model.favoriteStore.remove(accountID: account.id, fileID: file.id, inside: false)
                 }
                 done.insert(candidate.id)
             }
@@ -385,9 +385,6 @@ final class CompareCenter: NSObject, ObservableObject, NSWindowDelegate {
         self.report = DuplicateGrouping.removing(done, from: report)
         marked.subtract(done)
         trashing = false
-        if !touched.isEmpty {
-            do { try LocalStore.save(model.favorites, to: model.favoritesURL) } catch { scanProblem = error.localizedDescription }
-        }
         for id in touched {
             if let account = account(id) { model.refreshStorage(account, force: true) }
             if let account = account(id) { model.reloadAfterWrite(to: account) }

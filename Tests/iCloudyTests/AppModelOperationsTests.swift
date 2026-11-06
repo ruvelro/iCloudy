@@ -155,7 +155,8 @@ final class AppModelOperationsTests: XCTestCase {
 
     func testDeletingAFavouriteForgetsTheFavourite() async throws {
         let file = try item("Bienvenido.txt")
-        model.favorites = [Favorite(accountID: Account.demo.id, file: file, path: [], collection: .files)]
+        model.favoriteStore.toggle(file, accountID: Account.demo.id, path: [], collection: .files)
+        XCTAssertEqual(model.favorites.count, 1)
         await model.trash([file])
         XCTAssertTrue(model.favorites.isEmpty, "A favourite that points at the bin is gone")
     }

@@ -35,7 +35,7 @@ struct S3LoginView: View {
 
     /// Reconnecting is about the keys: the service, region and bucket are known, and the access key is in the id.
     private func prefillForReconnect() {
-        guard form.accessKey.isEmpty, let account = model.reconnecting, account.cloud == .s3, let location = try? S3Location(account: account) else { return }
+        guard form.accessKey.isEmpty, let account = model.ui.reconnecting, account.cloud == .s3, let location = try? S3Location(account: account) else { return }
         form.service = location.service
         form.region = location.region
         form.bucket = location.bucket ?? ""
@@ -55,19 +55,19 @@ struct S3LoginView: View {
         if let home = getpwuid(getuid())?.pointee.pw_dir { panel.directoryURL = URL(fileURLWithPath: String(cString: home)).appendingPathComponent(".aws") }
         guard panel.runModal() == .OK, let url = panel.url, let text = try? String(contentsOf: url, encoding: .utf8) else { return }
         let found = AWSProfiles.parse(text)
-        model.connectionError = nil
-        guard !found.isEmpty else { model.connectionError = L("Ese archivo no tiene perfiles de AWS."); return }
+        model.ui.connectionError = nil
+        guard !found.isEmpty else { model.ui.connectionError = L("Ese archivo no tiene perfiles de AWS."); return }
         profiles = found
         use(found.first { $0.name == "default" && $0.hasKeys } ?? found.first(where: \.hasKeys) ?? found[0])
     }
     private func use(_ profile: AWSProfile) {
         if let why = profile.indirection, !profile.hasKeys {
-            model.connectionError = L("El perfil «\(profile.name)» \(why). iCloudy necesita las claves escritas en el archivo.")
+            model.ui.connectionError = L("El perfil «\(profile.name)» \(why). iCloudy necesita las claves escritas en el archivo.")
             return
         }
-        guard profile.hasKeys else { model.connectionError = L("El perfil «\(profile.name)» no tiene claves de acceso."); return }
+        guard profile.hasKeys else { model.ui.connectionError = L("El perfil «\(profile.name)» no tiene claves de acceso."); return }
         form.adopt(profile)
-        model.connectionError = nil
+        model.ui.connectionError = nil
     }
 
     var body: some View {
@@ -127,22 +127,22 @@ struct S3LoginView: View {
             } label: {
                 Text("Avanzado").font(.caption)
             }
-            if let error = model.connectionError {
+            if let error = model.ui.connectionError {
                 Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             }
             HStack {
-                Button("Cancelar") { model.serverLogin = nil; model.reconnecting = nil; dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancelar") { model.ui.serverLogin = nil; model.ui.reconnecting = nil; dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
-                if model.connecting { ProgressView().controlSize(.small) }
+                if model.ui.connecting { ProgressView().controlSize(.small) }
                 Button("Conectar") {
                     Task {
                         await model.connectS3(form)
                         form.secretKey = ""; form.sessionToken = ""
-                        if model.connectionError == nil { dismiss() }
+                        if model.ui.connectionError == nil { dismiss() }
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(model.connecting || !complete)
+                .disabled(model.ui.connecting || !complete)
             }
         }.padding(24).frame(width: 470)
     }
@@ -153,19 +153,19 @@ struct S3LoginView: View {
 struct TemporaryLinkDialog: ViewModifier {
     @Bindable var model: AppModel
     func body(content: Content) -> some View {
-        content.confirmationDialog("¿Crear un enlace temporal?", isPresented: Binding(get: { model.pendingTemporaryLink != nil },
-                                                                                        set: { if !$0 { model.pendingTemporaryLink = nil } }),
+        content.confirmationDialog("¿Crear un enlace temporal?", isPresented: Binding(get: { model.ui.pendingTemporaryLink != nil },
+                                                                                        set: { if !$0 { model.ui.pendingTemporaryLink = nil } }),
                                    titleVisibility: .visible) {
             Button("Válido durante 1 hora") { create(3600) }
             Button("Válido durante 1 día") { create(24 * 3600) }
             Button("Válido durante 7 días") { create(7 * 24 * 3600) }
-            Button("Cancelar", role: .cancel) { model.pendingTemporaryLink = nil }
+            Button("Cancelar", role: .cancel) { model.ui.pendingTemporaryLink = nil }
         } message: {
-            Text("Cualquier persona con el enlace podrá descargar «\(model.pendingTemporaryLink?.file.name ?? "")» hasta que caduque. No se puede revocar antes salvo desactivando la clave de acceso.")
+            Text("Cualquier persona con el enlace podrá descargar «\(model.ui.pendingTemporaryLink?.file.name ?? "")» hasta que caduque. No se puede revocar antes salvo desactivando la clave de acceso.")
         }
     }
     private func create(_ lifetime: Int) {
-        if let pending = model.pendingTemporaryLink { Task { await model.createTemporaryLink(pending.file, account: pending.account, lifetime: lifetime) } }
-        model.pendingTemporaryLink = nil
+        if let pending = model.ui.pendingTemporaryLink { Task { await model.createTemporaryLink(pending.file, account: pending.account, lifetime: lifetime) } }
+        model.ui.pendingTemporaryLink = nil
     }
 }

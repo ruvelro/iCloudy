@@ -109,15 +109,8 @@ struct TransferPolicy: Equatable {
 
 /// Decides which waiting jobs may start. Pure, so the limits can be tested without moving a byte.
 enum TransferScheduler {
-    /// Providers whose session does one thing at a time. FTP has a single control connection, SFTP one channel, and
-    /// Mega and O2 a session the server serialises (or drops requests from) when it is asked two things at once. A
-    /// second job on them would only queue inside the session while showing as running here.
-    static func sessionLimit(for cloud: Cloud) -> Int? {
-        switch cloud {
-        case .ftp, .sftp, .mega, .o2: return 1
-        default: return nil
-        }
-    }
+    /// Providers whose session does one thing at a time: `CloudCapabilities.sessionLimit`.
+    static func sessionLimit(for cloud: Cloud) -> Int? { cloud.capabilities.sessionLimit }
     static func perAccountLimit(for cloud: Cloud?, policy: TransferPolicy) -> Int {
         let chosen = max(1, policy.maxPerAccount)
         guard let cloud, let session = sessionLimit(for: cloud) else { return chosen }

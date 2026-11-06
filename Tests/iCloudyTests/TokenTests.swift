@@ -170,7 +170,7 @@ final class TokenTests: XCTestCase {
         let patient = HTTPURLResponse(url: URL(string: "https://example.com")!, statusCode: 429, httpVersion: nil,
                                       headerFields: ["Retry-After": "3600"])!
         do { try HTTP.validate(patient, data: Data()); XCTFail("Un 429 es un error") }
-        catch let error as ServiceError { XCTAssertEqual(TransferQueue.retryWait(after: error, attempt: 0, base: 1), 60) }
+        catch let error as ServiceError { XCTAssertEqual(TransferQueue.retryWait(after: error, attempt: 0, base: 1), RetryAfter.cap) }
     }
 
     func testInvalidGrantMarksTheSessionExpiredWithTheProviderDetail() async throws {

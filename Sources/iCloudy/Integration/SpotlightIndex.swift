@@ -73,7 +73,7 @@ final class SpotlightIndex {
 
     init(index: SearchableIndexing = SystemSearchableIndex(), storeURL: URL = LocalStore.directory.appendingPathComponent("spotlight.json")) {
         self.index = index; self.storeURL = storeURL
-        items = (try? LocalStore.read([IndexedItem].self, from: storeURL)) ?? []
+        items = (try? LocalStore.read(StoreEnvelope<[IndexedItem]>.self, from: storeURL))?.items ?? []
     }
 
     static func identifier(accountID: String, fileID: String) -> String { accountID + separator + fileID }
@@ -212,5 +212,5 @@ final class SpotlightIndex {
         }
     }
     /// Off the main thread: the index is rewritten whenever a folder is listed.
-    private func persist() { StoreWriter.shared.later(items, to: storeURL) }
+    private func persist() { StoreWriter.shared.later(StoreEnvelope(items), to: storeURL) }
 }

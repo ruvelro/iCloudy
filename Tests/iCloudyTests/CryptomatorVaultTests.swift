@@ -315,7 +315,7 @@ final class CryptomatorVaultTests: XCTestCase {
         XCTAssertEqual(entry.id, CryptomatorVaults.accountID(base: "memory", folder: folder), "El mismo id cada vez que se abre")
         XCTAssertEqual(vaults.account(entry.id)?.name, "Privado")
         XCTAssertFalse(entry.account.capabilities.search); XCTAssertFalse(entry.account.capabilities.publicLinks)
-        XCTAssertFalse(entry.account.capabilities.copy); XCTAssertTrue(entry.account.capabilities.move)
+        XCTAssertFalse(entry.account.capabilities.copy)
         XCTAssertEqual(vaults.rememberedPassphrase(base: "memory", folder: folder), "contraseña larga")
         let stored = try XCTUnwrap(keychain.item(service: KeychainStorage.service, account: KeychainStorage.account))
         XCTAssertEqual(stored[kSecAttrAccessible as String] as? String, kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String)

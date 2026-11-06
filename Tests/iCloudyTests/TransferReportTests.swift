@@ -94,7 +94,7 @@ final class TransferReportTests: XCTestCase {
         XCTAssertTrue(job.report.values.allSatisfy { $0.outcome == .verified })
         XCTAssertEqual(job.report["./sub/b.txt"]?.bytes, 2)
         XCTAssertEqual(job.verifiedFiles, 3, "The counters follow the records")
-        let saved = try XCTUnwrap(LocalStore.read([Transfer].self, from: queue.storeURL)?.first)
+        let saved = try XCTUnwrap(LocalStore.read(StoreEnvelope<[Transfer]>.self, from: queue.storeURL)?.items.first)
         XCTAssertEqual(saved.report.count, 3, "Unlike the checkpoints, the report survives completion on disk")
     }
 
