@@ -421,4 +421,63 @@ final class ExplorerFeaturesTests: XCTestCase {
         model.search = "Bienvenido"
         guard case .single = model.inspectorSummary().content else { return XCTFail("Only the visible row counts") }
     }
+
+    // MARK: - Column view
+
+    func testColumnsFollowThePathAndTheKeyboardMovesBetweenThem() async throws {
+        let model = AppModel()
+        model.enableDemo()
+        model.demo?.latency = .milliseconds(1)
+        model.viewMode = "columns"
+        try await wait(until: { model.files.contains { $0.name == "Proyectos" } })
+        XCTAssertEqual(model.columns(inPane: 0).map(\.role), [.current], "At the top there is one column")
+
+        // ↓ from nothing selected takes the first item: the folder, which is listed first.
+        model.columnStep(1, pane: 0)
+        let folder = try XCTUnwrap(model.selection(model.selectedIDs).first)
+        XCTAssertEqual(folder.name, "Proyectos")
+        var columns = model.columns(inPane: 0)
+        XCTAssertEqual(columns.map(\.role), [.current, .preview], "A selected folder shows what it holds in the next column")
+        XCTAssertNil(columns[1].files, "Asked for by the view")
+        await model.loadColumn(columns[1], inPane: 0)
+        columns = model.columns(inPane: 0)
+        XCTAssertEqual(columns[1].files?.map(\.name), ["Notas.txt"])
+
+        model.columnStep(1, pane: 0)
+        XCTAssertNotEqual(model.selection(model.selectedIDs).first?.name, "Proyectos", "↓ moves within the open folder")
+        model.columnStep(-1, pane: 0)
+        model.columnStep(-5, pane: 0)
+        XCTAssertEqual(model.selection(model.selectedIDs).first?.name, "Proyectos", "and stops at the top")
+
+        // → goes in; the column above keeps the folder highlighted.
+        XCTAssertEqual(model.columnRight(pane: 0)?.name, "Proyectos")
+        XCTAssertEqual(model.path.map(\.name), ["Proyectos"])
+        columns = model.columns(inPane: 0)
+        XCTAssertEqual(columns.map(\.role), [.ancestor, .current])
+        XCTAssertEqual(columns[0].highlighted, [folder.id])
+        XCTAssertEqual(columns[0].files?.contains { $0.name == "Bienvenido.txt" }, true, "The column above is drawn from what was listed")
+        try await wait(until: { model.files.contains { $0.name == "Notas.txt" } })
+
+        // A click in the column above climbs there and selects what was clicked.
+        let welcome = try XCTUnwrap(columns[0].files?.first { $0.name == "Bienvenido.txt" })
+        model.columnClick(welcome, column: columns[0], pane: 0)
+        XCTAssertTrue(model.path.isEmpty)
+        XCTAssertEqual(model.selectedIDs, [welcome.id])
+
+        // ← from inside a folder climbs and selects the folder that was open.
+        model.columnClick(folder, column: model.columns(inPane: 0)[0], pane: 0)
+        _ = model.columnRight(pane: 0)
+        model.columnLeft(pane: 0)
+        XCTAssertTrue(model.path.isEmpty)
+        XCTAssertEqual(model.selectedIDs, [folder.id])
+
+        // A click in the look ahead goes into that folder with the item selected.
+        await model.loadColumn(model.columns(inPane: 0)[1], inPane: 0)
+        let preview = model.columns(inPane: 0)[1]
+        let notes = try XCTUnwrap(preview.files?.first)
+        model.columnClick(notes, column: preview, pane: 0)
+        XCTAssertEqual(model.path.map(\.name), ["Proyectos"])
+        XCTAssertEqual(model.selectedIDs, [notes.id])
+        XCTAssertFalse(model.columnRight(pane: 0) != nil, "→ on a file goes nowhere")
+    }
 }

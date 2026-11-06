@@ -68,6 +68,8 @@ final class AppModel {
         get { workspace.current.search }
         set { workspace.current.search = newValue }
     }
+    /// The folders the column view shows above the open one.
+    let columnListings = ColumnListings()
     /// Files open in other apps from private copies, and their way back to the cloud.
     let editor = ExternalEditor()
     /// The last folders visited, in any tab.

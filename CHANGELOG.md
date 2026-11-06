@@ -35,6 +35,9 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
   ruta, la suma de comprobación y su algoritmo, si hay copia en este Mac o sin conexión, si está abierto en otra
   aplicación, cuántas versiones guarda el proveedor y cuántos enlaces públicos tiene, donde se pueden consultar. Con
   botones para copiar la ruta o el enlace, mostrar la copia local y abrirlo. Con varios elementos, suma el total.
+- **Vista en columnas**, la tercera junto a la lista y los iconos: una columna por carpeta desde el principio de la
+  cuenta, y la carpeta seleccionada enseña lo que tiene en la siguiente, como en el Finder. ← y → pasan de una columna
+  a otra, ↑ y ↓ recorren la abierta e Intro abre. Un archivo seleccionado muestra su ficha en la última columna.
 
 ### Robustez
 

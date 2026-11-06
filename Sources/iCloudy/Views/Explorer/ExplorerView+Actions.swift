@@ -28,9 +28,10 @@ extension ExplorerView {
             ToolbarSeparator()
             Group {
                 Picker("Vista", selection: $model.viewMode) {
-                    Image(systemName: "list.bullet").tag("list")
-                    Image(systemName: "square.grid.2x2").tag("grid")
-                }.pickerStyle(.segmented).frame(width: 80)
+                    Image(systemName: "list.bullet").tag("list").accessibilityLabel("Lista")
+                    Image(systemName: "square.grid.2x2").tag("grid").accessibilityLabel("Iconos")
+                    Image(systemName: "rectangle.split.3x1").tag("columns").accessibilityLabel("Columnas")
+                }.pickerStyle(.segmented).frame(width: 116).help("Lista, iconos o columnas")
                 // The sort used to live down in the header, beside the breadcrumbs. It answers the same question as
                 // the two buttons on its left — how this list is drawn — so it now sits in the same group.
                 Menu {

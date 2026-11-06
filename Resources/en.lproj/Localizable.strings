@@ -1993,3 +1993,10 @@
 "Mostrar el inspector (⌘I)" = "Show the Inspector (⌘I)";
 "Ocultar el inspector" = "Hide Inspector";
 "Mostrar el inspector" = "Show Inspector";
+"Vista en columnas" = "Column view";
+"Vacía" = "Empty";
+"Muestra su contenido en la columna siguiente" = "Shows its contents in the next column";
+"Selecciona el archivo" = "Selects the file";
+"Lista" = "List";
+"Iconos" = "Icons";
+"Lista, iconos o columnas" = "List, icons or columns";

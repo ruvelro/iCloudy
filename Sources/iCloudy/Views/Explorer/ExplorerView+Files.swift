@@ -86,12 +86,7 @@ extension ExplorerView {
             } else if let file = model.selection(ids).first { fileActions(file) }
         } primaryAction: { ids in
             guard let file = model.selection(ids).first else { return }
-            // ⌘ and a double-click open the folder in a tab of its own, as in the Finder; a single ⌘-click still
-            // adds to the selection.
-            if file.isFolder, NSEvent.modifierFlags.contains(.command) { model.openInNewTab(file) }
-            else if file.isFolder { model.navigate(file) }
-            else if file.isGoogleDocument { model.openBrowser(file) }
-            else { Task { await model.save(file) } }
+            openFile(file)
         }
     }
 
@@ -117,12 +112,7 @@ extension ExplorerView {
                             }.frame(maxWidth: .infinity).frame(height: 130).padding(8)
                                 .background(tab.selection.contains(file.id) ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 10))
                                 .contentShape(Rectangle())
-                                .onTapGesture(count: 2) {
-                                    if file.isFolder, NSEvent.modifierFlags.contains(.command) { model.openInNewTab(file) }
-                                    else if file.isFolder { model.navigate(file) }
-                                    else if file.isGoogleDocument { model.openBrowser(file) }
-                                    else { Task { await model.save(file) } }
-                                }
+                                .onTapGesture(count: 2) { openFile(file) }
                                 .onTapGesture {
                                     focusedList = pane
                                     let modifiers = NSEvent.modifierFlags
@@ -173,6 +163,13 @@ extension ExplorerView {
                         return .handled
                     }
                 }
+            } else if tab.viewMode == "columns" {
+                ColumnBrowserView(model: model, pane: pane) { openFile($0) }
+                    .focusable().focusEffectDisabled().focused($focusedList, equals: pane)
+                    .onDeleteCommand { model.requestDelete(model.selection(selected)) }
+                    .contextMenu {
+                        if selected.count == 1, let file = model.selection(selected).first { fileActions(file) }
+                    }
             } else { fileList(pane) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -202,5 +199,14 @@ extension ExplorerView {
         } isTargeted: { targeted in
             if targeted { dropTarget = pane } else if dropTarget == pane { dropTarget = nil }
         }
+    }
+
+    /// What a double-click or Return does in any of the three views. ⌘ opens a folder in a tab of its own, as in the
+    /// Finder; a single ⌘-click still adds to the selection.
+    func openFile(_ file: CloudFile) {
+        if file.isFolder, NSEvent.modifierFlags.contains(.command) { model.openInNewTab(file) }
+        else if file.isFolder { model.navigate(file) }
+        else if file.isGoogleDocument { model.openBrowser(file) }
+        else { Task { await model.save(file) } }
     }
 }
