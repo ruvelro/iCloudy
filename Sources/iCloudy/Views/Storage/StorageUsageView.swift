@@ -84,6 +84,13 @@ struct StorageUsageView: View {
         .frame(width: Self.barWidth, height: 4)
         .accessibilityHidden(true)
     }
+    /// Built apart from the body: written inline, the chain of concatenations is more than Swift 6.2 can type-check in
+    /// time inside the view builder.
+    private func tooltip(_ quota: StorageQuota) -> String {
+        var lines: [String] = [explanation, quota.summary]
+        if !quota.breakdown.isEmpty { lines.append(quota.breakdown) }
+        return lines.joined(separator: "\n")
+    }
     var body: some View {
         Group {
             switch state {
@@ -92,7 +99,7 @@ struct StorageUsageView: View {
                     if StorageStyle.current(style) == .bar { bar(quota) } else { pie(quota) }
                     Text(quota.summary).fixedSize(horizontal: false, vertical: true)
                 }
-                .help(explanation + "\n" + quota.summary + (quota.breakdown.isEmpty ? "" : "\n" + quota.breakdown))
+                .help(tooltip(quota))
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Almacenamiento: \(quota.summary)")
                 .accessibilityValue(quota.fraction.map { $0.formatted(.percent.precision(.fractionLength(0))) } ?? "")
