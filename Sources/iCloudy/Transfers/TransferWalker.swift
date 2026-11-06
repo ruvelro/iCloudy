@@ -192,7 +192,7 @@ final class TransferWalker {
         if !folder, current.options?.skipIdentical == true, current.names[key] == nil || current.replacements[key] != nil,
            let same = try await identicalAtDestination(name: current.mirrorEntries?[key]?.name ?? current.names[key] ?? local.lastPathComponent, parent: parent,
                                                        in: api, size: values.fileSize.map(Int64.init),
-                                                       digest: { algorithm in try await blockingIO { try ContentHasher.digest(of: local, algorithm: algorithm).digest } }) {
+                                                       digest: { algorithm in try await blockingIO { ContentComparison.hasBytesHere(local) ? try ContentHasher.digest(of: local, algorithm: algorithm).digest : nil } }) {
             try edit(coalesce: true) {
                 $0.completedPaths.insert(key); $0.names[key] = same.name
                 $0.record(key, .verified, bytes: values.fileSize.map(Int64.init), reason: L("Ya estaba en el destino con la misma suma; no se ha vuelto a enviar."))

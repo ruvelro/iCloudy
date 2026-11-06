@@ -23,10 +23,22 @@ enum ContentComparison {
             var result = Result()
             for item in items {
                 try Task.checkCancellation()
+                // A dataless iCloud Drive file has no bytes here: hashing it would download it, silently and
+                // without a way to stop it. It stays unknown, and size and date decide.
+                guard hasBytesHere(item.url) else { continue }
                 guard let digest = try? ContentHasher.digest(of: item.url, algorithm: item.checksum.algorithm).digest else { continue }
                 if item.checksum.matches(digest) { result.identical.insert(item.path) } else { result.different.insert(item.path) }
             }
             return result
+        }
+    }
+
+    /// False for an iCloud Drive file whose bytes are only in iCloud (or still on their way), which reading would
+    /// download.
+    nonisolated static func hasBytesHere(_ url: URL) -> Bool {
+        switch VolumeProvider.ubiquity(of: url) {
+        case .none, .some(.downloaded), .some(.uploading): return true
+        case .some(.cloudOnly), .some(.downloading): return false
         }
     }
 
