@@ -59,9 +59,11 @@ struct ResumableSessionUpload {
             cursor.offset = total
             cursor.complete = true
             let stamp = cursor.sourceStamp
-            // The comparison is worked out here and only reported inside `finish`, after the checkpoint says
-            // "pending": Swift 6.2 refuses to let the closure capture `item`, a non-Sendable dictionary.
-            let verification = Result { try hasher?.verify(against: item, name: name) ?? .unavailable }
+            // The comparison is worked out here, outside any closure, and only reported inside `finish`, after the
+            // checkpoint says "pending": Swift 6.2 refuses to let a closure capture `item`, a non-Sendable dictionary.
+            let verification: Result<UploadVerification, Error>
+            do { verification = .success(try hasher?.verify(against: item, name: name) ?? .unavailable) }
+            catch { verification = .failure(error) }
             return try cursor.finish(remoteID: item["id"] as? String, save: save) {
                 try stamp?.validate(local)
                 return try verification.get()
