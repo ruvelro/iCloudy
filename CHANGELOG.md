@@ -45,6 +45,11 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
   en los demás el menú dice por qué no), ⇧⌘N crea una carpeta, ⌘E bloquea la bóveda abierta o desconecta el volumen,
   tras preguntar. «Añadir cuenta…» pasa a ⌥⌘N. Y escribir las primeras letras de un nombre lo selecciona, en la
   lista, los iconos y las columnas.
+- **Accesibilidad**: las nubes de la barra lateral se alcanzan con el teclado (↑ y ↓ las recorren, Intro o Espacio
+  abren), igual que los favoritos y las recientes. VoiceOver lee el estado de cada fila (copia local, sin conexión,
+  favorito), las migas dicen cuál es la carpeta actual, el campo de filtro su contenido, el espacio de cada nube su
+  porcentaje y cada transferencia qué va adónde y cuánto lleva. Con «Reducir movimiento» las animaciones de la
+  ventana se quitan, y con «Aumentar contraste» las migas, el campo y la fila elegida ganan borde.
 
 ### Robustez
 

@@ -26,6 +26,7 @@ extension ExplorerView {
                 ScrollView {
                   if sidebarTab == .clouds {
                     VStack(spacing: 5) {
+                        // ↑ and ↓ walk the clouds while one of them has the focus.
                         ForEach(model.accounts) { account in
                             // Not a Button: on macOS a button keeps the mouse from the moment it is pressed, so a drag that
                             // starts on it never reaches `onDrag`, and the clouds could not be dragged into a new order.
@@ -48,8 +49,14 @@ extension ExplorerView {
                                 .sidebarRow(selected: model.selectedAccountID == account.id && !model.ui.showGlobalSearch,
                                             tint: model.appearance(for: account).tint.color)
                                 .onTapGesture { model.select(account.id) }
+                                // Reachable with Tab and the arrows, not only with the mouse: the row takes the focus
+                                // and Return or Space opens it, as a button would.
+                                .focusable()
+                                .focused($sidebarFocus, equals: account.id)
+                                .onKeyPress(keys: [.return, .space]) { _ in model.select(account.id); return .handled }
                                 .accessibilityElement(children: .combine)
                                 .accessibilityAddTraits(model.selectedAccountID == account.id ? [.isSelected, .isButton] : .isButton)
+                                .accessibilityHint("Abre esta nube. Las flechas pasan a la siguiente.")
                                 .accessibilityAction { model.select(account.id) }
                                 // Dragging a cloud onto another puts it there, the same as with the tabs.
                                 .onDrag {
@@ -69,9 +76,9 @@ extension ExplorerView {
                                     }
                                     if model.accounts.count > 1 {
                                         Divider()
-                                        Button("Mover arriba") { withAnimation(.easeInOut(duration: 0.15)) { model.moveAccount(account, by: -1) } }
+                                        Button("Mover arriba") { withAnimation(Motion.quick) { model.moveAccount(account, by: -1) } }
                                             .disabled(!model.canMoveAccount(account, by: -1))
-                                        Button("Mover abajo") { withAnimation(.easeInOut(duration: 0.15)) { model.moveAccount(account, by: 1) } }
+                                        Button("Mover abajo") { withAnimation(Motion.quick) { model.moveAccount(account, by: 1) } }
                                             .disabled(!model.canMoveAccount(account, by: 1))
                                     }
                                     Divider()
@@ -92,6 +99,12 @@ extension ExplorerView {
                         }
                         if !model.mirrors.mirrors.isEmpty { MirrorList(model: model, mirrors: model.mirrors) }
                         if !model.offline.pins.isEmpty || !model.offline.notices.isEmpty { OfflineList(model: model, store: model.offline) }
+                    }
+                    .onMoveCommand { direction in
+                        guard let focused = sidebarFocus, let index = model.accounts.firstIndex(where: { $0.id == focused }) else { return }
+                        let step = direction == .up ? -1 : (direction == .down ? 1 : 0)
+                        guard step != 0, model.accounts.indices.contains(index + step) else { return }
+                        sidebarFocus = model.accounts[index + step].id
                     }
                   } else {
                     FavoritesList(model: model)
@@ -183,7 +196,7 @@ extension ExplorerView {
             // Something started moving, so show it. Closing the drawer by hand keeps it closed until the next one.
             .onChange(of: model.transfers.count) { _, count in
                 guard count > 0, !showTransfers else { return }
-                withAnimation(.easeInOut(duration: 0.18)) { showTransfers = true }
+                withAnimation(Motion.drawer) { showTransfers = true }
             }
             }
             }
@@ -353,7 +366,7 @@ struct AccountReorder: DropDelegate {
 
     func dropEntered(info: DropInfo) {
         guard let dragging, dragging != target else { return }
-        withAnimation(.easeInOut(duration: 0.15)) { model.moveAccount(dragging, to: target) }
+        withAnimation(Motion.quick) { model.moveAccount(dragging, to: target) }
     }
     func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
     func validateDrop(info: DropInfo) -> Bool { dragging != nil }

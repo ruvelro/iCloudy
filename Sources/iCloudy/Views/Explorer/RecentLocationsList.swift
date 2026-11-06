@@ -20,6 +20,7 @@ struct RecentLocationsList: View {
                 ForEach(store.items) { recent in
                     Button { model.openRecent(recent) } label: { row(recent) }
                         .buttonStyle(.plain)
+                        .focusable()
                         .sidebarRow(selected: false)
                         .help(model.addressText(accountID: recent.accountID, path: recent.path))
                         .contextMenu {

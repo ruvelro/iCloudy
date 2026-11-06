@@ -100,6 +100,9 @@ struct InspectorView: View {
             Text(value).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 .font(monospaced ? .callout.monospaced() : .callout)
         }
-        .accessibilityElement(children: .combine)
+        // One element per row, read as «Ruta: Demo local:/Notas.txt».
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(title))
+        .accessibilityValue(value)
     }
 }

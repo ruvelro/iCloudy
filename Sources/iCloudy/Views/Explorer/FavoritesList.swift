@@ -49,6 +49,8 @@ struct FavoritesList: View {
                 row(favorite)
                     .sidebarRow(selected: false)
                     .onTapGesture { model.openFavorite(favorite) }
+                    .focusable()
+                    .onKeyPress(keys: [.return, .space]) { _ in model.openFavorite(favorite); return .handled }
                     .help(model.accounts.first { $0.id == favorite.accountID }?.email ?? L("Cuenta desconectada"))
                     .accessibilityElement(children: .combine)
                     .accessibilityAddTraits(.isButton)

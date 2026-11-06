@@ -2026,3 +2026,14 @@
 "Expulsar «%@»…" = "Eject “%@”…";
 "Expulsar" = "Eject";
 "Hace una copia en esta misma carpeta (⌘D)" = "Makes a copy in this same folder (⌘D)";
+"Subida de «%@» a %@" = "Upload of “%@” to %@";
+"Descarga de «%@» a %@" = "Download of “%@” to %@";
+"Copia de «%@» a %@" = "Copy of “%@” to %@";
+"Carpeta actual" = "Current folder";
+"Vuelve a esta carpeta" = "Goes back to this folder";
+"Almacenamiento: espacio no disponible" = "Storage: space not available";
+"Almacenamiento: consultando espacio…" = "Storage: checking space…";
+"Doble clic o Intro para abrir la carpeta" = "Double-click or Return to open the folder";
+"Espacio para la vista previa" = "Space for the preview";
+"favorito" = "favourite";
+"Abre esta nube. Las flechas pasan a la siguiente." = "Opens this cloud. The arrow keys move to the next one.";

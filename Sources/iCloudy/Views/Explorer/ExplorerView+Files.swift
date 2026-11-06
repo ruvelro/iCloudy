@@ -25,6 +25,10 @@ extension ExplorerView {
                     Text(file.name).lineLimit(1)
                     if model.isFavorite(file, in: tab) { Image(systemName: "star.fill").font(.caption).foregroundStyle(.yellow) }
                 }.padding(.vertical, 5)
+                    // VoiceOver reads the row as its name, with what the badges say as its value.
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(file.name)
+                    .accessibilityValue(rowStatus(file, in: tab))
                     .overlay { if file.isFolder { MiddleClick { model.openInNewTab(file) } } }
                     .paneDragSource { model.paneDragProvider(for: file, pane: pane) }
             }.width(min: 200, ideal: 320)
@@ -130,6 +134,8 @@ extension ExplorerView {
                                 .overlay { if file.isFolder { MiddleClick { model.openInNewTab(file) } } }
                                 .paneDragSource { model.paneDragProvider(for: file, pane: pane) }
                                 .accessibilityLabel(file.name)
+                                .accessibilityValue(rowStatus(file, in: tab))
+                                .accessibilityHint(file.isFolder ? L("Doble clic o Intro para abrir la carpeta") : L("Espacio para la vista previa"))
                                 .accessibilityAddTraits(tab.selection.contains(file.id) ? [.isSelected, .isButton] : .isButton)
                                 .id(file.id)
                         }
@@ -155,7 +161,7 @@ extension ExplorerView {
                         if NSEvent.modifierFlags.contains(.shift), let start = anchor { selected = Self.range(from: start, to: target, in: files) }
                         else { selected = [target]; anchor = target }
                         cursor = target
-                        withAnimation(.easeOut(duration: 0.12)) { scroller.scrollTo(target) }
+                        withAnimation(Motion.scroll) { scroller.scrollTo(target) }
                     }
                     .onKeyPress(.return) {
                         guard selected.count == 1, let file = model.selection(selected).first else { return .ignored }
@@ -208,5 +214,14 @@ extension ExplorerView {
         else if file.isFolder { model.navigate(file) }
         else if file.isGoogleDocument { model.openBrowser(file) }
         else { Task { await model.save(file) } }
+    }
+
+    /// What a row's badges and star say, in words: «Carpeta, Disponible sin conexión, favorito».
+    func rowStatus(_ file: CloudFile, in tab: BrowserState) -> String {
+        var parts = [file.isFolder ? L("Carpeta") : file.kindDescription]
+        let status = model.statusDescription(file, in: tab)
+        if !status.isEmpty { parts.append(status) }
+        if model.isFavorite(file, in: tab) { parts.append(L("favorito")) }
+        return parts.joined(separator: ", ")
     }
 }

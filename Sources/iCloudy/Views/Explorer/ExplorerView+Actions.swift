@@ -59,7 +59,7 @@ extension ExplorerView {
             ToolbarSeparator()
             // Personalizar and Desconectar used to hang off an ⋯ menu here. They belong to a cloud, not to the
             // window, so they now live where the cloud itself is: the right-click menu of its row in the sidebar.
-            Button { withAnimation(.easeInOut(duration: 0.18)) { showTransfers.toggle() } } label: {
+            Button { withAnimation(Motion.drawer) { showTransfers.toggle() } } label: {
                 Image(systemName: "arrow.up.arrow.down.circle")
                     .symbolVariant(model.transfers.isEmpty ? .none : .fill)
             }.help(showTransfers ? "Ocultar transferencias" : "Mostrar transferencias")

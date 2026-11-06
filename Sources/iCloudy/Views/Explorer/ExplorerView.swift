@@ -17,6 +17,8 @@ struct ExplorerView: View {
     @State var dropTarget: Int?
     /// The transfers drawer starts closed and opens itself when something is transferring.
     @State var showTransfers = false
+    /// The cloud of the sidebar that has the keyboard: ↑ and ↓ move it, Return or Space opens that cloud.
+    @FocusState var sidebarFocus: Account.ID?
     /// Letters typed over the list, to select by name.
     @State var typeSelect = TypeSelect()
     @State var previewFollow: Task<Void, Never>?
