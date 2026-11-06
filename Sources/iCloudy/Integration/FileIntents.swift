@@ -74,7 +74,8 @@ struct MirrorQuery: EntityQuery {
 @MainActor
 enum IntentFiles {
     static func urls(_ files: [IntentFile]) throws -> [URL] {
-        let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("iCloudy/Shortcuts", isDirectory: true)
+        // The clipboard's folder, which the maintenance settings clear once the queue no longer needs what is in it.
+        let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("iCloudy/Pasteboard", isDirectory: true)
         return try files.map { file in
             if let url = file.fileURL { return url }
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])

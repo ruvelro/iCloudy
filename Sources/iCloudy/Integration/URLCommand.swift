@@ -1,9 +1,11 @@
 import Foundation
 import AppKit
+import iCloudyCommandWire
 
 /// What an `icloudy://` link asks for. Any app, script or web page can open one, so a link only ever shows things:
 /// it opens a folder, reveals an item or starts a search. Nothing a link says is a reason to delete, move, overwrite
-/// or send anything.
+/// or send anything; the command-line companion's requests (`cli`) are answered only for a companion the person
+/// approved in the app (`CLIBridge`).
 ///
 ///     icloudy://open?account=<id, alias, name or e-mail>&path=/Fotos/2024
 ///     icloudy://reveal?account=…&path=/Fotos/2024/playa.jpg
@@ -13,6 +15,7 @@ enum URLCommand: Equatable {
     case open(account: String, path: [String])
     case reveal(account: String, path: [String])
     case search(query: String)
+    case cli(CLIRequest)
 
     static let scheme = "icloudy"
     /// Long enough for any real path; a link built to exhaust memory or the log is refused instead.
@@ -46,6 +49,8 @@ enum URLCommand: Equatable {
         case "search":
             guard let query = clean(fields["q"])?.trimmingCharacters(in: .whitespaces), !query.isEmpty else { throw Failure.missing("q") }
             return .search(query: String(query.prefix(256)))
+        case "cli":
+            do { return .cli(try CLIRequest(fields: fields)) } catch { throw Failure.invalidPath }
         case "":
             throw Failure.missing("account")
         default:
@@ -84,6 +89,8 @@ enum URLCommand: Equatable {
         case .search(let query):
             components.host = "search"
             components.queryItems = [URLQueryItem(name: "q", value: query)]
+        case .cli(let request):
+            return request.url
         }
         return components.url
     }
@@ -106,12 +113,14 @@ extension AppModel {
     func handle(_ url: URL) async {
         do {
             let command = try URLCommand.parse(url)
-            // There is no application object when the model runs under the tests.
-            NSApp?.activate(ignoringOtherApps: true)
+            // A link brings the window forward; the command line works in the background. There is no application
+            // object when the model runs under the tests.
+            if case .cli = command {} else { NSApp?.activate(ignoringOtherApps: true) }
             switch command {
             case .open(let reference, let path): try await openLink(account: try account(named: reference), path: path, revealing: false)
             case .reveal(let reference, let path): try await openLink(account: try account(named: reference), path: path, revealing: true)
             case .search(let query): startGlobalSearch(query)
+            case .cli(let request): await CLIBridge.shared.handle(request, model: self); return
             }
         } catch { self.error = error.localizedDescription }
     }

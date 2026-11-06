@@ -50,6 +50,12 @@ simulados y la documentación de cada uno. Se marca como 🆕 hasta que alguien 
   (siempre pregunta antes, y avisa si en esa nube es definitivo), buscar devolviendo los elementos encontrados para
   usarlos en el atajo («Abrir en iCloudy» los muestra), sincronizar un reflejo concreto y crear un enlace con
   caducidad. Las frases para Siri y Spotlight van en castellano y en inglés.
+- **`icloudy`, la línea de órdenes.** Va dentro de la app (`Contents/Helpers/icloudy`; un `ln -s` la deja en el
+  `PATH`) y habla con iCloudy, abriéndola si hace falta: `icloudy ls trabajo:/Fotos`, `get`, `put`, `search`, `open`,
+  `accounts` y `jobs run <reflejo>`. Como la app vive en la sandbox, la línea de órdenes escucha en 127.0.0.1 y la app
+  se conecta a ella para responder. Solo contesta a una copia emparejada: `icloudy pair` pregunta en la ventana y
+  guarda un token en `~/.config/icloudy/token`; sin él no se lista ni se envía nada. Las descargas pasan la misma
+  verificación que las de la ventana y las subidas van a la cola.
 
 ### Robustez
 

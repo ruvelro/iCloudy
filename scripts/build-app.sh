@@ -121,6 +121,13 @@ if [[ -n "${ICLOUDY_APP_GROUP:-}" ]]; then
     /usr/libexec/PlistBuddy -c "Add :com.apple.security.application-groups array" -c "Add :com.apple.security.application-groups:0 string ${ICLOUDY_APP_GROUP}" "$app_entitlements_source"
     /usr/libexec/PlistBuddy -c "Add :keychain-access-groups array" -c "Add :keychain-access-groups:0 string ${ICLOUDY_APP_GROUP}" "$app_entitlements_source"
 fi
+# The command-line companion, signed on its own before the app seals its bundle. It is not sandboxed: it only opens
+# icloudy:// links and listens on 127.0.0.1 for the app's answer. Install it with
+#   ln -s /Applications/iCloudy.app/Contents/Helpers/icloudy /usr/local/bin/icloudy
+mkdir -p "$app_dir/Contents/Helpers"
+cp "$binary_dir/iCloudyCLI" "$app_dir/Contents/Helpers/icloudy"
+helper_id="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$app_dir/Contents/Info.plist").cli"
+codesign --force --options runtime --timestamp=none --identifier "$helper_id" --sign "$identity" "$app_dir/Contents/Helpers/icloudy"
 # Self-signed certificates cannot be timestamped by Apple; Developer ID builds get a timestamp automatically.
 entitlements="$app_entitlements_source"
 if [[ "$build_configuration" == "debug" ]]; then
