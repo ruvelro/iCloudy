@@ -60,6 +60,9 @@ simulados y la documentación de cada uno. Se marca como 🆕 hasta que alguien 
   carpeta, sin prisa y hasta un límite (5000 elementos por omisión), y publica los nombres y las rutas, nunca el
   contenido. Se repite una vez al día al abrir la app, vive aparte de lo abierto y los favoritos, y apagarlo lo quita
   de Spotlight sin tocar lo demás.
+- **AppleScript, lo mínimo**: `list accounts`, `show "Dropbox:/Fotos"` y `search for "factura" in account "Trabajo"`,
+  que devuelve lo encontrado. Funciona en la sandbox porque la app solo recibe los eventos; macOS pregunta al script
+  que los envía. Como los enlaces, solo enseña: nada borra, mueve ni sube.
 ### Distribución
 
 Lo necesario para que iCloudy se descargue y se abra sin Xcode. Todo funciona ya sin cuenta de Apple, marcado como

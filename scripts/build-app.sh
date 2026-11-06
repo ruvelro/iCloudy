@@ -57,6 +57,8 @@ if [[ ! -f Resources/AppIcon.icns ]]; then
     swift scripts/make-icon.swift Resources
 fi
 cp Resources/AppIcon.icns "$app_dir/Contents/Resources/AppIcon.icns"
+# The AppleScript dictionary named by OSAScriptingDefinition.
+cp Resources/iCloudy.sdef "$app_dir/Contents/Resources/iCloudy.sdef"
 cp "$oauth_config" "$app_dir/Contents/Resources/OAuth.plist"
 # Localizations live in Bundle.main so both SwiftUI's LocalizedStringKey and String(localized:) find them.
 for lproj in Resources/*.lproj; do [[ -d "$lproj" ]] && cp -R "$lproj" "$app_dir/Contents/Resources/"; done

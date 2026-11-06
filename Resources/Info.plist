@@ -34,6 +34,9 @@
     </array>
     <!-- icloudy:// links: open a folder, reveal an item, search (Integration/URLCommand.swift). A link only ever shows
          things; nothing it says deletes, moves or sends anything. -->
+    <!-- AppleScript: a small dictionary to list accounts, show a place and search (Integration/AppleScript.swift). -->
+    <key>NSAppleScriptEnabled</key><true/>
+    <key>OSAScriptingDefinition</key><string>iCloudy.sdef</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>
