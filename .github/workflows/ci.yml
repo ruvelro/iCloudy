@@ -57,7 +57,7 @@ jobs:
     env:
       DEVELOPER_DIR: /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
       # A crash prints its backtrace in the log instead of only "unexpected signal".
-      SWIFT_BACKTRACE: enable=yes,style=full,interactive=no
+      SWIFT_BACKTRACE: enable=yes,interactive=no
       # Per-test watchdog (Tests/iCloudyTests/TestSupport.swift); generous for a loaded runner.
       ICLOUDY_TEST_TIMEOUT: "300"
     steps:

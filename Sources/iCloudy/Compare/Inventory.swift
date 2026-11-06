@@ -82,7 +82,7 @@ final class ListingPacer {
 /// long comparison does not throw away the ninety-nine before it over one bad minute.
 @MainActor
 enum ListingRetry {
-    static func run<T>(attempts: Int = 3, base: Double = 2,
+    static func run<T: Sendable>(attempts: Int = 3, base: Double = 2,
                        sleep: (Double) async throws -> Void = { try await Task.sleep(for: .seconds($0)) },
                        _ work: () async throws -> T) async throws -> T {
         var attempt = 0
