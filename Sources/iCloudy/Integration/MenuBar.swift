@@ -14,6 +14,16 @@ struct MenuBarContent: View {
     private var failed: Int { queue.items.filter { $0.state == .failed }.count }
 
     var body: some View {
+        // Locked, the menu says so and offers the way back in; what the queue is doing is nobody else's business.
+        if model.isLocked {
+            Text("iCloudy está bloqueado")
+            Button("Desbloquear…") { NSApp.activate(ignoringOtherApps: true); openWindow(id: "explorer"); Task { await model.unlock() } }
+            Divider()
+            Button("Salir de iCloudy") { NSApp.terminate(nil) }
+        } else { openMenu }
+    }
+
+    @ViewBuilder private var openMenu: some View {
         if running.count == 1, let active = running.first {
             Text(active.name)
             Text(active.metrics)

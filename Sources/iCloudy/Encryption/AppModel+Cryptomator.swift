@@ -42,6 +42,9 @@ extension AppModel {
         let request = CryptomatorVaults.Request(base: account, folder: folder, tab: workspace.current.id)
         guard let remembered = cryptomator.rememberedPassphrase(base: account.id, folder: folder.id) else { cryptomator.unlocking = request; return }
         Task {
+            // A remembered passphrase opens the vault for whoever is at the Mac. With the lock on, that person is
+            // asked to prove who they are first; a refusal opens nothing, not even the sheet to type it.
+            guard await ownerConfirmed(for: L("abrir la bóveda «\(folder.name)»")) else { return }
             if let problem = await unlockVault(request, passphrase: remembered, remember: false) {
                 if problem == CryptomatorError.invalidPassphrase.errorDescription {
                     cryptomator.forgetPassphrase(CryptomatorVaults.accountID(base: account.id, folder: folder.id))

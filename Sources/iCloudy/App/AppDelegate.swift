@@ -11,6 +11,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let services = ServicesProvider()
     /// Clicking the Dock icon with no window open must bring the explorer back, not just activate a headless process.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { true }
+    /// Coming back from the application a file was being edited in is the likeliest moment for it to have been saved.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        AppModel.shared?.appBecameActive()
+        AppModel.shared?.editing.checkAll()
+    }
+    func applicationDidResignActive(_ notification: Notification) { AppModel.shared?.appResignedActive() }
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         DockIcon.apply()
