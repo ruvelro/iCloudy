@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The symbol and the colour a file is drawn with, by what the file actually is.
 ///
@@ -101,6 +102,28 @@ enum FileKind: String, CaseIterable {
 
 extension CloudFile {
     var kind: FileKind { FileKind.of(name: name, mime: mime, isFolder: isFolder) }
+}
+
+extension CloudFile {
+    /// What the item is, in the words the Finder would use: the system's own description of the type, so it reads in
+    /// the person's language without a table of ours.
+    var kindDescription: String {
+        if isFolder { return L("Carpeta") }
+        switch mime {
+        case "application/vnd.google-apps.document": return L("Documento de Google")
+        case "application/vnd.google-apps.spreadsheet": return L("Hoja de cálculo de Google")
+        case "application/vnd.google-apps.presentation": return L("Presentación de Google")
+        case "application/vnd.google-apps.shortcut": return L("Acceso directo")
+        default: break
+        }
+        if isGoogleDocument { return L("Elemento de Google") }
+        let ext = (name as NSString).pathExtension
+        guard !ext.isEmpty else { return L("Documento") }
+        if let described = UTType(filenameExtension: ext)?.localizedDescription, !described.isEmpty {
+            return described.prefix(1).uppercased() + described.dropFirst()
+        }
+        return L("Archivo \(ext.uppercased())")
+    }
 }
 
 extension FileKind {

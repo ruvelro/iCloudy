@@ -8,7 +8,8 @@ extension ExplorerView {
     /// a click in this one has already made it.
     func fileList(_ pane: Int) -> some View {
         let tab = model.tab(inPane: pane)
-        return Table(tab.visibleFiles, selection: model.selection(inPane: pane)) {
+        // Right-click on the header shows or hides the columns after the name; the choice is kept with the window.
+        return Table(tab.visibleFiles, selection: model.selection(inPane: pane), columnCustomization: $columnCustomization) {
             TableColumn("Nombre") { file in
                 HStack(spacing: 8) {
                     // Folders carry no cloud/Mac badge: iCloudy cannot claim that everything inside is present and
@@ -22,13 +23,21 @@ extension ExplorerView {
                 }.padding(.vertical, 5)
                     .overlay { if file.isFolder { MiddleClick { model.openInNewTab(file) } } }
                     .paneDragSource { model.paneDragProvider(for: file, pane: pane) }
-            }.width(min: 200, ideal: 320)
+            }.width(min: 200, ideal: 320).customizationID("name").disabledCustomizationBehavior(.visibility)
             TableColumn("Modificado") { file in
                 Text(file.modified?.formatted(date: .abbreviated, time: .omitted) ?? "—").foregroundStyle(.secondary)
-            }.width(125)
+            }.width(125).customizationID("modified")
             TableColumn("Tamaño") { file in
                 Text(file.size.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "—").foregroundStyle(.secondary)
-            }.width(85)
+            }.width(85).customizationID("size")
+            TableColumn("Tipo") { file in
+                Text(file.kindDescription).foregroundStyle(.secondary).lineLimit(1)
+            }.width(min: 90, ideal: 150).customizationID("kind")
+            // For whoever compares copies by eye. Hidden until asked for: most people never want to read a hash.
+            TableColumn("Suma de verificación") { file in
+                Text(file.checksum.map { $0.algorithm.title + " " + $0.value } ?? "—").font(.caption.monospaced()).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+            }.width(min: 120, ideal: 220).customizationID("checksum").defaultVisibility(.hidden)
         }
         // A Table insets its own cells; this brings their text onto the margin shared by the title and the footer.
         .padding(.horizontal, Layout.tableCorrection)
@@ -43,6 +52,7 @@ extension ExplorerView {
                     .help(model.limitation(.permanentDelete, for: model.selection(ids)) ?? "")
             } else if ids.count > 1 {
                 Button("Descargar \(ids.count) elementos…") { Task { await model.saveMany(model.selection(ids)) } }
+                Button("Descargar \(ids.count) elementos como ZIP…") { Task { await model.saveCompressed(model.selection(ids)) } }
                 Button("Renombrar \(ids.count) elementos…") { model.requestBatchRename(model.selection(ids)) }.disabled(!model.canWrite)
                 Button("Mover \(ids.count) elementos a…") { model.requestRelocation(model.selection(ids), copy: false) }
                 Button("Copiar \(ids.count) elementos a…") { model.requestRelocation(model.selection(ids), copy: true) }

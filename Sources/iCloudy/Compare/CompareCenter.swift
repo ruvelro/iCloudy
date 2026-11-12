@@ -33,7 +33,7 @@ struct FolderLocation: Identifiable, Hashable {
 @MainActor
 final class CompareCenter: NSObject, ObservableObject, NSWindowDelegate {
     static let shared = CompareCenter()
-    enum Mode: String { case compare, duplicates }
+    enum Mode: String { case compare, duplicates, usage }
 
     weak var model: AppModel?
     private var window: NSWindow?
@@ -72,6 +72,19 @@ final class CompareCenter: NSObject, ObservableObject, NSWindowDelegate {
     private var scanTask: Task<Void, Never>?
     private var lastProgress = Date.distantPast
 
+    // Usage
+    @Published var usageLocation: FolderLocation?
+    @Published private(set) var measuring = false
+    @Published private(set) var usageProgress = UsageScanner.Progress()
+    @Published private(set) var usageTree: UsageNode?
+    @Published private(set) var usageTruncated = false
+    /// The folder of the tree on screen: child ids from its root down.
+    @Published var usagePath: [String] = []
+    @Published var usageProblem: String?
+    /// The folder the tree on screen was measured from, which is where its items are shown.
+    private var measured: FolderLocation?
+    private var usageTask: Task<Void, Never>?
+
     // MARK: - Window
 
     func openCompare(model: AppModel, with folder: FolderLocation?) {
@@ -88,13 +101,58 @@ final class CompareCenter: NSObject, ObservableObject, NSWindowDelegate {
         show()
     }
 
+    func openUsage(model: AppModel, in folder: FolderLocation?) {
+        self.model = model
+        mode = .usage
+        if let folder, !measuring { usageLocation = folder }
+        show()
+        // Asked from a folder's own menu: there is nothing left to choose, so it starts.
+        if folder != nil, !measuring { startUsage() }
+    }
+
+    func startUsage() {
+        guard let location = usageLocation, !measuring else { return }
+        usageProblem = nil; usageTree = nil; usagePath = []; usageTruncated = false; usageProgress = .init()
+        measuring = true
+        let name = location.trail.last ?? title(of: location)
+        usageTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.measuring = false }
+            do {
+                let source = try self.source(for: location)
+                var last = Date.distantPast
+                let result = try await UsageScanner.scan(source, name: name) { progress in
+                    // A listing per folder arrives in bursts; the counter does not need every one of them.
+                    guard Date().timeIntervalSince(last) > 0.15 else { return }
+                    last = Date(); self.usageProgress = progress
+                }
+                self.usageTree = result.root; self.usageTruncated = result.truncated; self.usageProgress = result.progress
+                self.measured = location
+            } catch is CancellationError {
+            } catch { self.usageProblem = error.localizedDescription }
+        }
+    }
+    func cancelUsage() { usageTask?.cancel() }
+
+    /// Shows a measured item where it lives: its folder in the explorer, or the item itself in the Finder.
+    func revealUsage(_ node: UsageNode, parent: UsageNode) {
+        guard let entry = node.entry, let measured else { return }
+        reveal(entry, parent: parent.entry, in: measured)
+    }
+    func revealUsage(_ node: UsageNode, trail: [String], in tree: UsageNode) {
+        // The folder the file is in is found by walking its trail of names down from the top.
+        var folder = tree
+        for name in trail { guard let next = folder.children.first(where: { $0.isFolder && $0.name == name }) else { break }; folder = next }
+        revealUsage(node, parent: folder)
+    }
+
     private func show() {
         guard let model else { return }
         if window == nil {
             let created = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1040, height: 700),
                                    styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
             created.isReleasedWhenClosed = false
-            created.title = L("Comparar y buscar duplicados")
+            created.title = L("Comparar, duplicados y espacio")
             created.minSize = NSSize(width: 860, height: 560)
             created.contentView = NSHostingView(rootView: CompareRootView(center: self, model: model))
             created.delegate = self
@@ -106,8 +164,12 @@ final class CompareCenter: NSObject, ObservableObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// Takes the window off the screen without forgetting what it found, for when iCloudy locks.
+    func hide() { window?.orderOut(nil) }
+
     /// Closing the window stops whatever is listing or hashing; what was already found stays for when it reopens.
     func windowWillClose(_ notification: Notification) {
+        usageTask?.cancel()
         compareTask?.cancel()
         scanTask?.cancel()
     }
@@ -432,5 +494,11 @@ extension AppModel {
 
     func openDuplicateFinder(in folder: CloudFile? = nil) {
         CompareCenter.shared.openDuplicates(model: self, in: folder.flatMap(folderLocation) ?? currentFolderLocation)
+    }
+
+    /// «Analizar espacio…»: what takes up room in a folder, or in the whole of an account.
+    func openUsage(in folder: CloudFile? = nil, account target: Account? = nil) {
+        let location = target.map { FolderLocation(place: .cloud(accountID: $0.id, folder: nil)) } ?? folder.flatMap(folderLocation) ?? currentFolderLocation
+        CompareCenter.shared.openUsage(model: self, in: location)
     }
 }
