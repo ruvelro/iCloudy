@@ -9,6 +9,8 @@ import CryptoKit
 /// list of buckets otherwise. Every request is signed here with SigV4; the secret key never leaves the Mac.
 @MainActor
 final class S3Provider: CloudSession, CloudProvider {
+    /// Downloads continue from the bytes a cut connection left behind. `DownloadResume` has the rules.
+    var resumesDownloads: Bool { true }
     /// Where each bucket lives, learnt from listings and from the redirects of AWS. A bucket of another region only
     /// answers at that region's host, and the account was connected to one region.
     var bucketRegions: [String: String] = [:]

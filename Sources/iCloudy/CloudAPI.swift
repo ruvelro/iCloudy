@@ -137,26 +137,53 @@ final class CloudAPI {
     }
     /// Every download ends checked against the listed size and, when `checksum` allows it and the provider listed
     /// one, its checksum. A copy that fails the check is deleted before the error reaches the caller.
+    ///
+    /// A caller that keeps its partial file between attempts says so with `DownloadResume.mode`; what it gets here
+    /// is narrowed to what this file and this provider can honour. An export is generated on the way out and has no
+    /// second half to ask for, and a provider that cannot continue never sees the leftovers of an earlier attempt.
     @discardableResult
     func download(file: CloudFile, to destination: URL, exportMime: String? = nil, maxBytes: Int64? = nil, checksum: Bool = true,
                   progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws -> DownloadVerification {
+        let keepsPartial = DownloadResume.mode != .none
         // An earlier version, handed over by the versions sheet to the same preview and queue as any other file.
         if demo == nil, let reference = VersionedFile.reference(file) {
-            return try await downloadVersion(file, reference: reference, to: destination, exportMime: exportMime, maxBytes: maxBytes, checksum: checksum, progress: progress)
+            if keepsPartial { try? FileManager.default.removeItem(at: destination) }
+            return try await DownloadResume.$mode.withValue(.none) {
+                try await downloadVersion(file, reference: reference, to: destination, exportMime: exportMime, maxBytes: maxBytes, checksum: checksum, progress: progress)
+            }
         }
         // A provider that lists no checksum may still answer one per file; it is asked before the bytes travel.
         var file = file
         if demo == nil, checksum, exportMime == nil, file.checksum == nil, !file.isFolder,
            let asked = try await provider.downloadChecksum(of: file) { file.checksum = asked }
-        if let demo {
-            try await demo.download(file, to: destination, maxBytes: maxBytes, progress: progress)
-        } else {
-            try await provider.download(file: file, to: destination, exportMime: exportMime, maxBytes: maxBytes, progress: progress)
-            if let maxBytes, Int64((try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > maxBytes {
-                try? FileManager.default.removeItem(at: destination)
-                throw CloudError.message(L("La vista previa supera el límite de descarga autorizado."))
-            }
+        var mode = DownloadResume.none
+        if keepsPartial, demo == nil, provider.resumesDownloads, exportMime == nil, !file.isGoogleDocument {
+            let compared = checksum && provider.canVerifyDownload(of: file) && provider.verifiableChecksum(of: file) != nil
+            mode = compared ? .checked : .validated
         }
-        return try await verifyDownload(file, at: destination, exported: exportMime != nil, checksum: checksum)
+        if keepsPartial, mode == .none { try? FileManager.default.removeItem(at: destination) }
+        let described = file
+        let continued = mode != .none && FileManager.default.fileExists(atPath: destination.path)
+        func fetch(_ mode: DownloadResume, reconciling: Bool) async throws -> DownloadVerification {
+            if let demo {
+                try await demo.download(described, to: destination, maxBytes: maxBytes, progress: progress)
+            } else {
+                try await DownloadResume.$mode.withValue(mode) {
+                    try await provider.download(file: described, to: destination, exportMime: exportMime, maxBytes: maxBytes, progress: progress)
+                }
+                if let maxBytes, Int64((try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > maxBytes {
+                    try? FileManager.default.removeItem(at: destination)
+                    throw CloudError.message(L("La vista previa supera el límite de descarga autorizado."))
+                }
+            }
+            return try await verifyDownload(described, at: destination, exported: exportMime != nil, checksum: checksum, reconciling: reconciling)
+        }
+        do { return try await fetch(mode, reconciling: !continued) }
+        catch is DownloadIntegrityError where continued {
+            // The check deleted the file. What failed may be the splice of two attempts rather than the provider's
+            // copy, so the whole file is fetched once more before anybody calls it damaged or changed.
+            Diagnostics.downloadRestarted(account, name: file.name)
+            return try await fetch(mode, reconciling: true)
+        }
     }
 }

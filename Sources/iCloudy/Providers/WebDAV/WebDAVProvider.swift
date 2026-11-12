@@ -4,6 +4,8 @@ import Foundation
 /// under the configured base URL, and "root" is that base. There is no OAuth, no search and no recycle bin here.
 @MainActor
 final class WebDAVProvider: CloudSession, CloudProvider {
+    /// Downloads continue from the bytes a cut connection left behind. `DownloadResume` has the rules.
+    var resumesDownloads: Bool { true }
     
 }
 

@@ -160,6 +160,16 @@ enum Diagnostics {
                                 status: status, duration: delay, attempt: attempt,
                                 message: "espera \(Int(delay.rounded())) s"))
     }
+    /// A download that asked only for the bytes it was missing.
+    static func downloadResumed(_ account: Account, from offset: Int64) {
+        record(DiagnosticRecord(.summary, stage: DiagnosticStage.download, provider: account.cloud.rawValue,
+                                account: account.id, message: "reanudada desde el byte \(offset)"))
+    }
+    /// A continued download failed its check and is fetched whole.
+    static func downloadRestarted(_ account: Account, name: String) {
+        record(DiagnosticRecord(.retry, stage: DiagnosticStage.download, provider: account.cloud.rawValue,
+                                account: account.id, message: "la descarga reanudada no pasó la comprobación; se repite entera"))
+    }
     static func tokenRenewed(_ account: Account) {
         record(DiagnosticRecord(.summary, stage: DiagnosticStage.auth, provider: account.cloud.rawValue,
                                 account: account.id, message: "token renovado"))

@@ -4,6 +4,8 @@ import CryptoKit
 /// Box uses numeric ids and keeps files and folders on separate routes, so every call needs to know which one it is.
 @MainActor
 final class BoxProvider: CloudSession, CloudProvider {
+    /// Downloads continue from the bytes a cut connection left behind. `DownloadResume` has the rules.
+    var resumesDownloads: Bool { true }
     
 }
 

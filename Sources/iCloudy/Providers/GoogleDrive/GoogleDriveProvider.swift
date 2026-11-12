@@ -2,6 +2,8 @@ import Foundation
 
 @MainActor
 final class GoogleDriveProvider: CloudSession, CloudProvider {
+    /// Downloads continue from the bytes a cut connection left behind. `DownloadResume` has the rules.
+    var resumesDownloads: Bool { true }
     var rootIDCache: String?
 }
 

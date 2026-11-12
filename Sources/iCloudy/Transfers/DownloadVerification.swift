@@ -53,7 +53,10 @@ extension CloudAPI {
     /// Checks a downloaded file against the size and checksum the provider listed, in one streaming pass. On a
     /// mismatch the file is deleted, and the item is asked for again once so that a file someone changed while it
     /// travelled is reported as such instead of as corruption.
-    func verifyDownload(_ file: CloudFile, at url: URL, exported: Bool, checksum: Bool) async throws -> DownloadVerification {
+    ///
+    /// `reconciling` is false for a download that continued a partial file: a mismatch there says the splice went
+    /// wrong, the caller fetches the file whole, and only that second copy is worth asking the provider about.
+    func verifyDownload(_ file: CloudFile, at url: URL, exported: Bool, checksum: Bool, reconciling: Bool = true) async throws -> DownloadVerification {
         // Drive generates an export on the fly: there is no listed size or checksum for that rendition.
         if exported || file.isGoogleDocument { return .exported }
         guard demo != nil || provider.canVerifyDownload(of: file) else { return .unavailable }
@@ -70,6 +73,7 @@ extension CloudAPI {
         }
         guard let problem else { return verification }
         try? FileManager.default.removeItem(at: url)
+        guard reconciling else { throw problem }
         throw try await reconcile(problem, file: file)
     }
 

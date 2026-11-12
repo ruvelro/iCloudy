@@ -236,38 +236,72 @@ class CloudSession {
         let parts = path.split(separator: "/").dropLast()
         return parts.isEmpty ? "" : "/" + parts.joined(separator: "/")
     }
+    /// Writes the answer to `initialRequest` at `destination`.
+    ///
+    /// Outside the queue (`DownloadResume.mode` is `.none`) the contract is the one it always was: `destination`
+    /// must not exist, it appears only when the file is whole, and a failure leaves nothing. Inside it, `destination`
+    /// is the job's own partial file: bytes already there are skipped with a `Range` request, and whatever arrived
+    /// before a failure stays for the next attempt.
     func downloadHTTP(_ initialRequest: URLRequest, to destination: URL, maxBytes: Int64?, progress: @escaping (Int64, Int64) -> Void) async throws {
-        let delegate = DownloadProgress(maxBytes: maxBytes) { bytes, total in Task { @MainActor in progress(bytes, total) } }
+        let mode = DownloadResume.mode
         var request = initialRequest
         Diagnostics.stamp(&request, account: account)
-        var temporary: URL, response: URLResponse
-        do {
-            (temporary, response) = try await session.download(for: request, delegate: delegate)
-            if (response as? HTTPURLResponse)?.statusCode == 401, tokenProvider == nil {
-                // Same policy as `send`: renew once, then treat a repeated 401 as a revoked session.
-                try? FileManager.default.removeItem(at: temporary)
-                request.setValue(account.cloud.authorizationScheme + " " + (try await token(force: true)), forHTTPHeaderField: "Authorization")
-                (temporary, response) = try await session.download(for: request, delegate: delegate)
+        // Read here, inside the job that asked for the download; nil outside the queue.
+        let throttle = TaskThrottle(TransferThrottle.active?.download)
+        let target = mode == .none
+            ? FileManager.default.temporaryDirectory.appendingPathComponent("icloudy-download-" + UUID().uuidString)
+            : destination
+        defer { if mode == .none { try? FileManager.default.removeItem(at: target) } }
+        var renewed = false, startedOver = false
+        while true {
+            try Task.checkCancellation()
+            var attempt = request
+            let offset = DownloadResume.usableBytes(at: target, mode: mode)
+            if offset > 0 {
+                attempt.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
+                if let validator = DownloadResume.validator(of: target) { attempt.setValue(validator, forHTTPHeaderField: "If-Range") }
+                Diagnostics.downloadResumed(account, from: offset)
             }
-        } catch {
-            if delegate.exceededLimit { throw CloudError.message(L("La vista previa supera el límite de descarga autorizado.")) }
-            throw error
+            let transfer = StreamedDownload(destination: target, offset: offset, maxBytes: maxBytes, throttle: throttle) { bytes, total in
+                Task { @MainActor in progress(bytes, total) }
+            }
+            let outcome: StreamedDownload.Outcome
+            do { outcome = try await transfer.run(attempt, session: session) }
+            catch is DownloadResumeRefused where !startedOver {
+                // The server sent a range that does not continue the file. Once is enough to start clean.
+                startedOver = true
+                try? FileManager.default.removeItem(at: target)
+                continue
+            }
+            let status = outcome.response.statusCode
+            if status == 401, tokenProvider == nil {
+                // Same policy as `send`: renew once, then treat a repeated 401 as a revoked session.
+                guard !renewed else { expireSession(); throw CloudError.sessionExpired(nil) }
+                renewed = true
+                request.setValue(account.cloud.authorizationScheme + " " + (try await token(force: true)), forHTTPHeaderField: "Authorization")
+                continue
+            }
+            if status == 416, offset > 0, !startedOver {
+                // What is on disk is as long as the file, or longer: it is not a prefix of what the server has now.
+                startedOver = true
+                try? FileManager.default.removeItem(at: target)
+                continue
+            }
+            // The error body never reached the file. A bounded prefix keeps the provider's message, e.g. Google's
+            // explanation when an export exceeds its size limit.
+            try HTTP.validate(outcome.response, data: outcome.errorBody)
+            break
         }
-        defer { try? FileManager.default.removeItem(at: temporary) }
         try Task.checkCancellation()
-        if (response as? HTTPURLResponse)?.statusCode == 401, tokenProvider == nil { expireSession(); throw CloudError.sessionExpired(nil) }
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            // The error body landed in the temporary file. Read a bounded prefix so the provider's message survives,
-            // e.g. Google's explanation when an export exceeds its size limit.
-            let body = (try? FileHandle(forReadingFrom: temporary))?.readData(ofLength: 64 * 1024) ?? Data()
-            try HTTP.validate(response, data: body)
-        }
         if let maxBytes {
-            let actual = try temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            let actual = try target.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
             guard Int64(actual) <= maxBytes else { throw CloudError.message(L("La vista previa supera el límite de descarga autorizado.")) }
         }
+        // The validator described a file still on its way; the finished one keeps no trace of it.
+        DownloadResume.setValidator(nil, on: target)
+        guard mode == .none else { return }
         // moveItem refuses to overwrite an existing destination.
-        let downloaded = temporary
+        let downloaded = target
         try await blockingIO { try FileManager.default.moveItem(at: downloaded, to: destination) }
     }
 }

@@ -5,6 +5,8 @@ import Foundation
 /// Items are addressed by folderid and fileid, which stay the same across renames and moves.
 @MainActor
 final class PCloudProvider: CloudSession, CloudProvider {
+    /// Downloads continue from the bytes a cut connection left behind. `DownloadResume` has the rules.
+    var resumesDownloads: Bool { true }
 
 }
 

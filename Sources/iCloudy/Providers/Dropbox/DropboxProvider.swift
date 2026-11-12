@@ -6,6 +6,8 @@ import UniformTypeIdentifiers
 /// Ids therefore change when an item is renamed or moved, which is why every write is followed by a fresh listing.
 @MainActor
 final class DropboxProvider: CloudSession, CloudProvider {
+    /// Downloads continue from the bytes a cut connection left behind. `DownloadResume` has the rules.
+    var resumesDownloads: Bool { true }
     
 }
 

@@ -2,6 +2,8 @@ import Foundation
 
 @MainActor
 final class OneDriveProvider: CloudSession, CloudProvider {
+    /// Downloads continue from the bytes a cut connection left behind. `DownloadResume` has the rules.
+    var resumesDownloads: Bool { true }
     var rootIDCache: String?
 }
 

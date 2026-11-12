@@ -3,6 +3,7 @@ import Foundation
 extension Prefs {
     static let transferConcurrency = "transferConcurrency"
     static let transferPerAccount = "transferPerAccount"
+    static let transferFilesPerJob = "transferFilesPerJob"
     static let uploadLimitEnabled = "uploadLimitEnabled"
     static let uploadLimitValue = "uploadLimitValue"
     static let uploadLimitUnit = "uploadLimitUnit"
@@ -74,6 +75,9 @@ enum TransferHold: String, Codable {
 struct TransferPolicy: Equatable {
     var maxConcurrent = 3
     var maxPerAccount = 2
+    /// How many files of one folder travel at once inside a job. A folder of thousands of small files spends its
+    /// time on round trips, not on bytes, and those overlap well.
+    var filesPerJob = 4
     /// Bytes per second; nil is no limit.
     var uploadLimit: Int64?
     var downloadLimit: Int64?
@@ -82,6 +86,7 @@ struct TransferPolicy: Equatable {
 
     static let concurrencyRange = 1...8
     static let perAccountRange = 1...4
+    static let filesPerJobRange = 1...8
     /// Below this a suspended download waits so long between turns that the server may give up on it.
     static let minimumLimit: Int64 = 32_000
 
@@ -95,6 +100,7 @@ struct TransferPolicy: Equatable {
         var policy = TransferPolicy()
         policy.maxConcurrent = int(Prefs.transferConcurrency).map { min(max($0, concurrencyRange.lowerBound), concurrencyRange.upperBound) } ?? 3
         policy.maxPerAccount = int(Prefs.transferPerAccount).map { min(max($0, perAccountRange.lowerBound), perAccountRange.upperBound) } ?? 2
+        policy.filesPerJob = int(Prefs.transferFilesPerJob).map { min(max($0, filesPerJobRange.lowerBound), filesPerJobRange.upperBound) } ?? 4
         policy.uploadLimit = limit(Prefs.uploadLimitEnabled, Prefs.uploadLimitValue, Prefs.uploadLimitUnit)
         policy.downloadLimit = limit(Prefs.downloadLimitEnabled, Prefs.downloadLimitValue, Prefs.downloadLimitUnit)
         if bool(Prefs.transferWindowEnabled) {
@@ -117,6 +123,15 @@ enum TransferScheduler {
         case .ftp, .sftp, .mega, .o2: return 1
         default: return nil
         }
+    }
+
+    /// How many files of one job may travel at once between these providers. One wherever a session does a single
+    /// thing at a time. One for writes to Dropbox as well: each commit locks the account's namespace, and files
+    /// finishing side by side only earn `too_many_write_operations` and a wait.
+    static func filesAtOnce(_ policy: TransferPolicy, clouds: [Cloud], uploading: Bool) -> Int {
+        if clouds.contains(where: { sessionLimit(for: $0) != nil }) { return 1 }
+        if uploading, clouds.last == .dropbox { return 1 }
+        return max(1, policy.filesPerJob)
     }
     static func perAccountLimit(for cloud: Cloud?, policy: TransferPolicy) -> Int {
         let chosen = max(1, policy.maxPerAccount)
