@@ -1285,6 +1285,8 @@
 "%lld marcados · %@" = "%lld marked · %@";
 "Marcar copias sobrantes" = "Mark spare copies";
 "En cada grupo con el mismo contenido marca todas las copias menos la más antigua. Los posibles duplicados no se marcan." = "In every group with the same content, marks every copy except the oldest. Possible duplicates are not marked.";
+"Marcar las copias de este Mac" = "Mark the copies on this Mac";
+"Marca los archivos del Mac cuyo mismo contenido ya está en una nube, para liberar espacio sin tocar la nube. Van a la Papelera del Mac." = "Marks the files on this Mac whose exact content is already in a cloud, to free space without touching the cloud. They go to the Mac's Trash.";
 "Desmarcar todo" = "Unmark all";
 "Eliminar…" = "Delete…";
 "¿Enviar %lld archivos a la papelera?" = "Move %lld files to the trash?";

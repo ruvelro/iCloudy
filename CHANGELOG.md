@@ -133,6 +133,9 @@ Lo necesario para que iCloudy se descargue y se abra sin Xcode. Todo funciona ya
   favorito), las migas dicen cuál es la carpeta actual, el campo de filtro su contenido, el espacio de cada nube su
   porcentaje y cada transferencia qué va adónde y cuánto lleva. Con «Reducir movimiento» las animaciones de la
   ventana se quitan, y con «Aumentar contraste» las migas, el campo y la fila elegida ganan borde.
+- **Liberar espacio en el Mac sin tocar la nube.** En el buscador de duplicados, «Marcar las copias de este Mac» marca
+  los archivos del Mac cuyo contenido ya está, confirmado por su suma, en una cuenta en la nube. Van a la Papelera del
+  Mac; la copia de la nube no se toca. Una cuenta de disco o de iCloud Drive no cuenta como nube para esto.
 
 ### Transferencias y sincronización
 

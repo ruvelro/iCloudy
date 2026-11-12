@@ -340,6 +340,8 @@ final class CompareCenter: NSObject, ObservableObject, NSWindowDelegate {
     var canTrash: Bool { !marked.isEmpty && !trashing && !scanning && marksLeaveACopy }
 
     func markSuggested() { marked = DuplicateGrouping.suggestedSelection(report?.groups ?? []) }
+    func markMacCopies() { marked = DuplicateGrouping.macCopiesSelection(report?.groups ?? []) }
+    var hasMacCopies: Bool { !DuplicateGrouping.macCopiesSelection(report?.groups ?? []).isEmpty }
 
     func location(of candidate: DuplicateCandidate) -> FolderLocation? {
         scannedRoots.indices.contains(candidate.rootIndex) ? scannedRoots[candidate.rootIndex] : nil
