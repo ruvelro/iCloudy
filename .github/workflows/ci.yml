@@ -33,6 +33,8 @@ jobs:
         env:
           ICLOUDY_SFTP_URL: ${{ secrets.ICLOUDY_SFTP_URL }}
           ICLOUDY_FTPS_URL: ${{ secrets.ICLOUDY_FTPS_URL }}
+          # Real accounts, described as docs/PRUEBAS-REALES.md says. Unset, as on a fork, those tests are skipped.
+          ICLOUDY_LIVE_ACCOUNTS_JSON: ${{ secrets.ICLOUDY_LIVE_ACCOUNTS_JSON }}
           # A crash prints its backtrace in the log instead of only "unexpected signal".
           SWIFT_BACKTRACE: enable=yes,style=full,interactive=no
         run: swift test
