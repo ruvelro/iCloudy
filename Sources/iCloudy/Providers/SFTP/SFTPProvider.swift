@@ -87,6 +87,36 @@ extension SFTPProvider {
         }
     }
 
+    /// The permission bits of an item, as the server has them now.
+    func sftpPermissions(of file: CloudFile) async throws -> POSIXMode {
+        let attributes = try await sftpTranslating { try await sftp().stat(file.id) }
+        guard let permissions = attributes.permissions else { throw CloudError.message(L("El servidor no dice qué permisos tiene «\(file.name)».")) }
+        return POSIXMode(bits: permissions)
+    }
+    /// chmod. With `recursive`, everything below a folder gets the same bits, except that a file is never made
+    /// executable just because the folder above it has to be: its three x bits stay as they were.
+    func sftpSetPermissions(_ mode: POSIXMode, on file: CloudFile, recursive: Bool) async throws {
+        let client = try await sftp()
+        try await sftpTranslating { try await client.setPermissions(file.id, mode: mode.bits) }
+        guard recursive, file.isFolder else { return }
+        var pending = [file.id]
+        while let folder = pending.popLast() {
+            try Task.checkCancellation()
+            for entry in try await client.list(folder) where entry.name != "." && entry.name != ".." {
+                // A link is somebody else's file; changing what it points at from here would be a surprise.
+                guard !entry.attributes.isSymbolicLink else { continue }
+                let path = FTPListing.join(folder, entry.name)
+                if entry.attributes.isDirectory {
+                    try await client.setPermissions(path, mode: mode.bits)
+                    pending.append(path)
+                } else {
+                    let runs = (entry.attributes.permissions ?? 0) & 0o111
+                    try await client.setPermissions(path, mode: (mode.bits & ~0o111) | runs)
+                }
+            }
+        }
+    }
+
     func sftpList(parent: String) async throws -> [CloudFile] {
         let path = try sftpPath(parent)
         let entries = try await sftpTranslating { try await sftp().list(path) }

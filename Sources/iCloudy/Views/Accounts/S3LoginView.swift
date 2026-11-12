@@ -19,6 +19,9 @@ struct S3LoginView: View {
         case .cloudflare: return "Crea un token de API de R2 con acceso S3. El ID de cuenta está en el panel de R2, en la dirección del servicio."
         case .scaleway: return "Usa una clave de API de Scaleway con permiso sobre Object Storage."
         case .digitalocean: return "Crea una clave de acceso de Spaces en el panel de DigitalOcean."
+        case .googleCloud: return "Cloud Storage habla S3 con claves HMAC. Créalas en la consola de Google Cloud, en Cloud Storage › Configuración › Interoperabilidad."
+        case .storj: return "Crea unas credenciales compatibles con S3 en el panel de Storj. La pasarela «global» responde desde la más cercana."
+        case .hetzner: return "Crea las credenciales S3 en la consola de Hetzner y elige la ubicación donde está el bucket."
         case .custom: return "Para MinIO, Garage, Ceph y otros servidores compatibles con S3. Escribe la dirección completa del servicio, con su puerto."
         }
     }
@@ -78,7 +81,7 @@ struct S3LoginView: View {
             }
             .onChange(of: form.service) { _, service in
                 // The region of one service means nothing to another.
-                form.region = service.regions.isEmpty && service != .custom && service != .cloudflare ? "" : service.defaultRegion
+                form.region = service.regions.isEmpty && ![.custom, .cloudflare, .googleCloud].contains(service) ? "" : service.defaultRegion
             }
             Text(explanation).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             switch form.service {
@@ -89,6 +92,9 @@ struct S3LoginView: View {
                 TextField("ID de cuenta de Cloudflare", text: $form.accountID).textFieldStyle(.roundedBorder)
             case .backblaze:
                 TextField("Región, por ejemplo eu-central-003", text: $form.region).textFieldStyle(.roundedBorder)
+            case .googleCloud:
+                // One address for every bucket, wherever it is.
+                EmptyView()
             default:
                 Picker("Región", selection: $form.region) {
                     ForEach(form.service.regions, id: \.self) { region in Text(verbatim: region).tag(region) }

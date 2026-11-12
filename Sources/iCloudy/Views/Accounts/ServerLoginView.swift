@@ -29,6 +29,8 @@ struct ServerLoginView: View {
     @State private var passphrase = ""
     @State private var nextcloud = false
     @State private var showAdvanced = false
+    /// What the last known service chosen asks to be kept in mind.
+    @State private var presetHint: String?
 
     /// WebDAV and FTP need a full server address; Mega has only one.
     private var needsServer: Bool { cloud != .mega }
@@ -129,6 +131,25 @@ struct ServerLoginView: View {
                         .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
+            if cloud == .webdav {
+                HStack {
+                    // The services whose address has a known shape; the rest is typed as always.
+                    Menu("Servicios conocidos") {
+                        ForEach(WebDAVPreset.all) { preset in
+                            Button(preset.title) {
+                                server = preset.address(user: username.trimmingCharacters(in: .whitespaces))
+                                nextcloud = preset.nextcloud
+                                presetHint = preset.hint
+                            }
+                        }
+                    }.fixedSize()
+                    Spacer()
+                }
+                if let presetHint { Text(presetHint).font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+                if WebDAVPreset.isIncomplete(server) {
+                    Text("Sustituye {servidor} y {usuario} por los tuyos.").font(.caption2).foregroundStyle(.orange)
+                }
+            }
             if needsServer { TextField(placeholder, text: $server).textFieldStyle(.roundedBorder) }
             TextField(needsServer ? "Usuario" : "Correo de la cuenta", text: $username).textFieldStyle(.roundedBorder)
                 .onAppear(perform: prefillForReconnect)
@@ -177,7 +198,8 @@ struct ServerLoginView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(model.connecting || (needsServer && server.isEmpty) || username.isEmpty || (password.isEmpty && keyText == nil))
+                .disabled(model.connecting || (needsServer && server.isEmpty) || username.isEmpty || (password.isEmpty && keyText == nil)
+                          || (cloud == .webdav && WebDAVPreset.isIncomplete(server)))
             }
         }.padding(24).frame(width: 470)
     }
