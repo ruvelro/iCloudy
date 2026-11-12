@@ -197,8 +197,19 @@ final class MirrorManager: ObservableObject {
     var debounce: Duration = .seconds(3)
     /// Tests turn this off: FSEvents on a temporary folder would race the assertions.
     var watching = true
-    /// How often a two-way mirror asks the cloud for changes nobody made from this Mac.
+    /// How often a two-way mirror lists the cloud to find changes nobody made from this Mac, where the provider has
+    /// no change feed to ask instead.
     var remotePollInterval: Duration = .seconds(300)
+    /// How often the change feed is asked, where there is one. One small request that usually answers "nothing".
+    var feedPollInterval: Duration = .seconds(30)
+    /// With a feed the tree is still listed in full this often, in case the feed ever kept something to itself.
+    var feedSafetyInterval: TimeInterval = 3600
+    /// The feed position of each two-way mirror, taken right before its last complete run listed the cloud. Only in
+    /// memory: every launch starts with a full run, which takes a new one.
+    private(set) var feedCursors: [UUID: String] = [:]
+    /// The ids of each mirror's remote tree as its last run saw it, which is what a change is matched against.
+    private var feedKnown: [UUID: Set<String>] = [:]
+    private var lastFullRun: [UUID: Date] = [:]
     /// Two-way syncs in progress, and the ones that must run once more because something changed meanwhile.
     private(set) var running: Set<UUID> = []
     private var pollers: [UUID: Task<Void, Never>] = [:]
@@ -245,6 +256,7 @@ final class MirrorManager: ObservableObject {
         if let url = scopedURLs.removeValue(forKey: id) { url.stopAccessingSecurityScopedResource() }
         scheduled.removeValue(forKey: id)?.cancel(); dirty.remove(id); pending.remove(id)
         pollers.removeValue(forKey: id)?.cancel(); running.remove(id); massDeletionAllowed.remove(id); matchers[id] = nil
+        feedCursors[id] = nil; feedKnown[id] = nil; lastFullRun[id] = nil
         mirrors.removeAll { $0.id == id }
         if let transfer { queue?.cancel(transfer) }
         do { try persist() } catch { persistenceError = error.localizedDescription }
@@ -378,14 +390,50 @@ final class MirrorManager: ObservableObject {
         watchers[id] = FolderWatcher(url: url) { [weak self] paths in Task { @MainActor in self?.noteChanges(paths, for: id) } }
         // The cloud sends no events: a two-way mirror asks it now and then for what changed elsewhere.
         if mirror.mode == .twoWay, pollers[id] == nil {
-            let interval = remotePollInterval
             pollers[id] = Task { [weak self] in
                 while !Task.isCancelled {
+                    guard let interval = self?.remoteInterval(for: id) else { return }
                     try? await Task.sleep(for: interval)
                     guard !Task.isCancelled else { return }
-                    await MainActor.run { self?.scheduleSync(id, immediate: true) }
+                    await self?.remoteTick(id)
                 }
             }
+        }
+    }
+    /// What a complete run leaves behind for the feed: where it started from and what it saw.
+    func adoptFeedPosition(_ position: String?, known: Set<String>, for id: UUID) {
+        feedCursors[id] = position
+        feedKnown[id] = known
+        lastFullRun[id] = Date()
+    }
+    /// With a feed position in hand the cloud is asked often and cheaply; without one, seldom and in full.
+    private func remoteInterval(for id: UUID) -> Duration { feedCursors[id] == nil ? remotePollInterval : feedPollInterval }
+
+    /// One turn of the remote poll. A mirror whose provider has a change feed asks it what happened since the last
+    /// run, and only lists the cloud when the answer touches its tree; the others list it every time, as before.
+    func remoteTick(_ id: UUID) async {
+        guard let mirror = mirrors.first(where: { $0.id == id }), !mirror.paused, !running.contains(id) else { return }
+        guard let cursor = feedCursors[id], let api = try? queue?.client?(mirror.accountID),
+              Date().timeIntervalSince(lastFullRun[id] ?? .distantPast) < feedSafetyInterval else {
+            scheduleSync(id, immediate: true); return
+        }
+        do {
+            let batch = try await api.changes(since: cursor, in: mirror.remoteFolderID)
+            // A run that started while the feed was being asked takes its own position; this one is stale.
+            guard feedCursors[id] == cursor, let current = mirrors.first(where: { $0.id == id }) else { return }
+            // What the run listed, plus what it then created or uploaded itself.
+            let known = (feedKnown[id] ?? []).union(current.baseline.values.compactMap(\.remoteID))
+            if batch.touches(root: current.remoteFolderID, known: known, rootAlias: api.account.cloud.rootAlias) {
+                // The run takes a new position before it lists; until it succeeds there is none to ask from.
+                feedCursors[id] = nil
+                scheduleSync(id, immediate: true)
+            } else {
+                feedCursors[id] = batch.cursor
+            }
+        } catch {
+            // No network, an expired session, a feed that stopped answering: nothing is concluded from silence.
+            // The position is dropped, so the next turn lists the cloud at the old pace until a run succeeds.
+            feedCursors[id] = nil
         }
     }
     private func scheduleSync(_ id: UUID, immediate: Bool, resumeInterrupted: Bool = false) {
@@ -458,6 +506,9 @@ final class MirrorManager: ObservableObject {
         do {
             guard FileManager.default.fileExists(atPath: url.path) else { throw CloudError.message(L("La carpeta local ya no existe en \(url.path).")) }
             let engine = try makeEngine(mirror, account: account, url: url)
+            // Taken before the cloud is listed: whatever changes during the run is then reported after it.
+            let feedPosition = try? await engine.api.changeCursor(for: mirror.remoteFolderID)
+            feedCursors[id] = nil
             engine.shouldStop = { [weak self] in self?.isPaused(id) ?? true }
             engine.allowMassDeletion = massDeletionAllowed.remove(id) != nil
             engine.persist = { [weak self] baseline in
@@ -472,6 +523,8 @@ final class MirrorManager: ObservableObject {
             mirrors[position].lastSync = Date()
             mirrors[position].lastError = nil
             try persist()
+            // Only a run that reached the end vouches for the position it started from.
+            adoptFeedPosition(feedPosition, known: engine.seenRemoteIDs, for: id)
         } catch {
             if let position = mirrors.firstIndex(where: { $0.id == id }) {
                 // Paused halfway: every finished step is in the baseline already, so that is not an error.

@@ -193,6 +193,10 @@ final class TwoWaySyncEngine {
         self.api = api; self.localRoot = localRoot; self.remoteRoot = remoteRoot; self.baseline = baseline
     }
 
+    /// The id of everything the last listing of the cloud found, folders included. A change feed names items by
+    /// id, and a folder both sides had from the start has no baseline entry to remember its id by.
+    private(set) var seenRemoteIDs: Set<String> = []
+
     /// Relative path → item for the whole remote tree, plus the id of every remote folder by path.
     func remoteSnapshot() async throws -> (files: [String: CloudFile], folders: [String: String]) {
         var files: [String: CloudFile] = [:]
@@ -208,6 +212,7 @@ final class TwoWaySyncEngine {
                 if item.isFolder, !exclusions.excludes(path, isFolder: true) { folders[path] = item.id; queue.append((item.id, path)) }
             }
         }
+        seenRemoteIDs = Set(files.values.map(\.id)).union(folders.values)
         return (files, folders)
     }
 
