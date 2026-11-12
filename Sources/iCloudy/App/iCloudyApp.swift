@@ -29,7 +29,8 @@ struct iCloudyApp: App {
         // the user (or a crash) closed stays closed, leaving the app running with nothing on screen. "Nueva ventana"
         // is removed below, so this still behaves as a single-window app over one shared model.
         WindowGroup(id: "explorer") {
-            ExplorerView(model: model)
+            // Locked, the explorer is not merely covered: it is not there, and neither are its sheets or its toolbar.
+            Group { if model.isLocked { LockedView(model: model) } else { ExplorerView(model: model) } }
                 .frame(minWidth: 900, minHeight: 600)
                 .onAppear { delegate.model = model }
                 .onChange(of: menuBarEnabled) { DockIcon.apply() }
@@ -44,6 +45,7 @@ struct iCloudyApp: App {
         .commands {
             // There is still one window; ⌘T opens a tab in it instead of a second one.
             CommandGroup(replacing: .newItem) {
+              Group {
                 Button("Nueva pestaña") { model.newTab() }.keyboardShortcut("t", modifiers: .command)
                 Divider()
                 // F5 and F6, as in the two-pane file managers they come from.
@@ -51,6 +53,7 @@ struct iCloudyApp: App {
                     .keyboardShortcut(KeyEquivalent.function(5), modifiers: []).disabled(!model.isSplit)
                 Button("Mover al otro panel") { model.sendSelectionToOtherPane(move: true) }
                     .keyboardShortcut(KeyEquivalent.function(6), modifiers: []).disabled(!model.isSplit)
+              }.disabled(model.isLocked)
             }
             CommandGroup(replacing: .saveItem) {
                 // ⌘W closes a tab while there are others and the window with the last one. Any other window with
@@ -62,6 +65,7 @@ struct iCloudyApp: App {
                 Button("Cerrar ventana") { NSApp.keyWindow?.performClose(nil) }.keyboardShortcut("w", modifiers: [.command, .shift])
             }
             CommandGroup(after: .windowArrangement) {
+              Group {
                 Divider()
                 Button("Mostrar la pestaña anterior") { model.cycleTabs(forward: false) }
                     .keyboardShortcut(.tab, modifiers: [.control, .shift]).disabled(model.tabCount < 2)
@@ -74,18 +78,24 @@ struct iCloudyApp: App {
                     }
                     Button("Última pestaña") { model.showTab(number: 9) }.keyboardShortcut("9", modifiers: .command)
                 }
+              }.disabled(model.isLocked)
             }
             CommandGroup(after: .appInfo) {
+              Group {
+                Button("Bloquear iCloudy") { model.lock() }.keyboardShortcut("l", modifiers: [.command, .control]).disabled(!model.lockPolicy.enabled)
                 Button("Añadir cuenta…") { model.showConnect = true }.keyboardShortcut("n", modifiers: [.command, .shift])
                 Button("Subir archivos…") { Task { await model.pickUpload() } }.disabled(!model.canWrite)
+                Button("Subir comprimido en ZIP…") { Task { await model.pickCompressedUpload() } }.disabled(!model.canWrite)
                 Button("Subir el portapapeles") { model.uploadFromPasteboard() }.disabled(!model.canWrite)
                 Button("Buscar en todas las nubes") { model.preview.close(); model.showGlobalSearch = true }.keyboardShortcut("f", modifiers: [.command, .shift])
                 Button("Comparar carpetas…") { model.openComparator() }.disabled(model.accounts.isEmpty)
                 Button("Buscar duplicados…") { model.openDuplicateFinder() }.disabled(model.accounts.isEmpty)
+                Button("Analizar espacio…") { model.openUsage() }.disabled(model.accounts.isEmpty)
+              }.disabled(model.isLocked)
             }
             CommandGroup(after: .toolbar) {
                 Button(model.isSplit ? "Cerrar el segundo panel" : "Dividir en dos paneles") { model.toggleSplit() }
-                    .keyboardShortcut("d", modifiers: [.command, .shift])
+                    .keyboardShortcut("d", modifiers: [.command, .shift]).disabled(model.isLocked)
                 Toggle("Mostrar iCloudy en la barra de menús", isOn: $menuBarEnabled)
             }
         }

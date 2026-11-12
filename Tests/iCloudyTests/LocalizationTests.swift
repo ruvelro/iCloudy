@@ -88,6 +88,13 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(try format("es", "%lld archivos en cola hacia %@.", 1, "Drive"), "1 archivo en cola hacia Drive.")
         XCTAssertEqual(try format("en", "%lld archivos en %lld carpetas", 1, 4), "1 file in 4 folders")
         XCTAssertEqual(try format("es", "%lld carpetas · %lld archivos", 2, 1), "2 carpetas · 1 archivo")
+        // A count that follows a name takes its own argument, not the first one.
+        XCTAssertEqual(try format("es", "%@ en %lld archivos", "3 MB", 1), "3 MB en 1 archivo")
+        XCTAssertEqual(try format("en", "%@ en %lld archivos", "3 MB", 7), "3 MB in 7 files")
+        XCTAssertEqual(try format("es", "%lld nuevos", 1), "1 nuevo")
+        XCTAssertEqual(try format("en", "%lld archivos extraídos en «%@».", 1, "Proyecto"), "1 file extracted into “Proyecto”.")
+        XCTAssertEqual(try format("es", "Cada %lld horas", 1), "Cada 1 hora")
+        XCTAssertEqual(try format("en", "%lld enlaces públicos que revisar", 2), "2 public links to review")
     }
 
     /// Every plural entry keeps the arguments of its key, in both languages, so no count or name goes missing.

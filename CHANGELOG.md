@@ -5,13 +5,77 @@ en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y a
 
 ## Sin publicar
 
+Lo nuevo se ha probado con respuestas simuladas, con la demo local y con archivos hechos por las herramientas del
+sistema, no contra cuentas reales. Para eso está ahora la batería de [pruebas reales](docs/PRUEBAS-REALES.md), que se
+salta sola mientras no se le den cuentas.
+
+### Transferencias
+
+- **Las descargas se reanudan.** Un corte a mitad de un archivo grande ya no lo empieza de cero: lo que había llegado
+  se queda en un archivo parcial junto al destino y el siguiente intento pide solo el resto (`Range`). En Drive,
+  OneDrive, Dropbox, Box, pCloud, WebDAV y S3. Si el archivo cambió entre un intento y otro, el servidor lo dice
+  (`If-Range`) o la suma no cuadra, y entonces baja entero una vez más antes de darlo por dañado. Cancelar o limpiar
+  la transferencia borra el parcial.
+- **Varios archivos de una carpeta a la vez.** Dentro de una subida, una descarga o una copia entre nubes viajan hasta
+  cuatro archivos en paralelo (de uno a ocho, en Ajustes › Transferencias). FTP, SFTP, Mega y O2 siguen de uno en uno,
+  y las subidas a Dropbox también, porque bloquea la cuenta en cada escritura. Las partes de una subida multiparte a
+  S3 van de varias en varias, sin tener nunca más de 64 MiB en memoria.
+- **Mover entre nubes sobrevive al cierre.** La promesa de quitar el original cuando su copia llegue verificada se
+  guarda con la transferencia. Antes vivía en memoria: cerrar iCloudy a medias convertía el movimiento en copia sin
+  decir nada.
+
+### Sincronización
+
+- **Registro de cambios en lugar de recorrer el árbol.** Una sincronización en ambos sentidos con Drive, OneDrive,
+  Dropbox o Box pregunta cada 30 segundos al registro de cambios del proveedor (una petición que casi siempre contesta
+  «nada») y solo lista la nube cuando la respuesta toca su carpeta. Antes listaba el árbol entero cada cinco minutos.
+  Los demás proveedores siguen como estaban, y cada hora se lista todo igualmente, por si el registro callara algo.
+- **Copias programadas de nube a nube.** «Copiar periódicamente a otra nube…», en el menú de una carpeta: a mano, cada
+  varias horas, cada día o cada semana. La primera vez copia todo; después, solo lo nuevo y lo cambiado. Lo que una
+  copia sustituye o retira se puede guardar en «Versiones anteriores (iCloudy)», en una carpeta con la fecha, durante
+  los días que se elijan. Solo retira del destino lo que ella misma copió, y se niega a vaciar la mayor parte de él.
+
+### Uso diario
+
+- **Editar y subir los cambios.** Abre un archivo de la nube en su aplicación y sube cada cambio que se guarde. Si el
+  archivo cambió en la nube mientras tanto, los cambios suben aparte, con un nombre que lo dice, y el original se queda
+  como estaba.
+- **Comprimir y descomprimir.** «Descargar como ZIP…» para una carpeta o una selección, «Descargar y descomprimir…»
+  para un .zip, y «Subir comprimido en ZIP…». El lector de ZIP es propio (no hay herramienta que llamar desde el
+  sandbox): ZIP64, y rechaza rutas que saldrían del destino, enlaces y entradas que se inflan más de lo que declaran.
+- **Analizar espacio.** Una tercera herramienta en la ventana de comparar y duplicados: qué ocupa cada carpeta, de
+  mayor a menor y nivel a nivel, y los archivos más grandes. Solo lee listados.
+- **Columnas.** «Tipo» y, oculta por omisión, «Suma de verificación». Clic derecho en la cabecera para elegirlas.
+
+### Seguridad
+
+- **Bloqueo con Touch ID.** Opcional: iCloudy pide Touch ID o la contraseña del Mac al abrirse, al volver tras unos
+  minutos fuera y al bloquearse la pantalla, y antes de abrir una bóveda con la contraseña guardada. Es una pantalla de
+  privacidad, no un cifrado; los Atajos tampoco pasan mientras está bloqueado.
+- **Revisión de enlaces públicos.** Una vez al día, y avisando en la barra lateral: los que caducan en una semana, los
+  ya caducados y los que cualquiera puede abrir sin fecha ni contraseña. No revoca nada por su cuenta.
+
+### Proveedores
+
+- **S3**: Google Cloud Storage (con claves HMAC), Storj y Hetzner Object Storage como servicios con dirección conocida.
+- **WebDAV**: «Servicios conocidos» rellena la dirección de Nextcloud, ownCloud, Synology, Koofr, Hetzner Storage
+  Box, HiDrive, Yandex Disk y Fastmail.
+- **SFTP**: «Permisos…» para ver y cambiar los permisos de un archivo o de una carpeta con todo lo que contiene.
+
+### Pruebas
+
+- `LiveAccountTests` recorre un proveedor entero contra una cuenta real: subir, bajar, reanudar una descarga,
+  renombrar, mover, copiar, el registro de cambios y la papelera. Las cuentas se describen en un archivo que no entra
+  en el repositorio.
+- La cola de las pruebas ya no lee ni escribe la cola real de quien las ejecuta.
+
 ### Robustez
 
 - **La ventana ya no se traba guardando ni leyendo.** La cola, los reflejos, las copias sin conexión y locales, el
   índice de Spotlight y el historial se escriben en segundo plano, en orden y sin escrituras repetidas. Las
   respuestas grandes (una página de mil archivos, el árbol de pCloud o de Mega) se leen fuera del hilo principal.
 - **El archivo de la cola deja de crecer sin límite**: el panel conserva las 300 transferencias terminadas más
-  recientes, y el historial, todas. Antes guardaba cada pasada de cada reflejo con su informe completo.
+  recientes, y el historial, las que diga Ajustes (200 por omisión). Antes guardaba cada pasada de cada reflejo con su informe completo.
 - **Cada vista se redibuja solo por lo que muestra.** El modelo de la app pasa a Observation: antes, cualquier cambio
   (una cuota que llega, una transferencia que avanza) redibujaba las 24 vistas que lo miraban. De paso, olvidar una
   copia local ya quita su marca al momento.

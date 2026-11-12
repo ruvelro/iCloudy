@@ -65,13 +65,14 @@ extension AppModel {
         }
     }
     /// Returns the jobs queued, none if the queue refused them.
-    @discardableResult func enqueueCrossCloud(_ files: [CloudFile], from source: Account, to target: Account, parent: String, destinationPath: [CloudFile], seeds: [[String: FileRecord]]?) -> [Transfer] {
+    @discardableResult func enqueueCrossCloud(_ files: [CloudFile], from source: Account, to target: Account, parent: String, destinationPath: [CloudFile], seeds: [[String: FileRecord]]?, move: Bool = false) -> [Transfer] {
         let label = ([target.email] + destinationPath.map(\.name)).joined(separator: " / ")
         let batch = UUID()
         let jobs = files.enumerated().map { index, file -> Transfer in
             var job = Transfer(batchID: batch, name: file.name, destination: label, accountID: source.id, direction: .transfer, localURL: URL(fileURLWithPath: "/"), parent: parent, file: file)
             job.localURL = queue.scratchDirectory(for: job.id)
             job.targetAccountID = target.id
+            job.removesSource = move
             job.seed(seeds?.indices.contains(index) == true ? seeds?[index] : nil)
             return job
         }
@@ -274,6 +275,8 @@ extension AppModel {
         offlineFollow(change, account: account, destinationPath: destinationPath)
         spotlight.remap(change, accountID: account.id, accountLabel: accountTitle(account), oldParent: previousParent, newParent: destinationPath?.map(\.name))
         try mirrors.remap(change, accountID: account.id)
+        editing.remap(change, accountID: account.id)
+        backups.remap(change, accountID: account.id)
         try queue.remap(change, accountID: account.id)
     }
 
@@ -294,5 +297,37 @@ extension AppModel {
             } else { _ = try await api.createFolder(name: name, parent: parent) }
             showNameDialog = false; reloadAfterWrite(to: account)
         } catch { self.error = error.localizedDescription }
+    }
+
+    /// Why `file` cannot be opened for editing here, or nil when it can.
+    func editingLimitation(_ file: CloudFile) -> String? {
+        if file.isFolder { return L("Una carpeta no se edita: ábrela y edita lo que contiene.") }
+        if file.isGoogleDocument { return L("Los documentos de Google se editan en el navegador: no tienen un archivo que abrir en el Mac.") }
+        if !canWrite { return L("Aquí no se puede guardar: abre la carpeta donde vive el archivo.") }
+        return nil
+    }
+
+    /// Opens a remote file in its own application and keeps uploading what that application saves.
+    func editInPlace(_ file: CloudFile) {
+        guard let account, editingLimitation(file) == nil else { return }
+        let parent = folderID
+        let location = ([accountTitle(account)] + path.map(\.name)).joined(separator: " / ")
+        if editing.session(for: file, accountID: account.id) == nil { info = L("Descargando «\(file.name)» para editarlo…") }
+        Task {
+            do {
+                try await editing.begin(file, account: account, parent: parent, location: location)
+                if info == L("Descargando «\(file.name)» para editarlo…") {
+                    info = L("«\(file.name)» está abierto para editar. Cada vez que lo guardes, iCloudy subirá los cambios.")
+                }
+            } catch { self.error = L("No se pudo abrir «\(file.name)» para editarlo: \(error.localizedDescription)") }
+        }
+    }
+
+    /// «Copiar periódicamente a otra nube…»: opens the sheet that sets a scheduled copy of `folder` up.
+    func requestBackup(of folder: CloudFile) {
+        guard let account, folder.isFolder else { return }
+        guard accounts.count > 1 || !account.isDemo else { error = L("Conecta otra cuenta para poder copiar de una nube a otra."); return }
+        let name = ([accountTitle(account)] + (collection == .files ? path.map(\.name) : []) + [folder.name]).joined(separator: " / ")
+        backupDraft = BackupDraft(sourceAccountID: account.id, sourceFolderID: folder.id, sourceName: name)
     }
 }

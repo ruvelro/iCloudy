@@ -13,6 +13,8 @@ struct ExplorerView: View {
     }
     /// The pane files from the Finder are being dragged over, if any.
     @State var dropTarget: Int?
+    /// Which columns of the list are shown, in which order and how wide; restored with the window.
+    @SceneStorage("explorerColumns") var columnCustomization: TableColumnCustomization<CloudFile>
     /// The transfers drawer starts closed and opens itself when something is transferring.
     @State var showTransfers = false
     @State var confirmDisconnect = false
@@ -64,6 +66,9 @@ struct ExplorerView: View {
         .sheet(item: $model.relocation) { request in FolderPickerView(model: model, request: request) }
         .sheet(item: $model.batchRename) { request in BatchRenameView(model: model, request: request) }
         .sheet(item: $model.crossCloud) { request in CloudTargetPicker(model: model, request: request) }
+        .sheet(item: $model.backupDraft) { draft in BackupPlanSheet(model: model, draft: draft) }
+        .sheet(item: $model.permissionsRequest) { request in PermissionsView(model: model, request: request) }
+        .sheet(isPresented: $model.showLinkReview) { LinkReviewView(model: model, auditor: model.linkAuditor) }
         .sheet(item: $model.sharing) { request in SharingView(model: model, request: request) }
         .sheet(item: $model.publicLinkManager) { request in PublicLinksView(model: model, request: request) }
         .sheet(item: $model.linkInventory) { account in LinkInventoryView(model: model, account: account) }

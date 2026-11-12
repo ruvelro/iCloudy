@@ -10,7 +10,7 @@
 [![macOS](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-6-F05138?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![SwiftUI](https://img.shields.io/badge/SwiftUI-nativo-0071e3?style=flat-square)](https://developer.apple.com/xcode/swiftui/)
-[![tests](https://img.shields.io/badge/tests-835%20✓-43c463?style=flat-square)](Tests)
+[![tests](https://img.shields.io/badge/tests-939%20✓-43c463?style=flat-square)](Tests)
 [![licencia](https://img.shields.io/badge/licencia-GPL--3.0-8a7ee0?style=flat-square)](LICENSE)
 
 </div>
@@ -60,7 +60,7 @@ terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga 
 ³ Cifrado de extremo a extremo: cada descarga se verifica contra el resumen que lleva dentro la clave del archivo.
 <br>⁴ En Mega, enlaces de archivo. Una carpeta se comparte con una clave aparte que iCloudy todavía no sabe crear, y lo dice.
 <br>⁵ Papelera navegable (restaurar, eliminar definitivamente, vaciar) en Drive, Box y Mega; en Dropbox se listan y restauran archivos, y el vaciado depende de la cuenta. En OneDrive se lista lo eliminado desde iCloudy en los últimos 30 días y se restaura (cuentas personales): Graph no deja ver la papelera entera. O2 y los volúmenes borran sin listar su papelera. pCloud lista, restaura y vacía la suya.
-<br>⁶ Amazon S3, Backblaze B2, Wasabi, Cloudflare R2, MinIO, Scaleway y DigitalOcean Spaces, con firma SigV4 propia y subidas multiparte reanudables — [guía](docs/S3.md).
+<br>⁶ Amazon S3, Backblaze B2, Wasabi, Cloudflare R2, MinIO, Scaleway, DigitalOcean Spaces, Google Cloud Storage, Storj y Hetzner, con firma SigV4 propia y subidas multiparte reanudables — [guía](docs/S3.md).
 <br>⁷ URL prefirmadas de una hora, un día o siete días, solo de archivos.
 <br>⁹ En Nextcloud: la papelera se lista, se restaura, se purga y se vacía. WebDAV a secas no tiene.
 <br>⁸ Por nombre. El proveedor no tiene búsqueda propia: iCloudy recorre las carpetas (pCloud, con un solo listado recursivo).
@@ -137,6 +137,21 @@ cancelable y limpieza al cerrar.
 | **Bóvedas cifradas** | Cifrado en el Mac compatible con Cryptomator (formato 8): nombres y contenidos cifrados en cualquier nube — [cómo funciona](docs/CIFRADO.md). |
 | **Exclusiones en reflejos** | Patrones al estilo de gitignore, ocultos, paquetes y basura del sistema fuera de los reflejos y la sincronización; pausa y vista previa de los cambios pendientes. |
 | **Diagnóstico** | Registro estructurado de todos los proveedores, sin secretos, con vista previa de lo que se exporta — [detalles](docs/DIAGNOSTICO.md). |
+
+### 🆕 Lo último, aún sin publicar
+
+|  |  |
+|---|---|
+| **Descargas que se reanudan** | Un corte a mitad de un archivo grande ya no lo empieza de cero: se pide solo lo que falta, y lo que llega se comprueba igual. |
+| **Editar y subir los cambios** | Abre un archivo de la nube en su aplicación; cada vez que guardas, sube. Si alguien lo cambió mientras tanto, tus cambios suben aparte y nada se pisa. |
+| **Copias programadas de nube a nube** | Una carpeta de una cuenta copiada a otra cada día, cada semana o cuando digas, guardando las versiones anteriores de lo que cambia. |
+| **Sincronización más viva y más barata** | Con Drive, OneDrive, Dropbox y Box, la sincronización pregunta cada medio minuto al registro de cambios del proveedor en vez de recorrer la carpeta entera cada cinco. |
+| **Carpetas en paralelo** | Varios archivos de una misma carpeta viajan a la vez, y las partes de una subida a S3 también. |
+| **Comprimir y descomprimir** | Descarga una selección como un único ZIP, descomprime un ZIP al bajarlo o sube comprimido. |
+| **Analizar espacio** | Qué ocupa cada carpeta de una nube, de mayor a menor, y cuáles son los archivos más grandes. |
+| **Bloqueo con Touch ID** | Opcional, para la app y para las bóvedas con la contraseña guardada. |
+| **Revisión de enlaces públicos** | Un aviso de los que caducan pronto y de los que siguen abiertos sin fecha ni contraseña. |
+| **Más direcciones conocidas** | Google Cloud Storage, Storj y Hetzner en S3; Koofr, Hetzner Storage Box, Yandex y otros en WebDAV. Y permisos en SFTP. |
 
 ### 🆕 Nuevo en el uso diario
 
@@ -217,6 +232,9 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 - [x] Integración continua en GitHub Actions
 - [x] Miniaturas, arrastrar al Finder, deshacer, renombrado en lote, búsquedas guardadas y búsqueda en todas las nubes
 - [x] Claves SSH, versiones en pCloud y S3, papeleras de Nextcloud y OneDrive, credenciales temporales y perfiles en S3, subidas reanudables en Mega
+- [x] Descargas reanudables, varios archivos a la vez dentro de un trabajo y movimientos entre nubes que sobreviven al cierre
+- [x] Registro de cambios de Drive, OneDrive, Dropbox y Box en la sincronización en ambos sentidos
+- [x] Editar y volver a subir, ZIP, analizador de espacio, copias programadas con versiones, bloqueo con Touch ID y revisión de enlaces
 
 **En camino**
 
@@ -224,6 +242,9 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 - [ ] **Extensión del Finder firmada y verificada**: el código está ([File Provider](docs/FILEPROVIDER.md)) y se empaqueta al indicar un App Group, pero cargarla en el Finder exige un identificador de equipo de Apple que todavía no hay
 - [ ] **Mega**: probar el segundo factor y las cuentas anteriores a 2018 contra cuentas reales
 - [ ] **pCloud, S3 y bóvedas**: probarlos contra cuentas reales y contra una bóveda creada por Cryptomator
+- [ ] **Cuentas reales**: la [batería que las recorre](docs/PRUEBAS-REALES.md) existe; falta pasarla proveedor por proveedor
+- [ ] **Azure Blob**: pendiente de poder comprobar su firma contra el emulador o una cuenta, por la misma regla que Proton
+- [ ] **Varias ventanas y vista por columnas**: hoy hay pestañas y doble panel sobre una sola ventana
 - [ ] **Proton Drive**: necesita OpenPGP propio, y no se añadirá sin poder verificarlo contra cuentas reales
 - [ ] **Más idiomas**
 
@@ -243,13 +264,14 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 | [pCloud](docs/PCLOUD.md) | API, regiones y registro del cliente |
 | [Cifrado](docs/CIFRADO.md) | Bóvedas compatibles con Cryptomator: qué protege y qué no |
 | [Diagnóstico](docs/DIAGNOSTICO.md) | Niveles, qué se oculta y qué se exporta |
+| [Pruebas reales](docs/PRUEBAS-REALES.md) | La batería contra cuentas de verdad: qué hace y cómo configurarla |
 
 <br>
 
 ## 🛠️ Desarrollo
 
 ```bash
-swift test                       # 792 pruebas; HTTP simulado y servidores FTP locales
+swift test                       # 939 pruebas; HTTP simulado y servidores FTP locales
 swift run iCloudy                # iterar sobre la interfaz
 python3 scripts/mockups/generar.py  # rehacer las maquetas del README
 swift scripts/render-mockups.swift  # y convertirlas en PNG

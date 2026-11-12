@@ -23,6 +23,10 @@ extension AppModel {
             // The demo account is local and may already be in the list.
             accounts = stored + accounts.filter(\.isDemo)
             mirrors.start()
+            editing.start()
+            backups.start()
+            // A test's model has no business asking anybody for their links twenty seconds later.
+            if !Diagnostics.underTest { linkAuditor.start() }
             remoteCopies.client = queue.client
             remoteCopies.didComplete = queue.didComplete
             remoteCopies.resume()
@@ -482,6 +486,9 @@ extension AppModel {
         expiredAccountIDs.remove(account.id); expiryReasons[account.id] = nil
         listings.removeAll(accountID: account.id)
         mirrors.removeAll(accountID: account.id)
+        editing.removeAll(accountID: account.id)
+        backups.removeAll(accountID: account.id)
+        linkAuditor.forgetAccount(account.id)
         spotlight.removeAccount(account.id)
         localCopies.removeAccount(account.id)
         forgetOffline(account.id)

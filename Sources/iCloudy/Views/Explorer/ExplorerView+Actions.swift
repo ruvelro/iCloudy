@@ -134,12 +134,19 @@ extension ExplorerView {
                 Button("Reflejar una carpeta local aquí…") { Task { await model.pickMirrorSource(for: file) } }
                 Button("Sincronizar en ambos sentidos con una carpeta local…") { Task { await model.pickMirrorSource(for: file, twoWay: true) } }
             }
+            if !model.inEncryptedVault { Button("Copiar periódicamente a otra nube…") { model.requestBackup(of: file) } }
             Button("Descargar carpeta…") { Task { await model.save(file) } }
+            Button("Descargar como ZIP…") { Task { await model.saveCompressed([file]) } }
             Button("Comparar con…") { model.openComparator(with: file) }
             Button("Buscar duplicados aquí…") { model.openDuplicateFinder(in: file) }
+            Button("Analizar espacio aquí…") { model.openUsage(in: file) }
             CryptomatorFolderActions(model: model, folder: file)
         } else if !file.isGoogleDocument {
             Button("Descargar…") { Task { await model.save(file) } }
+            if AppModel.isZip(file) { Button("Descargar y descomprimir…") { Task { await model.saveExtracted(file) } } }
+            Button("Editar y subir los cambios") { model.editInPlace(file) }
+                .disabled(model.editingLimitation(file) != nil)
+                .help(model.editingLimitation(file) ?? L("Abre el archivo en su aplicación y sube cada cambio que guardes"))
         }
         if file.webURL != nil { Button("Abrir en navegador") { model.openBrowser(file) } }
         ForEach(file.exportOptions, id: \.ext) { option in
@@ -152,6 +159,9 @@ extension ExplorerView {
             Button("Versiones…") { model.requestVersions(file) }
                 .disabled(model.versionsLimitation(file) != nil)
                 .help(model.versionsLimitation(file) ?? "")
+        }
+        if let account = model.account, account.cloud == .sftp, !model.inEncryptedVault {
+            Button("Permisos…") { model.permissionsRequest = PermissionsRequest(file: file, account: account) }
         }
         if let copy = model.localStatus(file).copy {
             Divider()

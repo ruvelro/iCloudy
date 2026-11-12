@@ -128,6 +128,29 @@ final class AppModel {
     let planner = TransferPlanCoordinator()
     let connectivity = Connectivity()
     let mirrors = MirrorManager()
+    /// The daily look over every account's public links, and the sheet that shows what it found.
+    let linkAuditor = LinkAuditor()
+    var showLinkReview = false
+    /// True while the window shows nothing but a request to prove who is at the Mac. See `AppLock.swift`.
+    var isLocked = false
+    var unlocking = false
+    var lockProblem: String?
+    /// When iCloudy stopped being the app in front, to lock it after long enough away.
+    @ObservationIgnored var resignedAt: Date?
+    @ObservationIgnored var lockObservers: [NSObjectProtocol] = []
+    /// Where the lock's settings live, and what proves the owner; both seams for tests.
+    @ObservationIgnored var lockDefaults: UserDefaults = .standard
+    @ObservationIgnored var confirmOwner: (String) async throws -> Void = { try await DeviceOwner.confirm($0) }
+    /// Folders copied from one account to another on a schedule, with the earlier versions kept.
+    let backups = BackupManager()
+    /// The item of an SFTP account whose permissions are on screen.
+    var permissionsRequest: PermissionsRequest?
+    /// The scheduled copy being set up in a sheet.
+    var backupDraft: BackupDraft?
+    /// Compressing after a download, extracting a downloaded archive, discarding one that was made to be uploaded.
+    let archives = ArchiveSteps()
+    /// Remote files opened in their own application, each with a watched copy that is uploaded on every save.
+    let editing = EditSessions()
     let spotlight = SpotlightIndex()
     let localCopies = LocalCopyIndex()
     /// Managed offline copies ("Disponible sin conexión") and what keeps them current.
@@ -163,6 +186,7 @@ final class AppModel {
     let quotas = StorageQuotaController(refreshInterval: AppModel.quotaRefreshInterval)
     @ObservationIgnored var quotaSubscription: AnyCancellable?
     @ObservationIgnored var localCopySubscription: AnyCancellable?
+    @ObservationIgnored var moveSubscription: AnyCancellable?
     /// The listing each tab is waiting for, so a new request for the same tab cancels the old one.
     @ObservationIgnored var navigationTasks: [BrowserState.ID: Task<Void, Never>] = [:]
     var favoriteKeys: Set<String> = []
@@ -229,9 +253,13 @@ final class AppModel {
         }
         queue.didFinish = { [weak self] transfer in
             self?.history.record(transfer); self?.mirrors.handleFinished(transfer)
+            self?.editing.handleFinished(transfer)
+            self?.archives.handleFinished(transfer)
+            self?.backups.handleFinished(transfer)
             self?.notifier.finished(transfer)
             self?.finishPaneMove(transfer)
         }
+        moveSubscription = accountsLoaded.first().sink { [weak self] _ in self?.finishInterruptedMoves(); self?.archives.resumeInterrupted() }
         thumbnails.client = { [weak self] account in
             guard let self else { throw CancellationError() }
             return try self.client(account)
@@ -266,6 +294,26 @@ final class AppModel {
         listings.enabled = Prefs.bool(Prefs.listingCache, default: true)
         queue.cleanScratch()
         mirrors.queue = queue
+        editing.queue = queue
+        backups.queue = queue
+        backups.accountLookup = { [weak self] id in self?.accounts.first { $0.id == id } }
+        // Both hold their own paused jobs back from "Reanudar todas".
+        queue.isHeldPaused = { [weak self] transfer in (self?.mirrors.holdsPaused(transfer) ?? false) || (self?.backups.holdsPaused(transfer) ?? false) }
+        linkAuditor.accounts = { [weak self] in self?.accounts ?? [] }
+        linkAuditor.client = { [weak self] account in
+            guard let self else { throw CancellationError() }
+            return try self.client(account)
+        }
+        archives.queue = queue
+        archives.report = { [weak self] message, isError in if isError { self?.error = message } else { self?.info = message } }
+        archives.reveal = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
+        editing.client = { [weak self] id in
+            guard let self, let account = self.accounts.first(where: { $0.id == id }) ?? self.cryptomator.account(id) else {
+                throw CloudError.message(L("Vuelve a conectar la cuenta de este archivo."))
+            }
+            return try self.client(account)
+        }
+        editing.notify = { [weak self] message in self?.info = message }
         configureTransferPolicy()
         mirrors.accountLookup = { [weak self] id in self?.accounts.first { $0.id == id } }
         loadAccounts()
@@ -280,6 +328,8 @@ final class AppModel {
         }
         startOffline()
         Self.shared = self
+        // A test builds models by the dozen; none of them should watch the screen or read this Mac's own setting.
+        if !Diagnostics.underTest { startLock() }
     }
 
     // MARK: - System integration
