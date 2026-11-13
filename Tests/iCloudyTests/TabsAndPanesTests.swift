@@ -431,16 +431,28 @@ final class TabsAndPanesTests: XCTestCase {
                       "Una carpeta vacía copiada no tiene archivos que verificar")
     }
 
-    func testAMoveWhoseCopyCouldNotBeVerifiedKeepsTheOriginal() {
-        let (model, left, _) = splitModel()
+    func testAMoveWhoseCopyCouldNotBeVerifiedKeepsTheOriginal() throws {
+        let (model, left, right) = splitModel()
         let file = CloudFile(id: "f", name: "a.txt", mime: "text/plain", size: 1, modified: nil, webURL: nil, isFolder: false)
-        let job = copyJob { $0.unverifiedFiles = 1 }
-        model.paneTransfers.pending[job.id] = PaneTransfers.Pending(sourceAccountID: left.id, file: file, targetTitle: "Destino")
+        var job = copyJob { $0.unverifiedFiles = 1; $0.removesSource = true }
+        job.accountID = left.id; job.targetAccountID = right.id; job.file = file
+        try model.queue.add([job])
         model.finishPaneMove(job)
-        XCTAssertNil(model.paneTransfers.pending[job.id])
-        XCTAssertEqual(model.error, L("«a.txt» se ha copiado a Destino, pero no todo pudo verificarse o algo se omitió. El original se queda donde estaba."))
+        XCTAssertEqual(model.queue.items.first { $0.id == job.id }?.removesSource, false, "El trabajo deja de ser un movimiento")
+        XCTAssertEqual(model.error, L("«a.txt» se ha copiado a \(model.accountTitle(right)), pero no todo pudo verificarse o algo se omitió. El original se queda donde estaba."))
         model.error = nil
         model.finishPaneMove(copyJob { _ in })
         XCTAssertNil(model.error, "Un trabajo que no es de un movimiento no toca nada")
+    }
+
+    /// The promise to remove the original used to live in memory: quitting before the copy ended turned the move
+    /// into a copy without a word.
+    func testAMoveIsStillAMoveAfterTheQueueIsReadBack() throws {
+        var job = copyJob { $0.removesSource = true; $0.state = .paused }
+        job.file = CloudFile(id: "f", name: "a.txt", mime: "text/plain", size: 1, modified: nil, webURL: nil, isFolder: false)
+        let back = try JSONDecoder().decode([Transfer].self, from: JSONEncoder().encode([job]))
+        XCTAssertEqual(back.first?.removesSource, true)
+        let legacy = #"{"accountID":"a","direction":"transfer","localURL":"file:///tmp/"}"#
+        XCTAssertFalse(try JSONDecoder().decode(Transfer.self, from: Data(legacy.utf8)).removesSource)
     }
 }

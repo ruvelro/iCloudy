@@ -65,13 +65,14 @@ extension AppModel {
         }
     }
     /// Returns the jobs queued, none if the queue refused them.
-    @discardableResult func enqueueCrossCloud(_ files: [CloudFile], from source: Account, to target: Account, parent: String, destinationPath: [CloudFile], seeds: [[String: FileRecord]]?) -> [Transfer] {
+    @discardableResult func enqueueCrossCloud(_ files: [CloudFile], from source: Account, to target: Account, parent: String, destinationPath: [CloudFile], seeds: [[String: FileRecord]]?, move: Bool = false) -> [Transfer] {
         let label = ([target.email] + destinationPath.map(\.name)).joined(separator: " / ")
         let batch = UUID()
         let jobs = files.enumerated().map { index, file -> Transfer in
             var job = Transfer(batchID: batch, name: file.name, destination: label, accountID: source.id, direction: .transfer, localURL: URL(fileURLWithPath: "/"), parent: parent, file: file)
             job.localURL = queue.scratchDirectory(for: job.id)
             job.targetAccountID = target.id
+            job.removesSource = move
             job.seed(seeds?.indices.contains(index) == true ? seeds?[index] : nil)
             return job
         }

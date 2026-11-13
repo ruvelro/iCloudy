@@ -73,6 +73,7 @@ extension ExplorerView {
                     .help(model.limitation(.permanentDelete, for: model.selection(ids)) ?? "")
             } else if ids.count > 1 {
                 Button("Descargar \(ids.count) elementos…") { Task { await model.saveMany(model.selection(ids)) } }
+                Button("Descargar \(ids.count) elementos como ZIP…") { Task { await model.saveCompressed(model.selection(ids)) } }
                 Button("Renombrar \(ids.count) elementos…") { model.requestBatchRename(model.selection(ids)) }.disabled(!model.canWrite)
                 Button("Mover \(ids.count) elementos a…") { model.requestRelocation(model.selection(ids), copy: false) }
                 Button("Copiar \(ids.count) elementos a…") { model.requestRelocation(model.selection(ids), copy: true) }

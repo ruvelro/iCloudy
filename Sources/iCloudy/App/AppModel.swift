@@ -72,6 +72,21 @@ final class AppModel {
     let columnListings = ColumnListings()
     /// Files open in other apps from private copies, and their way back to the cloud.
     let editor = ExternalEditor()
+    /// Compressing after a download, extracting a downloaded archive, discarding one that was made to be uploaded.
+    let archives = ArchiveSteps()
+    @ObservationIgnored var moveSubscription: AnyCancellable?
+    /// The daily look over every account's public links.
+    let linkAuditor = LinkAuditor()
+    /// True while the window shows nothing but a request to prove who is at the Mac. See `AppLock.swift`.
+    var isLocked = false
+    var unlocking = false
+    var lockProblem: String?
+    /// When iCloudy stopped being the app in front, to lock it after long enough away.
+    @ObservationIgnored var resignedAt: Date?
+    @ObservationIgnored var lockObservers: [NSObjectProtocol] = []
+    /// Where the lock's settings live, and what proves the owner; both seams for tests.
+    @ObservationIgnored var lockDefaults: UserDefaults = Prefs.defaults
+    @ObservationIgnored var confirmOwner: (String) async throws -> Void = { try await DeviceOwner.confirm($0) }
     /// The last folders visited, in any tab.
     let recents = RecentLocationsStore()
     /// How the lists are drawn: their columns, for every tab alike.
@@ -179,6 +194,7 @@ final class AppModel {
             self?.history.record(transfer); self?.mirrors.handleFinished(transfer)
             self?.notifier.finished(transfer)
             self?.finishPaneMove(transfer)
+            self?.archives.handleFinished(transfer)
             self?.editingTransferFinished(transfer)
         }
         thumbnails.client = { [weak self] account in
@@ -237,6 +253,18 @@ final class AppModel {
         }
         startOffline()
         Self.shared = self
+        archives.queue = queue
+        archives.report = { [weak self] message, isError in if isError { self?.error = message } else { self?.info = message } }
+        archives.reveal = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
+        // Moves and archive steps whose transfer finished in a run that ended before they did.
+        moveSubscription = accountsLoaded.first().sink { [weak self] _ in self?.finishInterruptedMoves(); self?.archives.resumeInterrupted() }
+        linkAuditor.accounts = { [weak self] in self?.accounts ?? [] }
+        linkAuditor.client = { [weak self] account in
+            guard let self else { throw CancellationError() }
+            return try self.client(account)
+        }
+        // A test builds models by the dozen; none of them should watch the screen or read this Mac's own setting.
+        if !AppEnvironment.isTesting { startLock() }
     }
 
     // MARK: - System integration

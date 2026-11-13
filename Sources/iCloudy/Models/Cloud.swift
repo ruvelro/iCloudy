@@ -148,27 +148,27 @@ struct CloudCapabilities {
         case .google:
             // Drive has no server-side copy of a folder; its files have to be copied one by one.
             return CloudCapabilities(trashListing: true, permanentDelete: true, emptyTrash: true, memberSharing: true,
-                                     copiesFolders: false, versions: true, deletesVersions: true, thumbnails: true, undoesTrash: true)
+                                     copiesFolders: false, versions: true, deletesVersions: true, thumbnails: true, undoesTrash: true, resumesDownloads: true)
         case .microsoft:
             // Graph deletes for good with `permanentDelete`, but exposes no listing of the recycle bin to third parties:
             // the bin iCloudy shows is what it deleted itself, restored by id. Nothing empties it from here.
             // Its versions can be listed, read and restored, but not deleted one by one.
-            return CloudCapabilities(trashListing: true, permanentDelete: true, memberSharing: true, versions: true, thumbnails: true, asyncCopy: true)
+            return CloudCapabilities(trashListing: true, permanentDelete: true, memberSharing: true, versions: true, thumbnails: true, asyncCopy: true, resumesDownloads: true)
         case .dropbox:
             // No "recent" or "shared with me" listing in this version; both need APIs beyond plain file browsing.
             // Deleted entries are listed alongside the live ones and files come back through their revisions.
             // Purging exists only on Business accounts; the provider explains the refusal on the others.
             // Revisions are listed, downloaded and restored by `rev`; there is no call to delete a single one.
-            return CloudCapabilities(recents: false, sharedWithMe: false, trashListing: true, permanentDelete: true, memberSharing: true, versions: true, thumbnails: true)
+            return CloudCapabilities(recents: false, sharedWithMe: false, trashListing: true, permanentDelete: true, memberSharing: true, versions: true, thumbnails: true, resumesDownloads: true)
         case .box:
             // Box has no single "empty trash" call; iCloudy walks the trash and purges item by item.
             // Earlier versions can be promoted back to current and deleted; on free accounts Box keeps none.
             return CloudCapabilities(recents: false, sharedWithMe: false, trashListing: true, permanentDelete: true, emptyTrash: true, memberSharing: true,
-                                     versions: true, deletesVersions: true, thumbnails: true, undoesTrash: true)
+                                     versions: true, deletesVersions: true, thumbnails: true, undoesTrash: true, resumesDownloads: true)
         case .webdav:
             // Plain WebDAV has no sharing links and no recycle bin. It has no search either; iCloudy walks the tree.
             return CloudCapabilities(recents: false, sharedWithMe: false,
-                                     publicLinks: false, reversibleTrash: false, signIn: .password)
+                                     publicLinks: false, reversibleTrash: false, resumesDownloads: true, signIn: .password)
         case .ftp:
             // FTP has no copy, no quota report and no checksum either; deleting is final. Search walks the tree.
             return CloudCapabilities(recents: false, sharedWithMe: false,

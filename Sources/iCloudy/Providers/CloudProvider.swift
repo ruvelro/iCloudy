@@ -62,6 +62,11 @@ protocol CloudProvider: CloudSession {
     func verifiableChecksum(of file: CloudFile) -> ContentHash?
     /// A small picture of the item, drawn by the provider, or nil when it has none. `CloudProvider+Thumbnails.swift`.
     func thumbnail(of file: CloudFile, side: Int) async throws -> Data?
+    /// A position at "now" in the provider's feed of changes under `folder`, or nil where it has none. Defaults,
+    /// and what a change is, live in `ChangeFeed.swift`.
+    func changeCursor(for folder: String) async throws -> String?
+    /// What changed since `cursor`. Cheap by design: one request when nothing happened.
+    func changes(since cursor: String, in folder: String) async throws -> ChangeBatch
     func uploadFile(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt
     func resumeCommittedUpload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt?
 }
@@ -86,7 +91,9 @@ extension CloudProvider {
     func availableDrives() async throws -> [RemoteDrive] { throw CloudError.message(L("\(account.cloud.title) no tiene unidades compartidas.")) }
     func remoteCopyStatus(_ url: URL) async throws -> RemoteCopy.State { throw CloudError.message(L("Este proveedor no usa copias asíncronas.")) }
     func download(file: CloudFile, to destination: URL, exportMime: String?, maxBytes: Int64?, progress: @escaping (Int64, Int64) -> Void) async throws {
-        try await downloadHTTP(contentRequest(for: file, exportMime: exportMime), to: destination, maxBytes: maxBytes, progress: progress)
+        // An export is generated on the way out: it has no second half to ask for.
+        try await downloadHTTP(contentRequest(for: file, exportMime: exportMime), to: destination, maxBytes: maxBytes,
+                               resuming: exportMime == nil && !file.isGoogleDocument ? file : nil, progress: progress)
     }
     func resumeCommittedUpload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt? { nil }
     func currentMetadata(of file: CloudFile) async throws -> CloudFile? { nil }

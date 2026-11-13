@@ -26,6 +26,6 @@ Lo que no se ha podido verificar todavía, por no existir ese identificador: que
 
 ## Lo que la extensión no hace
 
-- No mantiene un flujo de cambios: los proveedores no lo ofrecen, así que `enumerateChanges` no informa de nada y el Finder vuelve a listar cuando le hace falta.
+- No mantiene un flujo de cambios todavía. Drive, OneDrive, Dropbox y Box ya exponen su registro a la app (`changes(since:in:)`, que hoy usa la sincronización en ambos sentidos); conectarlo aquí queda para cuando la extensión pueda cargarse y probarse. Mientras tanto `enumerateChanges` no informa de nada y el Finder vuelve a listar cuando le hace falta.
 - No enseña la papelera ni el «conjunto de trabajo» (`workingSet`): ambos devuelven listas vacías para que el Finder no se quede esperando.
 - Los documentos de Google no tienen contenido descargable sin exportar; en el Finder se listan pero no se abren. La ventana de iCloudy los exporta.

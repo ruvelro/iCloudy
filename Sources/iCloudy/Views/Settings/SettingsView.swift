@@ -11,7 +11,7 @@ struct SettingsView: View {
             OfflineSettingsView(model: model, store: model.offline).tabItem { Label("Sin conexión", systemImage: "arrow.down.circle") }
             SpotlightSettings(model: model).tabItem { Label("Spotlight", systemImage: "magnifyingglass") }
             DiagnosticsSettings(model: model).tabItem { Label("Diagnóstico", systemImage: "stethoscope") }
-            CryptomatorSettings(model: model, vaults: model.cryptomator).tabItem { Label("Cifrado", systemImage: "lock.shield") }
+            CryptomatorSettings(model: model, vaults: model.cryptomator).tabItem { Label("Seguridad", systemImage: "lock.shield") }
             UpdateSettings(checker: .shared).tabItem { Label("Actualizaciones", systemImage: "arrow.down.app") }
         }.frame(width: 540, height: 430)
     }

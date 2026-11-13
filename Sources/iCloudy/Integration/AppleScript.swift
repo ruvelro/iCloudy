@@ -11,7 +11,7 @@ import AppKit
 final class ListAccountsScriptCommand: NSScriptCommand {
     override func performDefaultImplementation() -> Any? {
         let lines: [String] = MainActor.assumeIsolated {
-            guard let model = AppModel.shared else { return [] }
+            guard let model = AppModel.shared, !model.isLocked else { return [] }
             return model.accounts.map { model.accountTitle($0) + ": " + $0.id }
         }
         return lines

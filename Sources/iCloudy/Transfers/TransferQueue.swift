@@ -369,6 +369,19 @@ final class TransferQueue {
               let api = try? lookup(transfer.targetAccountID ?? transfer.accountID) else { return }
         Task { await api.abandonUploadSessions(urls: urls, sessionIDs: sessionIDs) }
     }
+    /// The original of a cross-cloud move has been dealt with: removed, or left where it was with an explanation.
+    /// Either way the job stops being a move, so the next launch does not act on it again.
+    func settleMove(_ id: UUID) {
+        guard let index = index(id), items[index].removesSource else { return }
+        items[index].removesSource = false
+        do { try persist() } catch { persistenceError = error.localizedDescription }
+    }
+    /// The archive step of a job has run: it stops carrying it.
+    func settleArchive(_ id: UUID) {
+        guard let index = index(id), items[index].archive != nil else { return }
+        items[index].archive = nil
+        do { try persist() } catch { persistenceError = error.localizedDescription }
+    }
     /// True for jobs that can be re-prioritised: waiting or paused. Running jobs and finished ones keep their place.
     func isMovable(_ transfer: Transfer) -> Bool { [.queued, .paused].contains(transfer.state) && tasks[transfer.id] == nil }
     /// Same semantics as SwiftUI's `onMove`: `destination` is an index in the list before removal.
@@ -695,18 +708,18 @@ final class TransferQueue {
         if current.direction == .upload {
             let total = try await blockingIO { try Self.localSize(source) }
             try edit(id) { $0.total = total; $0.bytes = 0 }
-            try await TransferWalker(queue: self, id: id).upload(api: api, local: source, parent: current.parent)
+            try await TransferWalker(queue: self, id: id, width: TransferScheduler.filesAtOnce(policy, accounts: [api.account], uploading: true)).upload(api: api, local: source, parent: current.parent)
         } else if current.direction == .transfer, let file = current.file {
             guard let targetID = current.targetAccountID else { throw CloudError.message(L("Falta la cuenta de destino de esta transferencia.")) }
             let target = try client(targetID)
             try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             try edit(id) { $0.bytes = 0; $0.total = file.isFolder ? 0 : (file.size ?? 0) }
-            try await TransferWalker(queue: self, id: id).copy(from: api, to: target, file: file, parent: current.parent, scratch: source)
+            try await TransferWalker(queue: self, id: id, width: TransferScheduler.filesAtOnce(policy, accounts: [api.account, target.account], uploading: true)).copy(from: api, to: target, file: file, parent: current.parent, scratch: source)
             try? FileManager.default.removeItem(at: source)
         } else if let file = current.file {
             // Folder totals grow as each remote folder is listed; a single file's size is known up front.
             try edit(id) { $0.bytes = 0; $0.total = file.isFolder ? 0 : (file.size ?? 0) }
-            try await TransferWalker(queue: self, id: id).download(api: api, file: file, into: source)
+            try await TransferWalker(queue: self, id: id, width: TransferScheduler.filesAtOnce(policy, accounts: [api.account], uploading: false)).download(api: api, file: file, into: source)
         }
     }
     /// Flat, collision-free staging name: keys are paths, and the digest keeps them out of nested directories.

@@ -23,6 +23,8 @@ extension AppModel {
             // The demo account is local and may already be in the list.
             directory.accounts = stored + accounts.filter(\.isDemo)
             mirrors.start()
+            // A test's model has no business asking anybody for their links twenty seconds later.
+            if !AppEnvironment.isTesting { linkAuditor.start() }
             jobs.start()
             remoteCopies.client = queue.client
             remoteCopies.didComplete = queue.didComplete
@@ -311,6 +313,7 @@ extension AppModel {
         directory.forgetSessions([account.id])
         listings.removeAll(accountID: account.id)
         mirrors.removeAll(accountID: account.id)
+        linkAuditor.forgetAccount(account.id)
         spotlight.removeAccount(account.id)
         localCopies.removeAccount(account.id)
         forgetOffline(account.id)

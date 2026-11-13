@@ -184,6 +184,19 @@ cancelable y limpieza al cerrar.
 
 <br>
 
+### 🆕 Lo último, aún sin publicar
+
+|  |  |
+|---|---|
+| **Descargas HTTP que se reanudan** | Un corte a mitad de un archivo grande ya no lo empieza de cero en Drive, OneDrive, Dropbox, Box y WebDAV. |
+| **Carpetas en paralelo** | Varios archivos de una misma carpeta viajan a la vez, y las partes de una subida a S3 también. |
+| **Sincronización más viva y más barata** | Con Drive, OneDrive, Dropbox y Box, se pregunta cada medio minuto al registro de cambios en vez de recorrer la carpeta entera cada cinco. |
+| **Comprimir y descomprimir** | Descarga una selección como un único ZIP, descomprime un ZIP al bajarlo o sube comprimido. |
+| **Analizar espacio** | Qué ocupa cada carpeta de una nube, de mayor a menor, y cuáles son los archivos más grandes. |
+| **Bloqueo con Touch ID** | Opcional, para la app y para las bóvedas con la contraseña guardada. |
+| **Revisión de enlaces públicos** | Un aviso de los que caducan pronto y de los que siguen abiertos sin fecha ni contraseña. |
+| **Permisos en SFTP** | Ver y cambiar los permisos de un archivo o de una carpeta entera. |
+
 ## 🚀 Instalación
 
 > [!IMPORTANT]
@@ -274,6 +287,7 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 | [Detalles técnicos](docs/DETALLES.md) | La referencia larga: cada función, cada límite, cada decisión |
 | [OAuth](docs/OAUTH.md) | Registrar los clientes de Google, Microsoft, Dropbox, Box y pCloud |
 | [Distribución](docs/DISTRIBUCION.md) | Publicar una versión, firma y notarización, actualizaciones, Homebrew y el Mac App Store |
+| [Pruebas reales](docs/PRUEBAS-REALES.md) | La batería contra cuentas de verdad: qué hace y cómo configurarla |
 | [Mega](docs/MEGA.md) | El protocolo, la criptografía y por qué es experimental |
 | [O2 Cloud](docs/O2.md) | Funambol OneMediaHub bajo la marca de O2 |
 | [FTP](docs/FTP.md) | Qué hay, qué falta y lo que costaría añadirlo |

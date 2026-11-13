@@ -70,7 +70,12 @@ final class MirrorChecksumTests: XCTestCase {
         XCTAssertEqual(summary.missing, 1, summary.text)
         XCTAssertNotNil(f.manager.mirrors[0].lastVerified)
         XCTAssertEqual(f.manager.mirrors[0].lastVerification, summary.text)
-        try await wait { (try? Data(contentsOf: f.demo.directory.appendingPathComponent(a.id))) == Data("uno".utf8) }
+        // The bytes reach the cloud a moment before the mirror closes the job that sent them, and only then does it
+        // know the file as synced again; verifying in between would find nothing it vouches for.
+        try await wait {
+            (try? Data(contentsOf: f.demo.directory.appendingPathComponent(a.id))) == Data("uno".utf8)
+                && f.manager.mirrors[0].activeTransferID == nil && f.manager.mirrors[0].stamps["a.txt"] != nil
+        }
         let clean = try await f.manager.verify(f.id)
         XCTAssertEqual(clean.verified, 1, clean.text)
         XCTAssertEqual(clean.missing, 0)

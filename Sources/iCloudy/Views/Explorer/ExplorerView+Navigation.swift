@@ -71,6 +71,7 @@ extension ExplorerView {
                                     }
                                     Button("Personalizar nube…") { model.ui.appearanceAccount = account }
                                     Button("Actualizar espacio") { model.refreshStorage(account, force: true) }
+                                    Button("Ver qué ocupa espacio…") { model.openUsage(account: account) }
                                     if account.capabilities.links.manage {
                                         Button("Enlaces compartidos…") { model.requestLinkInventory(account) }
                                     }
@@ -97,6 +98,7 @@ extension ExplorerView {
                                 Text("Abriendo el Llavero…").font(.caption).foregroundStyle(.secondary)
                             }.padding(Layout.sidebarInner)
                         }
+                        LinkAuditNotice(model: model, auditor: model.linkAuditor)
                         if !model.mirrors.mirrors.isEmpty { MirrorList(model: model, mirrors: model.mirrors) }
                         if !model.offline.pins.isEmpty || !model.offline.notices.isEmpty { OfflineList(model: model, store: model.offline) }
                     }

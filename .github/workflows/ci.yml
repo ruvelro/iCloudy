@@ -100,6 +100,9 @@ jobs:
           scripts/ci/sftp.sh start || fallback ICLOUDY_SFTP_URL "$SECRET_SFTP_URL"
           scripts/ci/ftps.sh start || fallback ICLOUDY_FTPS_URL "$SECRET_FTPS_URL"
       - name: Test
+        # Real accounts, described as docs/PRUEBAS-REALES.md says. Unset, as on a fork, those tests are skipped.
+        env:
+          ICLOUDY_LIVE_ACCOUNTS_JSON: ${{ secrets.ICLOUDY_LIVE_ACCOUNTS_JSON }}
         run: swift test --parallel --enable-code-coverage
       - name: Coverage
         if: success() || failure()

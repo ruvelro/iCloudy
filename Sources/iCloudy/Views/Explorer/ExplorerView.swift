@@ -72,6 +72,8 @@ struct ExplorerView: View {
         .sheet(item: sheets.sharing) { request in SharingView(model: model, request: request) }
         .sheet(item: sheets.publicLinkManager) { request in PublicLinksView(model: model, request: request) }
         .sheet(item: sheets.linkInventory) { account in LinkInventoryView(model: model, account: account) }
+        .sheet(item: sheets.permissionsRequest) { request in PermissionsView(model: model, request: request) }
+        .sheet(isPresented: sheets.showLinkReview) { LinkReviewView(model: model, auditor: model.linkAuditor) }
         .sheet(item: sheets.versionHistory) { request in VersionsView(model: model, request: request) }
         .sheet(item: Binding(get: { model.queue.conflict }, set: { _ in })) { request in
             ConflictView(queue: model.queue, request: request)

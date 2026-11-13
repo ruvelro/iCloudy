@@ -190,6 +190,8 @@ struct CryptomatorSettings: View {
 
     var body: some View {
         Form {
+            AppLockSettings(model: model)
+            LinkAuditSettings(model: model)
             Section {
                 Picker("Bloquear las bóvedas sin uso tras", selection: $idleMinutes) {
                     Text("5 minutos").tag(5)
