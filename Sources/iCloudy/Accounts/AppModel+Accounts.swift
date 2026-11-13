@@ -176,6 +176,8 @@ extension AppModel {
             case .ftp: result = try await FTPAuthentication().signInFTP(server: server, username: username, password: password)
             case .sftp: result = try await SFTPAuthentication().signInSFTP(server: server, username: username, password: password, key: key)
             case .mega: result = try await MegaAuthentication().signInMega(email: username, password: password)
+            // The "user" of a Telegram account is the channel, and its "password" is the bot token.
+            case .telegram: result = try await TelegramAuthentication().signInTelegram(channel: username, token: password)
             default: throw CloudError.message(L("\(cloud.title) no se conecta con usuario y contraseña."))
             }
             var (account, credential) = result
@@ -253,6 +255,7 @@ extension AppModel {
         case .pcloud: return .teal
         case .s3: return .orange
         case .azure: return .blue
+        case .telegram: return .blue
         }
     }
 

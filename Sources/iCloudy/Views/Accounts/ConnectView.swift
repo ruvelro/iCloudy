@@ -24,6 +24,7 @@ struct ConnectView: View {
                     providerButton(.pcloud, title: "Continuar con pCloud", subtitle: "Cuentas de pCloud en Europa o en Estados Unidos", icon: "cloud.circle")
                     providerButton(.mega, title: "Conectar Mega", subtitle: "Cifrado de extremo a extremo, con correo y contraseña", icon: "lock.icloud")
                     providerButton(.o2, title: "Conectar O2 Cloud", subtitle: "Inicias sesión en las páginas de O2, con tu móvil o tu NIF", icon: "antenna.radiowaves.left.and.right")
+                    providerButton(.telegram, title: "Conectar Telegram", subtitle: "Un canal privado tuyo, con un bot que creas en BotFather", icon: "paperplane")
                     connectRow(title: "Conectar iCloud Drive", subtitle: "La carpeta de iCloud Drive de este Mac, con los archivos que solo están en iCloud",
                                icon: "icloud", tint: .blue, badge: "Nuevo", trailing: "chevron.right") { Task { await model.connectICloudDrive() } }
                 }.disabled(model.ui.connecting)
@@ -187,6 +188,7 @@ struct ConnectView: View {
         case .pcloud: return .teal
         case .s3: return .orange
         case .azure: return .blue
+        case .telegram: return .blue
         }
     }
 }

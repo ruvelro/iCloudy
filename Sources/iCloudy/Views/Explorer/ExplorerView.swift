@@ -113,6 +113,8 @@ struct ExplorerView: View {
             Text(model.account?.capabilities.reversibleTrash == false
                  ? L("Este servidor no tiene papelera: lo que elimines se borra de forma definitiva, con todo el contenido de las carpetas. iCloudy no puede deshacerlo.")
                  : model.account?.cloud == .volume ? L("Los elementos van a la papelera del Mac y se pueden restaurar desde el Finder.")
+                 // Telegram has no bin of its own: iCloudy stops listing the items, and the messages stay in the channel.
+                 : model.account?.cloud == .telegram ? L("Los elementos dejan de aparecer en iCloudy, pero sus mensajes siguen en el canal: desde la app de Telegram puedes verlos y descargarlos. Las carpetas se envían con todo su contenido. iCloudy no borra ningún mensaje de un canal, nunca.")
                  : model.account?.capabilities.trashListing == true ? L("Los elementos van a la papelera de \(model.account?.cloud.title ?? L("la nube")), con todo el contenido de las carpetas. Desde la pestaña Papelera se pueden restaurar o eliminar definitivamente.")
                  : L("Los elementos van a la papelera de \(model.account?.cloud.title ?? L("la nube")) y se pueden restaurar desde su web. Las carpetas se envían con todo su contenido."))
         }

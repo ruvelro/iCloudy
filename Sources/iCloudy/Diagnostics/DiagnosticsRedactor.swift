@@ -56,7 +56,8 @@ struct DiagnosticsRedactor: Sendable {
     /// Path segments after which whatever follows is a capability, so even the detailed level keeps it out.
     static let capabilityMarkers: Set<String> = ["rup", "uploadsession", "upload_sessions", "ul", "dl", "cd"]
     /// Hosts whose addresses are themselves capabilities: temporary download and upload links.
-    static let capabilityHosts = ["userstorage.mega.co.nz", "dropboxusercontent.com", "boxcloud.com"]
+    /// Telegram's Bot API puts the bot token in the path of every address (`/bot<token>/getFile`), so its host is one.
+    static let capabilityHosts = ["userstorage.mega.co.nz", "dropboxusercontent.com", "boxcloud.com", "api.telegram.org"]
 
     /// Host and path template of a URL. The user and password some addresses carry are never part of either.
     func url(_ url: URL) -> (host: String?, path: String) {

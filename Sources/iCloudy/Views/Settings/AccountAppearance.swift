@@ -93,6 +93,7 @@ struct AccountIcon: View {
         case .pcloud: return "cloud.circle.fill"
         case .s3: return "cylinder.split.1x2.fill"
         case .azure: return "square.stack.3d.down.right.fill"
+        case .telegram: return "paperplane.circle.fill"
         }
     }
     var body: some View {

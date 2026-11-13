@@ -4,7 +4,7 @@
 
 ### Todas tus nubes, en una sola ventana del Mac
 
-**Google Drive · OneDrive · Dropbox · Box · pCloud · S3 · Mega · Nextcloud · Synology · SFTP · FTP · SMB**
+**Google Drive · OneDrive · Dropbox · Box · pCloud · S3 · Mega · Telegram · Nextcloud · Synology · SFTP · FTP · SMB**
 
 [![versión](https://img.shields.io/badge/versión-0.9.0-6f9dff?style=flat-square)](https://github.com/ruvelro/iCloudy/releases)
 [![macOS](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white)](https://www.apple.com/macos/)
@@ -51,6 +51,7 @@ terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga 
 | **FTP / FTPS** | Usuario y contraseña | ✅⁸ | — | — | — | — | Estable |
 | **Mega** | Correo y contraseña | ✅ | ✅⁴ | — | ✅⁵ | MAC propio³ | 🧪 Experimental |
 | **O2 Cloud** | Sesión de Mi O2 | ✅⁸ | — | — | ✅ | — | 🧪 Experimental |
+| **Telegram** | Bot propio y canal privado | ✅ | — | — | ✅¹² | SHA-256¹³ | 🧪 Experimental |
 | **pCloud** | OAuth | ✅⁸ | ✅ | — | ✅ | SHA-256 / SHA-1 | 🆕 Nuevo |
 | **S3 y compatibles**⁶ | Clave de acceso, STS o perfil de `~/.aws` | Prefijo | Temporales⁷ | — | — | MD5 (ETag) | 🆕 Nuevo |
 | **Azure Blob Storage** | Clave de la cuenta o token SAS | Prefijo | Temporales (SAS)⁷ | — | — | MD5 (`Content-MD5`) | 🆕 Sin probar con cuentas reales |
@@ -69,6 +70,8 @@ terceros**. Tampoco sincroniza tu disco entero a tus espaldas: solo se descarga 
 <br>⁸ Por nombre. El proveedor no tiene búsqueda propia: iCloudy recorre las carpetas (pCloud, con un solo listado recursivo).
 <br>¹⁰ La carpeta de iCloud Drive de este Mac, con el estado de cada archivo (solo en iCloud, bajando, descargado, subiendo), descarga bajo demanda y «Quitar la descarga». Sin cuota: macOS no deja leer la del plan.
 <br>¹¹ Hetzner Storage Box (SFTP y WebDAV), Koofr, Yandex Disk, kDrive, HiDrive, Fastmail Files, Seafile, ownCloud Infinite Scale y Nextcloud (con inicio de sesión en el navegador), más Storj e iDrive e2 en S3: dirección, puerto y ruta ya puestos sobre los proveedores WebDAV, SFTP y S3. Azure, en su [guía](docs/AZURE.md).
+<br>¹² En Telegram no se borra nunca un mensaje: la papelera deja de listar el archivo y sus trozos siguen en el canal, a la vista desde la app de Telegram.
+<br>¹³ Telegram no informa de ninguna suma. La huella es la que calcula iCloudy sobre los bytes que envía, y la descarga se comprueba contra ella.
 </sub>
 
 **SFTP** cubre cualquier servidor SSH y la mayoría de NAS, cifrado y con la clave del servidor comprobada en cada sesión. **WebDAV** cubre Nextcloud, ownCloud, Synology y casi cualquier NAS. **Volúmenes** cubre SMB, AFP, NFS, discos
@@ -202,7 +205,7 @@ Para conectar cuentas de Google, Microsoft, Dropbox, Box o pCloud necesitas regi
 el repositorio no incluye ninguno. Ten en cuenta que esos identificadores quedan dentro del `.app` que compilas, en
 claro: es lo normal en un cliente de escritorio, porque la app tiene que presentarlos al proveedor, pero significa
 que un paquete compilado no se comparte con nadie a quien no le darías también esas credenciales. La [guía de OAuth](docs/OAUTH.md) explica cómo, proveedor por proveedor.
-**WebDAV, SFTP, FTP, S3, volúmenes, Mega y O2 no necesitan registro**: funcionan nada más compilar.
+**WebDAV, SFTP, FTP, S3, volúmenes, Mega, O2 y Telegram no necesitan registro**: funcionan nada más compilar. El bot de Telegram lo creas tú en BotFather, y su token es la credencial.
 
 <br>
 
@@ -234,7 +237,7 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 
 **Ya funciona**
 
-- [x] Doce proveedores, con las capacidades de cada uno declaradas y la interfaz adaptada
+- [x] Trece proveedores, con las capacidades de cada uno declaradas y la interfaz adaptada
 - [x] Subidas reanudables por bloques con verificación de integridad
 - [x] Búsqueda global entre cuentas con filtros
 - [x] Transferencia directa de nube a nube
@@ -276,6 +279,7 @@ que un paquete compilado no se comparte con nadie a quien no le darías también
 | [Distribución](docs/DISTRIBUCION.md) | Publicar una versión, firma y notarización, actualizaciones, Homebrew y el Mac App Store |
 | [Mega](docs/MEGA.md) | El protocolo, la criptografía y por qué es experimental |
 | [O2 Cloud](docs/O2.md) | Funambol OneMediaHub bajo la marca de O2 |
+| [Telegram](docs/TELEGRAM.md) | Un canal privado como disco: el puente con teldrive y el proveedor nativo |
 | [FTP](docs/FTP.md) | Qué hay, qué falta y lo que costaría añadirlo |
 | [Vista previa](docs/PREVIEW.md) | Formatos, límites y consentimiento |
 | [S3](docs/S3.md) | Puntos de acceso, firma, subidas multiparte y verificación |
@@ -320,5 +324,5 @@ Se distribuye con la esperanza de que sea útil, pero **sin garantía de ningún
 <br>
 
 <div align="center">
-<sub>Hecho con SwiftUI para macOS · iCloudy no está afiliado a Google, Microsoft, Dropbox, Box, Mega, O2 ni Apple</sub>
+<sub>Hecho con SwiftUI para macOS · iCloudy no está afiliado a Google, Microsoft, Dropbox, Box, Mega, Telegram, O2 ni Apple</sub>
 </div>
