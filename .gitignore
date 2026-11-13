@@ -9,3 +9,6 @@ Configuration/*client_secret*.json
 *.provisionprofile
 __pycache__/
 coverage.lcov
+live-accounts.json
+Configuration/live-accounts*.json
+!Configuration/live-accounts.example.json

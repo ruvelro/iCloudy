@@ -31,6 +31,7 @@ Un único paquete SwiftPM sin dependencias externas (`Package.swift`, `swift-too
 | `Models/` | Tipos de valor: `Account`, `Cloud` y `CloudCapabilities`, `CloudFile`, `Transfer`, `CloudError`… |
 | `Encryption/` | Bóvedas Cryptomator: criptografía propia (AES-SIV, scrypt…), el proveedor que cifra sobre otro y sus vistas. |
 | `Demo/` | `DemoStore` (archivos simulados en una carpeta local) y `DemoProvider`. |
+| `Archives/`, `Security/` | El lector de ZIP y los pasos de compresión; el bloqueo con Touch ID y la revisión de enlaces públicos. |
 | `Compare/`, `Search/`, `Preview/`, `Integration/`, `Diagnostics/`, `FileProvider/`, `Utilities/` | Comparar carpetas y duplicados; búsqueda global y guardada; vista previa y miniaturas; Spotlight, menú, Atajos, notificaciones, el aviso de versiones nuevas (`UpdateChecker`, ver [DISTRIBUCION.md](DISTRIBUCION.md)); registro de diagnóstico; el lado de la app del File Provider; utilidades. |
 | `Views/` | Las vistas SwiftUI, agrupadas por área. |
 
@@ -55,6 +56,9 @@ guarda estado suelto: lo reparte en subsistemas con dueño, y las propiedades qu
 | `workspace: ExplorerWorkspace` | Paneles y pestañas, cada una con su lugar, su listado y su selección. | Las propiedades `files`, `path`, `selectedIDs`… del modelo reenvían a la pestaña activa del panel enfocado. Cada pestaña guarda también su orden (`sortMode` y `sortAscending`) y su modo de vista (lista, iconos o columnas). |
 | `explorer: ExplorerSettings` | Cómo se dibujan las listas: las columnas de la tabla (un `TableColumnCustomization`, que edita también el menú de su cabecera) y la agrupación, de las carpetas y de la búsqueda global. | En las preferencias (`Prefs.defaults`). |
 | `recents: RecentLocationsStore` | Las veinte últimas carpetas de «Mis archivos» abiertas en cualquier pestaña. | `go(to:)` y atrás/adelante llaman a `note`; `recent-locations.json` con sobre y `StoreWriter.later`. |
+| `archives: ArchiveSteps` | Lo que pasa con los bytes de un trabajo al completarse cuando es media transferencia comprimida: comprimir, extraer o descartar. | El paso viaja en `Transfer.archive`; `handleFinished` lo ejecuta cuando todo su lote ha terminado. |
+| `linkAuditor: LinkAuditor` | La revisión diaria de enlaces públicos. | `LinkAudit.findings` es puro; la barra lateral lee `summary`. |
+| Bloqueo (`Security/AppLock.swift`) | `isLocked` en el modelo y `AppLockPolicy` en las preferencias. | La escena monta `LockedView` en lugar del explorador; `ColdStart.model()` rechaza mientras dura. |
 | `editor: ExternalEditor` | «Abrir con»: copias privadas en `Caches/iCloudy/Editing`, vigiladas con el `FolderWatcher` de los reflejos. | `AppModel.openWith` descarga por la fachada; `uploadEdits` encola una subida normal de una copia preparada, y conserva las dos versiones si la nube cambió. |
 | `columnListings: ColumnListings` | Los listados de las carpetas que la vista en columnas enseña por encima de la abierta. | `AppModel.columns(inPane:)` es puro; la vista pide los que faltan. |
 
@@ -127,7 +131,7 @@ pruebas lo desvían con `LocalStore.directoryOverride`). Lo secreto (cuentas y c
 
 `TransferQueue` decide qué trabajos arrancan (`TransferScheduler`: límites por cuenta y por sesión, horario, red de
 pago), los reintenta y guarda su estado. Cada trabajo se recorre con un `TransferWalker` (`Transfers/TransferWalker.swift`),
-que tiene los pasos comunes una sola vez: saltar lo completado, olvidar una carpeta cuya creación no se confirmó,
+que reparte los archivos de una carpeta entre hasta `filesPerJob` tareas a la vez (lo que va en orden lo hace el recorrido; los bytes, cada tarea) y tiene los pasos comunes una sola vez: saltar lo completado, olvidar una carpeta cuya creación no se confirmó,
 resolver el nombre (preguntando por el conflicto o usando la respuesta del lote), reservarlo frente a otros trabajos
 (`NameClaims`) y crear la carpeta con la marca en disco antes de la petición. Los tres recorridos (`upload`,
 `download` y `copy` entre cuentas) solo añaden lo propio de cada uno.

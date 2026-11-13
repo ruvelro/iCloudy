@@ -162,31 +162,53 @@ extension S3Provider {
         let secure = try location().isSecure
         var opaque = false
         progress(cursor.offset, total)
+        // Parts are independent requests, so several travel at once. They are confirmed in order: the checkpoint
+        // only ever holds an unbroken run of parts, which is what a resume can build on.
+        let width = Self.partsAtOnce(partSize: partSize)
+        let stamp = cursor.sourceStamp
         while cursor.offset < total {
-            try cursor.sourceStamp?.validate(local)
+            try stamp?.validate(local)
             try Task.checkCancellation()
-            let number = cursor.parts.count + 1
-            let offset = cursor.offset, length = min(partSize, total - offset)
-            let (chunk, md5) = try await blockingIO { try Self.readPart(local, offset: offset, length: length) }
-            try cursor.sourceStamp?.validate(local)
-            var call = S3Call(method: "PUT", bucket: target.bucket, key: target.key,
-                              query: [("partNumber", String(number)), ("uploadId", upload.uploadID)])
-            call.body = chunk
-            call.headers["Content-MD5"] = md5.base64EncodedString()
-            // Over TLS the channel protects the body and Content-MD5 checks it; hashing 8 MiB twice buys nothing.
-            // Over plain HTTP the signature is all there is, so it covers the bytes.
-            if secure { call.payloadHash = S3Signer.unsignedPayload }
-            let (_, response) = try await s3(call) { sent in progress(offset + min(sent, length), total) }
-            guard let etag = S3XML.etag(response.value(forHTTPHeaderField: "ETag")) else {
-                throw CloudError.message(L("El servidor no confirmó una de las partes de la subida."))
+            var window: [(number: Int, offset: Int64, length: Int64)] = []
+            var next = cursor.offset
+            while window.count < width, next < total {
+                let length = min(partSize, total - next)
+                window.append((cursor.parts.count + window.count + 1, next, length))
+                next += length
             }
-            let record = S3PartRecord(etag: etag, md5: S3Signer.hex(md5))
-            if Self.encrypted(response) || !Self.isPlainMD5(etag) { opaque = true }
-            else if !record.verified { throw mismatch(name) }
-            cursor.parts.append(record.raw)
-            cursor.offset += length
+            let tracker = PartProgress(base: cursor.offset, total: total, report: progress)
+            let outcomes = await withTaskGroup(of: (Int, Result<SentPart, Error>).self) { group in
+                for part in window {
+                    let number = part.number, offset = part.offset, length = part.length
+                    group.addTask {
+                        do {
+                            return (number, .success(try await self.sendPart(number, offset: offset, length: length, local: local, target: target,
+                                                                             uploadID: upload.uploadID, secure: secure, stamp: stamp, tracker: tracker)))
+                        } catch { return (number, .failure(error)) }
+                    }
+                }
+                var collected: [Int: Result<SentPart, Error>] = [:]
+                for await (number, outcome) in group { collected[number] = outcome }
+                return collected
+            }
+            // What arrived in order is kept even when a later part of the window failed; the failure then ends the
+            // upload, and the next attempt starts after the last part confirmed here.
+            var failure: Error?
+            for part in window {
+                switch outcomes[part.number] {
+                case .success(let sent)?:
+                    let record = S3PartRecord(etag: sent.etag, md5: sent.md5)
+                    if sent.opaque { opaque = true }
+                    else if !record.verified { failure = mismatch(name) }
+                    if failure == nil { cursor.parts.append(record.raw); cursor.offset += part.length }
+                case .failure(let error)?: failure = error
+                case nil: failure = CancellationError()
+                }
+                if failure != nil { break }
+            }
             try save(cursor)
             progress(cursor.offset, total)
+            if let failure { throw failure }
         }
         let records = cursor.parts.compactMap(S3PartRecord.init)
         var complete = S3Call(method: "POST", bucket: target.bucket, key: target.key, query: [("uploadId", upload.uploadID)])
@@ -206,6 +228,42 @@ extension S3Provider {
         }
         guard etag.lowercased() == expected else { throw mismatch(name) }
         return UploadReceipt(remoteID: target.id, verification: .verified)
+    }
+
+    struct SentPart: Sendable { let etag: String; let md5: String; let opaque: Bool }
+
+    /// How many parts of one upload travel at once. Each one is held in memory while it is sent, and a very large
+    /// object has very large parts, so the count shrinks as they grow: never more than 64 MiB in flight.
+    nonisolated static func partsAtOnce(partSize: Int64) -> Int {
+        Int(min(4, max(1, (64 * 1024 * 1024) / max(1, partSize))))
+    }
+
+    /// What the parts of one window have sent between them, reported as one figure.
+    @MainActor final class PartProgress {
+        private var moved: [Int: Int64] = [:]
+        private let base: Int64, total: Int64
+        private let report: (Int64, Int64) -> Void
+        init(base: Int64, total: Int64, report: @escaping (Int64, Int64) -> Void) { self.base = base; self.total = total; self.report = report }
+        func sent(_ bytes: Int64, part: Int) { moved[part] = bytes; report(base + moved.values.reduce(0, +), total) }
+    }
+
+    /// Reads one part from disk and PUTs it, with its MD5 for the server to check.
+    private func sendPart(_ number: Int, offset: Int64, length: Int64, local: URL, target: S3Path, uploadID: String, secure: Bool,
+                          stamp: UploadSourceStamp?, tracker: PartProgress) async throws -> SentPart {
+        let (chunk, md5) = try await blockingIO { try Self.readPart(local, offset: offset, length: length) }
+        try stamp?.validate(local)
+        var call = S3Call(method: "PUT", bucket: target.bucket, key: target.key,
+                          query: [("partNumber", String(number)), ("uploadId", uploadID)])
+        call.body = chunk
+        call.headers["Content-MD5"] = md5.base64EncodedString()
+        // Over TLS the channel protects the body and Content-MD5 checks it; hashing 8 MiB twice buys nothing.
+        // Over plain HTTP the signature is all there is, so it covers the bytes.
+        if secure { call.payloadHash = S3Signer.unsignedPayload }
+        let (_, response) = try await s3(call) { sent in tracker.sent(min(sent, length), part: number) }
+        guard let etag = S3XML.etag(response.value(forHTTPHeaderField: "ETag")) else {
+            throw CloudError.message(L("El servidor no confirmó una de las partes de la subida."))
+        }
+        return SentPart(etag: etag, md5: S3Signer.hex(md5), opaque: Self.encrypted(response) || !Self.isPlainMD5(etag))
     }
 
     /// Asks the server which parts it already holds and keeps the run of them that still matches the file: the

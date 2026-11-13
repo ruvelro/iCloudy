@@ -3,6 +3,57 @@
 Las versiones siguen [SemVer](https://semver.org/lang/es/). Mientras el número mayor sea `0`, la app se considera
 en desarrollo: puede haber cambios que rompan cosas entre versiones menores, y así se dirá aquí.
 
+## Sin publicar
+
+Lo que la 0.9.0 no traía. Probado con servidores simulados, con la cuenta de demostración y con archivos hechos por
+las herramientas del sistema, no contra cuentas reales ni con la app en marcha; para lo primero está la batería de
+[pruebas reales](docs/PRUEBAS-REALES.md), que se salta sola mientras no se le den cuentas.
+
+### Transferencias
+
+- **Las descargas por HTTP se reanudan**, como ya hacían las de SFTP y sobre los mismos parciales: en Drive, OneDrive,
+  Dropbox, Box y WebDAV, un corte deja lo que había llegado junto al destino y el siguiente intento pide solo el
+  resto (`Range`). Solo se continúa un parcial sellado con la misma versión que da el listado. Donde hay suma, la
+  comprobación final vigila; en WebDAV, que no la da, la fecha listada va en `If-Range` y un servidor con otra versión
+  contesta con el archivo entero.
+- **Varios archivos de una carpeta a la vez.** Dentro de un trabajo viajan hasta cuatro archivos en paralelo (de uno a
+  ocho, en Ajustes › Transferencias). Los proveedores de una sola sesión (FTP, SFTP, Mega, O2) siguen de uno en uno,
+  y las subidas a Dropbox también, porque bloquea la cuenta en cada escritura. Las partes de una subida multiparte a
+  S3 van de varias en varias, sin tener nunca más de 64 MiB en memoria.
+- **Mover entre nubes sobrevive al cierre.** La promesa de quitar el original cuando su copia llegue verificada se
+  guarda con la transferencia. Antes vivía en memoria: cerrar iCloudy a medias convertía el movimiento en copia.
+
+### Sincronización
+
+- **Registro de cambios en lugar de recorrer el árbol.** Una sincronización en ambos sentidos con Drive, OneDrive,
+  Dropbox o Box pregunta cada 30 segundos al registro de cambios del proveedor (una petición que casi siempre contesta
+  «nada») y solo lista la nube cuando la respuesta toca su carpeta. Antes listaba el árbol entero cada cinco minutos.
+  Cada hora se lista todo igualmente, y los reflejos con programación propia no cambian.
+
+### Uso diario
+
+- **Comprimir y descomprimir.** «Descargar como ZIP…» para una carpeta o una selección, «Descargar y descomprimir…»
+  para un .zip, y «Subir comprimido en ZIP…». El lector de ZIP es propio (no hay herramienta que llamar desde la
+  sandbox): ZIP64, y rechaza rutas que saldrían del destino, enlaces y entradas que se inflan más de lo que declaran.
+- **Analizar espacio.** Una tercera herramienta en la ventana de comparar y duplicados: qué ocupa cada carpeta, de
+  mayor a menor y nivel a nivel, y los archivos más grandes. Solo lee listados.
+- **Permisos en SFTP**: «Permisos…» ve y cambia los de un archivo o los de una carpeta con todo lo que contiene.
+
+### Seguridad
+
+- **Bloqueo con Touch ID.** Opcional: iCloudy pide Touch ID o la contraseña del Mac al abrirse, al volver tras unos
+  minutos fuera y al bloquearse la pantalla, y antes de abrir una bóveda con la contraseña guardada. Es una pantalla de
+  privacidad, no un cifrado. Bloqueado, tampoco pasan los Atajos, los enlaces `icloudy://`, la línea de órdenes ni
+  AppleScript.
+- **Revisión de enlaces públicos.** Una vez al día, y avisando en la barra lateral: los que caducan en una semana, los
+  ya caducados y los que cualquiera puede abrir sin fecha ni contraseña. No revoca nada por su cuenta.
+
+### Pruebas
+
+- `LiveAccountTests` recorre un proveedor entero contra una cuenta real: subir, bajar, reanudar una descarga,
+  renombrar, mover, copiar, el registro de cambios y la papelera.
+- `scripts/untranslated.py` lista, con las claves que emite el compilador, lo que aún no tiene traducción al inglés.
+
 ## 0.9.0 — 6 de noviembre de 2026
 
 La versión que sale de la revisión del 5 de noviembre (`docs/REVISION-2026-11-05.md`): los fallos que encontró,

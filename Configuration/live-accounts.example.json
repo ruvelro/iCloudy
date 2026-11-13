@@ -1,0 +1,13 @@
+[
+  { "cloud": "google", "clientID": "…apps.googleusercontent.com", "clientSecret": "GOCSPX-…", "refreshToken": "1//…" },
+  { "cloud": "microsoft", "clientID": "00000000-0000-0000-0000-000000000000", "refreshToken": "M.C5…" },
+  { "cloud": "dropbox", "clientID": "app-key", "refreshToken": "…" },
+  { "cloud": "box", "clientID": "…", "clientSecret": "…", "refreshToken": "…", "largeMB": 21 },
+  { "cloud": "pcloud", "accessToken": "…", "apiHost": "eapi.pcloud.com" },
+  { "cloud": "webdav", "url": "https://nube.ejemplo.com/remote.php/dav/files/pruebas", "user": "pruebas", "password": "contraseña-de-aplicación", "flavor": "nextcloud" },
+  { "cloud": "sftp", "url": "sftp://pruebas:secreta@127.0.0.1:2222/" },
+  { "cloud": "ftp", "url": "ftpes://pruebas:secreta@127.0.0.1:2121/" },
+  { "cloud": "mega", "user": "pruebas@ejemplo.com", "password": "…" },
+  { "cloud": "azure", "user": "devstoreaccount1", "secretKey": "…", "bucket": "pruebas", "url": "http://127.0.0.1:10000/devstoreaccount1" },
+  { "cloud": "s3", "url": "http://127.0.0.1:9000", "accessKey": "clave", "secretKey": "secreto123", "bucket": "pruebas" }
+]

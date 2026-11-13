@@ -708,18 +708,18 @@ final class TransferQueue {
         if current.direction == .upload {
             let total = try await blockingIO { try Self.localSize(source) }
             try edit(id) { $0.total = total; $0.bytes = 0 }
-            try await TransferWalker(queue: self, id: id).upload(api: api, local: source, parent: current.parent)
+            try await TransferWalker(queue: self, id: id, width: TransferScheduler.filesAtOnce(policy, accounts: [api.account], uploading: true)).upload(api: api, local: source, parent: current.parent)
         } else if current.direction == .transfer, let file = current.file {
             guard let targetID = current.targetAccountID else { throw CloudError.message(L("Falta la cuenta de destino de esta transferencia.")) }
             let target = try client(targetID)
             try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             try edit(id) { $0.bytes = 0; $0.total = file.isFolder ? 0 : (file.size ?? 0) }
-            try await TransferWalker(queue: self, id: id).copy(from: api, to: target, file: file, parent: current.parent, scratch: source)
+            try await TransferWalker(queue: self, id: id, width: TransferScheduler.filesAtOnce(policy, accounts: [api.account, target.account], uploading: true)).copy(from: api, to: target, file: file, parent: current.parent, scratch: source)
             try? FileManager.default.removeItem(at: source)
         } else if let file = current.file {
             // Folder totals grow as each remote folder is listed; a single file's size is known up front.
             try edit(id) { $0.bytes = 0; $0.total = file.isFolder ? 0 : (file.size ?? 0) }
-            try await TransferWalker(queue: self, id: id).download(api: api, file: file, into: source)
+            try await TransferWalker(queue: self, id: id, width: TransferScheduler.filesAtOnce(policy, accounts: [api.account], uploading: false)).download(api: api, file: file, into: source)
         }
     }
     /// Flat, collision-free staging name: keys are paths, and the digest keeps them out of nested directories.

@@ -18,13 +18,69 @@ final class TransferWalker {
     /// The job's own rules, compiled once per run. A mirror's come from the queue instead, asked for every item.
     private var ownRules: SyncExclusionMatcher??
 
-    init(queue: TransferQueue, id: UUID) { self.queue = queue; self.id = id }
+    /// Bytes moved so far by each file that is travelling now. Several of a folder go at once, so the job's figure
+    /// is what has finished plus what each of these has moved.
+    private var live: [String: Int64] = [:]
+    /// How many files of the job may travel at once, and the lanes that hold them to it.
+    private let width: Int
+    private let lanes: TransferLanes
+
+    init(queue: TransferQueue, id: UUID, width: Int = 1) {
+        self.queue = queue; self.id = id
+        self.width = max(1, width); lanes = TransferLanes(max(1, width))
+    }
+
+    /// The part of an item that moves its bytes, handed back by the walk instead of awaited in it, so that the files
+    /// of a folder can travel side by side. Everything that has to happen in order (choosing a name, asking about a
+    /// conflict, creating a folder) is done by the walk before it hands one of these over.
+    typealias Leaf = @MainActor @Sendable () async throws -> Void
+
+    /// Visits the children of a folder in order and runs the leaves they hand back, up to `width` at a time. It
+    /// returns when every leaf has finished, so a folder is only marked complete once all of its files are; the
+    /// first one that fails cancels the rest and its error is the folder's.
+    private func each<Child: Sendable>(_ children: [Child], _ visit: @MainActor (Child) async throws -> Leaf?) async throws {
+        guard width > 1 else {
+            for child in children { if let leaf = try await visit(child) { try await leaf() } }
+            return
+        }
+        let lanes = lanes, width = width
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            var started = 0
+            for child in children {
+                guard let leaf = try await visit(child) else { continue }
+                // Never more tasks than lanes: a folder of a hundred thousand files does not become as many tasks.
+                if started >= width { try await group.next(); started -= 1 }
+                group.addTask { try await Self.travel(leaf, lanes: lanes) }
+                started += 1
+            }
+            try await group.waitForAll()
+        }
+    }
+    /// Runs one leaf in a lane of its job. The lanes are the job's, not the folder's: a subfolder walked while files
+    /// of its parent are still travelling shares them, so the job never exceeds its width.
+    private static func travel(_ leaf: Leaf, lanes: TransferLanes) async throws {
+        try await lanes.acquire()
+        defer { lanes.release() }
+        try await leaf()
+    }
+    /// Progress of one file in flight.
+    private func tick(_ key: String, _ bytes: Int64, _ total: Int64) {
+        live[key] = bytes
+        queue.report(id, base: done + live.values.reduce(0, +) - bytes, bytes: bytes, total: total)
+    }
+    /// A file is over: its bytes stop counting as in flight and count as done.
+    private func finish(_ key: String, _ bytes: Int64) { live[key] = nil; advance(bytes) }
+    /// A leaf failed: the failure belongs to its item, whatever the walk has moved on to since.
+    private func failed(_ key: String, _ cursor: ReportCursor, _ error: Error) {
+        live[key] = nil
+        if !(error is CancellationError) { queue.inFlight[id] = cursor }
+    }
 
     private func job() throws -> Transfer { try queue.job(id) }
     private func edit(coalesce: Bool = false, _ change: (inout Transfer) -> Void) throws { try queue.edit(id, coalesce: coalesce, change) }
     /// The same, written to disk before returning, for a marker that must exist before a request is sent.
     private func commit(_ change: (inout Transfer) -> Void) async throws { try await queue.commit(id, change) }
-    private func advance(_ bytes: Int64) { done += bytes; queue.mark(id, done: done) }
+    private func advance(_ bytes: Int64) { done += bytes; queue.mark(id, done: done + live.values.reduce(0, +)) }
 
     /// What an upload leaves out: the mirror's current rules, or the ones the job was saved with.
     private func uploadRules() throws -> SyncExclusionMatcher? {
@@ -166,19 +222,23 @@ final class TransferWalker {
 
     // MARK: Upload
 
-    func upload(api: CloudAPI, local: URL, parent: String, key: String = ".") async throws {
+    func upload(api: CloudAPI, local: URL, parent: String) async throws {
+        if let leaf = try await uploadStep(api: api, local: local, parent: parent, key: ".") { try await leaf() }
+    }
+    private func uploadStep(api: CloudAPI, local: URL, parent: String, key: String) async throws -> Leaf? {
         try Task.checkCancellation()
         let values = try local.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey])
         let folder = values.isDirectory == true
-        queue.inFlight[id] = ReportCursor(key: key, leaf: local.lastPathComponent, folder: folder)
+        let cursor = ReportCursor(key: key, leaf: local.lastPathComponent, folder: folder)
+        queue.inFlight[id] = cursor
         guard values.isSymbolicLink != true else { throw CloudError.message(L("No se admiten enlaces simbólicos.")) }
         // Excluded: never uploaded, never listed, never counted. The root itself is the mirror and is never excluded.
         if key != ".", let rules = try uploadRules() {
             let path = String(key.dropFirst(2))
-            if rules.excludes(path, isFolder: folder) { return }
-            if !folder, rules.filtersOut(size: values.fileSize.map(Int64.init), modified: values.contentModificationDate, now: Date()) { return }
+            if rules.excludes(path, isFolder: folder) { return nil }
+            if !folder, rules.filtersOut(size: values.fileSize.map(Int64.init), modified: values.contentModificationDate, now: Date()) { return nil }
         }
-        if try await alreadyCompleted(key, bytes: { try await blockingIO { try TransferQueue.localSize(local) } }) { return }
+        if try await alreadyCompleted(key, bytes: { try await blockingIO { try TransferQueue.localSize(local) } }) { return nil }
         // A mirror's own folder is never created remotely: its contents go into one that already exists, so its name
         // never reaches the provider. Judging it by the provider's rules stopped a mirror of "Fotos." from ever
         // syncing to OneDrive, over a name nobody was going to send.
@@ -199,7 +259,7 @@ final class TransferWalker {
                 if $0.mirrorEntries != nil { $0.mirrorEntries?[key] = same }
             }
             advance(Int64(values.fileSize ?? 0))
-            return
+            return nil
         }
         if current.names[key] == nil {
             let remembered = current.mirrorEntries?[key]
@@ -217,7 +277,7 @@ final class TransferWalker {
                     $0.mirrorEntries = $0.mirrorEntries?.filter { $0.key != key && !$0.key.hasPrefix(key + "/") }
                 }
                 advance(try await blockingIO { try TransferQueue.localSize(local) })
-                return
+                return nil
             }
             try edit(coalesce: true) {
                 $0.names[key] = name; $0.replacements[key] = replacing
@@ -240,46 +300,54 @@ final class TransferWalker {
                 try edit { $0.mirrorEntries?[key] = entry }
             }
             let children = try await blockingIO { try FileManager.default.contentsOfDirectory(at: local, includingPropertiesForKeys: nil).sorted(by: { $0.path < $1.path }) }
-            for child in children {
-                try await upload(api: api, local: child, parent: remote, key: key + "/" + child.lastPathComponent)
+            try await each(children) { child in
+                try await self.uploadStep(api: api, local: child, parent: remote, key: key + "/" + child.lastPathComponent)
             }
-        } else {
-            let base = done
-            let replacing = current.replacements[key]
-            let receipt = try await api.resumableUpload(local: local, parent: parent, name: name, replacing: replacing, checkpoint: current.uploads[key], save: { [queue, id] checkpoint in
+            try edit(coalesce: true) { $0.completedPaths.insert(key) }
+            return nil
+        }
+        let replacing = current.replacements[key], mirrored = current.mirrorEntries != nil, checkpoint = current.uploads[key]
+        return { [self] in
+          do {
+            let receipt = try await api.resumableUpload(local: local, parent: parent, name: name, replacing: replacing, checkpoint: checkpoint, save: { [queue, id] checkpoint in
                 // A new session URL and the completion are written at once; intermediate offsets are coalesced.
                 try queue.edit(id, coalesce: checkpoint.offset > 0 && !checkpoint.complete) { $0.uploads[key] = checkpoint }
-            }, progress: { [queue, id] bytes, total in queue.report(id, base: base, bytes: bytes, total: total) })
+            }, progress: { [weak self] bytes, total in self?.tick(key, bytes, total) })
             try edit(coalesce: true) { $0.record(key, receipt.verification == .verified ? .verified : .unverified, bytes: values.fileSize.map(Int64.init)) }
-            if current.mirrorEntries != nil {
+            if mirrored {
                 // Only an identity returned by this upload may become an automatically replaceable mirror target.
                 let remote = try await api.list(parent: parent)
                 let entry = receipt.remoteID.flatMap { id in remote.first { $0.id == id } }
                 try edit { $0.mirrorEntries?[key] = entry }
                 siblings[parent] = remote
             }
-            advance(Int64(values.fileSize ?? 0))
+            finish(key, Int64(values.fileSize ?? 0))
             if let remoteID = receipt.remoteID {
                 // The file that was just uploaded is, by definition, also on this Mac.
                 queue.didStoreLocalCopy?(LocalCopy(accountID: try job().accountID, fileID: remoteID, name: name, path: local.path,
                                                    bookmark: try job().bookmark, size: Int64(values.fileSize ?? 0),
                                                    remoteModified: Date(), savedAt: Date(), origin: .upload))
             }
-            if replacing == nil, current.mirrorEntries == nil {
+            if replacing == nil, !mirrored {
                 siblings[parent, default: []].append(Self.fileEntry(name, size: values.fileSize.map(Int64.init)))
             }
+            try edit(coalesce: true) { $0.completedPaths.insert(key) }
+          } catch { failed(key, cursor, error); throw error }
         }
-        try edit(coalesce: true) { $0.completedPaths.insert(key) }
     }
 
     // MARK: Copy between accounts
 
     /// Copies a remote tree from one account into a folder of another. Each file is staged in `scratch`, uploaded with
     /// the usual checkpoints, then deleted. Google documents leave Drive as Office files or PDF.
-    func copy(from source: CloudAPI, to target: CloudAPI, file: CloudFile, parent: String, scratch: URL, key: String = ".") async throws {
+    func copy(from source: CloudAPI, to target: CloudAPI, file: CloudFile, parent: String, scratch: URL) async throws {
+        if let leaf = try await copyStep(from: source, to: target, file: file, parent: parent, scratch: scratch, key: ".") { try await leaf() }
+    }
+    private func copyStep(from source: CloudAPI, to target: CloudAPI, file: CloudFile, parent: String, scratch: URL, key: String) async throws -> Leaf? {
         try Task.checkCancellation()
-        if try await alreadyCompleted(key, bytes: { file.size ?? 0 }) { return }
-        queue.inFlight[id] = ReportCursor(key: key, leaf: file.name, folder: file.isFolder)
+        if try await alreadyCompleted(key, bytes: { file.size ?? 0 }) { return nil }
+        let cursor = ReportCursor(key: key, leaf: file.name, folder: file.isFolder)
+        queue.inFlight[id] = cursor
         let export = file.isGoogleDocument ? file.crossCloudExport : nil
         if file.isGoogleDocument && export == nil {
             // Forms, sites and shortcuts have nothing exportable; note it and move on instead of failing the whole tree.
@@ -287,7 +355,7 @@ final class TransferWalker {
                 $0.completedPaths.insert(key); $0.unverifiedFiles += 1
                 $0.record(key, .excluded, path: $0.reportPath(for: key, leaf: file.name), reason: L("Google no permite exportar formularios, sitios ni accesos directos."))
             }
-            return
+            return nil
         }
         let localName = export.map { file.name + "." + $0.ext } ?? file.name
         if let problem = FileNames.problem(with: localName, for: target.account.cloud) { throw CloudError.message(L("No se puede enviar «\(localName)»: \(problem)")) }
@@ -301,13 +369,13 @@ final class TransferWalker {
                 $0.record(key, .verified, bytes: file.size, reason: L("Ya estaba en el destino con la misma suma; no se ha vuelto a enviar."))
             }
             advance(file.size ?? 0)
-            return
+            return nil
         }
         if current.names[key] == nil {
             guard case .use(let name, let replacing) = try await resolveName(localName, key: key, parent: parent, in: target, folder: file.isFolder, incoming: file.modified) else {
                 try edit { $0.completedPaths.insert(key); $0.recordSkip(key, leaf: localName, folder: file.isFolder, bytes: file.size) }
                 advance(file.size ?? 0)
-                return
+                return nil
             }
             try edit(coalesce: true) { $0.names[key] = name; $0.replacements[key] = replacing }
             current = try job()
@@ -321,12 +389,17 @@ final class TransferWalker {
             let children = try await source.list(parent: file.id)
             let known = children.reduce(Int64(0)) { $0 + ($1.size ?? 0) }
             if known > 0 { try edit(coalesce: true) { $0.total += known } }
-            for child in children {
-                try await copy(from: source, to: target, file: child, parent: remote, scratch: scratch, key: key + "/" + child.id)
+            try await each(children) { child in
+                try await self.copyStep(from: source, to: target, file: child, parent: remote, scratch: scratch, key: key + "/" + child.id)
             }
-        } else {
+            try edit(coalesce: true) { $0.completedPaths.insert(key) }
+            return nil
+        }
+        let snapshot = current
+        return { [self] in
+          do {
             let staged = scratch.appendingPathComponent(TransferQueue.stagedName(key, name))
-            var checkpoint = current.uploads[key]
+            var checkpoint = snapshot.uploads[key]
             if let checkpoint, checkpoint.complete {
                 guard checkpoint.integrity == .verified || checkpoint.integrity == .unavailable else {
                     throw CloudError.message(L("La copia remota quedó sin verificar. Revisa el destino antes de reintentar."))
@@ -336,7 +409,7 @@ final class TransferWalker {
                     $0.record(key, checkpoint.integrity == .verified ? .verified : .unverified, bytes: file.size)
                 }
                 try? FileManager.default.removeItem(at: staged)
-                advance(file.size ?? 0)
+                finish(key, file.size ?? 0)
                 return
             }
             let canResumeWithoutSource = target.canResumeWithoutSource(checkpoint)
@@ -349,25 +422,23 @@ final class TransferWalker {
                 // means a file at `staged` is always a complete one; a retry never uploads half a file as whole.
                 let partial = staged.appendingPathExtension("part")
                 try? FileManager.default.removeItem(at: partial)
-                // Half the work of a cross-cloud transfer is this download, and the bar did not move for any of it.
-                let downloaded = done
+                // Half the work of a cross-cloud transfer is this download, and the bar moves for it too.
                 // The download checks itself against the listed size and checksum, and deletes what fails, so only
                 // a copy that passed is ever renamed into place.
                 let verification: DownloadVerification
                 do {
-                    verification = try await source.download(file: file, to: partial, exportMime: export?.mime) { [queue, id] bytes, total in
-                        queue.report(id, base: downloaded, bytes: bytes, total: total)
+                    verification = try await source.download(file: file, to: partial, exportMime: export?.mime) { [weak self] bytes, total in
+                        self?.tick(key, bytes, total)
                     }
                 } catch let error as DownloadIntegrityError { try queue.recordFailedCheck(id, key: key, error); throw error }
                 try Task.checkCancellation()
                 try FileManager.default.moveItem(at: partial, to: staged)
                 try edit(coalesce: true) { $0.recordDownload(key, DownloadIntegrity(verification), path: $0.reportPath(for: key)) }
             }
-            let base = done
             try edit(coalesce: true) { $0.detail = L("Subiendo «\(name)» a \(target.account.cloud.title)…") }
-            let receipt = try await target.resumableUpload(local: staged, parent: parent, name: name, replacing: current.replacements[key], checkpoint: checkpoint, save: { [queue, id] checkpoint in
+            let receipt = try await target.resumableUpload(local: staged, parent: parent, name: name, replacing: snapshot.replacements[key], checkpoint: checkpoint, save: { [queue, id] checkpoint in
                 try queue.edit(id, coalesce: checkpoint.offset > 0 && !checkpoint.complete) { $0.uploads[key] = checkpoint }
-            }, progress: { [queue, id] bytes, total in queue.report(id, base: base, bytes: bytes, total: total) })
+            }, progress: { [weak self] bytes, total in self?.tick(key, bytes, total) })
             // On disk before deleting the only staged copy.
             try await commit {
                 $0.completedPaths.insert(key)
@@ -375,27 +446,32 @@ final class TransferWalker {
                           reason: export.map { L("Exportado de Google como .\($0.ext)") })
             }
             try? FileManager.default.removeItem(at: staged)
-            advance(file.size ?? 0)
-            if current.replacements[key] == nil {
+            finish(key, file.size ?? 0)
+            if snapshot.replacements[key] == nil {
                 siblings[parent, default: []].append(Self.fileEntry(name, size: file.size))
             }
+            try edit(coalesce: true) { $0.completedPaths.insert(key) }
+          } catch { failed(key, cursor, error); throw error }
         }
-        try edit(coalesce: true) { $0.completedPaths.insert(key) }
     }
 
     // MARK: Download
 
     /// `relative` is the item's path below the job's own item, by remote names, for the job's rules.
-    func download(api: CloudAPI, file: CloudFile, into folder: URL, key: String = ".", relative: String = "") async throws {
+    func download(api: CloudAPI, file: CloudFile, into folder: URL) async throws {
+        if let leaf = try await downloadStep(api: api, file: file, into: folder, key: ".", relative: "") { try await leaf() }
+    }
+    private func downloadStep(api: CloudAPI, file: CloudFile, into folder: URL, key: String, relative: String) async throws -> Leaf? {
         try Task.checkCancellation()
-        if try await alreadyCompleted(key, bytes: { file.size ?? 0 }) { return }
-        queue.inFlight[id] = ReportCursor(key: key, leaf: file.name, folder: file.isFolder)
+        if try await alreadyCompleted(key, bytes: { file.size ?? 0 }) { return nil }
+        let cursor = ReportCursor(key: key, leaf: file.name, folder: file.isFolder)
+        queue.inFlight[id] = cursor
         var current = try job()
         if key != ".", let rules = try ownDownloadRules() {
             if rules.excludes(relative, isFolder: file.isFolder)
                 || (!file.isFolder && rules.filtersOut(size: file.size, modified: file.modified, now: Date())) {
                 try edit(coalesce: true) { $0.completedPaths.insert(key) }
-                return
+                return nil
             }
         }
         // A mirror's folder is the copy of the remote one: the contents go straight in, under no new name.
@@ -410,7 +486,7 @@ final class TransferWalker {
             guard case .use(let selectedName, let replacing) = resolved.decision else {
                 try edit { $0.completedPaths.insert(key); $0.recordSkip(key, leaf: name, folder: file.isFolder, bytes: file.size) }
                 advance(file.size ?? 0)
-                return
+                return nil
             }
             target = resolved.target
             if replacing != nil { replace = true }
@@ -426,11 +502,17 @@ final class TransferWalker {
             let children = try await api.list(parent: file.id)
             let known = children.reduce(Int64(0)) { $0 + ($1.size ?? 0) }
             if known > 0 { try edit(coalesce: true) { $0.total += known } }
-            for child in children {
-                try await download(api: api, file: child, into: target, key: key + "/" + child.id,
-                                   relative: relative.isEmpty ? child.name : relative + "/" + child.name)
+            let inside = target
+            try await each(children) { child in
+                try await self.downloadStep(api: api, file: child, into: inside, key: key + "/" + child.id,
+                                            relative: relative.isEmpty ? child.name : relative + "/" + child.name)
             }
-        } else {
+            try edit(coalesce: true) { $0.completedPaths.insert(key) }
+            return nil
+        }
+        let snapshot = current, destination = target, replacing = replace
+        return { [self] in
+          do {
             // A provider that resumes by offset gets a partial named after the job and the item, which survives a
             // failed or paused attempt; every other one gets a fresh name that is always removed.
             let resumable = api.account.capabilities.resumesDownloads && !exporting && !file.isGoogleDocument
@@ -443,11 +525,10 @@ final class TransferWalker {
                 let link = try PropertyListSerialization.data(fromPropertyList: ["URL": url.absoluteString], format: .xml, options: 0)
                 try await blockingIO { try link.write(to: temporary) }
             } else {
-                let base = done
                 // A copy that fails its check is deleted inside `download`; the destination is never touched.
                 do {
-                    verification = try await api.download(file: file, to: temporary, exportMime: exporting ? current.exportMime : nil) { [queue, id] bytes, total in
-                        queue.report(id, base: base, bytes: bytes, total: total)
+                    verification = try await api.download(file: file, to: temporary, exportMime: exporting ? snapshot.exportMime : nil) { [weak self] bytes, total in
+                        self?.tick(key, bytes, total)
                     }
                 } catch let error as DownloadIntegrityError { try queue.recordFailedCheck(id, key: key, error); throw error }
                 catch {
@@ -457,22 +538,22 @@ final class TransferWalker {
                 }
             }
             try Task.checkCancellation()
-            let destination = target, replacing = replace
             try await blockingIO {
                 if replacing && FileManager.default.fileExists(atPath: destination.path) { _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary) }
                 else { try FileManager.default.moveItem(at: temporary, to: destination) }
             }
             if let verification { try edit(coalesce: true) { $0.recordDownload(key, DownloadIntegrity(verification), path: $0.reportPath(for: key)) } }
             else { try edit(coalesce: true) { $0.record(key, .exported, reason: L("Guardado como enlace .webloc al documento de Google"), counted: false) } }
-            advance(file.size ?? 0)
+            finish(key, file.size ?? 0)
             // Only real content counts as a local copy: a .webloc is a link and an export is a different document.
             // Nor is a download on its way into an archive, or out of one: its staging folder is about to go.
-            if !file.isGoogleDocument, !exporting, current.archive == nil {
-                queue.didStoreLocalCopy?(LocalCopy(accountID: current.accountID, fileID: file.id, name: file.name, path: target.path,
-                                                   bookmark: current.bookmark, size: file.size ?? 0,
+            if !file.isGoogleDocument, !exporting, snapshot.archive == nil {
+                queue.didStoreLocalCopy?(LocalCopy(accountID: snapshot.accountID, fileID: file.id, name: file.name, path: destination.path,
+                                                   bookmark: snapshot.bookmark, size: file.size ?? 0,
                                                    remoteModified: file.modified, savedAt: Date(), origin: .download))
             }
+            try edit(coalesce: true) { $0.completedPaths.insert(key) }
+          } catch { failed(key, cursor, error); throw error }
         }
-        try edit(coalesce: true) { $0.completedPaths.insert(key) }
     }
 }
