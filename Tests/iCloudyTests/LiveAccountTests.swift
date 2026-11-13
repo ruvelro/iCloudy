@@ -110,11 +110,8 @@ final class LiveAccountTests: XCTestCase {
     }
 
     private func payload(_ count: Int, seed: Int) -> Data {
-        var data = Data(count: count)
-        data.withUnsafeMutableBytes { bytes in
-            for index in 0..<count { bytes[index] = UInt8(truncatingIfNeeded: (index &* 31 &+ seed) % 251) }
-        }
-        return data
+        // Built from an array: older compilers cannot choose between the two `withUnsafeMutableBytes` of Data.
+        Data((0..<count).map { UInt8(truncatingIfNeeded: ($0 &* 31 &+ seed) % 251) })
     }
     private func upload(_ data: Data, named name: String, to parent: String, replacing: String? = nil, api: CloudAPI) async throws -> UploadReceipt {
         let local = FileManager.default.temporaryDirectory.appendingPathComponent("live-" + UUID().uuidString + "-" + name)

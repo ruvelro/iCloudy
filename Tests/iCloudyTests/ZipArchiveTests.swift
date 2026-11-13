@@ -21,8 +21,7 @@ final class ZipArchiveTests: XCTestCase {
     /// A tree with a name that needs UTF-8, an empty file, something compressible and something that is not.
     private func makeTree() throws -> (URL, [String: Data]) {
         let tree = root.appendingPathComponent("Carpeta ñ")
-        var noise = Data(count: 300_000)
-        noise.withUnsafeMutableBytes { bytes in for index in 0..<bytes.count { bytes[index] = UInt8(truncatingIfNeeded: (index &* 2_654_435_761) >> 13) } }
+        let noise = Data((0..<300_000).map { UInt8(truncatingIfNeeded: ($0 &* 2_654_435_761) >> 13) })
         let files: [String: Data] = [
             "leeme.txt": Data(String(repeating: "línea que se repite\n", count: 20_000).utf8),
             "vacío.txt": Data(),
@@ -91,19 +90,27 @@ final class ZipArchiveTests: XCTestCase {
 
     /// A one-entry archive written by hand, so the name can be anything.
     private func handmade(name: String, content: Data = Data("x".utf8), method: UInt16 = 0, declaredSize: UInt32? = nil, crc: UInt32? = nil, unixMode: UInt32 = 0o100644, flags: UInt16 = 0x0800) -> URL {
-        func le<T: FixedWidthInteger>(_ value: T) -> Data { withUnsafeBytes(of: value.littleEndian) { Data($0) } }
+        // One field per statement: a chain of a dozen `+` is more than some compilers will type-check in time.
+        func put<T: FixedWidthInteger>(_ value: T, into data: inout Data) { withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
         let bytes = Data(name.utf8)
-        let sum = crc ?? content.withUnsafeBytes { UInt32(truncatingIfNeeded: iCloudyZipCRC($0)) }
-        let size = declaredSize ?? UInt32(content.count)
+        let sum: UInt32 = crc ?? content.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> UInt32 in UInt32(truncatingIfNeeded: iCloudyZipCRC(raw)) }
+        let size: UInt32 = declaredSize ?? UInt32(content.count)
+        let packed = UInt32(content.count), nameLength = UInt16(bytes.count), zero16 = UInt16(0)
         var local = Data()
-        local += le(UInt32(0x04034b50)) + le(UInt16(20)) + le(flags) + le(method) + le(UInt16(0)) + le(UInt16(0))
-        local += le(sum) + le(UInt32(content.count)) + le(size) + le(UInt16(bytes.count)) + le(UInt16(0)) + bytes + content
+        put(UInt32(0x04034b50), into: &local); put(UInt16(20), into: &local); put(flags, into: &local); put(method, into: &local)
+        put(zero16, into: &local); put(zero16, into: &local)
+        put(sum, into: &local); put(packed, into: &local); put(size, into: &local); put(nameLength, into: &local); put(zero16, into: &local)
+        local.append(bytes); local.append(content)
         var central = Data()
-        central += le(UInt32(0x02014b50)) + le(UInt16(0x0314)) + le(UInt16(20)) + le(flags) + le(method) + le(UInt16(0)) + le(UInt16(0))
-        central += le(sum) + le(UInt32(content.count)) + le(size) + le(UInt16(bytes.count)) + le(UInt16(0)) + le(UInt16(0)) + le(UInt16(0)) + le(UInt16(0))
-        central += le(unixMode << 16) + le(UInt32(0)) + bytes
+        put(UInt32(0x02014b50), into: &central); put(UInt16(0x0314), into: &central); put(UInt16(20), into: &central)
+        put(flags, into: &central); put(method, into: &central); put(zero16, into: &central); put(zero16, into: &central)
+        put(sum, into: &central); put(packed, into: &central); put(size, into: &central); put(nameLength, into: &central)
+        put(zero16, into: &central); put(zero16, into: &central); put(zero16, into: &central); put(zero16, into: &central)
+        put(unixMode << 16, into: &central); put(UInt32(0), into: &central)
+        central.append(bytes)
         var end = Data()
-        end += le(UInt32(0x06054b50)) + le(UInt16(0)) + le(UInt16(0)) + le(UInt16(1)) + le(UInt16(1)) + le(UInt32(central.count)) + le(UInt32(local.count)) + le(UInt16(0))
+        put(UInt32(0x06054b50), into: &end); put(zero16, into: &end); put(zero16, into: &end); put(UInt16(1), into: &end); put(UInt16(1), into: &end)
+        put(UInt32(central.count), into: &end); put(UInt32(local.count), into: &end); put(zero16, into: &end)
         let url = root.appendingPathComponent(UUID().uuidString + ".zip")
         try! (local + central + end).write(to: url)
         return url
