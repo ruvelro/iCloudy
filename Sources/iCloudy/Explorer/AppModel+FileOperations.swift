@@ -41,20 +41,20 @@ extension AppModel {
     func requestPublicLink(_ file: CloudFile, account target: Account? = nil) {
         guard let account = target ?? account else { return }
         if let reason = account.limitation(.publicLink, for: [file]) { error = reason; return }
-        if account.cloud == .s3, !account.isDemo { pendingTemporaryLink = (file, account); return }
-        pendingShare = (file, account)
+        if account.capabilities.temporaryLinks { ui.pendingTemporaryLink = (file, account); return }
+        ui.pendingShare = (file, account)
     }
 
     func requestRelocation(_ files: [CloudFile], copy: Bool) {
         guard let account, !files.isEmpty else { return }
         if copy, let reason = account.limitation(.copy, for: files) { error = reason; return }
-        relocation = Relocation(files: files, kind: copy ? .copy : .move, account: account, origin: path.isEmpty && collection != .files ? nil : folderID)
+        ui.relocation = Relocation(files: files, kind: copy ? .copy : .move, account: account, origin: path.isEmpty && collection != .files ? nil : folderID)
     }
 
     func requestCrossCloud(_ files: [CloudFile]) {
         guard let account, !files.isEmpty else { return }
         guard accounts.count > 1 else { error = L("Conecta otra cuenta para poder enviar archivos entre nubes."); return }
-        crossCloud = CrossCloudRequest(files: files, source: account)
+        ui.crossCloud = CrossCloudRequest(files: files, source: account)
     }
 
     /// Queues one job per item; the queue stages each file locally and uploads it with checkpoints and verification.
@@ -97,7 +97,7 @@ extension AppModel {
             let clashes = request.files.filter { file in siblings.contains { $0.id != file.id && $0.name.localizedCaseInsensitiveCompare(file.name) == .orderedSame } }
             guard clashes.isEmpty else {
                 let names = clashes.map { "«\($0.name)»" }.joined(separator: ", ")
-                throw CloudError.message(L("En la carpeta de destino ya existe \(names). Renombra antes de mover o copiar."))
+                throw CloudError.conflict(L("En la carpeta de destino ya existe \(names). Renombra antes de mover o copiar."))
             }
             if request.isMove, queue.hasActive(accountID: request.account.id) { throw CloudError.message(L("Pausa las transferencias de esta cuenta antes de mover sus archivos.")) }
             for file in request.files {
@@ -106,22 +106,15 @@ extension AppModel {
                     let change = try api.identityChange(file: file, name: file.name, destination: destination)
                     try applyIdentityChange(change, account: request.account, destinationPath: destinationPath)
                     if let origin = request.origin { moves.append((file, change.file(file), origin, destination)) }
-                } else if request.account.cloud == .microsoft && !request.account.isDemo {
+                } else if request.account.capabilities.asyncCopy {
                     try await remoteCopies.start(file: file, destination: destination, api: api)
                 } else { try await api.copy(file: file, to: destination) }
                 done += 1
-                if request.isMove {
-                    for i in favorites.indices where favorites[i].accountID == request.account.id && favorites[i].file.id == file.id {
-                        favorites[i].path = destinationPath; favorites[i].collection = .files
-                    }
-                }
+                if request.isMove { favoriteStore.moved(accountID: request.account.id, fileID: file.id, to: destinationPath) }
             }
-            if request.isMove {
-                try LocalStore.save(favorites, to: favoritesURL)
-                if moves.count == request.files.count { registerMoveUndo(moves, account: request.account) }
-            }
+            if request.isMove, moves.count == request.files.count { registerMoveUndo(moves, account: request.account) }
             let target = destinationPath.last?.name ?? L("Mis archivos")
-            if !request.isMove, request.account.cloud == .microsoft, !request.account.isDemo {
+            if !request.isMove, request.account.capabilities.asyncCopy {
                 info = L("Copia enviada a OneDrive. Su estado se muestra en Transferencias hasta que el servidor confirme el resultado.")
                 reloadAfterWrite(to: request.account)
                 return
@@ -145,18 +138,18 @@ extension AppModel {
 
     func requestTrash(_ files: [CloudFile]) {
         guard account != nil, !files.isEmpty else { return }
-        pendingTrash = files
+        ui.pendingTrash = files
     }
 
     func requestPermanentDelete(_ files: [CloudFile]) {
         guard let account, !files.isEmpty else { return }
         if let reason = account.limitation(.permanentDelete, for: files) { error = reason; return }
-        pendingPurge = files
+        ui.pendingPurge = files
     }
 
     func requestEmptyTrash() {
         guard let account, account.capabilities.emptyTrash else { return }
-        pendingEmptyTrash = true
+        ui.pendingEmptyTrash = true
     }
 
     /// Deletes for good, one by one, stopping at the first failure so what remains is exactly what the list shows.
@@ -170,7 +163,6 @@ extension AppModel {
                 removed += 1
                 forgetLocally(file, account: account)
             }
-            try LocalStore.save(favorites, to: favoritesURL)
             info = removed == 1 ? L("«\(files[0].name)» se ha eliminado definitivamente de \(account.cloud.title).") : L("\(removed) elementos eliminados definitivamente de \(account.cloud.title).")
         } catch {
             self.error = (removed > 0 ? L("Se eliminaron \(removed) de \(files.count) elementos. ") : L("")) + error.localizedDescription
@@ -204,7 +196,6 @@ extension AppModel {
         do {
             try await client(account).emptyTrash()
             for file in binned { forgetLocally(file, account: account) }
-            try LocalStore.save(favorites, to: favoritesURL)
             info = L("La papelera de \(account.cloud.title) se ha vaciado.")
         } catch { self.error = error.localizedDescription }
         reloadAfterWrite(to: account)
@@ -214,7 +205,8 @@ extension AppModel {
     /// What the app itself knew about an item that no longer exists anywhere.
     private func forgetLocally(_ file: CloudFile, account: Account) {
         spotlight.forget(accountID: account.id, fileID: file.id)
-        favorites.removeAll { $0.accountID == account.id && ($0.file.id == file.id || $0.path.contains { $0.id == file.id }) }
+        favoriteStore.remove(accountID: account.id, fileID: file.id)
+        recents.forget(accountID: account.id, fileID: file.id)
         offline.itemDeleted(file, accountID: account.id)
     }
 
@@ -229,9 +221,9 @@ extension AppModel {
                 moved += 1
                 spotlight.forget(accountID: account.id, fileID: file.id)
                 offline.itemDeleted(file, accountID: account.id)
-                favorites.removeAll { $0.accountID == account.id && ($0.file.id == file.id || $0.path.contains { $0.id == file.id }) }
+                favoriteStore.remove(accountID: account.id, fileID: file.id)
+                recents.forget(accountID: account.id, fileID: file.id)
             }
-            try LocalStore.save(favorites, to: favoritesURL)
             registerTrashUndo(files, account: account)
             if !account.capabilities.reversibleTrash, !account.isDemo {
                 info = L("\(moved) elementos eliminados del servidor de forma permanente.")
@@ -250,23 +242,14 @@ extension AppModel {
 
     func promptName(_ file: CloudFile? = nil) {
         guard let account, file != nil || canWrite else { return }
-        editingFile = file; editName = file?.name ?? ""; editContext = (account, folderID); showNameDialog = true
+        ui.editingFile = file; ui.editName = file?.name ?? ""; editContext = (account, folderID); ui.showNameDialog = true
     }
 
     func applyIdentityChange(_ change: RemoteIdentityChange, account: Account, destinationPath: [CloudFile]? = nil) throws {
         let previousParent = path.map(\.name)
-        for i in favorites.indices where favorites[i].accountID == account.id {
-            let old = favorites[i].file.id
-            favorites[i].file = change.file(favorites[i].file)
-            favorites[i].path = favorites[i].path.map(change.file)
-            if let destinationPath {
-                if old == change.oldID { favorites[i].path = destinationPath }
-                else if let position = favorites[i].path.firstIndex(where: { $0.id == change.newID }) {
-                    favorites[i].path = destinationPath + favorites[i].path[position...]
-                }
-            }
-        }
-        try LocalStore.save(favorites, to: favoritesURL)
+        favoriteStore.apply(change, accountID: account.id, destinationPath: destinationPath)
+        // A renamed folder keeps its place in the recents; a moved one leaves it, its old path no longer leads there.
+        if destinationPath != nil { recents.forget(accountID: account.id, fileID: change.oldID) } else { recents.apply(change, accountID: account.id) }
         // Every tab showing the item, or with it in its history, follows it; not only the one with the focus.
         workspace.updateAll { $0.remap(change, accountID: account.id) }
         listings.removeAll(accountID: account.id)
@@ -279,7 +262,7 @@ extension AppModel {
 
     func commitName() async {
         guard let (account, parent) = editContext else { return }
-        let file = editingFile, name = editName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let file = ui.editingFile, name = ui.editName.trimmingCharacters(in: .whitespacesAndNewlines)
         if let problem = FileNames.problem(with: name, for: account.cloud) { error = problem; return }
         do {
             let api = try client(account)
@@ -292,7 +275,7 @@ extension AppModel {
                 try applyIdentityChange(change, account: account)
                 registerRenameUndo(file, renamed: change.file(file), account: account)
             } else { _ = try await api.createFolder(name: name, parent: parent) }
-            showNameDialog = false; reloadAfterWrite(to: account)
+            ui.showNameDialog = false; reloadAfterWrite(to: account)
         } catch { self.error = error.localizedDescription }
     }
 }

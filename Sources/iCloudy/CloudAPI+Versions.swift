@@ -1,19 +1,16 @@
 import Foundation
 
-/// The version history of a file, behind the same facade as everything else. The demo has no history to show.
+/// The version history of a file, behind the same facade as everything else.
 extension CloudAPI {
     func versions(of file: CloudFile) async throws -> [FileVersion] {
-        if demo != nil { throw CloudError.message(account.versionsUnavailable) }
         if let reason = account.versionsLimitation(for: file) { throw CloudError.message(reason) }
         return try await provider.versions(of: file)
     }
     func restoreVersion(_ version: FileVersion, of file: CloudFile) async throws {
-        if demo != nil { throw CloudError.message(account.versionsUnavailable) }
         if let reason = account.versionLimitation(.restore, version: version, of: file) { throw CloudError.message(reason) }
         try await provider.restoreVersion(version, of: file)
     }
     func deleteVersion(_ version: FileVersion, of file: CloudFile) async throws {
-        if demo != nil { throw CloudError.message(account.versionsUnavailable) }
         if let reason = account.versionLimitation(.delete, version: version, of: file) { throw CloudError.message(reason) }
         try await provider.deleteVersion(version, of: file)
     }

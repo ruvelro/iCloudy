@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 /// behind — what is at the destination now, and what is not — and exports the answer for whoever needs it.
 struct TransferReportView: View {
     let model: AppModel
-    @ObservedObject var queue: TransferQueue
+    @Bindable var queue: TransferQueue
     let batchID: UUID
     @Environment(\.dismiss) private var dismiss
     @State private var filter: FileOutcome?

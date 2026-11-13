@@ -150,6 +150,17 @@ enum DuplicateGrouping {
         return selection
     }
 
+    /// The copies on this Mac's disk of files whose bytes a cloud also holds, for freeing space without touching the
+    /// cloud. Only confirmed groups count, and only a remote account counts as the cloud: a volume account is a disk
+    /// too, and keeping a file only there would not be keeping it in the cloud.
+    static func macCopiesSelection(_ groups: [DuplicateGroup]) -> Set<String> {
+        var selection: Set<String> = []
+        for group in groups where group.isConfirmed && group.members.contains(where: { !$0.hashesLocally }) {
+            for member in group.members where member.entry.url != nil { selection.insert(member.id) }
+        }
+        return selection
+    }
+
     /// True when every group still keeps at least one copy that is not selected. Deleting is refused otherwise.
     static func leavesACopy(_ selection: Set<String>, in groups: [DuplicateGroup]) -> Bool {
         groups.allSatisfy { group in group.members.contains { !selection.contains($0.id) } }

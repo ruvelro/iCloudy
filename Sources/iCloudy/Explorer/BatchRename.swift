@@ -93,7 +93,7 @@ struct BatchRenameRequest: Identifiable {
 extension AppModel {
     func requestBatchRename(_ files: [CloudFile]) {
         guard let account, files.count > 1, canWrite else { return }
-        batchRename = BatchRenameRequest(files: files, account: account, parent: folderID)
+        ui.batchRename = BatchRenameRequest(files: files, account: account, parent: folderID)
     }
 
     /// Renames every item, stopping at the first refusal. Returns the items as they are named now.

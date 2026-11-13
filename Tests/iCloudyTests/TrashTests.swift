@@ -12,10 +12,7 @@ final class TrashTests: XCTestCase {
     override func tearDown() { StubProtocol.handler = nil }
 
     private func client(_ cloud: Cloud, options: [String: String] = [:]) -> CloudAPI {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        let account = Account(id: "test", cloud: cloud, name: "Test", email: "test@example.com", clientID: "client", clientSecret: nil,
-                              serverURL: nil, bookmark: nil, options: options)
-        return CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "test-token" })
+        makeStubbedClient(cloud, options: options)
     }
     private func item(_ id: String, folder: Bool = false) -> CloudFile {
         CloudFile(id: id, name: "cosa", mime: folder ? "application/vnd.google-apps.folder" : "text/plain", size: 1, modified: nil, webURL: nil, isFolder: folder)
@@ -157,7 +154,7 @@ final class TrashTests: XCTestCase {
         let api = client(.dropbox)
         let listed = try await api.list(parent: Collection.trash.rootID)
         XCTAssertTrue(seen[0].body.contains(#""include_deleted":true"#), seen[0].body)
-        XCTAssertTrue(seen[0].body.contains(#""recursive":true"#), "Dropbox solo entrega los borrados recorriendo toda la cuenta")
+        XCTAssertFalse(seen[0].body.contains(#""recursive":true"#), "La papelera se recorre carpeta a carpeta, no la cuenta entera")
         XCTAssertEqual(listed.map(\.id), ["/muerto.txt"], "Lo vivo no es papelera")
 
         try await api.restore(file: item("/muerto.txt"))

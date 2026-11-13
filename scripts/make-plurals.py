@@ -65,6 +65,18 @@ TABLE = [
      "%#@n@ already at the destination (%@).", [("n", "%lld file is", "%lld files are")]),
     ("En pausa · %lld cambios esperando", "En pausa · %#@n@", [("n", "%lld cambio esperando", "%lld cambios esperando")],
      "Paused · %#@n@", [("n", "%lld change waiting", "%lld changes waiting")]),
+    # 0.9 — Transferencias
+    ("%lld conflictos esperan tu decisión", "%#@n@ tu decisión", [("n", "%lld conflicto espera", "%lld conflictos esperan")],
+     "%#@n@ your decision", [("n", "%lld conflict awaits", "%lld conflicts await")]),
+    ("%lld copiados", "%#@n@", [("n", "%lld copiado", "%lld copiados")], "%#@n@", [("n", "%lld copied", "%lld copied")]),
+    ("%lld pendientes o fallidos", "%#@n@", [("n", "%lld pendiente o fallido", "%lld pendientes o fallidos")],
+     "%#@n@", [("n", "%lld pending or failed", "%lld pending or failed")]),
+    ("%lld enviados a la papelera del destino", "%#@n@ a la papelera del destino", [("n", "%lld enviado", "%lld enviados")],
+     "%#@n@ to the destination's trash", [("n", "%lld sent", "%lld sent")]),
+    # 0.9 — Proveedores e integración
+    ("%lld resultados.", "%#@n@.", [("n", "%lld resultado", "%lld resultados")], "%#@n@.", [("n", "%lld result", "%lld results")]),
+    ("Enlace creado. Caduca en %lld días.", "Enlace creado. Caduca en %#@n@.", [("n", "%lld día", "%lld días")],
+     "Link created. It expires in %#@n@.", [("n", "%lld day", "%lld days")]),
 ]
 
 def entry(format_key, variables):

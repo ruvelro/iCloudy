@@ -4,8 +4,7 @@ import XCTest
 @MainActor
 final class ResumeTests: XCTestCase {
     private func client(_ cloud: Cloud) -> CloudAPI {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        return CloudAPI(account: Account(id: "test", cloud: cloud, name: "Test", email: "test@example.com", clientID: "client", clientSecret: nil), session: URLSession(configuration: config), tokenProvider: { "test-token" })
+        makeStubbedClient(cloud)
     }
     private func local() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

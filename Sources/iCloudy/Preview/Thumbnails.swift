@@ -18,7 +18,7 @@ final class ThumbnailStore {
     var client: ((Account) throws -> CloudAPI)?
     private let memory = NSCache<NSString, NSImage>()
     private var missing: Set<String> = []
-    private var inFlight: [String: Task<NSImage?, Never>] = [:]
+    private var inFlight: [String: Task<Thumbnail?, Never>] = [:]
     private let limiter = AsyncLimiter(width: 4)
 
     init() { memory.countLimit = 600 }
@@ -43,11 +43,11 @@ final class ThumbnailStore {
         guard wants(file, account: account) else { return nil }
         let key = Self.key(file, account: account)
         if let image = memory.object(forKey: key as NSString) { return image }
-        if let running = inFlight[key] { return await running.value }
-        let task = Task<NSImage?, Never> { [weak self] in
+        if let running = inFlight[key] { return await running.value?.image }
+        let task = Task<Thumbnail?, Never> { [weak self] in
             guard let self else { return nil }
             let url = Self.directory.appendingPathComponent(key + ".jpg")
-            if let data = try? await blockingIO({ try Data(contentsOf: url) }), let image = NSImage(data: data) { return image }
+            if let data = try? await blockingIO({ try Data(contentsOf: url) }), let image = NSImage(data: data) { return Thumbnail(image: image) }
             let data: Data? = await limiter.run {
                 guard !Task.isCancelled, let api = try? self.client?(account) else { return nil }
                 return try? await api.thumbnail(of: file, side: Self.side * 2)
@@ -57,10 +57,10 @@ final class ThumbnailStore {
                 try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
                 try data.write(to: url, options: .atomic)
             }
-            return image
+            return Thumbnail(image: image)
         }
         inFlight[key] = task
-        let image = await task.value
+        let image = await task.value?.image
         inFlight[key] = nil
         if let image { memory.setObject(image, forKey: key as NSString) } else if !Task.isCancelled { missing.insert(key) }
         return image
@@ -68,6 +68,10 @@ final class ThumbnailStore {
 
     func clearMemory() { memory.removeAllObjects(); missing = [] }
 }
+
+/// An image handed from a task to the main actor. The macOS 15 SDK marks NSImage's Sendable conformance unavailable,
+/// so older compilers refuse `Task<NSImage?, Never>`; the image is built in the task and only read once it is done.
+private struct Thumbnail: @unchecked Sendable { let image: NSImage }
 
 /// Runs at most `width` operations at once; the rest wait their turn in order.
 @MainActor

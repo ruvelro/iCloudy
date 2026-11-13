@@ -3,8 +3,9 @@ import Combine
 
 /// Quota requests outlive navigation. Generations prevent a removed account or an older request from restoring stale data.
 @MainActor
-final class StorageQuotaController: ObservableObject {
-    @Published private(set) var states: [String: StorageQuotaState] = [:]
+@Observable
+final class StorageQuotaController {
+    private(set) var states: [String: StorageQuotaState] = [:]
     private var tasks: [String: Task<Void, Never>] = [:]
     private var generations: [String: UUID] = [:]
     private var fetched: [String: Date] = [:]

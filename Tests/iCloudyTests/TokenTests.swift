@@ -1,27 +1,13 @@
 import XCTest
 @testable import iCloudy
 
-/// In-memory replacement for the Keychain so refresh logic runs without touching the user's real keychain.
-final class MemoryCredentials: CredentialStore {
-    var stored: [String: Credential] = [:]
-    var reads = 0
-    /// Set to play a locked Keychain: reads still work, writes do not.
-    var refuseSaves = false
-    func read(_ key: String) throws -> Credential? { reads += 1; return stored[key] }
-    func save(_ credential: Credential, key: String) throws {
-        if refuseSaves { throw CloudError.message("Llavero bloqueado") }
-        stored[key] = credential
-    }
-}
-
 @MainActor
 final class TokenTests: XCTestCase {
     private let account = Account(id: "google:1", cloud: .google, name: "Test", email: "test@example.com", clientID: "client", clientSecret: "desktop-metadata")
     private let tokenHost = "oauth2.googleapis.com"
 
     private func client(_ store: MemoryCredentials) -> CloudAPI {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        return CloudAPI(account: account, session: URLSession(configuration: config), credentials: store)
+        makeStubbedClient(account, credentials: store)
     }
     private func credential(expiresIn seconds: TimeInterval, access: String = "old") -> Credential {
         Credential(accessToken: access, refreshToken: "refresh-1", expires: Date().addingTimeInterval(seconds))
@@ -74,7 +60,7 @@ final class TokenTests: XCTestCase {
             used.append(body.contains("refresh_token=refresh-1") ? "refresh-1" : "otro")
             return (200, [:], Data(#"{"access_token":"fresh","refresh_token":"refresh-2","expires_in":3600}"#.utf8))
         }
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
+        let config = StubProtocol.configuration()
         let session = URLSession(configuration: config)
         let parentAPI = CloudAPI(account: parent, session: session, credentials: store)
         let driveAPI = CloudAPI(account: drive, session: session, credentials: store)
@@ -138,7 +124,7 @@ final class TokenTests: XCTestCase {
         XCTAssertNil(CloudSession.retryDelay(nil, method: "GET", attempt: 0))
         // What the provider asks for wins over the backoff, within reason.
         XCTAssertEqual(CloudSession.retryDelay(response(429, retryAfter: "7"), method: "GET", attempt: 0), 7)
-        XCTAssertEqual(CloudSession.retryDelay(response(429, retryAfter: "9999"), method: "GET", attempt: 0), 30, "Con un tope")
+        XCTAssertEqual(CloudSession.retryDelay(response(429, retryAfter: "9999"), method: "GET", attempt: 0), 120, "Con un tope")
         XCTAssertEqual(CloudSession.retryDelay(response(429), method: "GET", attempt: 3), 8, "Sin cabecera, se duplica la espera")
     }
     private func response(_ status: Int, retryAfter: String? = nil) -> HTTPURLResponse {
@@ -184,7 +170,7 @@ final class TokenTests: XCTestCase {
         let patient = HTTPURLResponse(url: URL(string: "https://example.com")!, statusCode: 429, httpVersion: nil,
                                       headerFields: ["Retry-After": "3600"])!
         do { try HTTP.validate(patient, data: Data()); XCTFail("Un 429 es un error") }
-        catch let error as ServiceError { XCTAssertEqual(TransferQueue.retryWait(after: error, attempt: 0, base: 1), 60) }
+        catch let error as ServiceError { XCTAssertEqual(TransferQueue.retryWait(after: error, attempt: 0, base: 1), RetryAfter.cap) }
     }
 
     func testInvalidGrantMarksTheSessionExpiredWithTheProviderDetail() async throws {

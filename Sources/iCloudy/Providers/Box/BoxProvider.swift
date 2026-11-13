@@ -196,7 +196,7 @@ extension BoxProvider {
             upload.setValue("bytes \(cursor.offset)-\(cursor.offset + Int64(chunk.count) - 1)/\(total)", forHTTPHeaderField: "Content-Range")
             upload.setValue("sha=" + Data(Insecure.SHA1.hash(data: chunk)).base64EncodedString(), forHTTPHeaderField: "Digest")
             upload.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-            let (data, response) = try await self.upload(&upload, from: chunk)
+            let (data, response) = try await sendBlock { try await self.upload(&upload, from: chunk) }
             try HTTP.validate(response, data: data)
             guard let part = (try? HTTP.json(data))?["part"] as? [String: Any],
                   let encoded = try? JSONSerialization.data(withJSONObject: part), let text = String(data: encoded, encoding: .utf8) else {
@@ -219,8 +219,7 @@ extension BoxProvider {
             committed = answer
             guard (answer.1 as? HTTPURLResponse)?.statusCode == 202 else { break }
             guard attempt < 5 else { throw CloudError.message(L("Box sigue ensamblando «\(name)» y no ha confirmado la subida. Compruébalo en su web antes de volver a subirlo.")) }
-            let announced = Double((answer.1 as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After") ?? "")
-            try await Task.sleep(for: .seconds(min(max(1, announced ?? pow(2, Double(attempt))), 30)))
+            try await Task.sleep(for: .seconds(RetryAfter.delay(announced: RetryAfter.seconds(answer.1), attempt: attempt)))
         }
         guard let (data, response) = committed else { throw CloudError.message(L("Box no confirmó la subida.")) }
         try HTTP.validate(response, data: data)
@@ -334,13 +333,13 @@ extension BoxProvider {
     func uploadFile(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
         return try await boxUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
     }
-    func abandonUploadSessions(urls: [URL], boxSessions: [String]) async {
+    func abandonUploadSessions(urls: [URL], sessionIDs: [String]) async {
         for url in urls where url.scheme == "https" {
             var request = URLRequest(url: url)
             request.httpMethod = "DELETE"
             _ = try? await session.data(for: request, delegate: RedirectGuard.shared)
         }
-        for id in boxSessions {
+        for id in sessionIDs {
             guard var request = try? await request(URL(string: "https://upload.box.com/api/2.0/files/upload_sessions/\(Self.segment(id))")!, method: "DELETE") else { continue }
             _ = try? await send(&request)
         }

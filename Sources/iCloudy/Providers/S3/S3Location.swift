@@ -3,7 +3,7 @@ import Foundation
 /// The services iCloudy knows how to address without being told the endpoint. They all speak the same API; what
 /// changes is the host name, the region names and how picky the host is about bucket subdomains.
 enum S3Service: String, CaseIterable, Identifiable {
-    case aws, backblaze, wasabi, cloudflare, scaleway, digitalocean, custom
+    case aws, backblaze, wasabi, cloudflare, scaleway, digitalocean, storj, idrive, custom
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -13,6 +13,8 @@ enum S3Service: String, CaseIterable, Identifiable {
         case .cloudflare: return L("Cloudflare R2")
         case .scaleway: return L("Scaleway")
         case .digitalocean: return L("DigitalOcean Spaces")
+        case .storj: return L("Storj")
+        case .idrive: return L("iDrive e2")
         case .custom: return L("MinIO u otro compatible")
         }
     }
@@ -29,7 +31,7 @@ enum S3Service: String, CaseIterable, Identifiable {
                     "eu-west-1", "eu-west-2", "eu-south-1", "ap-northeast-1", "ap-northeast-2", "ap-southeast-1", "ap-southeast-2"]
         case .scaleway: return ["fr-par", "nl-ams", "pl-waw"]
         case .digitalocean: return ["nyc3", "sfo3", "ams3", "fra1", "lon1", "sgp1", "syd1", "blr1", "tor1"]
-        case .backblaze, .cloudflare, .custom: return []
+        case .backblaze, .cloudflare, .storj, .idrive, .custom: return []
         }
     }
     var defaultRegion: String {
@@ -40,7 +42,9 @@ enum S3Service: String, CaseIterable, Identifiable {
         case .cloudflare: return "auto"
         case .scaleway: return "fr-par"
         case .digitalocean: return "ams3"
-        case .custom: return "us-east-1"
+        // Storj's gateway ignores the region in the signature as long as there is one; its own docs use us1.
+        case .storj: return "us1"
+        case .idrive, .custom: return "us-east-1"
         }
     }
     /// The service endpoint for `region`; R2 needs the account id instead. Nil for a custom endpoint, which the person types.
@@ -52,12 +56,16 @@ enum S3Service: String, CaseIterable, Identifiable {
         case .cloudflare: return accountID.isEmpty ? nil : "https://\(accountID).r2.cloudflarestorage.com"
         case .scaleway: return "https://s3.\(region).scw.cloud"
         case .digitalocean: return "https://\(region).digitaloceanspaces.com"
-        case .custom: return nil
+        case .storj: return "https://gateway.storjshare.io"
+        // iDrive e2 gives every account its own regional host (`xyz1.ldn.idrivee2-11.com`), shown in its console.
+        case .idrive, .custom: return nil
         }
     }
     /// A self-hosted server is usually one host with no wildcard DNS or certificate, and R2's certificate does not
     /// cover a subdomain of the account's own; both are addressed by path unless told otherwise.
-    var prefersPathStyle: Bool { [.custom, .cloudflare].contains(self) }
+    var prefersPathStyle: Bool { [.custom, .cloudflare, .storj, .idrive].contains(self) }
+    /// The person types the whole endpoint: a self-hosted server, or a service that hands each account its own host.
+    var typesEndpoint: Bool { [.custom, .idrive].contains(self) }
 }
 
 /// Path-style puts the bucket in the path (`host/bucket/key`); virtual-hosted puts it in the host (`bucket.host/key`).

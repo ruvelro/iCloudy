@@ -13,11 +13,8 @@ final class PCloudTests: XCTestCase {
     override func tearDown() { StubProtocol.handler = nil }
 
     private func client(host: String? = "eapi.pcloud.com", credentials: CredentialStore? = nil) -> CloudAPI {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        let account = Account(id: "pcloud:7", cloud: .pcloud, name: "Ana", email: "ana@example.com", clientID: "client", clientSecret: nil,
-                              serverURL: nil, bookmark: nil, options: host.map { ["apiHost": $0] } ?? [:])
-        if let credentials { return CloudAPI(account: account, session: URLSession(configuration: config), credentials: credentials) }
-        return CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "test-token" })
+        makeStubbedClient(stubbedAccount(.pcloud, id: "pcloud:7", name: "Ana", email: "ana@example.com", options: host.map { ["apiHost": $0] } ?? [:]),
+                          credentials: credentials)
     }
     private func temporaryFile(_ payload: Data) throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -65,7 +62,7 @@ final class PCloudTests: XCTestCase {
     func testTheProviderDeclaresWhatPCloudOffers() {
         let capabilities = Cloud.pcloud.capabilities
         XCTAssertEqual(Cloud.pcloud.title, "pCloud")
-        XCTAssertTrue(capabilities.oauth)
+        XCTAssertEqual(capabilities.signIn, .oauth)
         XCTAssertTrue(capabilities.search, "Sin método de búsqueda, pero con un listado recursivo en una sola llamada")
         XCTAssertFalse(capabilities.recents)
         XCTAssertFalse(capabilities.sharedWithMe)
@@ -73,7 +70,6 @@ final class PCloudTests: XCTestCase {
         XCTAssertTrue(capabilities.permanentDelete)
         XCTAssertTrue(capabilities.emptyTrash)
         XCTAssertTrue(capabilities.reversibleTrash)
-        XCTAssertTrue(capabilities.checksum)
         XCTAssertTrue(capabilities.copiesFolders)
         XCTAssertFalse(capabilities.memberSharing)
         XCTAssertFalse(Cloud.pcloud.isSelfHosted)
@@ -441,7 +437,7 @@ final class PCloudTests: XCTestCase {
 
     func testCancellingAnUploadDeletesItsSession() async {
         serve { _, _, _ in (200, self.json(#"{"result":0}"#)) }
-        await client().abandonUploadSessions(urls: [], boxSessions: ["77"])
+        await client().abandonUploadSessions(urls: [], sessionIDs: ["77"])
         XCTAssertEqual(methods, ["upload_delete"])
         XCTAssertEqual(seen.first?.parameters, ["uploadid": "77"])
     }
@@ -524,11 +520,6 @@ final class PCloudTests: XCTestCase {
     }
 
     // MARK: - Sign-in
-
-    private func stubbedSession() -> URLSession {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        return URLSession(configuration: config)
-    }
 
     func testTheCodeIsTradedOnTheRegionTheCallbackNames() async throws {
         serve { method, parameters, _ in

@@ -120,8 +120,7 @@ final class MegaProviderTests: XCTestCase {
         let store = MemoryCredentials()
         store.stored["mega:ana@ejemplo.com"] = Credential(accessToken: session, refreshToken: "", expires: .distantFuture,
                                                           secret: MegaCrypto.encode(masterKey))
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         let account = Account(id: "mega:ana@ejemplo.com", cloud: .mega, name: "Mega", email: "ana@ejemplo.com",
                               clientID: "", clientSecret: nil)
         return CloudAPI(account: account, session: URLSession(configuration: configuration), credentials: store)
@@ -144,8 +143,7 @@ final class MegaProviderTests: XCTestCase {
         var privateKey = Self.integer(p) + Self.integer(q) + Self.integer(privateExponent) + Self.integer(MegaBigInt(1))
         privateKey.append(Data(count: (16 - privateKey.count % 16) % 16))
 
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         var seen: [String] = []
         StubProtocol.handler = { [self] request in
             let command = try XCTUnwrap((try JSONSerialization.jsonObject(with: requestData(request)) as? [[String: Any]])?.first)
@@ -174,8 +172,7 @@ final class MegaProviderTests: XCTestCase {
     }
 
     func testAWrongPasswordIsReportedAsSuchAndTwoStepCodesAreSentAlong() async throws {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         var sentCode: String?
         StubProtocol.handler = { request in
             let command = try XCTUnwrap((try JSONSerialization.jsonObject(with: requestData(request)) as? [[String: Any]])?.first)
@@ -731,8 +728,7 @@ final class MegaProviderTests: XCTestCase {
         XCTAssertTrue(MegaAPI.failure(-9).localizedDescription.contains("ya no está"))
 
         StubProtocol.handler = { _ in (200, [:], Data("[-9]".utf8)) }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         do {
             _ = try await MegaAPI.signIn(email: "nadie@ejemplo.com", password: "x", code: nil,
                                           session: URLSession(configuration: configuration))
@@ -842,14 +838,16 @@ final class MegaProviderTests: XCTestCase {
     func testWorkRunOffTheMainActorStopsWhenTheTaskIsCancelled() async throws {
         // The proof of work Mega asks for runs off the main actor, and a detached task inherits no cancellation.
         // Its own check never fired, so a hard challenge kept a core busy with no way to stop it.
+        let running = Flag()
         let job = Task { () -> Bool in
             try await blockingIO {
+                running.set()
                 let deadline = Date().addingTimeInterval(5)
                 while Date() < deadline { try Task.checkCancellation() }
                 return false        // ran the full five seconds without ever noticing
             }
         }
-        try await Task.sleep(for: .milliseconds(30))
+        try await wait { running.isSet }
         job.cancel()
         do { _ = try await job.value; XCTFail("La cancelación tiene que llegar") }
         catch { XCTAssertTrue(error is CancellationError, "\(error)") }
@@ -862,8 +860,7 @@ final class MegaProviderTests: XCTestCase {
         XCTAssertTrue(mega.reversibleTrash, "Borrar mueve a la papelera de Mega")
         XCTAssertTrue(mega.copy)
         XCTAssertTrue(mega.quota)
-        XCTAssertFalse(mega.oauth)
-        XCTAssertFalse(mega.checksum, "La única comprobación que Mega guarda es la que calculó iCloudy")
+        XCTAssertEqual(mega.signIn, .password)
         XCTAssertFalse(mega.recents)
         XCTAssertTrue(Cloud.mega.isExperimental, "La interfaz debe decirlo: Mega no publica ni sostiene esta API")
         XCTAssertFalse(Cloud.google.isExperimental)
@@ -912,11 +909,13 @@ extension MegaProviderTests {
         let base = try XCTUnwrap(StubProtocol.handler)
         let payload = Data((0..<3_000_000).map { UInt8($0 % 251) })
         var received: [Int64: Data] = [:]
-        var failAt: Int64? = MegaCrypto.chunks(of: Int64(payload.count))[4].offset
+        let failAt = MegaCrypto.chunks(of: Int64(payload.count))[4].offset
+        // A dropped connection is retried in place now, so the piece fails on every attempt of the first run.
+        var drops = ResumableSessionUpload.attemptsPerBlock
         StubProtocol.handler = { request in
             guard request.url?.host == "subida.ejemplo.com" else { return try base(request) }
             let offset = Int64(request.url?.lastPathComponent ?? "") ?? -1
-            if offset == failAt { failAt = nil; throw URLError(.networkConnectionLost) }
+            if offset == failAt, drops > 0 { drops -= 1; throw URLError(.networkConnectionLost) }
             let body = requestData(request)
             received[offset] = body
             // Like Mega's storage servers: nothing for a piece, the receipt once every byte has arrived.
@@ -929,6 +928,7 @@ extension MegaProviderTests {
         let stamp = try source.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
         var saved = UploadCheckpoint(total: Int64(payload.count), modified: stamp)
         let api = client()
+        (api.provider as CloudSession).blockRetryDelay = { _, _ in 0 }
 
         do {
             _ = try await api.resumableUpload(local: source, parent: "root", name: "grande.bin", replacing: nil,

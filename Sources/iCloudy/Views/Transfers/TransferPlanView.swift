@@ -3,7 +3,7 @@ import SwiftUI
 /// Presents the plan sheet for the window. It observes the coordinator alone, so counting thousands of files does not
 /// re-render the explorer behind it.
 struct TransferPlanHost: View {
-    @ObservedObject var planner: TransferPlanCoordinator
+    @Bindable var planner: TransferPlanCoordinator
     var body: some View {
         Color.clear
             .sheet(item: Binding(get: { planner.session?.shown == true ? planner.session : nil }, set: { _ in })) { _ in
@@ -15,7 +15,7 @@ struct TransferPlanHost: View {
 /// "Antes de empezar": how much is about to move, where it needs room, what is already there and what will not
 /// travel as it is. Nothing is queued until "Empezar".
 struct TransferPlanView: View {
-    @ObservedObject var planner: TransferPlanCoordinator
+    @Bindable var planner: TransferPlanCoordinator
     @State private var dontAskAgain = false
     /// A plan of a whole drive can list thousands of conversions; the first ones say enough.
     private let visibleLimit = 200

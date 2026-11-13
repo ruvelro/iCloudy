@@ -174,6 +174,9 @@ struct DuplicatesView: View {
             Button("Marcar copias sobrantes") { center.markSuggested() }
                 .help("En cada grupo con el mismo contenido marca todas las copias menos la más antigua. Los posibles duplicados no se marcan.")
                 .disabled(center.report?.groups.contains(where: \.isConfirmed) != true || center.trashing)
+            Button("Marcar las copias de este Mac") { center.markMacCopies() }
+                .help("Marca los archivos del Mac cuyo mismo contenido ya está en una nube, para liberar espacio sin tocar la nube. Van a la Papelera del Mac.")
+                .disabled(!center.hasMacCopies || center.trashing)
             Button("Desmarcar todo") { center.marked.removeAll() }.disabled(center.marked.isEmpty || center.trashing)
             Button(center.permanentDeletions.isEmpty ? L("Enviar a la papelera…") : L("Eliminar…"), role: .destructive) { center.confirmingTrash = true }
                 .disabled(!center.canTrash)

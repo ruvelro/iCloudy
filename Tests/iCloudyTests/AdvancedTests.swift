@@ -27,11 +27,13 @@ final class AdvancedTests: XCTestCase {
         let scoped = CloudAPI(account: Account.scoped(to: "0ABCdrive", named: "Marketing", from: account(.google)))
         let base = "https://www.googleapis.com/drive/v3/files/abc?fields=id"
 
-        XCTAssertEqual((plain.provider as! GoogleDriveProvider).googleURL(base).absoluteString, base, "Una cuenta normal no cambia de dirección")
+        // A personal account opts in as well: a folder of a shared drive can be shared with it.
+        XCTAssertTrue((plain.provider as! GoogleDriveProvider).googleURL(base).absoluteString.contains("supportsAllDrives=true"))
         XCTAssertTrue((scoped.provider as! GoogleDriveProvider).googleURL(base).absoluteString.contains("supportsAllDrives=true"))
         XCTAssertTrue((scoped.provider as! GoogleDriveProvider).googleURL(base).absoluteString.contains("fields=id"), "Los parámetros originales se conservan")
 
-        XCTAssertTrue((plain.provider as! GoogleDriveProvider).googleDriveScope.isEmpty)
+        let plainScope = Dictionary(uniqueKeysWithValues: (plain.provider as! GoogleDriveProvider).googleDriveScope.map { ($0.name, $0.value) })
+        XCTAssertEqual(plainScope, ["includeItemsFromAllDrives": "true", "supportsAllDrives": "true"])
         let scope = Dictionary(uniqueKeysWithValues: (scoped.provider as! GoogleDriveProvider).googleDriveScope.map { ($0.name, $0.value) })
         XCTAssertEqual(scope["corpora"], "drive")
         XCTAssertEqual(scope["driveId"], "0ABCdrive")
@@ -57,7 +59,7 @@ final class AdvancedTests: XCTestCase {
     func testEveryGoogleAndGraphCallGoesThroughTheScopedHelpers() throws {
         // A single endpoint written by hand would silently read the wrong drive, so the check is mechanical, and it
         // covers every source file: the upload and the move were once written outside the two files it looked at.
-        let root = URL(fileURLWithPath: "Sources/iCloudy")
+        let root = repositoryURL("Sources/iCloudy")
         let sources = try XCTUnwrap(FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?
             .compactMap { ($0 as? URL)?.path }.filter { $0.hasSuffix(".swift") })
         XCTAssertGreaterThan(sources.count, 30)
@@ -68,9 +70,12 @@ final class AdvancedTests: XCTestCase {
                 let place = "\(path):\(number + 1)"
                 // The helpers themselves are the one place allowed to name the unscoped endpoints.
                 guard !line.contains("account.driveID") else { continue }
-                // A URL built with URLComponents adds the scope when its query items are set, a few lines below.
-                let nearby = lines[number...].prefix { !$0.contains("try await json(") }.joined()
-                let scopedNearby = nearby.contains("googleDriveScope") || nearby.contains("googleAllDrives")
+                // A URL built with URLComponents adds the scope when its query items are set, a few lines below. Only
+                // worked out for the lines that need it: joining the rest of the file for every line took minutes.
+                var scopedNearby: Bool {
+                    let nearby = lines[number...].prefix { !$0.contains("try await json(") }.joined()
+                    return nearby.contains("googleDriveScope") || nearby.contains("googleAllDrives")
+                }
 
                 XCTAssertFalse(line.contains("graph.microsoft.com/v1.0/me/drive"), "\(place) debería usar graphDrive")
                 // `about` describes the person, not a drive; it takes no drive parameters.
@@ -83,8 +88,7 @@ final class AdvancedTests: XCTestCase {
     }
 
     private func stubbed(_ account: Account) -> CloudAPI {
-        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [StubProtocol.self]
-        return CloudAPI(account: account, session: URLSession(configuration: configuration), tokenProvider: { "token" })
+        return makeStubbedClient(account, token: "token")
     }
 
     func testUploadingToTheTopOfASharedDriveFilesItThereAndNotUnderMiUnidad() async throws {

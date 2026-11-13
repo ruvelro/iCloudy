@@ -15,9 +15,7 @@ final class S3ProviderTests: XCTestCase {
                                                addressing: addressing, accessKey: "AKIDPRUEBA")
         let store = MemoryCredentials()
         store.stored[account.id] = Credential(accessToken: "AKIDPRUEBA", refreshToken: "", expires: .distantFuture, secret: "secreto")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
-        let api = CloudAPI(account: account, session: URLSession(configuration: configuration), credentials: store)
+        let api = makeStubbedClient(account, credentials: store)
         let provider = api.provider as! S3Provider
         provider.pause = { _ in }
         return (api, provider)
@@ -401,7 +399,7 @@ final class S3ProviderTests: XCTestCase {
         var aborted: URLRequest?
         StubProtocol.handler = { request in aborted = request; return (204, [:], Data()) }
         let (api, _) = client()
-        await api.abandonUploadSessions(urls: [], boxSessions: [S3UploadSession(uploadID: "up-7", objectID: "fotos/a b/grande.bin").raw, "basura"])
+        await api.abandonUploadSessions(urls: [], sessionIDs: [S3UploadSession(uploadID: "up-7", objectID: "fotos/a b/grande.bin").raw, "basura"])
         let request = try XCTUnwrap(aborted)
         XCTAssertEqual(request.httpMethod, "DELETE")
         XCTAssertEqual(request.url?.path, "/fotos/a b/grande.bin")
@@ -667,8 +665,7 @@ final class S3ProviderTests: XCTestCase {
     }
 
     func testSignInFindsTheRegionOfTheBucket() async throws {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         var calls = 0
         StubProtocol.handler = { request in
             calls += 1
@@ -689,8 +686,7 @@ final class S3ProviderTests: XCTestCase {
     }
 
     func testSignInWithoutBucketExplainsAKeyThatCannotListThem() async throws {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         StubProtocol.handler = { _ in (403, [:], self.xmlError("AccessDenied")) }
         let form = S3SignIn(service: .backblaze, region: "eu-central-003", accessKey: "k", secretKey: "s")
         do { _ = try await S3Authentication(session: URLSession(configuration: configuration)).signIn(form); XCTFail() }
@@ -704,7 +700,6 @@ final class S3ProviderTests: XCTestCase {
         XCTAssertFalse(capabilities.reversibleTrash, "No bin: deleting is final and the confirmation says so")
         XCTAssertFalse(capabilities.quota)
         XCTAssertTrue(capabilities.search)
-        XCTAssertTrue(capabilities.checksum)
         XCTAssertFalse(capabilities.linksFolders)
         XCTAssertFalse(capabilities.trashListing || capabilities.permanentDelete || capabilities.memberSharing)
         XCTAssertTrue(Cloud.s3.usesPasswordLogin)

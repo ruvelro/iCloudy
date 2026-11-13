@@ -19,4 +19,7 @@ enum Collection: String, Codable, CaseIterable, Identifiable {
         switch self { case .files: return "root"; case .recent: return "recent"; case .shared: return "sharedWithMe"; case .trash: return "trash" }
     }
     static let virtualRoots: Set<String> = [Collection.recent.rootID, Collection.shared.rootID, Collection.trash.rootID]
+    /// The id prefix of a folder the bin can be browsed into: a live folder shown in the bin so the deleted things
+    /// inside it can be reached. Dropbox lists deleted entries folder by folder, not for the account as a whole.
+    static let trashFolderPrefix = "trash-folder:"
 }

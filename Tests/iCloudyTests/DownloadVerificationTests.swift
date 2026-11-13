@@ -7,10 +7,8 @@ import CryptoKit
 @MainActor
 final class DownloadVerificationTests: XCTestCase {
     private func client(_ cloud: Cloud, driveID: String? = nil) -> CloudAPI {
-        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [StubProtocol.self]
-        let base = Account(id: "test", cloud: cloud, name: "Test", email: "test@example.com", clientID: "client", clientSecret: nil)
-        let account = driveID.map { Account.scoped(to: $0, named: "Biblioteca", from: base) } ?? base
-        return CloudAPI(account: account, session: URLSession(configuration: config), tokenProvider: { "test-token" })
+        let base = stubbedAccount(cloud)
+        return makeStubbedClient(driveID.map { Account.scoped(to: $0, named: "Biblioteca", from: base) } ?? base)
     }
     private func destination() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) }
     private func md5(_ text: String) -> String { UploadHasher.hex(Insecure.MD5.hash(data: Data(text.utf8))) }
@@ -175,11 +173,7 @@ final class DownloadVerificationTests: XCTestCase {
         return (queue, output)
     }
     private func wait(_ queue: TransferQueue) async throws {
-        for _ in 0..<500 {
-            if !queue.isWorking, queue.items.allSatisfy(\.finished) { return }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        XCTFail("Timed out waiting for queue")
+        try await wait(until: { !queue.isWorking && queue.items.allSatisfy(\.finished) }, "Timed out waiting for queue")
     }
     private func job(_ file: CloudFile, into output: URL, export: String? = nil) -> Transfer {
         var job = Transfer(name: file.name, destination: output.path, accountID: "test", direction: .download, localURL: output, file: file)
@@ -214,7 +208,7 @@ final class DownloadVerificationTests: XCTestCase {
         XCTAssertTrue(failed.detail.contains("suma de verificación"), failed.detail)
         XCTAssertEqual(failed.downloads["."], .failed, "The failed check is kept on the job")
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: output.path), [], "Neither the file nor a .part is left")
-        let saved = try XCTUnwrap(LocalStore.read([Transfer].self, from: queue.storeURL)?.first)
+        let saved = try XCTUnwrap(LocalStore.read(StoreEnvelope<[Transfer]>.self, from: queue.storeURL)?.items.first)
         XCTAssertEqual(saved.downloads["."], .failed, "And it is on disk, not only in memory")
     }
 

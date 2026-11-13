@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 /// going to, so a queue with three accounts in it can be read without opening anything.
 struct TransferCard: View {
     let model: AppModel
-    @ObservedObject var queue: TransferQueue
+    @Bindable var queue: TransferQueue
     let transfer: Transfer
     @State private var showReport = false
 
@@ -117,7 +117,18 @@ struct TransferCard: View {
         .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 9))
         .overlay(RoundedRectangle(cornerRadius: 9).stroke(accent.opacity(transfer.state == .running ? 0.35 : 0.14), lineWidth: 1))
         .textSelection(.enabled)
+        // One element for VoiceOver with its buttons inside: what moves, where to, and how far it has got.
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(accessibilityTitle)
+        .accessibilityValue(transfer.status + (transfer.finished ? "" : ", " + transfer.progress.formatted(.percent.precision(.fractionLength(0)))))
         .sheet(isPresented: $showReport) { TransferReportView(model: model, queue: queue, batchID: transfer.batchID) }
+    }
+    private var accessibilityTitle: String {
+        switch transfer.direction {
+        case .upload: return L("Subida de «\(transfer.name)» a \(transfer.destination)")
+        case .download: return L("Descarga de «\(transfer.name)» a \(transfer.destination)")
+        case .transfer: return L("Copia de «\(transfer.name)» a \(transfer.destination)")
+        }
     }
     private var actionsAreEmpty: Bool {
         transfer.state == .completed && !queue.isMovable(transfer) && !hasReport

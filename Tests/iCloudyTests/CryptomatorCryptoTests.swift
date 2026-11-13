@@ -19,7 +19,14 @@ final class CryptomatorCryptoTests: XCTestCase {
         return result
     }
     private func words(_ data: [UInt8]) -> [UInt32] {
-        stride(from: 0, to: data.count, by: 4).map { UInt32(data[$0]) | UInt32(data[$0 + 1]) << 8 | UInt32(data[$0 + 2]) << 16 | UInt32(data[$0 + 3]) << 24 }
+        stride(from: 0, to: data.count, by: 4).map { (i: Int) -> UInt32 in
+            // One shift per line: as a single expression, Swift 6.2 cannot type-check it in time.
+            var word = UInt32(data[i])
+            word |= UInt32(data[i + 1]) << 8
+            word |= UInt32(data[i + 2]) << 16
+            word |= UInt32(data[i + 3]) << 24
+            return word
+        }
     }
     private func bytes(words: [UInt32]) -> [UInt8] { words.flatMap { word in (0..<4).map { UInt8(truncatingIfNeeded: word >> (8 * $0)) } } }
 

@@ -85,7 +85,7 @@ enum MegaAPI {
         case -14: return .message(L("La clave no corresponde a ese elemento."))
         case -16: return .message(L("Mega ha bloqueado esta cuenta."))
         case -17: return .message(L("La cuenta de Mega ha superado su cuota."))
-        case -26: return .message(L("Esta cuenta tiene verificación en dos pasos. Escribe la contraseña, un espacio y el código de seis dígitos."))
+        case -26: return .message(MegaTwoFactorRequired().localizedDescription)
         default: return .message(L("Mega devolvió el error \(code)."))
         }
     }
@@ -165,6 +165,8 @@ enum MegaAPI {
             let body = try? await HTTP.parse(data, fragments: true)
             var result: Any? = body
             if let list = body as? [Any] { result = list.first }
+            // Signing in, -26 is Mega asking for the second factor: a question for the person, not a failure.
+            if let code = result as? Int, code == -26, command == "us" { throw MegaTwoFactorRequired() }
             if let code = result as? Int, code < 0 {
                 Diagnostics.mega(command, severity: code == -3 && waits < Self.maxWaits ? .retry : .error, code: code,
                                  attempt: waits + 1, note: code == -3 ? "ocupado, se espera" : "error de Mega")
@@ -246,7 +248,7 @@ enum MegaAPI {
 
     /// Signs in and derives the session identifier. The last step is an RSA decryption: Mega hands back a challenge
     /// encrypted with the account's public key, and only the private key inside the account proves who is asking.
-    static func signIn(email: String, password: String, code: String?,
+    static func signIn(email: String, password: String, code: String?, askCode: (@Sendable (_ retry: Bool) async -> String?)? = nil,
                        session: URLSession = .shared) async throws -> (sid: String, masterKey: Data) {
         let email = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         var sequence = Int.random(in: 0..<1_000_000)
@@ -271,8 +273,22 @@ enum MegaAPI {
         }
         if let code, !code.isEmpty { login["mfa"] = code }
 
-        guard let answer = try await call(login, sid: nil, sequence: sequence, session: session) as? [String: Any],
-              let wrappedMaster = answer["k"] as? String else {
+        // Mega answers -26 when the account has a second factor and no code came, or a wrong one did. The person is
+        // asked, up to three times, and the same derived proof is sent again with the code.
+        var reply: Any?
+        var asked = 0
+        while reply == nil {
+            do { reply = try await call(login, sid: nil, sequence: sequence, session: session) }
+            catch let refusal as MegaTwoFactorRequired {
+                guard let askCode, asked < 3 else { throw login["mfa"] == nil ? refusal : MegaTwoFactorRequired(rejected: true) }
+                guard let typed = await askCode(login["mfa"] != nil) else { throw refusal }
+                asked += 1
+                login["mfa"] = typed.filter(\.isNumber)
+                // A new request number: the same one would let Mega treat this as a repeat of the refused request.
+                sequence += 1
+            }
+        }
+        guard let answer = reply as? [String: Any], let wrappedMaster = answer["k"] as? String else {
             throw CloudError.message(L("Mega no devolvió los datos necesarios para iniciar sesión."))
         }
         // A wrong password produces a key that does not unwrap; that is the only signal Mega gives, so it is the one

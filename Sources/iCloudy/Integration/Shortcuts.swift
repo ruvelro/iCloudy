@@ -94,17 +94,29 @@ struct UploadFilesIntent: AppIntent {
     }
 }
 
+/// At most ten shortcuts can be offered without setup. Each has its phrases in Spanish and in English: Siri and
+/// Spotlight match whichever the person says.
 struct iCloudyShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
-        AppShortcut(intent: PauseTransfersIntent(), phrases: ["Pausar transferencias en \(.applicationName)"],
+        AppShortcut(intent: PauseTransfersIntent(), phrases: ["Pausar transferencias en \(.applicationName)", "Pause transfers in \(.applicationName)"],
                     shortTitle: "Pausar transferencias", systemImageName: "pause.circle")
-        AppShortcut(intent: ResumeTransfersIntent(), phrases: ["Reanudar transferencias en \(.applicationName)"],
+        AppShortcut(intent: ResumeTransfersIntent(), phrases: ["Reanudar transferencias en \(.applicationName)", "Resume transfers in \(.applicationName)"],
                     shortTitle: "Reanudar transferencias", systemImageName: "play.circle")
-        AppShortcut(intent: SyncMirrorsIntent(), phrases: ["Sincronizar reflejos de \(.applicationName)"],
+        AppShortcut(intent: SyncMirrorsIntent(), phrases: ["Sincronizar reflejos de \(.applicationName)", "Sync \(.applicationName) mirrors"],
                     shortTitle: "Sincronizar reflejos", systemImageName: "arrow.triangle.2.circlepath")
-        AppShortcut(intent: StorageReportIntent(), phrases: ["Cuánto espacio queda en \(.applicationName)"],
+        AppShortcut(intent: StorageReportIntent(), phrases: ["Cuánto espacio queda en \(.applicationName)", "How much space is left in \(.applicationName)"],
                     shortTitle: "Espacio de las nubes", systemImageName: "chart.pie")
-        AppShortcut(intent: SearchCloudsIntent(), phrases: ["Buscar en \(.applicationName)"],
+        AppShortcut(intent: SearchCloudsIntent(), phrases: ["Buscar en \(.applicationName)", "Search in \(.applicationName)"],
                     shortTitle: "Buscar en las nubes", systemImageName: "magnifyingglass")
+        AppShortcut(intent: SearchItemsIntent(), phrases: ["Buscar archivos con \(.applicationName)", "Find files with \(.applicationName)"],
+                    shortTitle: "Buscar archivos", systemImageName: "doc.text.magnifyingglass")
+        AppShortcut(intent: UploadToFolderIntent(), phrases: ["Subir a una carpeta de \(.applicationName)", "Upload to a folder in \(.applicationName)"],
+                    shortTitle: "Subir a una carpeta", systemImageName: "icloud.and.arrow.up")
+        AppShortcut(intent: CreateFolderIntent(), phrases: ["Crear una carpeta en \(.applicationName)", "Create a folder in \(.applicationName)"],
+                    shortTitle: "Crear carpeta", systemImageName: "folder.badge.plus")
+        AppShortcut(intent: SyncMirrorIntent(), phrases: ["Sincronizar un reflejo de \(.applicationName)", "Sync a mirror in \(.applicationName)"],
+                    shortTitle: "Sincronizar un reflejo", systemImageName: "arrow.triangle.2.circlepath.circle")
+        AppShortcut(intent: ExpiringLinkIntent(), phrases: ["Crear un enlace con caducidad en \(.applicationName)", "Create an expiring link in \(.applicationName)"],
+                    shortTitle: "Enlace con caducidad", systemImageName: "link.badge.plus")
     }
 }

@@ -40,7 +40,11 @@ struct FileStateBadge: View {
     let offline: OfflineStatus?
     var size: CGFloat = 13
     var body: some View {
-        if let offline, file.isFolder || local == .cloudOnly { OfflineBadge(status: offline, size: size) }
+        // iCloud Drive says itself whether a file is here; that is the state worth showing, not iCloudy's copies.
+        if let state = file.ubiquity {
+            Image(systemName: state.symbol).font(.system(size: size)).foregroundStyle(state == .cloudOnly ? Color.secondary : Color.blue)
+                .help(state.help).accessibilityLabel(Text(verbatim: state.help))
+        } else if let offline, file.isFolder || local == .cloudOnly { OfflineBadge(status: offline, size: size) }
         else if file.isFolder { Color.clear }
         else { LocalCopyBadge(status: local, size: size) }
     }
@@ -67,7 +71,7 @@ extension ExplorerView {
 /// Sidebar section with everything kept offline: what it takes, how it stands, and the way to update or remove it.
 struct OfflineList: View {
     let model: AppModel
-    @ObservedObject var store: OfflineStore
+    @Bindable var store: OfflineStore
     @State private var removing: OfflinePin?
 
     var body: some View {
@@ -146,7 +150,7 @@ struct OfflineList: View {
 /// The "Sin conexión" tab of the settings window.
 struct OfflineSettingsView: View {
     @Bindable var model: AppModel
-    @ObservedObject var store: OfflineStore
+    @Bindable var store: OfflineStore
     @AppStorage(OfflineSettings.budgetKey) private var budgetGB = 10
     @AppStorage(OfflineSettings.refreshKey) private var refreshMinutes = 60
     @AppStorage(OfflineSettings.keepPreviewsKey) private var keepPreviews = true

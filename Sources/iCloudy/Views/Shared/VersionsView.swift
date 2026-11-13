@@ -45,7 +45,7 @@ struct VersionsView: View {
                 Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }
                     .help("Actualizar la lista de versiones").accessibilityLabel("Actualizar la lista de versiones").disabled(loading || working)
                 Spacer()
-                Button("Cerrar") { model.versionHistory = nil; dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cerrar") { model.ui.versionHistory = nil; dismiss() }.keyboardShortcut(.cancelAction)
             }
         }
         .padding(24).frame(width: 600)

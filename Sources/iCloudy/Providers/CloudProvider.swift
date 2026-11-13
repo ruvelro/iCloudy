@@ -37,7 +37,7 @@ protocol CloudProvider: CloudSession {
     func rootID() async throws -> String
     func availableDrives() async throws -> [RemoteDrive]
     func remoteCopyStatus(_ url: URL) async throws -> RemoteCopy.State
-    func abandonUploadSessions(urls: [URL], boxSessions: [String]) async
+    func abandonUploadSessions(urls: [URL], sessionIDs: [String]) async
     var requiresVerifiedLegacyCheckpoint: Bool { get }
     func canResumeWithoutSource(_ checkpoint: UploadCheckpoint?) -> Bool
     func download(file: CloudFile, to destination: URL, exportMime: String?, maxBytes: Int64?, progress: @escaping (Int64, Int64) -> Void) async throws
@@ -93,7 +93,7 @@ extension CloudProvider {
     func canVerifyDownload(of file: CloudFile) -> Bool { true }
     func downloadChecksum(of file: CloudFile) async throws -> ContentHash? { nil }
     func verifiableChecksum(of file: CloudFile) -> ContentHash? { file.checksum }
-    func abandonUploadSessions(urls: [URL], boxSessions: [String]) async {
+    func abandonUploadSessions(urls: [URL], sessionIDs: [String]) async {
         for url in urls where url.scheme == "https" {
             var request = URLRequest(url: url)
             request.httpMethod = "DELETE"

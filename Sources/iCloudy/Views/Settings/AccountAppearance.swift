@@ -64,11 +64,11 @@ final class AppearanceStore {
     let url: URL
     private(set) var values: [String: AccountAppearance]
     init(url: URL = LocalStore.directory.appendingPathComponent("account-appearance.json")) throws {
-        self.url = url; values = try LocalStore.read([String: AccountAppearance].self, from: url) ?? [:]
+        self.url = url; values = try LocalStore.read(StoreEnvelope<[String: AccountAppearance]>.self, from: url)?.items ?? [:]
     }
     func save(_ appearance: AccountAppearance, for accountID: String) throws {
         var updated = values; updated[accountID] = try appearance.validated()
-        try LocalStore.save(updated, to: url); values = updated
+        try LocalStore.save(StoreEnvelope(updated), to: url); values = updated
     }
 }
 
@@ -87,11 +87,12 @@ struct AccountIcon: View {
         case .webdav: return "server.rack"
         case .ftp: return "arrow.up.arrow.down.square.fill"
         case .sftp: return "lock.rectangle.stack.fill"
-        case .volume: return "externaldrive.connected.to.line.below.fill"
+        case .volume: return account.capabilities.ubiquitousItems ? "icloud.fill" : "externaldrive.connected.to.line.below.fill"
         case .mega: return "lock.icloud.fill"
         case .o2: return "antenna.radiowaves.left.and.right.circle.fill"
         case .pcloud: return "cloud.circle.fill"
         case .s3: return "cylinder.split.1x2.fill"
+        case .azure: return "square.stack.3d.down.right.fill"
         }
     }
     var body: some View {

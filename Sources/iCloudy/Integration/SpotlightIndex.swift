@@ -70,17 +70,23 @@ final class SpotlightIndex {
     /// own, so a deletion could overtake the publication it was meant to undo, or «Vaciar» could run before a
     /// publication that was asked for earlier, and in both cases the entry stayed in Spotlight.
     private var tail: Task<Void, Never>?
+    /// The optional full index, per account (`SpotlightFullIndex.swift`), and the file it lives in.
+    private(set) var full: [String: FullIndexState] = [:]
+    let fullStoreURL: URL
 
     init(index: SearchableIndexing = SystemSearchableIndex(), storeURL: URL = LocalStore.directory.appendingPathComponent("spotlight.json")) {
         self.index = index; self.storeURL = storeURL
-        items = (try? LocalStore.read([IndexedItem].self, from: storeURL)) ?? []
+        fullStoreURL = storeURL.deletingLastPathComponent().appendingPathComponent(Self.fullStoreName)
+        items = (try? LocalStore.read(StoreEnvelope<[IndexedItem]>.self, from: storeURL))?.items ?? []
+        full = (try? LocalStore.read(StoreEnvelope<[String: FullIndexState]>.self, from: fullStoreURL))?.items ?? [:]
     }
 
     static func identifier(accountID: String, fileID: String) -> String { accountID + separator + fileID }
     /// Inverse of `identifier`, used when Spotlight hands an activation back to the app.
+    /// A full-index identifier carries a third part, `full`.
     static func decode(identifier: String) -> (accountID: String, fileID: String)? {
         let parts = identifier.components(separatedBy: separator)
-        guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else { return nil }
+        guard parts.count == 2 || (parts.count == 3 && parts[2] == SpotlightFullIndex.marker), !parts[0].isEmpty, !parts[1].isEmpty else { return nil }
         return (parts[0], parts[1])
     }
 
@@ -135,6 +141,8 @@ final class SpotlightIndex {
     func clear() {
         items = []
         persist()
+        full = [:]
+        persistFull()
         enqueue { try await $0.deleteAllItems() }
     }
     /// Disconnecting an account must leave nothing of it in Spotlight.
@@ -142,7 +150,41 @@ final class SpotlightIndex {
         items.removeAll { $0.accountID == accountID }
         persist()
         enqueue { try await $0.deleteItems(withDomainIdentifiers: [accountID]) }
+        dropFull(accountID)
     }
+
+    // MARK: Full index
+
+    func fullState(_ accountID: String) -> FullIndexState? { full[accountID] }
+    /// What Spotlight hands back for an item, from the recent list or from a full index.
+    func entry(accountID: String, fileID: String) -> IndexedItem? {
+        items.first { $0.accountID == accountID && $0.file.id == fileID }
+            ?? full[accountID]?.entries.first { $0.file.id == fileID }
+    }
+    /// Puts a new walk in place of the last one: the account's full domain is emptied and refilled, in batches.
+    func replaceFull(_ accountID: String, with state: FullIndexState, label: String) {
+        full[accountID] = state
+        persistFull()
+        let domain = SpotlightFullIndex.domain(accountID)
+        enqueue { try await $0.deleteItems(withDomainIdentifiers: [domain]) }
+        var start = 0
+        while start < state.entries.count {
+            let batch = state.entries[start..<min(start + 500, state.entries.count)].map { entry -> CSSearchableItem in
+                let item = Self.searchableItem(for: entry, accountLabel: label)
+                return CSSearchableItem(uniqueIdentifier: SpotlightFullIndex.identifier(accountID: accountID, fileID: entry.file.id),
+                                        domainIdentifier: domain, attributeSet: item.attributeSet)
+            }
+            enqueue { try await $0.index(batch) }
+            start += 500
+        }
+    }
+    func dropFull(_ accountID: String) {
+        guard full.removeValue(forKey: accountID) != nil else { return }
+        persistFull()
+        let domain = SpotlightFullIndex.domain(accountID)
+        enqueue { try await $0.deleteItems(withDomainIdentifiers: [domain]) }
+    }
+    private func persistFull() { StoreWriter.shared.later(StoreEnvelope(full), to: fullStoreURL) }
     /// Drops one item, which is what sending it to the bin means for Spotlight. A hit left behind opens on a file
     /// that is not there any more, and the app can only answer that the result is no longer available.
     func forget(accountID: String, fileID: String) {
@@ -212,5 +254,5 @@ final class SpotlightIndex {
         }
     }
     /// Off the main thread: the index is rewritten whenever a folder is listed.
-    private func persist() { StoreWriter.shared.later(items, to: storeURL) }
+    private func persist() { StoreWriter.shared.later(StoreEnvelope(items), to: storeURL) }
 }

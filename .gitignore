@@ -7,3 +7,5 @@ Configuration/*client_secret*.json
 *.p12
 *.mobileprovision
 *.provisionprofile
+__pycache__/
+coverage.lcov

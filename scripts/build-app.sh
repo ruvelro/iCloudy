@@ -45,6 +45,11 @@ mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
 # The binary is the small `iCloudyMain` launcher; the app itself is the `iCloudy` library linked into it.
 cp "$binary_dir/iCloudyMain" "$app_dir/Contents/MacOS/iCloudy"
 cp Resources/Info.plist "$app_dir/Contents/Info.plist"
+# Version: the VERSION file is the only place it is written by hand; the build number counts commits, so it grows with
+# every release and two builds of one commit agree. scripts/release.py check keeps the README and CHANGELOG in step.
+short_version="$(scripts/version.sh)"; build_number="$(scripts/version.sh --build)"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${short_version}" \
+    -c "Set :CFBundleVersion ${build_number}" "$app_dir/Contents/Info.plist"
 if [[ -n "${ICLOUDY_BUNDLE_ID:-}" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${ICLOUDY_BUNDLE_ID}" "$app_dir/Contents/Info.plist"
 fi
@@ -52,6 +57,8 @@ if [[ ! -f Resources/AppIcon.icns ]]; then
     swift scripts/make-icon.swift Resources
 fi
 cp Resources/AppIcon.icns "$app_dir/Contents/Resources/AppIcon.icns"
+# The AppleScript dictionary named by OSAScriptingDefinition.
+cp Resources/iCloudy.sdef "$app_dir/Contents/Resources/iCloudy.sdef"
 cp "$oauth_config" "$app_dir/Contents/Resources/OAuth.plist"
 # Localizations live in Bundle.main so both SwiftUI's LocalizedStringKey and String(localized:) find them.
 for lproj in Resources/*.lproj; do [[ -d "$lproj" ]] && cp -R "$lproj" "$app_dir/Contents/Resources/"; done
@@ -121,6 +128,13 @@ if [[ -n "${ICLOUDY_APP_GROUP:-}" ]]; then
     /usr/libexec/PlistBuddy -c "Add :com.apple.security.application-groups array" -c "Add :com.apple.security.application-groups:0 string ${ICLOUDY_APP_GROUP}" "$app_entitlements_source"
     /usr/libexec/PlistBuddy -c "Add :keychain-access-groups array" -c "Add :keychain-access-groups:0 string ${ICLOUDY_APP_GROUP}" "$app_entitlements_source"
 fi
+# The command-line companion, signed on its own before the app seals its bundle. It is not sandboxed: it only opens
+# icloudy:// links and listens on 127.0.0.1 for the app's answer. Install it with
+#   ln -s /Applications/iCloudy.app/Contents/Helpers/icloudy /usr/local/bin/icloudy
+mkdir -p "$app_dir/Contents/Helpers"
+cp "$binary_dir/iCloudyCLI" "$app_dir/Contents/Helpers/icloudy"
+helper_id="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$app_dir/Contents/Info.plist").cli"
+codesign --force --options runtime --timestamp=none --identifier "$helper_id" --sign "$identity" "$app_dir/Contents/Helpers/icloudy"
 # Self-signed certificates cannot be timestamped by Apple; Developer ID builds get a timestamp automatically.
 entitlements="$app_entitlements_source"
 if [[ "$build_configuration" == "debug" ]]; then
@@ -131,4 +145,4 @@ if [[ "$build_configuration" == "debug" ]]; then
     trap 'rm -f "$entitlements"' EXIT
 fi
 codesign --force --options runtime --timestamp=none --entitlements "$entitlements" --sign "$identity" "$app_dir"
-echo "Aplicación creada: $app_dir (firma: ${identity})"
+echo "Aplicación creada: $app_dir (versión ${short_version} (${build_number}), firma: ${identity})"
