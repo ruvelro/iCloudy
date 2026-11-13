@@ -8,9 +8,13 @@ extension ExplorerView {
     /// a click in this one has already made it.
     func fileList(_ pane: Int) -> some View {
         let tab = model.tab(inPane: pane)
-        // Right-click on the header shows or hides the columns after the name; the choice is kept with the window.
-        return Table(tab.visibleFiles, selection: model.selection(inPane: pane), columnCustomization: $columnCustomization) {
-            TableColumn("Nombre") { file in
+        // A click on a header sorts by that column, and a second one turns the direction round; the tab keeps both.
+        // Which columns show, how wide and in what order is the table's own customization, kept in the settings: the
+        // header's context menu hides and shows them, and so does the View menu.
+        let groups = model.groupedFiles(inPane: pane)
+        return Table(of: CloudFile.self, selection: model.selection(inPane: pane), sortOrder: model.sortOrder(inPane: pane),
+                     columnCustomization: Bindable(model.explorer).columns) {
+            TableColumn("Nombre", value: \.name) { file in
                 HStack(spacing: 8) {
                     // Folders carry no cloud/Mac badge: iCloudy cannot claim that everything inside is present and
                     // current. A folder kept offline is the exception, because then the refresh does know.
@@ -21,23 +25,40 @@ extension ExplorerView {
                     Text(file.name).lineLimit(1)
                     if model.isFavorite(file, in: tab) { Image(systemName: "star.fill").font(.caption).foregroundStyle(.yellow) }
                 }.padding(.vertical, 5)
+                    // VoiceOver reads the row as its name, with what the badges say as its value.
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(file.name)
+                    .accessibilityValue(rowStatus(file, in: tab))
                     .overlay { if file.isFolder { MiddleClick { model.openInNewTab(file) } } }
                     .paneDragSource { model.paneDragProvider(for: file, pane: pane) }
-            }.width(min: 200, ideal: 320).customizationID("name").disabledCustomizationBehavior(.visibility)
-            TableColumn("Modificado") { file in
+            }.width(min: 200, ideal: 320)
+                .customizationID(FileColumn.name.rawValue).disabledCustomizationBehavior(.visibility)
+            TableColumn("Modificado", value: \.sortDate) { file in
                 Text(file.modified?.formatted(date: .abbreviated, time: .omitted) ?? "—").foregroundStyle(.secondary)
-            }.width(125).customizationID("modified")
-            TableColumn("Tamaño") { file in
+            }.width(min: 90, ideal: 125).customizationID(FileColumn.modified.rawValue)
+            TableColumn("Tamaño", value: \.sortSize) { file in
                 Text(file.size.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "—").foregroundStyle(.secondary)
-            }.width(85).customizationID("size")
-            TableColumn("Tipo") { file in
+            }.width(min: 60, ideal: 85).customizationID(FileColumn.size.rawValue)
+            TableColumn("Tipo", value: \.kindSortKey) { file in
                 Text(file.kindDescription).foregroundStyle(.secondary).lineLimit(1)
-            }.width(min: 90, ideal: 150).customizationID("kind")
-            // For whoever compares copies by eye. Hidden until asked for: most people never want to read a hash.
-            TableColumn("Suma de verificación") { file in
-                Text(file.checksum.map { $0.algorithm.title + " " + $0.value } ?? "—").font(.caption.monospaced()).foregroundStyle(.secondary)
-                    .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-            }.width(min: 120, ideal: 220).customizationID("checksum").defaultVisibility(.hidden)
+            }.width(min: 80, ideal: 140).customizationID(FileColumn.kind.rawValue).defaultVisibility(.hidden)
+            TableColumn("Suma de comprobación") { file in
+                Text(file.checksumSummary ?? "—").foregroundStyle(.secondary).lineLimit(1).monospaced()
+                    .help(file.checksum.map { $0.algorithm.title + ": " + $0.value } ?? L("El proveedor no lista una suma para este elemento."))
+            }.width(min: 90, ideal: 170).customizationID(FileColumn.checksum.rawValue).defaultVisibility(.hidden)
+            TableColumn("Estado") { file in
+                Text(model.statusDescription(file, in: tab)).foregroundStyle(.secondary).lineLimit(1)
+            }.width(min: 90, ideal: 160).customizationID(FileColumn.status.rawValue).defaultVisibility(.hidden)
+        } rows: {
+            // Grouped, each heading is a section of the table; ungrouped there is a single, untitled one, drawn as
+            // the plain list it always was.
+            if model.explorer.grouping == .none {
+                ForEach(tab.visibleFiles) { TableRow($0) }
+            } else {
+                ForEach(groups) { group in
+                    Section(group.title) { ForEach(group.items) { TableRow($0) } }
+                }
+            }
         }
         // A Table insets its own cells; this brings their text onto the margin shared by the title and the footer.
         .padding(.horizontal, Layout.tableCorrection)
@@ -52,7 +73,6 @@ extension ExplorerView {
                     .help(model.limitation(.permanentDelete, for: model.selection(ids)) ?? "")
             } else if ids.count > 1 {
                 Button("Descargar \(ids.count) elementos…") { Task { await model.saveMany(model.selection(ids)) } }
-                Button("Descargar \(ids.count) elementos como ZIP…") { Task { await model.saveCompressed(model.selection(ids)) } }
                 Button("Renombrar \(ids.count) elementos…") { model.requestBatchRename(model.selection(ids)) }.disabled(!model.canWrite)
                 Button("Mover \(ids.count) elementos a…") { model.requestRelocation(model.selection(ids), copy: false) }
                 Button("Copiar \(ids.count) elementos a…") { model.requestRelocation(model.selection(ids), copy: true) }
@@ -70,12 +90,7 @@ extension ExplorerView {
             } else if let file = model.selection(ids).first { fileActions(file) }
         } primaryAction: { ids in
             guard let file = model.selection(ids).first else { return }
-            // ⌘ and a double-click open the folder in a tab of its own, as in the Finder; a single ⌘-click still
-            // adds to the selection.
-            if file.isFolder, NSEvent.modifierFlags.contains(.command) { model.openInNewTab(file) }
-            else if file.isFolder { model.navigate(file) }
-            else if file.isGoogleDocument { model.openBrowser(file) }
-            else { Task { await model.save(file) } }
+            openFile(file)
         }
     }
 
@@ -101,12 +116,7 @@ extension ExplorerView {
                             }.frame(maxWidth: .infinity).frame(height: 130).padding(8)
                                 .background(tab.selection.contains(file.id) ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 10))
                                 .contentShape(Rectangle())
-                                .onTapGesture(count: 2) {
-                                    if file.isFolder, NSEvent.modifierFlags.contains(.command) { model.openInNewTab(file) }
-                                    else if file.isFolder { model.navigate(file) }
-                                    else if file.isGoogleDocument { model.openBrowser(file) }
-                                    else { Task { await model.save(file) } }
-                                }
+                                .onTapGesture(count: 2) { openFile(file) }
                                 .onTapGesture {
                                     focusedList = pane
                                     let modifiers = NSEvent.modifierFlags
@@ -124,6 +134,8 @@ extension ExplorerView {
                                 .overlay { if file.isFolder { MiddleClick { model.openInNewTab(file) } } }
                                 .paneDragSource { model.paneDragProvider(for: file, pane: pane) }
                                 .accessibilityLabel(file.name)
+                                .accessibilityValue(rowStatus(file, in: tab))
+                                .accessibilityHint(file.isFolder ? L("Doble clic o Intro para abrir la carpeta") : L("Espacio para la vista previa"))
                                 .accessibilityAddTraits(tab.selection.contains(file.id) ? [.isSelected, .isButton] : .isButton)
                                 .id(file.id)
                         }
@@ -149,7 +161,7 @@ extension ExplorerView {
                         if NSEvent.modifierFlags.contains(.shift), let start = anchor { selected = Self.range(from: start, to: target, in: files) }
                         else { selected = [target]; anchor = target }
                         cursor = target
-                        withAnimation(.easeOut(duration: 0.12)) { scroller.scrollTo(target) }
+                        withAnimation(Motion.scroll) { scroller.scrollTo(target) }
                     }
                     .onKeyPress(.return) {
                         guard selected.count == 1, let file = model.selection(selected).first else { return .ignored }
@@ -157,6 +169,13 @@ extension ExplorerView {
                         return .handled
                     }
                 }
+            } else if tab.viewMode == "columns" {
+                ColumnBrowserView(model: model, pane: pane) { openFile($0) }
+                    .focusable().focusEffectDisabled().focused($focusedList, equals: pane)
+                    .onDeleteCommand { model.requestDelete(model.selection(selected)) }
+                    .contextMenu {
+                        if selected.count == 1, let file = model.selection(selected).first { fileActions(file) }
+                    }
             } else { fileList(pane) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -186,5 +205,23 @@ extension ExplorerView {
         } isTargeted: { targeted in
             if targeted { dropTarget = pane } else if dropTarget == pane { dropTarget = nil }
         }
+    }
+
+    /// What a double-click or Return does in any of the three views. ⌘ opens a folder in a tab of its own, as in the
+    /// Finder; a single ⌘-click still adds to the selection.
+    func openFile(_ file: CloudFile) {
+        if file.isFolder, NSEvent.modifierFlags.contains(.command) { model.openInNewTab(file) }
+        else if file.isFolder { model.navigate(file) }
+        else if file.isGoogleDocument { model.openBrowser(file) }
+        else { Task { await model.save(file) } }
+    }
+
+    /// What a row's badges and star say, in words: «Carpeta, Disponible sin conexión, favorito».
+    func rowStatus(_ file: CloudFile, in tab: BrowserState) -> String {
+        var parts = [file.isFolder ? L("Carpeta") : file.kindDescription]
+        let status = model.statusDescription(file, in: tab)
+        if !status.isEmpty { parts.append(status) }
+        if model.isFavorite(file, in: tab) { parts.append(L("favorito")) }
+        return parts.joined(separator: ", ")
     }
 }

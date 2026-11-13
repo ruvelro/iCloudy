@@ -4,9 +4,16 @@ import Foundation
 /// under the configured base URL, and "root" is that base. There is no OAuth, no search and no recycle bin here.
 @MainActor
 final class WebDAVProvider: CloudSession, CloudProvider {
-    /// Downloads continue from the bytes a cut connection left behind. `DownloadResume` has the rules.
-    var resumesDownloads: Bool { true }
-    
+    /// Where Nextcloud's chunked upload starts, and the size of its chunks. Tests make both small.
+    var chunkedThreshold = WebDAVProvider.chunkedUploadThreshold
+    var chunkOverride: Int64?
+    /// The server's Digest challenge, once it has sent one, and how many requests have answered it (`nc`).
+    var digestChallenge: HTTPDigest.Challenge?
+    var digestCount: UInt32 = 0
+    override func authorization(method: String, url: URL) async throws -> String { try await webdavAuthorization(method: method, url: url) }
+    override func answer(_ refusal: HTTPURLResponse, method: String, url: URL) async throws -> String? {
+        try await webdavAnswer(refusal, method: method, url: url)
+    }
 }
 
 extension WebDAVProvider {
@@ -43,9 +50,12 @@ extension WebDAVProvider {
             request.httpBody = Data(body.utf8)
             request.setValue("application/xml; charset=utf-8", forHTTPHeaderField: "Content-Type")
         }
-        let (data, response) = try await send(&request)
-        return (data, response)
+        // A Nextcloud in maintenance answers 503 with a Retry-After, and a busy one 429. The shared policy repeats
+        // only what is safe to repeat: the RFC 4918 reads are idempotent although CloudSession does not know them.
+        return try await sendRetrying(&request, repeatable: Self.webdavReads.contains(method.uppercased()))
     }
+    /// WebDAV methods that change nothing, or do the same thing twice as once.
+    nonisolated static let webdavReads: Set<String> = ["PROPFIND", "PROPPATCH", "REPORT", "SEARCH", "OPTIONS"]
 
     private static let propfindBody = """
     <?xml version="1.0" encoding="utf-8"?>
@@ -185,11 +195,15 @@ extension WebDAVProvider {
         throw CloudError.message(L("El servidor no devolvió el enlace. Comprueba que compartir está habilitado."))
     }
 
-    /// WebDAV has no resumable protocol: a PUT either lands whole or is repeated. The file is streamed from disk.
+    /// Plain WebDAV has no resumable protocol: a PUT either lands whole or is repeated. The file is streamed from
+    /// disk. Nextcloud's chunked upload, which does resume, takes the large files (`WebDAVProvider+Chunking.swift`).
     func webdavUpload(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint,
                       save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
         let parentPath = Self.webdavNormalize(parent == "root" ? "/" : parent)
         let path = replacing ?? ((parentPath == "/" ? "" : parentPath) + "/" + name)
+        if usesChunkedUpload(cursor) {
+            return try await nextcloudChunkedUpload(local: local, path: path, replacing: replacing, cursor: &cursor, save: save, progress: progress)
+        }
         var request = try await request(try webdavURL(path), method: "PUT")
         request.timeoutInterval = 3600
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
@@ -197,7 +211,14 @@ extension WebDAVProvider {
         let total = cursor.total
         let delegate = UploadProgress { sent in Task { @MainActor in progress(min(sent, total), total) } }
         cursor.offset = 0; try save(cursor)
-        let (data, response) = try await session.upload(for: request, fromFile: local, delegate: delegate)
+        var (data, response) = try await session.upload(for: request, fromFile: local, delegate: delegate)
+        // The PUT streams from the file and so bypasses `send`: a Digest nonce that went stale is answered here.
+        if let http = response as? HTTPURLResponse, http.statusCode == 401,
+           let header = try await answer(http, method: "PUT", url: request.url ?? webdavURL(path)) {
+            request.setValue(header, forHTTPHeaderField: "Authorization")
+            (data, response) = try await session.upload(for: request, fromFile: local, delegate: delegate)
+            if (response as? HTTPURLResponse)?.statusCode == 401 { expireSession(); throw CloudError.sessionExpired(nil) }
+        }
         try HTTP.validate(response, data: data)
         cursor.offset = total; cursor.complete = true; try save(cursor); progress(total, total)
         // Plain WebDAV reports no checksum, so the upload cannot be verified beyond the server accepting it.
@@ -389,6 +410,13 @@ extension WebDAVProvider {
 }
 
 extension WebDAVProvider {
+    /// An upload collection of a cancelled chunked upload is deleted with the account's credentials; nothing else
+    /// is, whatever URL a checkpoint carries.
+    func abandonUploadSessions(urls: [URL], sessionIDs: [String]) async {
+        for url in urls where isNextcloudUploadCollection(url) {
+            _ = try? await webdavRequest(url, method: "DELETE")
+        }
+    }
     func identityChange(file: CloudFile, name: String, destination: String?) throws -> RemoteIdentityChange {
         let newID: String
 

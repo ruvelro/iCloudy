@@ -33,6 +33,8 @@ final class FakeFTPServer: @unchecked Sendable {
     var replyDelays: [String: TimeInterval] = [:]
     /// The verb of the previous command, so RNTO is refused unless it comes straight after RNFR, as real servers do.
     private var previousVerb = ""
+    /// What the last RNFR named, so RNTO moves an upload that is in `stored`.
+    private var renameSource = ""
     /// Verbs whose next arrival closes the control connection without a reply, as a server that crashes or a network
     /// that drops at that moment would. Each entry fires once.
     private var dropOnArrival: [String] = []
@@ -71,6 +73,24 @@ final class FakeFTPServer: @unchecked Sendable {
     func uploaded() -> [String: Data] { lock.withLock { stored } }
     /// What a server does to an idle client: closes the control connection without a word.
     func dropControl() { control?.cancel(); control = nil; buffer = Data() }
+    /// The same, from a test: returns once the connection is closed on this side, so the client's next command meets
+    /// a socket that is already dead instead of racing the close.
+    func dropControlAndWait() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            queue.async {
+                guard let connection = self.control else { continuation.resume(); return }
+                self.control = nil; self.buffer = Data()
+                let closed = Ready()
+                connection.stateUpdateHandler = { state in
+                    switch state {
+                    case .cancelled, .failed: closed.once { continuation.resume() }
+                    default: break
+                    }
+                }
+                connection.cancel()
+            }
+        }
+    }
 
     private func accept(_ connection: NWConnection) {
         control = connection
@@ -151,8 +171,10 @@ final class FakeFTPServer: @unchecked Sendable {
             return   // the 226 is sent once the upload finishes
         case "MKD": send("257 \"\(argument)\" creada\r\n")
         case "DELE", "RMD": send("250 Eliminado\r\n")
-        case "RNFR": send("350 Listo para el nuevo nombre\r\n", after: delay)
-        case "RNTO": send(renaming ? "250 Renombrado\r\n" : "503 RNFR primero\r\n")
+        case "RNFR": renameSource = argument; send("350 Listo para el nuevo nombre\r\n", after: delay)
+        case "RNTO":
+            if renaming { lock.withLock { if let moved = stored.removeValue(forKey: renameSource) { stored[argument] = moved } } }
+            send(renaming ? "250 Renombrado\r\n" : "503 RNFR primero\r\n")
         case "NOOP": send("200 Sigo aquí\r\n")
         case "QUIT": send("221 Adiós\r\n")
         default: send("502 No implementado\r\n")
@@ -321,14 +343,13 @@ final class FTPTests: XCTestCase {
 
     func testCapabilitiesHideWhatFTPCannotDo() {
         let ftp = Cloud.ftp.capabilities
-        XCTAssertFalse(ftp.oauth)
+        XCTAssertEqual(ftp.signIn, .password)
         XCTAssertTrue(ftp.search, "Sin búsqueda propia: iCloudy recorre el árbol")
         XCTAssertFalse(ftp.publicLinks)
         XCTAssertFalse(ftp.copy, "FTP no copia en el servidor")
         XCTAssertFalse(ftp.quota)
         XCTAssertFalse(ftp.reversibleTrash, "DELE es definitivo")
-        XCTAssertFalse(ftp.checksum)
-        XCTAssertTrue(ftp.move, "RNFR/RNTO sí mueve")
+        XCTAssertEqual(ftp.sessionLimit, 1, "Una sola conexión de control")
         XCTAssertTrue(Cloud.ftp.isSelfHosted)
         XCTAssertTrue(Cloud.webdav.isSelfHosted)
         XCTAssertFalse(Cloud.google.isSelfHosted)
@@ -390,8 +411,7 @@ final class FTPTests: XCTestCase {
         try await hurry(api)
         let before = try await api.list(parent: "root")
         XCTAssertEqual(before.map(\.name), ["a.txt"])
-        server.dropControl()
-        try await Task.sleep(for: .milliseconds(200))
+        await server.dropControlAndWait()
         let after = try await api.list(parent: "root")
         XCTAssertEqual(after.map(\.name), ["a.txt"], "Se vuelve a conectar sola")
         XCTAssertEqual(server.log().filter { $0 == "USER ana" }.count, 2, "Hubo una segunda sesión: \(server.log())")
@@ -439,8 +459,7 @@ final class FTPTests: XCTestCase {
 
         let file = CloudFile(id: "/a.txt", name: "a.txt", mime: "text/plain", size: 3, modified: nil, webURL: nil, isFolder: false)
         async let renamed: Void = api.rename(file: file, name: "b.txt")
-        try await Task.sleep(for: .milliseconds(150))
-        XCTAssertEqual(server.log().last, "RNFR /a.txt", "La otra orden tiene que llegar mientras RNFR espera: \(server.log())")
+        try await wait(until: { server.log().last == "RNFR /a.txt" }, "La otra orden tiene que llegar mientras RNFR espera: \(server.log())")
         let interloper = try await session.command("PWD")
         try await renamed
         XCTAssertEqual(interloper.code, 257)
@@ -528,7 +547,9 @@ final class FTPTests: XCTestCase {
         }
         XCTAssertEqual(server.count("STOR"), 1, "La subida no se repite sola: \(server.log())")
         XCTAssertFalse(checkpoint.complete)
-        XCTAssertEqual(server.uploaded()["/s.txt"], Data("contenido".utf8), "El servidor sí la tenía")
+        // Under the hidden name: the real one is never touched by an upload that did not finish for sure.
+        XCTAssertEqual(server.uploaded()["/.s.txt.icloudy-part"], Data("contenido".utf8), "El servidor sí la tenía")
+        XCTAssertNil(server.uploaded()["/s.txt"])
     }
 
     func testAQuietConnectionIsCheckedBeforeAChangeIsSentDownIt() async throws {
@@ -542,8 +563,7 @@ final class FTPTests: XCTestCase {
         let session = try await (api.provider as! FTPProvider).ftp()
         await session.setIdleProbe(0)
         _ = try await api.list(parent: "root")
-        server.dropControl()
-        try await Task.sleep(for: .milliseconds(200))
+        await server.dropControlAndWait()
         let path = try await api.createFolder(name: "Nueva", parent: "root")
         XCTAssertEqual(path, "/Nueva")
         XCTAssertEqual(server.count("MKD"), 1, "\(server.log())")

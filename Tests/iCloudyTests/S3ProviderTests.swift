@@ -15,9 +15,7 @@ final class S3ProviderTests: XCTestCase {
                                                addressing: addressing, accessKey: "AKIDPRUEBA")
         let store = MemoryCredentials()
         store.stored[account.id] = Credential(accessToken: "AKIDPRUEBA", refreshToken: "", expires: .distantFuture, secret: "secreto")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
-        let api = CloudAPI(account: account, session: URLSession(configuration: configuration), credentials: store)
+        let api = makeStubbedClient(account, credentials: store)
         let provider = api.provider as! S3Provider
         provider.pause = { _ in }
         return (api, provider)
@@ -262,12 +260,7 @@ final class S3ProviderTests: XCTestCase {
         var failPart: Int?
         var lostUpload = false
         var finalETag: String?
-        /// Parts arrive several at a time now, each on a thread of URLSession's.
-        private let lock = NSLock()
         func handle(_ request: URLRequest, test: S3ProviderTests) throws -> (Int, [String: String], Data) {
-            try lock.withLock { try answer(request, test: test) }
-        }
-        private func answer(_ request: URLRequest, test: S3ProviderTests) throws -> (Int, [String: String], Data) {
             let q = test.query(request)
             switch (request.httpMethod ?? "GET", q["uploadId"] != nil, q["uploads"] != nil) {
             case ("POST", false, true):
@@ -327,10 +320,10 @@ final class S3ProviderTests: XCTestCase {
                                                     checkpoint: try checkpoint(for: file, size: payload.count), save: { saved.append($0) }, progress: { _, _ in })
         XCTAssertEqual(receipt.verification, .verified)
         XCTAssertEqual(receipt.remoteID, "fotos/grande.bin")
-        XCTAssertEqual(server.putNumbers.sorted(), [1, 2, 3], "Side by side, so in any order")
+        XCTAssertEqual(server.putNumbers, [1, 2, 3])
         XCTAssertEqual(server.parts.keys.sorted().map { server.parts[$0]! }.reduce(Data(), +), payload)
         XCTAssertEqual(saved.first { $0.sessionID != nil }?.sessionID, "up-1\nfotos/grande.bin", "The upload is checkpointed before any part")
-        XCTAssertEqual(saved.first { !$0.parts.isEmpty }?.parts.first.flatMap(S3PartRecord.init)?.verified, true)
+        XCTAssertEqual(saved.first { $0.parts.count == 1 }?.parts.first.flatMap(S3PartRecord.init)?.verified, true)
         let last = try XCTUnwrap(saved.last)
         XCTAssertTrue(last.complete)
         XCTAssertNil(last.sessionID, "A finished upload leaves nothing to abort")
@@ -377,7 +370,7 @@ final class S3ProviderTests: XCTestCase {
                                                     checkpoint: resumed, save: { saved.append($0) }, progress: { _, _ in })
         XCTAssertEqual(server.listed, 1, "Resuming asks the server which parts it has")
         XCTAssertEqual(server.created, 1, "…and keeps the same upload")
-        XCTAssertEqual(server.putNumbers.sorted(), [2, 3], "Part 1 matched the file; part 2 did not, so it and what follows go again")
+        XCTAssertEqual(server.putNumbers, [2, 3], "Part 1 matched the file; part 2 did not, so it and what follows go again")
         XCTAssertEqual(receipt.verification, .verified)
         XCTAssertEqual(server.parts.keys.sorted().map { server.parts[$0]! }.reduce(Data(), +), payload)
     }
@@ -406,7 +399,7 @@ final class S3ProviderTests: XCTestCase {
         var aborted: URLRequest?
         StubProtocol.handler = { request in aborted = request; return (204, [:], Data()) }
         let (api, _) = client()
-        await api.abandonUploadSessions(urls: [], boxSessions: [S3UploadSession(uploadID: "up-7", objectID: "fotos/a b/grande.bin").raw, "basura"])
+        await api.abandonUploadSessions(urls: [], sessionIDs: [S3UploadSession(uploadID: "up-7", objectID: "fotos/a b/grande.bin").raw, "basura"])
         let request = try XCTUnwrap(aborted)
         XCTAssertEqual(request.httpMethod, "DELETE")
         XCTAssertEqual(request.url?.path, "/fotos/a b/grande.bin")
@@ -672,8 +665,7 @@ final class S3ProviderTests: XCTestCase {
     }
 
     func testSignInFindsTheRegionOfTheBucket() async throws {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         var calls = 0
         StubProtocol.handler = { request in
             calls += 1
@@ -694,8 +686,7 @@ final class S3ProviderTests: XCTestCase {
     }
 
     func testSignInWithoutBucketExplainsAKeyThatCannotListThem() async throws {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
+        let configuration = StubProtocol.configuration()
         StubProtocol.handler = { _ in (403, [:], self.xmlError("AccessDenied")) }
         let form = S3SignIn(service: .backblaze, region: "eu-central-003", accessKey: "k", secretKey: "s")
         do { _ = try await S3Authentication(session: URLSession(configuration: configuration)).signIn(form); XCTFail() }
@@ -709,7 +700,6 @@ final class S3ProviderTests: XCTestCase {
         XCTAssertFalse(capabilities.reversibleTrash, "No bin: deleting is final and the confirmation says so")
         XCTAssertFalse(capabilities.quota)
         XCTAssertTrue(capabilities.search)
-        XCTAssertTrue(capabilities.checksum)
         XCTAssertFalse(capabilities.linksFolders)
         XCTAssertFalse(capabilities.trashListing || capabilities.permanentDelete || capabilities.memberSharing)
         XCTAssertTrue(Cloud.s3.usesPasswordLogin)

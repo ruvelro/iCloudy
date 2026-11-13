@@ -29,8 +29,7 @@ struct iCloudyApp: App {
         // the user (or a crash) closed stays closed, leaving the app running with nothing on screen. "Nueva ventana"
         // is removed below, so this still behaves as a single-window app over one shared model.
         WindowGroup(id: "explorer") {
-            // Locked, the explorer is not merely covered: it is not there, and neither are its sheets or its toolbar.
-            Group { if model.isLocked { LockedView(model: model) } else { ExplorerView(model: model) } }
+            ExplorerView(model: model)
                 .frame(minWidth: 900, minHeight: 600)
                 .onAppear { delegate.model = model }
                 .onChange(of: menuBarEnabled) { DockIcon.apply() }
@@ -39,21 +38,29 @@ struct iCloudyApp: App {
                     guard let id = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String else { return }
                     model.openSpotlightItem(identifier: id)
                 }
+                .modifier(UpdateCheckTrigger(checker: .shared))
         }
         .defaultSize(width: 1120, height: 740)
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             // There is still one window; ⌘T opens a tab in it instead of a second one.
             CommandGroup(replacing: .newItem) {
-              Group {
                 Button("Nueva pestaña") { model.newTab() }.keyboardShortcut("t", modifiers: .command)
+                // The Finder's keys: ⇧⌘N for a folder, ⌘D to duplicate, ⌘E to eject.
+                Button("Nueva carpeta") { model.promptName() }.keyboardShortcut("n", modifiers: [.command, .shift])
+                    .disabled(!model.canWrite)
+                Button("Duplicar") { Task { await model.duplicate(model.selection(model.selectedIDs)) } }
+                    .keyboardShortcut("d", modifiers: .command)
+                    .disabled(model.duplicateLimitation(model.selection(model.selectedIDs)) != nil)
+                Button(model.ejectable.map { CryptomatorVaults.isVaultAccount($0.id) ? L("Bloquear la bóveda") : L("Expulsar «\(model.accountTitle($0))»…") } ?? L("Expulsar"))
+                { model.eject() }
+                    .keyboardShortcut("e", modifiers: .command).disabled(model.ejectable == nil)
                 Divider()
                 // F5 and F6, as in the two-pane file managers they come from.
                 Button("Copiar al otro panel") { model.sendSelectionToOtherPane(move: false) }
                     .keyboardShortcut(KeyEquivalent.function(5), modifiers: []).disabled(!model.isSplit)
                 Button("Mover al otro panel") { model.sendSelectionToOtherPane(move: true) }
                     .keyboardShortcut(KeyEquivalent.function(6), modifiers: []).disabled(!model.isSplit)
-              }.disabled(model.isLocked)
             }
             CommandGroup(replacing: .saveItem) {
                 // ⌘W closes a tab while there are others and the window with the last one. Any other window with
@@ -65,7 +72,6 @@ struct iCloudyApp: App {
                 Button("Cerrar ventana") { NSApp.keyWindow?.performClose(nil) }.keyboardShortcut("w", modifiers: [.command, .shift])
             }
             CommandGroup(after: .windowArrangement) {
-              Group {
                 Divider()
                 Button("Mostrar la pestaña anterior") { model.cycleTabs(forward: false) }
                     .keyboardShortcut(.tab, modifiers: [.control, .shift]).disabled(model.tabCount < 2)
@@ -78,30 +84,66 @@ struct iCloudyApp: App {
                     }
                     Button("Última pestaña") { model.showTab(number: 9) }.keyboardShortcut("9", modifiers: .command)
                 }
-              }.disabled(model.isLocked)
+            }
+            // The Finder's Go menu: places by path, and (below) the recent ones and the favourites.
+            CommandMenu("Ir") {
+                Button("Ir a la carpeta…") { model.preview.close(); model.ui.showGoToFolder = true }
+                    .keyboardShortcut("g", modifiers: [.command, .shift]).disabled(model.accounts.isEmpty)
+                Button("Escribir la ruta") { model.ui.editingPath = model.workspace.focusedPane }
+                    .keyboardShortcut("l", modifiers: .command)
+                    .disabled(model.account == nil || model.collection != .files || model.ui.showGlobalSearch)
+                Divider()
+                Menu("Carpetas recientes") {
+                    ForEach(model.recents.items) { recent in
+                        Button(model.recentTitle(recent)) { model.openRecent(recent) }
+                    }
+                    if !model.recents.items.isEmpty { Divider() }
+                    Button("Borrar el menú") { model.recents.clear() }.disabled(model.recents.items.isEmpty)
+                }
+                Divider()
+                // ⌃1 to ⌃9 open the first nine favourites, in the order the sidebar shows them.
+                Section("Favoritos") {
+                    ForEach(Array(model.favorites.prefix(9).enumerated()), id: \.element.id) { index, favorite in
+                        Button(favorite.file.name) { model.openFavorite(favorite) }
+                            .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .control)
+                    }
+                }
             }
             CommandGroup(after: .appInfo) {
-              Group {
-                Button("Bloquear iCloudy") { model.lock() }.keyboardShortcut("l", modifiers: [.command, .control]).disabled(!model.lockPolicy.enabled)
-                Button("Añadir cuenta…") { model.showConnect = true }.keyboardShortcut("n", modifiers: [.command, .shift])
+                // ⇧⌘N is the Finder's New Folder now; adding an account moves to ⌥⌘N.
+                Button("Añadir cuenta…") { model.ui.showConnect = true }.keyboardShortcut("n", modifiers: [.command, .option])
                 Button("Subir archivos…") { Task { await model.pickUpload() } }.disabled(!model.canWrite)
-                Button("Subir comprimido en ZIP…") { Task { await model.pickCompressedUpload() } }.disabled(!model.canWrite)
                 Button("Subir el portapapeles") { model.uploadFromPasteboard() }.disabled(!model.canWrite)
-                Button("Buscar en todas las nubes") { model.preview.close(); model.showGlobalSearch = true }.keyboardShortcut("f", modifiers: [.command, .shift])
+                Button("Buscar en todas las nubes") { model.preview.close(); model.ui.showGlobalSearch = true }.keyboardShortcut("f", modifiers: [.command, .shift])
                 Button("Comparar carpetas…") { model.openComparator() }.disabled(model.accounts.isEmpty)
                 Button("Buscar duplicados…") { model.openDuplicateFinder() }.disabled(model.accounts.isEmpty)
-                Button("Analizar espacio…") { model.openUsage() }.disabled(model.accounts.isEmpty)
-              }.disabled(model.isLocked)
             }
             CommandGroup(after: .toolbar) {
                 Button(model.isSplit ? "Cerrar el segundo panel" : "Dividir en dos paneles") { model.toggleSplit() }
-                    .keyboardShortcut("d", modifiers: [.command, .shift]).disabled(model.isLocked)
+                    .keyboardShortcut("d", modifiers: [.command, .shift])
+                // Quick Look's own shortcut, besides the space bar in the list.
+                Button("Vista rápida") { model.quickLookSelection() }.keyboardShortcut("y", modifiers: .command)
+                Button(model.ui.showInspector ? "Ocultar el inspector" : "Mostrar el inspector") { model.ui.showInspector.toggle() }
+                    .keyboardShortcut("i", modifiers: .command)
+                // The same choice as the context menu of the list's header.
+                Menu("Columnas") {
+                    ForEach(FileColumn.allCases.filter(\.canHide)) { column in
+                        Toggle(column.title, isOn: model.explorer.visibility(of: column))
+                    }
+                }
                 Toggle("Mostrar iCloudy en la barra de menús", isOn: $menuBarEnabled)
             }
+            UpdateCommands(checker: .shared)
         }
         MenuBarExtra("iCloudy", systemImage: "cloud.fill", isInserted: $menuBarEnabled) {
             MenuBarContent(model: model, queue: model.queue)
         }
         Settings { SettingsView(model: model) }
+        // Saved transfer jobs, opened from the transfer panel and the menu bar.
+        Window("Trabajos guardados", id: "jobs") { JobsView(model: model) }
+            .defaultSize(width: 680, height: 460)
+        // «Buscar actualizaciones…» and the daily check (Integration/UpdateChecker.swift, docs/DISTRIBUCION.md).
+        Window("Actualizaciones", id: UpdateView.windowID) { UpdateView(checker: .shared) }
+            .windowResizability(.contentSize)
     }
 }

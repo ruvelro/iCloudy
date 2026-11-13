@@ -13,14 +13,6 @@ final class TransferReportTests: XCTestCase {
         queue.client = { _ in CloudAPI(account: .demo, demo: demo) }
         return (root, demo, queue)
     }
-    private func wait(_ condition: () -> Bool) async throws {
-        for _ in 0..<500 {
-            if condition() { return }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        XCTFail("Timed out waiting for queue")
-        throw CloudError.message("Test timeout")
-    }
     private func upload(_ url: URL, batch: UUID = UUID()) -> Transfer {
         Transfer(batchID: batch, name: url.lastPathComponent, destination: "Demo", accountID: Account.demo.id, direction: .upload, localURL: url)
     }
@@ -102,7 +94,7 @@ final class TransferReportTests: XCTestCase {
         XCTAssertTrue(job.report.values.allSatisfy { $0.outcome == .verified })
         XCTAssertEqual(job.report["./sub/b.txt"]?.bytes, 2)
         XCTAssertEqual(job.verifiedFiles, 3, "The counters follow the records")
-        let saved = try XCTUnwrap(LocalStore.read([Transfer].self, from: queue.storeURL)?.first)
+        let saved = try XCTUnwrap(LocalStore.read(StoreEnvelope<[Transfer]>.self, from: queue.storeURL)?.items.first)
         XCTAssertEqual(saved.report.count, 3, "Unlike the checkpoints, the report survives completion on disk")
     }
 

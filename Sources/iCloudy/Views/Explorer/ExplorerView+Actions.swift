@@ -21,21 +21,33 @@ extension ExplorerView {
             Button { Task { await model.saveMany(model.selection(selected)) } } label: { Label("Descargar selección", systemImage: "square.and.arrow.down") }.disabled(selected.isEmpty)
             Button { previewSelection() } label: { Image(systemName: "eye") }.help("Vista previa (Espacio)")
                 .accessibilityLabel("Vista previa").disabled(selected.count != 1)
+            Button { model.ui.showInspector.toggle() } label: {
+                Image(systemName: "info.circle").symbolVariant(model.ui.showInspector ? .fill : .none)
+            }.help(model.ui.showInspector ? "Ocultar el inspector (⌘I)" : "Mostrar el inspector (⌘I)")
+                .accessibilityLabel("Inspector")
             ToolbarSeparator()
             Group {
                 Picker("Vista", selection: $model.viewMode) {
-                    Image(systemName: "list.bullet").tag("list")
-                    Image(systemName: "square.grid.2x2").tag("grid")
-                }.pickerStyle(.segmented).frame(width: 80)
+                    Image(systemName: "list.bullet").tag("list").accessibilityLabel("Lista")
+                    Image(systemName: "square.grid.2x2").tag("grid").accessibilityLabel("Iconos")
+                    Image(systemName: "rectangle.split.3x1").tag("columns").accessibilityLabel("Columnas")
+                }.pickerStyle(.segmented).frame(width: 116).help("Lista, iconos o columnas")
                 // The sort used to live down in the header, beside the breadcrumbs. It answers the same question as
                 // the two buttons on its left — how this list is drawn — so it now sits in the same group.
                 Menu {
                     Picker("Orden", selection: $model.sortMode) {
-                        Label("Nombre", systemImage: "textformat").tag("name")
-                        Label("Más recientes", systemImage: "clock").tag("date")
-                        Label("Mayor tamaño", systemImage: "arrow.up.arrow.down").tag("size")
-                        Label("Tipo", systemImage: "square.stack.3d.up").tag("kind")
+                        ForEach(SortKey.allCases) { key in Label(key.title, systemImage: key.symbol).tag(key.rawValue) }
                     }.pickerStyle(.inline).labelsHidden()
+                    // The same direction a second click on the column's header gives.
+                    Picker("Dirección", selection: $model.sortAscending) {
+                        let key = SortKey.of(model.sortMode)
+                        Text(key.directionTitle(ascending: true)).tag(true)
+                        Text(key.directionTitle(ascending: false)).tag(false)
+                    }.pickerStyle(.inline).labelsHidden()
+                    // Headings only make sense in the list; the grid and the columns keep a single run of items.
+                    Picker("Agrupar", selection: Bindable(model.explorer).grouping) {
+                        ForEach(FileGrouping.forFolders) { Text($0.title).tag($0) }
+                    }.pickerStyle(.inline).labelsHidden().disabled(model.viewMode != "list")
                 } label: { Image(systemName: "arrow.up.arrow.down") }
                 .accessibilityLabel("Ordenar la lista")
                     .help("Ordenar la lista")
@@ -47,7 +59,7 @@ extension ExplorerView {
             ToolbarSeparator()
             // Personalizar and Desconectar used to hang off an ⋯ menu here. They belong to a cloud, not to the
             // window, so they now live where the cloud itself is: the right-click menu of its row in the sidebar.
-            Button { withAnimation(.easeInOut(duration: 0.18)) { showTransfers.toggle() } } label: {
+            Button { withAnimation(Motion.drawer) { showTransfers.toggle() } } label: {
                 Image(systemName: "arrow.up.arrow.down.circle")
                     .symbolVariant(model.transfers.isEmpty ? .none : .fill)
             }.help(showTransfers ? "Ocultar transferencias" : "Mostrar transferencias")
@@ -59,12 +71,12 @@ extension ExplorerView {
     var selectedCount: Int { model.visibleFiles.reduce(0) { selected.contains($1.id) ? $0 + 1 : $0 } }
 
     var trashTitle: String {
-        guard let files = model.pendingTrash else { return "" }
+        guard let files = model.ui.pendingTrash else { return "" }
         return files.count == 1 ? L("¿Enviar «\(files[0].name)» a la papelera?") : L("¿Enviar \(files.count) elementos a la papelera?")
     }
 
     var purgeTitle: String {
-        guard let files = model.pendingPurge else { return "" }
+        guard let files = model.ui.pendingPurge else { return "" }
         return files.count == 1 ? L("¿Eliminar «\(files[0].name)» definitivamente?") : L("¿Eliminar \(files.count) elementos definitivamente?")
     }
 
@@ -124,6 +136,9 @@ extension ExplorerView {
         Button("Copiar a…") { model.requestRelocation([file], copy: true) }
             .disabled(!model.canCopy([file]))
             .help(model.limitation(.copy, for: [file]) ?? "")
+        Button("Duplicar") { Task { await model.duplicate([file]) } }
+            .disabled(model.duplicateLimitation([file]) != nil)
+            .help(model.duplicateLimitation([file]) ?? L("Hace una copia en esta misma carpeta (⌘D)"))
         if model.accounts.count > 1 { Button("Enviar a otra nube…") { model.requestCrossCloud([file]) } }
         otherPaneActions([file])
         Divider()
@@ -133,24 +148,29 @@ extension ExplorerView {
             if !model.inEncryptedVault {
                 Button("Reflejar una carpeta local aquí…") { Task { await model.pickMirrorSource(for: file) } }
                 Button("Sincronizar en ambos sentidos con una carpeta local…") { Task { await model.pickMirrorSource(for: file, twoWay: true) } }
+                Button("Mantener una copia en una carpeta del Mac…") { Task { await model.pickDownloadMirror(for: file) } }
             }
-            if !model.inEncryptedVault { Button("Copiar periódicamente a otra nube…") { model.requestBackup(of: file) } }
             Button("Descargar carpeta…") { Task { await model.save(file) } }
-            Button("Descargar como ZIP…") { Task { await model.saveCompressed([file]) } }
             Button("Comparar con…") { model.openComparator(with: file) }
             Button("Buscar duplicados aquí…") { model.openDuplicateFinder(in: file) }
-            Button("Analizar espacio aquí…") { model.openUsage(in: file) }
             CryptomatorFolderActions(model: model, folder: file)
         } else if !file.isGoogleDocument {
             Button("Descargar…") { Task { await model.save(file) } }
-            if AppModel.isZip(file) { Button("Descargar y descomprimir…") { Task { await model.saveExtracted(file) } } }
-            Button("Editar y subir los cambios") { model.editInPlace(file) }
-                .disabled(model.editingLimitation(file) != nil)
-                .help(model.editingLimitation(file) ?? L("Abre el archivo en su aplicación y sube cada cambio que guardes"))
+            openWithMenu(file)
         }
         if file.webURL != nil { Button("Abrir en navegador") { model.openBrowser(file) } }
         ForEach(file.exportOptions, id: \.ext) { option in
             Button("Exportar como \(option.title)…") { Task { await model.save(file, export: (option.mime, option.ext)) } }
+        }
+        if let account = model.account, account.capabilities.ubiquitousItems {
+            Divider()
+            if file.isFolder || file.ubiquity == .cloudOnly {
+                Button("Descargar de iCloud a este Mac") { Task { await model.setUbiquitousDownload(file, downloaded: true) } }
+            }
+            if file.isFolder || file.ubiquity == .downloaded {
+                Button("Quitar la descarga (dejar solo en iCloud)") { Task { await model.setUbiquitousDownload(file, downloaded: false) } }
+                    .help("Libera el espacio de este Mac. El archivo sigue en iCloud y se vuelve a descargar al abrirlo.")
+            }
         }
         Divider()
         offlineActions(file)
@@ -159,9 +179,6 @@ extension ExplorerView {
             Button("Versiones…") { model.requestVersions(file) }
                 .disabled(model.versionsLimitation(file) != nil)
                 .help(model.versionsLimitation(file) ?? "")
-        }
-        if let account = model.account, account.cloud == .sftp, !model.inEncryptedVault {
-            Button("Permisos…") { model.permissionsRequest = PermissionsRequest(file: file, account: account) }
         }
         if let copy = model.localStatus(file).copy {
             Divider()
@@ -172,6 +189,8 @@ extension ExplorerView {
         }
         Divider()
         if file.webURL != nil { Button("Copiar enlace") { model.copyLink(file) } }
+        Button("Copiar enlace de iCloudy") { model.copyICloudyLink(file) }
+            .help("Un enlace icloudy:// que abre iCloudy en este elemento, en este Mac")
         if let account = model.account, account.capabilities.memberSharing {
             Button("Compartir con personas…") { model.requestSharing(file) }
         }
@@ -191,5 +210,22 @@ extension ExplorerView {
                 .disabled(model.limitation(.permanentDelete, for: [file]) != nil)
                 .help(model.limitation(.permanentDelete, for: [file]) ?? "")
         }
+    }
+
+    /// «Abrir con»: the apps that open this kind of file, the default one first, and any other. The copy they get is
+    /// private and watched; its saves come back to the cloud.
+    @ViewBuilder func openWithMenu(_ file: CloudFile) -> some View {
+        Menu("Abrir con") {
+            let apps = model.applications(toOpen: file)
+            ForEach(apps, id: \.self) { app in
+                Button(FileManager.default.displayName(atPath: app.path)) { Task { await model.openWith(file, application: app) } }
+            }
+            if !apps.isEmpty { Divider() }
+            Button("Otra…") {
+                Task { if let app = await model.chooseApplication() { await model.openWith(file, application: app) } }
+            }
+        }
+        .disabled(model.openWithLimitation(file) != nil)
+        .help(model.openWithLimitation(file) ?? L("Abre una copia en otra aplicación y sube los cambios que guardes."))
     }
 }

@@ -21,30 +21,30 @@ enum Diagnostics {
 
     /// True while the test suite runs. The suite is not sandboxed, so without this the log would pile up in the real
     /// Application Support folder of whoever ran it, as O2's record once did.
-    static var underTest: Bool { NSClassFromString("XCTestCase") != nil }
+    static var underTest: Bool { AppEnvironment.isTesting }
 
     static let levelKey = "diagnosticsLevel"
     private static let saltKey = "diagnosticsSalt"
 
     static let shared: DiagnosticsLog = {
         let test = underTest
-        let level = (UserDefaults.standard.string(forKey: levelKey)).flatMap(DiagnosticsLevel.init(rawValue:)) ?? .normal
+        let level = (Prefs.defaults.string(forKey: levelKey)).flatMap(DiagnosticsLevel.init(rawValue:)) ?? .normal
         return DiagnosticsLog(directory: test ? nil : directory, level: test ? .normal : level, salt: test ? nil : storedSalt())
     }()
     static var directory: URL { LocalStore.directory.appendingPathComponent("Diagnostics", isDirectory: true) }
 
     /// One salt per Mac, so the same account hashes the same way across runs and differently on anyone else's Mac.
     private static func storedSalt() -> Data {
-        if let stored = UserDefaults.standard.string(forKey: saltKey).flatMap({ Data(base64Encoded: $0) }), stored.count >= 16 { return stored }
+        if let stored = Prefs.defaults.string(forKey: saltKey).flatMap({ Data(base64Encoded: $0) }), stored.count >= 16 { return stored }
         let salt = DiagnosticsLog.randomSalt()
-        UserDefaults.standard.set(salt.base64EncodedString(), forKey: saltKey)
+        Prefs.defaults.set(salt.base64EncodedString(), forKey: saltKey)
         return salt
     }
 
     /// Changes the level and remembers it. Turning the log off also stops anything already queued from being kept.
     static func setLevel(_ level: DiagnosticsLevel) {
         shared.level = level
-        UserDefaults.standard.set(level.rawValue, forKey: levelKey)
+        Prefs.defaults.set(level.rawValue, forKey: levelKey)
     }
 
     /// Records an event, filling in whatever the surrounding task knows.
@@ -159,16 +159,6 @@ enum Diagnostics {
                                 provider: account.cloud.rawValue, account: account.id, method: method, url: url,
                                 status: status, duration: delay, attempt: attempt,
                                 message: "espera \(Int(delay.rounded())) s"))
-    }
-    /// A download that asked only for the bytes it was missing.
-    static func downloadResumed(_ account: Account, from offset: Int64) {
-        record(DiagnosticRecord(.summary, stage: DiagnosticStage.download, provider: account.cloud.rawValue,
-                                account: account.id, message: "reanudada desde el byte \(offset)"))
-    }
-    /// A continued download failed its check and is fetched whole.
-    static func downloadRestarted(_ account: Account, name: String) {
-        record(DiagnosticRecord(.retry, stage: DiagnosticStage.download, provider: account.cloud.rawValue,
-                                account: account.id, message: "la descarga reanudada no pasó la comprobación; se repite entera"))
     }
     static func tokenRenewed(_ account: Account) {
         record(DiagnosticRecord(.summary, stage: DiagnosticStage.auth, provider: account.cloud.rawValue,

@@ -5,7 +5,6 @@ struct TransferQueueSettings: View {
     let model: AppModel
     @AppStorage(Prefs.transferConcurrency) private var concurrency = 3
     @AppStorage(Prefs.transferPerAccount) private var perAccount = 2
-    @AppStorage(Prefs.transferFilesPerJob) private var filesPerJob = 4
     @AppStorage(Prefs.uploadLimitEnabled) private var uploadLimited = false
     @AppStorage(Prefs.uploadLimitValue) private var uploadValue = 1
     @AppStorage(Prefs.uploadLimitUnit) private var uploadUnit = BandwidthUnit.megabytes.rawValue
@@ -26,9 +25,6 @@ struct TransferQueueSettings: View {
                 LabeledContent("Como mucho por cuenta") {
                     Stepper(value: $perAccount, in: TransferPolicy.perAccountRange) { Text(verbatim: "\(perAccount)").monospacedDigit() }
                 }
-                LabeledContent("Archivos a la vez dentro de una carpeta") {
-                    Stepper(value: $filesPerJob, in: TransferPolicy.filesPerJobRange) { Text(verbatim: "\(filesPerJob)").monospacedDigit() }
-                }
                 Text("FTP, SFTP, Mega y O2 Cloud hacen una cada vez por cuenta, digas lo que digas aquí: su sesión no admite dos operaciones a la vez. Una copia entre nubes cuenta para las dos cuentas.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
@@ -38,6 +34,7 @@ struct TransferQueueSettings: View {
                 Text("Es un límite para toda la cola, repartido a partes iguales entre lo que esté en marcha. No frena la vista previa ni la copia entre volúmenes montados. El mínimo es de 32 KB/s.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
+            AccountBandwidthSettings(model: model)
             Section("Cuándo") {
                 Toggle("Transferir solo en un horario", isOn: $windowEnabled)
                 if windowEnabled {

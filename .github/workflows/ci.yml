@@ -9,35 +9,108 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
-  test:
-    runs-on: macos-15
-    timeout-minutes: 45
+  lint:
+    name: Lint and localization
+    # swift-format reads .swift-format strictly, and older versions reject keys the newer ones added. Linting runs
+    # with the swift-format the configuration was written for, which ships with Xcode 27.
+    runs-on: xcode-27
+    timeout-minutes: 15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Toolchain
-        # The image's default Xcode lags behind; the newest one installed is the closest to what the app is built with.
         run: |
-          newest="$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
-          sudo xcode-select -s "$newest"
+          xcodebuild -version
+          xcrun swift-format --version
+      - name: swift-format
+        # Rule findings fail; layout findings are counted only (see scripts/lint.sh and .swift-format).
+        run: scripts/lint.sh
+      - name: Plural tables are generated from scripts/make-plurals.py
+        run: |
+          python3 scripts/make-plurals.py
+          git diff --exit-code Resources
+      - name: No new orphan keys in the English table
+        run: python3 scripts/check-localization.py --baseline scripts/localization-orphans.txt
+      - name: VERSION, CHANGELOG.md and README.md agree
+        run: python3 scripts/release.py check
+
+  test:
+    name: Test (${{ matrix.os }}, Xcode ${{ matrix.xcode }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Pinned, not "the newest installed": a toolchain that changes by itself makes failures unreproducible.
+          # Xcode 26 (Swift 6.2) is the oldest toolchain supported: Swift 6.1 rejects sending non-Sendable results
+          # out of nonisolated async calls that 6.2's region analysis accepts, all over the providers.
+          # macOS 14 runners are retired, so macOS 15 is the oldest system tested.
+          - os: macos-15
+            xcode: "26.3"
+            integration: true
+          - os: macos-26
+            xcode: "26.6"
+            integration: false
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
+      # A crash prints its backtrace in the log instead of only "unexpected signal".
+      SWIFT_BACKTRACE: enable=yes,interactive=no
+      # Per-test watchdog (Tests/iCloudyTests/TestSupport.swift); generous for a loaded runner.
+      ICLOUDY_TEST_TIMEOUT: "300"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain
+        run: |
+          if [[ ! -d "$DEVELOPER_DIR" ]]; then
+            echo "::error::Xcode ${{ matrix.xcode }} is not installed on ${{ matrix.os }}. Installed:"; ls -d /Applications/Xcode*.app; exit 1
+          fi
           xcodebuild -version
           swift --version
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .build
-          key: spm-${{ runner.os }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          # The build folder depends on the toolchain as much as on the sources. restore-keys reuses the closest
+          # earlier build, so a push rebuilds only what it changed.
+          key: build-${{ matrix.os }}-xcode${{ matrix.xcode }}-${{ hashFiles('Package.swift', 'Sources/**', 'Tests/**') }}
+          restore-keys: |
+            build-${{ matrix.os }}-xcode${{ matrix.xcode }}-
       - name: Build
         run: swift build -Xswiftc -warnings-as-errors
-      - name: Test
-        # The SFTP and FTPS integration tests skip unless a real server is configured as a repository secret.
+      - name: Integration servers
+        # MinIO, OpenSSH and pyftpdlib run inside the job, so the S3, SFTP and FTPS integration tests stop skipping.
+        # A server that fails to start falls back to the repository secret of the same name, if there is one.
+        if: matrix.integration
         env:
-          ICLOUDY_SFTP_URL: ${{ secrets.ICLOUDY_SFTP_URL }}
-          ICLOUDY_FTPS_URL: ${{ secrets.ICLOUDY_FTPS_URL }}
-          # Real accounts, described as docs/PRUEBAS-REALES.md says. Unset, as on a fork, those tests are skipped.
-          ICLOUDY_LIVE_ACCOUNTS_JSON: ${{ secrets.ICLOUDY_LIVE_ACCOUNTS_JSON }}
-          # A crash prints its backtrace in the log instead of only "unexpected signal".
-          SWIFT_BACKTRACE: enable=yes,style=full,interactive=no
-        run: swift test
+          SECRET_S3_URL: ${{ secrets.ICLOUDY_S3_URL }}
+          SECRET_SFTP_URL: ${{ secrets.ICLOUDY_SFTP_URL }}
+          SECRET_FTPS_URL: ${{ secrets.ICLOUDY_FTPS_URL }}
+        run: |
+          fallback() {
+            local name="$1" secret="$2"
+            echo "::warning::The local server for $name did not start."
+            if [[ -n "$secret" ]]; then echo "::add-mask::$secret"; echo "$name=$secret" >> "$GITHUB_ENV"; echo "Using the $name secret."; fi
+          }
+          scripts/ci/minio.sh start || fallback ICLOUDY_S3_URL "$SECRET_S3_URL"
+          scripts/ci/sftp.sh start || fallback ICLOUDY_SFTP_URL "$SECRET_SFTP_URL"
+          scripts/ci/ftps.sh start || fallback ICLOUDY_FTPS_URL "$SECRET_FTPS_URL"
+      - name: Test
+        run: swift test --parallel --enable-code-coverage
+      - name: Coverage
+        if: success() || failure()
+        run: scripts/ci/coverage.sh coverage.lcov
+      - uses: actions/upload-artifact@v7
+        if: success() || failure()
+        with:
+          name: coverage-${{ matrix.os }}-xcode${{ matrix.xcode }}
+          path: coverage.lcov
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Crash reports
         # A test process that crashes leaves only "unexpected signal" in the log; the system's report says where.
         if: failure()
@@ -47,6 +120,32 @@ jobs:
           for report in $(ls -t ~/Library/Logs/DiagnosticReports/*.ips /Library/Logs/DiagnosticReports/*.ips 2>/dev/null | head -2); do
             echo "== $report"; head -c 60000 "$report"; echo
           done
+      - name: Server logs
+        if: failure() && matrix.integration
+        run: |
+          root="${RUNNER_TEMP}/icloudy-ci"
+          for log in "$root/minio/minio.log" "$root/sftp/sshd.log" "$root/ftps/server.log"; do
+            [[ -f "$log" ]] && { echo "== $log"; sudo tail -n 200 "$log"; }
+          done
+          true
+      - name: Stop servers
+        if: always() && matrix.integration
+        run: |
+          scripts/ci/minio.sh stop || true
+          scripts/ci/sftp.sh stop || true
+          scripts/ci/ftps.sh stop || true
+
+  bundle:
+    name: Release build and bundles
+    # The same runner and Xcode as the release workflow.
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain
+        run: xcodebuild -version
       - name: Strict concurrency
         run: swift build -c release -Xswiftc -strict-concurrency=complete
       - name: Bundle
@@ -55,3 +154,32 @@ jobs:
           ICLOUDY_BUILD_CONFIGURATION=debug bash scripts/build-app.sh
           plutil -lint dist/debug/iCloudy.app/Contents/Info.plist
           codesign --verify --deep --strict dist/debug/iCloudy.app
+          test ! -e dist/debug/iCloudy.app/Contents/PlugIns
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' dist/debug/iCloudy.app/Contents/Info.plist)" = "$(scripts/version.sh)"
+      - name: Package
+        # The same packaging, feed and cask steps as the release workflow, on the debug bundle: the .zip, the .dmg
+        # with its Applications link, the sums, and an appcast.json the app's update checker can read.
+        run: |
+          bash scripts/package.sh dist/debug/iCloudy.app
+          source dist/release/package.env
+          (cd dist/release && shasum -a 256 -c SHA256SUMS.txt)
+          hdiutil imageinfo "$DMG" > /dev/null
+          python3 scripts/release.py notes "$VERSION" > "$RUNNER_TEMP/notes.md"
+          python3 scripts/release.py appcast --version "$VERSION" --build "$BUILD" --notes "$RUNNER_TEMP/notes.md" \
+            --zip "$ZIP" --dmg "$DMG" --out dist/release
+          python3 scripts/release.py cask --version "$VERSION" --zip "$ZIP" --out dist/release
+          ruby -c dist/release/icloudy.rb
+          scripts/notarize.sh app dist/debug/iCloudy.app
+      - name: Bundle with the File Provider extension
+        # The extension is only packaged when an App Group is named. A made-up group cannot load on a Mac without a
+        # matching provisioning profile, but it exercises the packaging, the entitlements and the signatures.
+        env:
+          ICLOUDY_BUILD_CONFIGURATION: debug
+          ICLOUDY_APP_GROUP: group.dev.icloudy.ci
+        run: |
+          bash scripts/build-app.sh
+          appex=dist/debug/iCloudy.app/Contents/PlugIns/iCloudyFileProvider.appex
+          plutil -lint "$appex/Contents/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :iCloudyAppGroup' "$appex/Contents/Info.plist")" = "$ICLOUDY_APP_GROUP"
+          codesign --verify --deep --strict dist/debug/iCloudy.app
+          codesign -d --entitlements :- "$appex" | grep -q "$ICLOUDY_APP_GROUP"

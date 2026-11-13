@@ -8,8 +8,10 @@
     <key>CFBundleName</key><string>iCloudy</string>
     <key>CFBundleDisplayName</key><string>iCloudy</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.7.0</string>
-    <key>CFBundleVersion</key><string>5</string>
+    <!-- Both versions are written by scripts/build-app.sh: the short one from the VERSION file, the build number from
+         the number of commits. These placeholders are what a bundle built any other way says. -->
+    <key>CFBundleShortVersionString</key><string>0.0.0</string>
+    <key>CFBundleVersion</key><string>0</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleDevelopmentRegion</key><string>es</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
@@ -28,6 +30,20 @@
                 <string>public.item</string>
                 <string>public.folder</string>
             </array>
+        </dict>
+    </array>
+    <!-- icloudy:// links: open a folder, reveal an item, search (Integration/URLCommand.swift). A link only ever shows
+         things; nothing it says deletes, moves or sends anything. -->
+    <!-- AppleScript: a small dictionary to list accounts, show a place and search (Integration/AppleScript.swift). -->
+    <key>NSAppleScriptEnabled</key><true/>
+    <key>OSAScriptingDefinition</key><string>iCloudy.sdef</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key><string>dev.icloudy.desktop.link</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>CFBundleURLSchemes</key>
+            <array><string>icloudy</string></array>
         </dict>
     </array>
     <!-- What a row carries when it is dragged from one pane to the other. Offered only inside the app. -->

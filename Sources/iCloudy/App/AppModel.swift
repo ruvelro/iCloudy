@@ -8,10 +8,15 @@ import Combine
 @MainActor
 @Observable
 final class AppModel {
-    /// The Finder's list of locations follows the list of accounts, for as long as the person wants it to. Which
-    /// accounts, not their order: reordering the sidebar has nothing to tell the Finder.
-    var accounts: [Account] = [] {
-        didSet { if Set(oldValue.map(\.id)) != Set(accounts.map(\.id)) { syncFinderDomains() } }
+    /// The accounts, their sessions and the Keychain entry they are saved in.
+    let directory = AccountDirectory()
+    /// O2's keep-alive, silent renewals and WebKit stores.
+    @ObservationIgnored private(set) lazy var o2 = O2SessionKeeper(directory: directory)
+    /// What the views read. Setting it changes this run only: connecting, reordering and removing go through
+    /// `directory`, which saves.
+    var accounts: [Account] {
+        get { directory.accounts }
+        set { directory.accounts = newValue }
     }
     /// Panes and tabs, each with its own place and listing. The properties below forward to the focused pane's
     /// active tab, so everything that asks for "the open folder" keeps getting exactly that.
@@ -21,8 +26,6 @@ final class AppModel {
     /// The workspace as a stream, for the store that saves it and the offline refresh that watches the open folder.
     @ObservationIgnored lazy var workspaceChanges = CurrentValueSubject<ExplorerWorkspace, Never>(workspace)
     @ObservationIgnored let workspaceStore = WorkspaceStore()
-    /// A move from one pane to another account, waiting for confirmation.
-    var pendingPaneMove: PaneMoveRequest?
     let paneTransfers = PaneTransfers()
     var selectedAccountID: String? {
         get { workspace.current.accountID }
@@ -50,77 +53,45 @@ final class AppModel {
         get { workspace.current.selection }
         set { workspace.current.selection = newValue }
     }
-    var error: String?
-    /// Non-error feedback, e.g. "link copied". Shown in a plain alert.
-    var info: String?
-    /// SwiftUI presents one alert at a time, so an error and a piece of good news arriving together meant the second
-    /// one never appeared at all. They share a presentation now: the error goes first and the other waits its turn.
-    var alertTitle: String { error != nil ? L("No se pudo completar la operación") : L("iCloudy") }
-    var alertMessage: String? { error ?? info }
-    func dismissAlert() { if error != nil { error = nil } else { info = nil } }
-    /// File awaiting confirmation before a public link is created for it.
-    var pendingShare: (file: CloudFile, account: Account)?
-    /// S3 file awaiting the choice of how long its presigned link lives.
-    var pendingTemporaryLink: (file: CloudFile, account: Account)?
-    /// Items awaiting confirmation before being sent to the provider's trash.
-    var pendingTrash: [CloudFile]?
-    /// The item whose sharing sheet is open.
-    var sharing: SharingRequest?
-    /// The item whose public links sheet is open, and the account whose list of every link is open.
-    var publicLinkManager: PublicLinksRequest?
-    var linkInventory: Account?
-    /// The file whose versions sheet is open.
-    var versionHistory: VersionsRequest?
-    /// Items awaiting confirmation before being deleted for good, from the trash or straight from the tree.
-    var pendingPurge: [CloudFile]?
-    /// True while the confirmation to empty the whole trash is showing.
-    var pendingEmptyTrash = false
-    /// A selection whose new names are being chosen.
-    var batchRename: BatchRenameRequest?
-    /// Move or copy in progress of being targeted; drives the folder picker sheet.
-    var relocation: Relocation?
-    /// Cross-cloud transfer waiting for its destination account.
-    var crossCloud: CrossCloudRequest?
-    /// Self-hosted provider whose credentials form is open, if any.
-    var serverLogin: Cloud?
-    /// The account that form was opened to reconnect, so it arrives with its address and user already written.
-    /// Retyping a NAS address from memory to fix a session is a poor way to ask somebody for a password.
-    var reconnecting: Account?
-    /// True while the advanced sheet for shared drives and document libraries is open.
-    /// Host of the O2 account being connected, which also drives the sign-in window.
-    var o2Login: O2LoginRequest?
-    var showAdvanced = false
-    var connecting = false
-    var connectionError: String?
-    var showConnect = false
+    /// Alerts, confirmations and sheets: the window's state, kept apart from the model's.
+    let ui = ExplorerPresentation()
+    /// The model reports what went wrong, and what went well, through these two; the window shows them.
+    var error: String? {
+        get { ui.error }
+        set { ui.error = newValue }
+    }
+    var info: String? {
+        get { ui.info }
+        set { ui.info = newValue }
+    }
     var search: String {
         get { workspace.current.search }
         set { workspace.current.search = newValue }
     }
-    var favorites: [Favorite] = [] { didSet { favoriteKeys = Set(favorites.map(\.id)) } }
+    /// The folders the column view shows above the open one.
+    let columnListings = ColumnListings()
+    /// Files open in other apps from private copies, and their way back to the cloud.
+    let editor = ExternalEditor()
+    /// The last folders visited, in any tab.
+    let recents = RecentLocationsStore()
+    /// How the lists are drawn: their columns, for every tab alike.
+    let explorer = ExplorerSettings()
+    /// The favorites and their file. Read-only here: every change goes through the store, which saves it.
+    let favoriteStore = FavoritesStore()
+    var favorites: [Favorite] { favoriteStore.items }
     /// Filtered and sorted once per change of `files`, `search` or `sortMode`, not on every render.
     var visibleFiles: [CloudFile] { workspace.current.visibleFiles }
-    var showGlobalSearch = false
-    var appearanceAccount: Account?
     var appearances: [String: AccountAppearance] = [:]
-    /// Read through `subsystems`, so a view showing it redraws when a quota arrives.
-    var storageQuotas: [String: StorageQuotaState] { _ = subsystems; return quotas.states }
-    /// Accounts whose provider rejected the stored credential. Shown in the sidebar until the user reconnects.
-    var expiredAccountIDs: Set<String> = []
-    /// Why each of them ended, when the provider said anything worth repeating.
-    var expiryReasons: [String: String] = [:]
+    var storageQuotas: [String: StorageQuotaState] { quotas.states }
     /// The last one chosen is also what a brand-new tab starts with.
     var viewMode: String {
         get { workspace.current.viewMode }
-        set { workspace.current.viewMode = newValue; UserDefaults.standard.set(newValue, forKey: "viewMode") }
+        set { workspace.current.viewMode = newValue; Prefs.defaults.set(newValue, forKey: "viewMode") }
     }
     var sortMode: String {
         get { workspace.current.sortMode }
         set { workspace.current.sortMode = newValue }
     }
-    var showNameDialog = false
-    var editName = ""
-    var editingFile: CloudFile?
     var demoOffline = false { didSet { demo?.offline = demoOffline } }
     let queue = TransferQueue()
     let remoteCopies = RemoteCopies()
@@ -128,29 +99,8 @@ final class AppModel {
     let planner = TransferPlanCoordinator()
     let connectivity = Connectivity()
     let mirrors = MirrorManager()
-    /// The daily look over every account's public links, and the sheet that shows what it found.
-    let linkAuditor = LinkAuditor()
-    var showLinkReview = false
-    /// True while the window shows nothing but a request to prove who is at the Mac. See `AppLock.swift`.
-    var isLocked = false
-    var unlocking = false
-    var lockProblem: String?
-    /// When iCloudy stopped being the app in front, to lock it after long enough away.
-    @ObservationIgnored var resignedAt: Date?
-    @ObservationIgnored var lockObservers: [NSObjectProtocol] = []
-    /// Where the lock's settings live, and what proves the owner; both seams for tests.
-    @ObservationIgnored var lockDefaults: UserDefaults = .standard
-    @ObservationIgnored var confirmOwner: (String) async throws -> Void = { try await DeviceOwner.confirm($0) }
-    /// Folders copied from one account to another on a schedule, with the earlier versions kept.
-    let backups = BackupManager()
-    /// The item of an SFTP account whose permissions are on screen.
-    var permissionsRequest: PermissionsRequest?
-    /// The scheduled copy being set up in a sheet.
-    var backupDraft: BackupDraft?
-    /// Compressing after a download, extracting a downloaded archive, discarding one that was made to be uploaded.
-    let archives = ArchiveSteps()
-    /// Remote files opened in their own application, each with a watched copy that is uploaded on every save.
-    let editing = EditSessions()
+    /// Saved transfer jobs; `runJob(id:)` and `runJob(named:)` run them.
+    let jobs = JobStore()
     let spotlight = SpotlightIndex()
     let localCopies = LocalCopyIndex()
     /// Managed offline copies ("Disponible sin conexión") and what keeps them current.
@@ -182,39 +132,14 @@ final class AppModel {
     @ObservationIgnored weak var undoManager: UndoManager?
     var appearanceStore: AppearanceStore?
     var demo: DemoStore?
-    let sessions = AccountClientRegistry()
+    var sessions: AccountClientRegistry { directory.sessions }
     let quotas = StorageQuotaController(refreshInterval: AppModel.quotaRefreshInterval)
-    @ObservationIgnored var quotaSubscription: AnyCancellable?
-    @ObservationIgnored var localCopySubscription: AnyCancellable?
-    @ObservationIgnored var moveSubscription: AnyCancellable?
     /// The listing each tab is waiting for, so a new request for the same tab cancels the old one.
     @ObservationIgnored var navigationTasks: [BrowserState.ID: Task<Void, Never>] = [:]
-    var favoriteKeys: Set<String> = []
     @ObservationIgnored var subscription: AnyCancellable?
-    @ObservationIgnored var keepAlive: Task<Void, Never>?
-    @ObservationIgnored var wakeObserver: NSObjectProtocol?
-    @ObservationIgnored var lastKeepAlive: [String: Date] = [:]
-    /// Accounts with a keep-alive request in flight, so a slow one is not asked again on the next round.
-    @ObservationIgnored var touching: Set<String> = []
-    /// Accounts whose session is being renewed in the background, so it is only attempted once at a time.
-    var renewingAccountIDs: Set<String> = []
-    /// The renewals themselves, so disconnecting or signing in again can cancel one and refuse what it brings back.
-    let o2Renewals = O2RenewalTasks()
-    /// Moving O2 accounts signed in before WebKit stores were kept apart into stores of their own. Renewals wait for
-    /// it, so none runs in a store that is being emptied.
-    @ObservationIgnored var o2StoreMigration: Task<Void, Never>?
     @ObservationIgnored var editContext: (Account, String)?
-    let favoritesURL = LocalStore.directory.appendingPathComponent("favorites.json")
     /// Opening folders refreshes the quota at most this often; explicit requests and finished transfers always do.
     static let quotaRefreshInterval: TimeInterval = 300
-    /// How long a session may go untouched. Measured against O2's server, which let 68 minutes pass and refused at
-    /// 80, so a quarter of an hour leaves room for several missed rounds.
-    static let keepAliveInterval: TimeInterval = 15 * 60
-    /// How often that is checked. Shorter than the interval on purpose: deciding by the clock rather than by how long
-    /// the sleep actually lasted is what survives a Mac that spends the night waking in the dark and going back to
-    /// sleep. (An earlier note here claimed the system stretched a twenty-minute sleep to forty. It did not: the
-    /// script that measured it was dropping one line in three. The shape of the fix stands; the reason given did not.)
-    static let keepAliveCheck: TimeInterval = 4 * 60
 
     var account: Account? { accounts.first { $0.id == selectedAccountID } ?? cryptomator.account(selectedAccountID) }
     var folderID: String { path.last?.id ?? collection.rootID }
@@ -222,44 +147,40 @@ final class AppModel {
     var canWrite: Bool { account != nil && workspace.current.isWritableLocation }
     /// The trash shows what was binned; the only things to do with it are restoring it and deleting it for good.
     var inTrash: Bool { collection == .trash }
-    var transfers: [Transfer] { _ = subsystems; return queue.items }
-    var hasActiveTransfers: Bool { _ = subsystems; return queue.hasActive }
-    /// The queue, the quotas and the offline copies are objects of their own. A change in any of them moves this
-    /// counter, and what the model reads from them reads it first, so the views drawing that redraw.
-    private(set) var subsystems = 0
-    func subsystemsChanged() { subsystems &+= 1 }
+    /// The queue as of its last structural change: progress ticks redraw the transfer panel alone.
+    var transfers: [Transfer] { queue.structuralItems }
+    var hasActiveTransfers: Bool { queue.structuralItems.contains { [.queued, .running].contains($0.state) } }
     var location: String { ([account?.email ?? ""] + (collection == .files ? [] : [collection.title]) + path.map(\.name)).joined(separator: " / ") }
     func updateVisibleFiles() { workspace.current.updateVisibleFiles() }
     /// A tab as the explorer opens one from nothing: no account yet, and the list drawn the way it was drawn last.
     static func newBrowser() -> BrowserState {
-        BrowserState(viewMode: UserDefaults.standard.string(forKey: "viewMode") ?? "list")
+        BrowserState(viewMode: Prefs.defaults.string(forKey: "viewMode") ?? "list")
     }
     init() {
         do { let store = try AppearanceStore(); appearanceStore = store; appearances = store.values }
         catch { self.error = L("No se pudo cargar la personalización: \(error.localizedDescription)") }
-        do { favorites = try LocalStore.read([Favorite].self, from: favoritesURL) ?? [] }
-        catch { self.error = error.localizedDescription }
-        // Property observers do not run while an initializer sets its own properties.
-        favoriteKeys = Set(favorites.map(\.id))
+        if let problem = favoriteStore.loadError { self.error = problem }
+        if let problem = recents.loadError { self.error = problem }
+        recents.saveFailed = { [weak self] message in self?.error = message }
+        favoriteStore.saveFailed = { [weak self] message in self?.error = message }
+        favoriteStore.didChange = { [weak self] in self?.refreshSpotlightFavorites() }
         // The tabs of the last session, put right against the accounts once those have been read.
         if let restored = workspaceStore.load() { workspace = restored }
         workspaceStore.watch(workspaceChanges.eraseToAnyPublisher())
-        if UserDefaults.standard.bool(forKey: "demoEnabled") { enableDemo(select: false) }
+        if Prefs.defaults.bool(forKey: "demoEnabled") { enableDemo(select: false) }
         queue.client = { [weak self] id in
             guard let self, let account = self.accounts.first(where: { $0.id == id }) ?? self.cryptomator.account(id) else {
                 throw CloudError.message(CryptomatorVaults.isVaultAccount(id) ? L("Desbloquea la bóveda de esta transferencia para continuar.") : L("Vuelve a conectar la cuenta de esta transferencia."))
             }
             return try self.client(account)
         }
+        mirrors.didRecordRun = { [weak self] transfer in self?.history.record(transfer) }
         queue.didFinish = { [weak self] transfer in
             self?.history.record(transfer); self?.mirrors.handleFinished(transfer)
-            self?.editing.handleFinished(transfer)
-            self?.archives.handleFinished(transfer)
-            self?.backups.handleFinished(transfer)
             self?.notifier.finished(transfer)
             self?.finishPaneMove(transfer)
+            self?.editingTransferFinished(transfer)
         }
-        moveSubscription = accountsLoaded.first().sink { [weak self] _ in self?.finishInterruptedMoves(); self?.archives.resumeInterrupted() }
         thumbnails.client = { [weak self] account in
             guard let self else { throw CancellationError() }
             return try self.client(account)
@@ -272,7 +193,7 @@ final class AppModel {
             // Whatever failed while offline is worth one automatic retry now, and a session that goes quiet while the
             // network is away is one the provider may have given up on: the first thing to do is prove it is alive.
             if online {
-                touchIdleSessions(force: true, note: "ha vuelto la red")
+                o2.touchIdleSessions(force: true, note: "ha vuelto la red")
                 reloadVisible()
             }
         }
@@ -281,46 +202,34 @@ final class AppModel {
             self.reloadVisible(accountID: id, fresh: true)
             if let account = self.accounts.first(where: { $0.id == id }) { self.refreshStorage(account, force: true) }
         }
-        // Only structural queue changes reach the explorer; progress ticks re-render the transfer panel alone.
-        quotaSubscription = quotas.objectWillChange.sink { [weak self] _ in self?.subsystemsChanged() }
-        // The marks of what is on this Mac change with a finished download, but also when a copy is forgotten.
-        localCopySubscription = localCopies.objectWillChange.sink { [weak self] _ in self?.subsystemsChanged() }
         subscription = queue.stateChanges.sink { [weak self] _ in
             guard let self else { return }
-            subsystemsChanged()
             notifier.queueChanged(active: queue.hasActive)
+            editingQueueChanged()
         }
         if let message = queue.persistenceError { error = message }
         listings.enabled = Prefs.bool(Prefs.listingCache, default: true)
         queue.cleanScratch()
+        editor.didChange = { [weak self] id in
+            guard let self, editor.autoUpload else { return }
+            Task { await self.uploadEdits(id) }
+        }
+        // Copies left by an earlier run are not watched by anyone any more; those a paused upload reads stay.
+        if !AppEnvironment.isTesting { editor.removeLeftovers(protecting: queue.protectedLocalURLs) }
         mirrors.queue = queue
-        editing.queue = queue
-        backups.queue = queue
-        backups.accountLookup = { [weak self] id in self?.accounts.first { $0.id == id } }
-        // Both hold their own paused jobs back from "Reanudar todas".
-        queue.isHeldPaused = { [weak self] transfer in (self?.mirrors.holdsPaused(transfer) ?? false) || (self?.backups.holdsPaused(transfer) ?? false) }
-        linkAuditor.accounts = { [weak self] in self?.accounts ?? [] }
-        linkAuditor.client = { [weak self] account in
-            guard let self else { throw CancellationError() }
-            return try self.client(account)
-        }
-        archives.queue = queue
-        archives.report = { [weak self] message, isError in if isError { self?.error = message } else { self?.info = message } }
-        archives.reveal = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
-        editing.client = { [weak self] id in
-            guard let self, let account = self.accounts.first(where: { $0.id == id }) ?? self.cryptomator.account(id) else {
-                throw CloudError.message(L("Vuelve a conectar la cuenta de este archivo."))
-            }
-            return try self.client(account)
-        }
-        editing.notify = { [weak self] message in self?.info = message }
         configureTransferPolicy()
         mirrors.accountLookup = { [weak self] id in self?.accounts.first { $0.id == id } }
+        jobs.queue = queue
+        jobs.accountLookup = { [weak self] id in self?.accounts.first { $0.id == id } }
+        directory.membershipChanged = { [weak self] in self?.syncFinderDomains() }
+        o2.touch = { [weak self] account, answered in self?.refreshStorage(account, force: true, then: answered) }
+        o2.didRenew = { [weak self] account in self?.reloadVisible(accountID: account.id) }
         loadAccounts()
         preview.download = { [weak self] file, account in
             Task { await self?.saveMany([file], targetAccount: account) }
         }
         preview.openBrowser = { [weak self] file in self?.openBrowser(file) }
+        preview.openWith = { [weak self] file, account, app in Task { await self?.openWith(file, application: app, in: account) } }
         preview.didSaveCopy = { [weak self] file, account, destination in
             self?.localCopies.record(LocalCopy(accountID: account.id, fileID: file.id, name: file.name, path: destination.path,
                                                bookmark: try? TransferQueue.bookmark(destination), size: file.size ?? 0,
@@ -328,8 +237,6 @@ final class AppModel {
         }
         startOffline()
         Self.shared = self
-        // A test builds models by the dozen; none of them should watch the screen or read this Mac's own setting.
-        if !Diagnostics.underTest { startLock() }
     }
 
     // MARK: - System integration
@@ -339,7 +246,6 @@ final class AppModel {
     var pendingSpotlightItem: String?
 
     var downloadedCount: Int {
-        _ = subsystems
         guard let account else { return 0 }
         return files.filter { !$0.isFolder && localCopies.status(for: $0, accountID: account.id).copy != nil }.count
     }

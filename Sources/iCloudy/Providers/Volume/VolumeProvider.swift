@@ -80,7 +80,7 @@ extension VolumeProvider {
                 try VolumePath.file(parent: fd, name: name, url: directory.appendingPathComponent(name))
             }
         }
-        return Self.sorted(files)
+        return Self.sorted(try await annotateUbiquity(files))
     }
     func volumeCreateFolder(name: String, parent: String) async throws -> String {
         let target = try volumeURL(parent).appendingPathComponent(name)
@@ -98,6 +98,8 @@ extension VolumeProvider {
     }
     func volumeCopy(file: CloudFile, to destination: String) async throws {
         let source = try volumeURL(file.id)
+        // A file only in iCloud has no bytes to copy until iCloud brings them.
+        if !file.isFolder { try await ensureDownloaded(source) }
         try await volumeRelocate(from: source, to: try volumeURL(destination).appendingPathComponent(file.name), copy: true)
     }
     private func volumeRelocate(from source: URL, to target: URL, copy: Bool) async throws {
@@ -232,6 +234,11 @@ extension VolumeProvider {
     func volumeDownload(file: CloudFile, to destination: URL, maxBytes: Int64? = nil, progress: @escaping (Int64, Int64) -> Void) async throws {
         try volumeCheckMounted()
         let source = try volumeURL(file.id)
+        if account.capabilities.ubiquitousItems, Self.ubiquity(of: source) != nil {
+            try await ensureDownloaded(source)
+            try await coordinatedRead(source, to: destination, maxBytes: maxBytes, progress: progress)
+            return
+        }
         let path = try VolumePath(root: volumeRoot(), url: source)
         try await Self.volumeCopyContents(from: source, to: destination, input: path.openFile(O_RDONLY), maxBytes: maxBytes, progress: { progress($0, $1) })
     }

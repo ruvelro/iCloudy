@@ -23,10 +23,14 @@ struct PaneMoveRequest: Identifiable {
     let destinationPath: [CloudFile]
 }
 
-/// Bookkeeping for the items being dragged from one pane to the other. The originals of cross-cloud moves used to be
-/// remembered here too, in memory only; they now travel with their transfer job (`Transfer.removesSource`).
+/// Bookkeeping for moves between panes that outlives the call that started them: the originals of cross-cloud moves
+/// whose copies are still on their way, and the items being dragged from one pane to the other.
 @MainActor
 final class PaneTransfers {
+    struct Pending { let sourceAccountID: String; let file: CloudFile; let targetTitle: String }
+    /// Keyed by the transfer job that copies the item. Only in memory: if iCloudy quits before the copy finishes,
+    /// the move is left as a copy and the original stays where it was, which is the safe way to fail.
+    var pending: [UUID: Pending] = [:]
     struct Drag { let token: String; let pane: Int; let files: [CloudFile] }
     var drag: Drag?
 }
@@ -72,10 +76,9 @@ extension AppModel {
                 set: { term in self.workspace.update(self.tab(inPane: pane).id) { $0.search = term } })
     }
 
-    func isFavorite(_ file: CloudFile, in tab: BrowserState) -> Bool { favoriteKeys.contains((tab.accountID ?? "") + ":" + file.id) }
+    func isFavorite(_ file: CloudFile, in tab: BrowserState) -> Bool { favoriteStore.contains(accountID: tab.accountID ?? "", fileID: file.id) }
 
     func localStatus(_ file: CloudFile, in tab: BrowserState) -> LocalCopyStatus {
-        _ = subsystems
         guard let id = tab.accountID else { return .cloudOnly }
         return localCopies.status(for: file, accountID: id)
     }
@@ -138,18 +141,20 @@ extension AppModel {
             enqueueCrossCloud(files, from: from, to: to, parent: target.folderID, destinationPath: target.path)
         case .crossCloud(true):
             guard let from = account(of: source), let to = account(of: target) else { return }
-            pendingPaneMove = PaneMoveRequest(files: files, source: from, target: to, parent: target.folderID, destinationPath: target.path)
+            ui.pendingPaneMove = PaneMoveRequest(files: files, source: from, target: to, parent: target.folderID, destinationPath: target.path)
         }
     }
 
     /// The confirmed cross-cloud move: copies are queued as usual, and each original waits for its own copy.
     func startPaneMove(_ request: PaneMoveRequest) {
-        // Already confirmed in its own dialog, so it skips the transfer plan. Each job carries the promise to remove
-        // its original, on disk with the rest of the queue.
-        let jobs = enqueueCrossCloud(request.files, from: request.source, to: request.target, parent: request.parent,
-                                     destinationPath: request.destinationPath, seeds: nil, move: true)
+        // Already confirmed in its own dialog, so it skips the transfer plan and keeps the jobs it has to follow.
+        let jobs = enqueueCrossCloud(request.files, from: request.source, to: request.target, parent: request.parent, destinationPath: request.destinationPath, seeds: nil)
+        let title = accountTitle(request.target)
+        for (job, file) in zip(jobs, request.files) {
+            paneTransfers.pending[job.id] = PaneTransfers.Pending(sourceAccountID: request.source.id, file: file, targetTitle: title)
+        }
         if !jobs.isEmpty {
-            info = L("Se copia a \(accountTitle(request.target)). Cada original irá a la papelera solo cuando su copia haya llegado completa y verificada.")
+            info = L("Se copia a \(title). Cada original irá a la papelera solo cuando su copia haya llegado completa y verificada.")
         }
     }
 
@@ -163,36 +168,25 @@ extension AppModel {
 
     /// Called for every finished transfer; acts only on the copies of a cross-cloud move.
     func finishPaneMove(_ job: Transfer) {
-        guard job.removesSource, job.direction == .transfer, let file = job.file else { return }
-        // Whatever happens next, this job has had its one chance to take the original away.
-        queue.settleMove(job.id)
-        let targetTitle = accounts.first { $0.id == job.targetAccountID }.map(accountTitle) ?? job.destination
+        guard let move = paneTransfers.pending.removeValue(forKey: job.id) else { return }
         guard Self.copyAllowsRemovingSource(job) else {
-            error = L("«\(file.name)» se ha copiado a \(targetTitle), pero no todo pudo verificarse o algo se omitió. El original se queda donde estaba.")
+            error = L("«\(move.file.name)» se ha copiado a \(move.targetTitle), pero no todo pudo verificarse o algo se omitió. El original se queda donde estaba.")
             return
         }
-        guard let source = accounts.first(where: { $0.id == job.accountID }) else {
-            error = L("«\(file.name)» se ha copiado a \(targetTitle), pero su cuenta de origen ya no está conectada. El original se queda donde estaba.")
+        guard let source = accounts.first(where: { $0.id == move.sourceAccountID }) else {
+            error = L("«\(move.file.name)» se ha copiado a \(move.targetTitle), pero su cuenta de origen ya no está conectada. El original se queda donde estaba.")
             return
         }
         Task {
             do {
-                try await client(source).trash(file: file)
-                spotlight.forget(accountID: source.id, fileID: file.id)
-                favorites.removeAll { $0.accountID == source.id && ($0.file.id == file.id || $0.path.contains { $0.id == file.id }) }
+                try await client(source).trash(file: move.file)
+                spotlight.forget(accountID: source.id, fileID: move.file.id)
+                favoriteStore.remove(accountID: source.id, fileID: move.file.id)
                 reloadVisible(accountID: source.id, fresh: true)
-                do { try LocalStore.save(favorites, to: favoritesURL) }
-                catch { self.error = L("No se pudieron guardar los favoritos: \(error.localizedDescription)") }
             } catch {
-                self.error = L("«\(file.name)» se ha copiado a \(targetTitle), pero el original no se pudo quitar: \(error.localizedDescription)")
+                self.error = L("«\(move.file.name)» se ha copiado a \(move.targetTitle), pero el original no se pudo quitar: \(error.localizedDescription)")
             }
         }
-    }
-
-    /// Moves whose copy finished in an earlier run that ended before the original was removed. Asked once the
-    /// accounts are back from the Keychain, which is the first moment anything can be sent to a bin.
-    func finishInterruptedMoves() {
-        for job in queue.items where job.state == .completed && job.removesSource { finishPaneMove(job) }
     }
 
     // MARK: - Dragging between panes

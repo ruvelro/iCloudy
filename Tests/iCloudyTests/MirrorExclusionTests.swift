@@ -17,10 +17,6 @@ final class MirrorExclusionTests: XCTestCase {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(text.utf8).write(to: url)
     }
-    private func wait(_ condition: () -> Bool) async throws {
-        for _ in 0..<1500 { if condition() { return }; try await Task.sleep(for: .milliseconds(10)) }
-        XCTFail("Timed out"); throw CloudError.message("timeout")
-    }
     private let rules = SyncExclusions(patterns: ["*.log", "build/"]).matcher(caseInsensitive: true)
 
     // MARK: - Two-way planner
@@ -147,12 +143,14 @@ final class MirrorExclusionTests: XCTestCase {
         // Excluding a file that was already uploaded neither deletes it nor sends its later edits.
         let uploaded = try XCTUnwrap(demo.list(remoteID).first { $0.name == "a.txt" })
         try manager.setExclusions(SyncExclusions(patterns: ["node_modules/", "a.txt"]), for: id)
-        try await Task.sleep(for: .milliseconds(20))
+        let remoteCopy = demo.directory.appendingPathComponent(uploaded.id)
+        let untouched = { (try? String(contentsOf: remoteCopy, encoding: .utf8)) == "a" }
+        try await assertStays({ untouched() }, for: .milliseconds(50), "Excluding it does not delete it")
         try await wait { manager.mirrors[0].activeTransferID == nil && !manager.pending.contains(id) }
         try write("editado", to: local.appendingPathComponent("a.txt"))
         manager.syncNow(id)
-        try await Task.sleep(for: .milliseconds(150))
-        try await wait { manager.mirrors[0].activeTransferID == nil }
+        try await assertStays({ untouched() && manager.mirrors[0].activeTransferID == nil }, for: .milliseconds(150),
+                              "An excluded file's edits are not sent")
         XCTAssertEqual(try String(contentsOf: demo.directory.appendingPathComponent(uploaded.id), encoding: .utf8), "a")
         XCTAssertTrue(try demo.list(remoteID).contains { $0.id == uploaded.id })
     }

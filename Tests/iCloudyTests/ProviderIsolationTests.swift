@@ -4,11 +4,9 @@ import XCTest
 @MainActor
 final class ProviderIsolationTests: XCTestCase {
     private func client(_ cloud: Cloud, driveID: String? = nil) -> CloudAPI {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
-        var account = Account(id: "isolation-\(cloud.rawValue)", cloud: cloud, name: "Test", email: "", clientID: "", clientSecret: nil)
+        var account = stubbedAccount(cloud, id: "isolation-\(cloud.rawValue)", email: "", clientID: "")
         account.options["driveID"] = driveID
-        return CloudAPI(account: account, session: URLSession(configuration: configuration), tokenProvider: { "test" })
+        return makeStubbedClient(account, token: "test")
     }
 
     func testInterleavedListingsKeepProviderRoutesAndSharedDriveScopesSeparate() async throws {

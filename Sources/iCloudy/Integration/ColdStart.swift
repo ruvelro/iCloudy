@@ -20,12 +20,7 @@ enum ColdStart {
     private static let poll: Duration = .milliseconds(20)
 
     /// The running model once its accounts are loaded.
-    static func model() async throws -> AppModel {
-        let model = try await ready(timeout: timeout) { AppModel.shared }
-        // A Shortcut that lists a folder or makes a public link would walk straight past the lock otherwise.
-        guard !model.isLocked else { throw CloudError.message(L("iCloudy está bloqueado. Desbloquéalo para continuar.")) }
-        return model
-    }
+    static func model() async throws -> AppModel { try await ready(timeout: timeout) { AppModel.shared } }
 
     /// Waits until `lookup` returns a model that has finished loading its accounts.
     static func ready<Model: AccountLoading>(timeout: Duration, lookup: () -> Model?) async throws -> Model {

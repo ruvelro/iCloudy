@@ -7,6 +7,5 @@ Configuration/*client_secret*.json
 *.p12
 *.mobileprovision
 *.provisionprofile
-live-accounts.json
-Configuration/live-accounts*.json
-!Configuration/live-accounts.example.json
+__pycache__/
+coverage.lcov

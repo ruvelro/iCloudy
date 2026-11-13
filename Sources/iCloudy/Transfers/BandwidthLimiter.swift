@@ -58,28 +58,40 @@ final class BandwidthLimiter: @unchecked Sendable {
         }
     }
 
-    /// One job's way into the bucket. It pays a whole slice whenever it runs short and keeps what it did not use for
-    /// its next call, so the size of a provider's blocks never decides how much of the limit a job gets.
+    /// One job's way into the buckets. It pays a whole slice whenever it runs short and keeps what it did not use for
+    /// its next call, so the size of a provider's blocks never decides how much of the limit a job gets. A lane can
+    /// go through several buckets, the queue's and its account's: the bytes wait for the slowest of them.
     final class Lane: @unchecked Sendable {
-        let limiter: BandwidthLimiter
+        /// The first bucket, whose sleep the lane waits with.
+        var limiter: BandwidthLimiter { limiters[0] }
+        let limiters: [BandwidthLimiter]
         private let lock = NSLock()
-        private var credit = 0
+        private var credits: [Int]
 
-        init(_ limiter: BandwidthLimiter) { self.limiter = limiter }
-        var isLimited: Bool { limiter.isLimited }
+        convenience init(_ limiter: BandwidthLimiter) { self.init([limiter]) }
+        init(_ limiters: [BandwidthLimiter]) {
+            precondition(!limiters.isEmpty, "A lane needs a bucket")
+            self.limiters = limiters
+            credits = Array(repeating: 0, count: limiters.count)
+        }
+        var isLimited: Bool { limiters.contains { $0.isLimited } }
 
-        /// Seconds to wait before `bytes` may go.
+        /// Seconds to wait before `bytes` may go: the longest wait any of its buckets asks for.
         func delay(for bytes: Int) -> TimeInterval {
             lock.withLock {
-                guard limiter.isLimited else { credit = 0; return 0 }
-                var missing = bytes - credit
-                var wait: TimeInterval = 0
-                while missing > 0 {
-                    wait = limiter.reserve(BandwidthLimiter.slice)
-                    missing -= BandwidthLimiter.slice
+                var longest: TimeInterval = 0
+                for (index, limiter) in limiters.enumerated() {
+                    guard limiter.isLimited else { credits[index] = 0; continue }
+                    var missing = bytes - credits[index]
+                    var wait: TimeInterval = 0
+                    while missing > 0 {
+                        wait = limiter.reserve(BandwidthLimiter.slice)
+                        missing -= BandwidthLimiter.slice
+                    }
+                    credits[index] = -missing
+                    longest = max(longest, wait)
                 }
-                credit = -missing
-                return wait
+                return longest
             }
         }
         /// Waits until `bytes` may be sent, a slice at a time so other jobs get their turns in between. Cancelling the
@@ -107,6 +119,11 @@ struct TransferThrottle: Sendable {
     let download: BandwidthLimiter.Lane
 
     init(upload: BandwidthLimiter, download: BandwidthLimiter) {
+        self.upload = BandwidthLimiter.Lane(upload)
+        self.download = BandwidthLimiter.Lane(download)
+    }
+    /// The queue's buckets followed by the accounts' own, for the job that sends to and reads from those accounts.
+    init(upload: [BandwidthLimiter], download: [BandwidthLimiter]) {
         self.upload = BandwidthLimiter.Lane(upload)
         self.download = BandwidthLimiter.Lane(download)
     }

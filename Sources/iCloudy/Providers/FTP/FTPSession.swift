@@ -58,8 +58,7 @@ actor FTPSession {
                 // The framer does the clear-text prologue and raises TLS before this connection reports ready, so
                 // the handshake below starts on an encrypted channel, exactly as with implicit TLS.
                 parameters = .tcp
-                parameters.defaultProtocolStack.applicationProtocols.insert(NWProtocolFramer.Options(definition: StartTLSFramer.definition), at: 0)
-                StartTLSFramer.serverName(for: parameters, host: host)
+                parameters.defaultProtocolStack.applicationProtocols.insert(StartTLSFramer.options(serverName: host), at: 0)
             } else { parameters = .tls }
         }
         if StartTLSFramer.trustAnyCertificateForTesting, let tls = parameters.defaultProtocolStack.applicationProtocols.compactMap({ $0 as? NWProtocolTLS.Options }).first {
@@ -533,6 +532,12 @@ actor FTPSession {
 enum FTPListing {
     static func join(_ parent: String, _ name: String) -> String {
         parent == "/" || parent.isEmpty ? "/" + name : parent + "/" + name
+    }
+    /// Where an FTP or SFTP upload is written before it takes the final name: `.name.icloudy-part` in the same
+    /// folder, hidden in listings and on the same file system, so the closing rename is one step.
+    static func partialName(for path: String) -> String {
+        let folder = (path as NSString).deletingLastPathComponent
+        return join(folder.isEmpty ? "/" : folder, "." + (path as NSString).lastPathComponent + ".icloudy-part")
     }
     /// RFC 3659 machine listing: `type=file;size=12;modify=20260101120000; nombre.txt`
     static func parseMLSD(_ text: String, parent: String) -> [CloudFile] {

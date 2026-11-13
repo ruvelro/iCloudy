@@ -243,6 +243,6 @@ enum S3Failure {
     static func error(_ response: HTTPURLResponse, data: Data, bucket: String?) -> ServiceError {
         let body = S3XML.error(data)
         return ServiceError(status: response.statusCode, detail: message(status: response.statusCode, body: body, bucket: bucket),
-                            code: body?.code, retryAfter: Double(response.value(forHTTPHeaderField: "Retry-After") ?? ""))
+                            code: body?.code, retryAfter: RetryAfter.seconds(response))
     }
 }

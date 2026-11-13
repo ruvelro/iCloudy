@@ -19,7 +19,7 @@ extension AppModel {
         guard let account else { return }
         if let reason = account.versionsLimitation(for: file) { error = reason; return }
         let inFolder = collection == .files || !path.isEmpty
-        versionHistory = VersionsRequest(file: file, account: account, parent: inFolder ? folderID : "root", location: location)
+        ui.versionHistory = VersionsRequest(file: file, account: account, parent: inFolder ? folderID : "root", location: location)
     }
 
     /// What the preview and the download of `version` work on: the file itself for the current version, otherwise

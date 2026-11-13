@@ -3,7 +3,6 @@ import Foundation
 extension Prefs {
     static let transferConcurrency = "transferConcurrency"
     static let transferPerAccount = "transferPerAccount"
-    static let transferFilesPerJob = "transferFilesPerJob"
     static let uploadLimitEnabled = "uploadLimitEnabled"
     static let uploadLimitValue = "uploadLimitValue"
     static let uploadLimitUnit = "uploadLimitUnit"
@@ -14,6 +13,30 @@ extension Prefs {
     static let transferWindowStart = "transferWindowStart"
     static let transferWindowEnd = "transferWindowEnd"
     static let pauseOnCostlyNetwork = "pauseOnCostlyNetwork"
+    /// JSON of `[accountID: AccountBandwidth]`.
+    static let accountBandwidthLimits = "accountBandwidthLimits"
+}
+
+/// One account's own limit in each direction, in bytes per second, on top of the queue's.
+struct AccountBandwidth: Codable, Equatable, Sendable {
+    var upload: Int64?
+    var download: Int64?
+    var isEmpty: Bool { upload == nil && download == nil }
+
+    /// What the settings keep, decoded leniently: a damaged value limits nothing rather than stopping the queue.
+    static func stored(in defaults: UserDefaults = Prefs.defaults) -> [String: AccountBandwidth] {
+        guard let data = defaults.data(forKey: Prefs.accountBandwidthLimits),
+              let limits = try? JSONDecoder().decode([String: AccountBandwidth].self, from: data) else { return [:] }
+        return limits.mapValues { limit in
+            AccountBandwidth(upload: limit.upload.flatMap { $0 > 0 ? max($0, TransferPolicy.minimumLimit) : nil },
+                             download: limit.download.flatMap { $0 > 0 ? max($0, TransferPolicy.minimumLimit) : nil })
+        }.filter { !$0.value.isEmpty }
+    }
+    static func store(_ limits: [String: AccountBandwidth], in defaults: UserDefaults = Prefs.defaults) {
+        let kept = limits.filter { !$0.value.isEmpty }
+        if kept.isEmpty { defaults.removeObject(forKey: Prefs.accountBandwidthLimits); return }
+        defaults.set(try? JSONEncoder().encode(kept), forKey: Prefs.accountBandwidthLimits)
+    }
 }
 
 /// Units offered for the bandwidth limit. Decimal, like the speeds `ByteCountFormatter` shows on every card, so a
@@ -75,22 +98,20 @@ enum TransferHold: String, Codable {
 struct TransferPolicy: Equatable {
     var maxConcurrent = 3
     var maxPerAccount = 2
-    /// How many files of one folder travel at once inside a job. A folder of thousands of small files spends its
-    /// time on round trips, not on bytes, and those overlap well.
-    var filesPerJob = 4
     /// Bytes per second; nil is no limit.
     var uploadLimit: Int64?
     var downloadLimit: Int64?
     var window: TransferWindow?
     var pauseOnCostlyNetwork = false
+    /// Per account, on top of the limits above.
+    var accountLimits: [String: AccountBandwidth] = [:]
 
     static let concurrencyRange = 1...8
     static let perAccountRange = 1...4
-    static let filesPerJobRange = 1...8
     /// Below this a suspended download waits so long between turns that the server may give up on it.
     static let minimumLimit: Int64 = 32_000
 
-    static func stored(in defaults: UserDefaults = .standard) -> TransferPolicy {
+    static func stored(in defaults: UserDefaults = Prefs.defaults) -> TransferPolicy {
         func int(_ key: String) -> Int? { defaults.object(forKey: key) as? Int }
         func bool(_ key: String) -> Bool { defaults.object(forKey: key) as? Bool ?? false }
         func limit(_ enabled: String, _ value: String, _ unit: String) -> Int64? {
@@ -100,7 +121,6 @@ struct TransferPolicy: Equatable {
         var policy = TransferPolicy()
         policy.maxConcurrent = int(Prefs.transferConcurrency).map { min(max($0, concurrencyRange.lowerBound), concurrencyRange.upperBound) } ?? 3
         policy.maxPerAccount = int(Prefs.transferPerAccount).map { min(max($0, perAccountRange.lowerBound), perAccountRange.upperBound) } ?? 2
-        policy.filesPerJob = int(Prefs.transferFilesPerJob).map { min(max($0, filesPerJobRange.lowerBound), filesPerJobRange.upperBound) } ?? 4
         policy.uploadLimit = limit(Prefs.uploadLimitEnabled, Prefs.uploadLimitValue, Prefs.uploadLimitUnit)
         policy.downloadLimit = limit(Prefs.downloadLimitEnabled, Prefs.downloadLimitValue, Prefs.downloadLimitUnit)
         if bool(Prefs.transferWindowEnabled) {
@@ -109,30 +129,15 @@ struct TransferPolicy: Equatable {
                                            end: (int(Prefs.transferWindowEnd) ?? 7 * 60) % day)
         }
         policy.pauseOnCostlyNetwork = bool(Prefs.pauseOnCostlyNetwork)
+        policy.accountLimits = AccountBandwidth.stored(in: defaults)
         return policy
     }
 }
 
 /// Decides which waiting jobs may start. Pure, so the limits can be tested without moving a byte.
 enum TransferScheduler {
-    /// Providers whose session does one thing at a time. FTP has a single control connection, SFTP one channel, and
-    /// Mega and O2 a session the server serialises (or drops requests from) when it is asked two things at once. A
-    /// second job on them would only queue inside the session while showing as running here.
-    static func sessionLimit(for cloud: Cloud) -> Int? {
-        switch cloud {
-        case .ftp, .sftp, .mega, .o2: return 1
-        default: return nil
-        }
-    }
-
-    /// How many files of one job may travel at once between these providers. One wherever a session does a single
-    /// thing at a time. One for writes to Dropbox as well: each commit locks the account's namespace, and files
-    /// finishing side by side only earn `too_many_write_operations` and a wait.
-    static func filesAtOnce(_ policy: TransferPolicy, clouds: [Cloud], uploading: Bool) -> Int {
-        if clouds.contains(where: { sessionLimit(for: $0) != nil }) { return 1 }
-        if uploading, clouds.last == .dropbox { return 1 }
-        return max(1, policy.filesPerJob)
-    }
+    /// Providers whose session does one thing at a time: `CloudCapabilities.sessionLimit`.
+    static func sessionLimit(for cloud: Cloud) -> Int? { cloud.capabilities.sessionLimit }
     static func perAccountLimit(for cloud: Cloud?, policy: TransferPolicy) -> Int {
         let chosen = max(1, policy.maxPerAccount)
         guard let cloud, let session = sessionLimit(for: cloud) else { return chosen }

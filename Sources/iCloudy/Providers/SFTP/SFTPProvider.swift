@@ -6,6 +6,8 @@ import Foundation
 @MainActor
 final class SFTPProvider: CloudSession, CloudProvider {
     var sftpClient: SFTPClient?
+    /// How much of an upload goes in one stretch before the checkpoint is saved. Tests make it one block.
+    var uploadSegment = SFTPProvider.defaultUploadSegment
     override func invalidate() {
         super.invalidate()
         if let sftpClient { Task { await sftpClient.close() } }
@@ -31,9 +33,23 @@ extension SFTPProvider {
         if base.hasSuffix("/"), base.count > 1 { base = String(base.dropLast()) }
         return SFTPEndpoint(host: host, port: port, base: base.isEmpty ? "/" : base)
     }
-    /// The key the server showed when the account was connected, which every later session must show again.
-    static func storedHostKey(_ account: Account) -> Data? {
+    /// Where accounts connected before 0.8 kept the server's key: `accounts.json`, which any process of this user
+    /// can rewrite. Read only to move it into the Keychain.
+    static func legacyHostKey(_ account: Account) -> Data? {
         account.options["hostKey"].flatMap { Data(base64Encoded: $0) }
+    }
+    /// The key the server showed when the account was connected, which every later session must show again. It is
+    /// read from the Keychain entry; an older account's copy in its options is moved there the first time, and from
+    /// then on the Keychain is what counts, whatever the options say.
+    func pinnedHostKey(_ credential: Credential?) -> Data? {
+        if let pinned = credential?.hostKey.flatMap({ Data(base64Encoded: $0) }) { return pinned }
+        guard let legacy = Self.legacyHostKey(account) else { return nil }
+        if var credential {
+            credential.hostKey = legacy.base64EncodedString()
+            // A failed write only means the move is tried again next time; the session can still use the pin.
+            try? credentials.save(credential, key: account.credentialKey)
+        }
+        return legacy
     }
 
     /// The live session for this account, created on first use and reused afterwards.
@@ -49,14 +65,17 @@ extension SFTPProvider {
             expireSession()
             throw CloudError.sessionExpired(nil)
         }
-        // A key, when the account was connected with one, lives in the same Keychain entry as the password.
-        let material = try credentials.read(account.credentialKey).flatMap { SFTPKeyMaterial.decode($0.secret) }
+        // A key, when the account was connected with one, lives in the same Keychain entry as the password, and so
+        // does the server's key.
+        let credential = try credentials.read(account.credentialKey)
+        let material = credential.flatMap { SFTPKeyMaterial.decode($0.secret) }
         let privateKey = try await material?.open()
+        // An account with no pin at all (it should not exist) is refused by the transport rather than trusted.
         let transport = SSHTransport(host: endpoint.host, port: endpoint.port,
                                      user: String(pair[pair.startIndex..<separator]),
                                      password: String(pair[pair.index(after: separator)...]),
                                      privateKey: privateKey,
-                                     expectedHostKey: Self.storedHostKey(account))
+                                     expectedHostKey: pinnedHostKey(credential))
         let client = SFTPClient(transport: transport, account: account.id)
         sftpClient = client
         return client
@@ -84,36 +103,6 @@ extension SFTPProvider {
                 throw CloudError.sessionExpired(text)
             }
             throw error
-        }
-    }
-
-    /// The permission bits of an item, as the server has them now.
-    func sftpPermissions(of file: CloudFile) async throws -> POSIXMode {
-        let attributes = try await sftpTranslating { try await sftp().stat(file.id) }
-        guard let permissions = attributes.permissions else { throw CloudError.message(L("El servidor no dice qué permisos tiene «\(file.name)».")) }
-        return POSIXMode(bits: permissions)
-    }
-    /// chmod. With `recursive`, everything below a folder gets the same bits, except that a file is never made
-    /// executable just because the folder above it has to be: its three x bits stay as they were.
-    func sftpSetPermissions(_ mode: POSIXMode, on file: CloudFile, recursive: Bool) async throws {
-        let client = try await sftp()
-        try await sftpTranslating { try await client.setPermissions(file.id, mode: mode.bits) }
-        guard recursive, file.isFolder else { return }
-        var pending = [file.id]
-        while let folder = pending.popLast() {
-            try Task.checkCancellation()
-            for entry in try await client.list(folder) where entry.name != "." && entry.name != ".." {
-                // A link is somebody else's file; changing what it points at from here would be a surprise.
-                guard !entry.attributes.isSymbolicLink else { continue }
-                let path = FTPListing.join(folder, entry.name)
-                if entry.attributes.isDirectory {
-                    try await client.setPermissions(path, mode: mode.bits)
-                    pending.append(path)
-                } else {
-                    let runs = (entry.attributes.permissions ?? 0) & 0o111
-                    try await client.setPermissions(path, mode: (mode.bits & ~0o111) | runs)
-                }
-            }
         }
     }
 
@@ -147,18 +136,52 @@ extension SFTPProvider {
         for child in try await sftpList(parent: file.id) { try await sftpDelete(file: child) }
         try await sftpTranslating { try await client.rmdir(file.id) }
     }
+    /// How much of an upload goes in one stretch before the checkpoint is saved. The pipeline drains at each
+    /// boundary, which costs one round trip per 16 MiB, and a dropped connection loses at most this much.
+    nonisolated static let defaultUploadSegment: Int64 = 16 * 1024 * 1024
+
+    /// The bytes go to a hidden name beside the target and take its place only once they are all there: a dropped
+    /// connection used to leave a truncated file under the final name, indistinguishable from a good one. That hidden
+    /// file is also the upload session: its path is the checkpoint's `sessionID`, `offset` counts the bytes the
+    /// server confirmed, in order, and a retry continues from there, after checking that the partial on the server
+    /// is still at least that long. The source is held to its stamp by the checkpoint, so a file that changed in
+    /// between starts again instead of being stitched to its old self.
     func sftpUpload(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint,
                     save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
         let total = cursor.total
         let path = try replacing ?? FTPListing.join(sftpPath(parent), name)
-        cursor.offset = 0; try save(cursor)
+        let temporary = FTPListing.partialName(for: path)
+        let client = try await sftp()
+        var start: Int64 = 0
+        if cursor.sessionID == temporary, cursor.offset > 0, cursor.offset <= total,
+           let size = try? await client.stat(temporary).size {
+            start = min(cursor.offset, Int64(clamping: size))
+        }
+        cursor.sessionID = temporary; cursor.offset = start; try save(cursor)
         // The client reports from its own actor; the callback only ever runs back here, on the main actor.
         let relay: @MainActor @Sendable (Int64) -> Void = { sent in progress(min(sent, total), total) }
-        try await sftpTranslating { try await sftp().upload(local, to: path) { sent in Task { @MainActor in relay(sent) } } }
+        progress(start, total)
+        do {
+            repeat {
+                try Task.checkCancellation()
+                let from = start, length = min(uploadSegment, total - start)
+                try await sftpTranslating { try await client.upload(local, to: temporary, from: from, length: length) { sent in Task { @MainActor in relay(sent) } } }
+                start += length
+                cursor.offset = start; try save(cursor)
+            } while start < total
+            try await sftpTranslating { try await client.replace(path, with: temporary) }
+        } catch {
+            // Nothing confirmed yet: the hidden name is removed, as before. Otherwise it stays for the retry to
+            // continue; cancelling the transfer removes it through `abandonUploadSessions`.
+            if cursor.offset == 0 { try? await client.remove(temporary) }
+            throw error
+        }
+        cursor.sessionID = nil
         cursor.offset = total; cursor.complete = true; try save(cursor); progress(total, total)
         // The protocol reports no checksum; the closing status is the only confirmation.
         return UploadReceipt(remoteID: path, verification: .unavailable)
     }
+
     func sftpTrail(id: String) throws -> [CloudFile] {
         guard id != "root" else { return [] }
         let base = try sftpPath("root")
@@ -212,10 +235,23 @@ extension SFTPProvider {
     func uploadFile(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt {
         try await sftpUpload(local: local, parent: parent, name: name, replacing: replacing, cursor: &cursor, save: save, progress: progress)
     }
+    /// Into a partial the queue keeps between attempts (`ResumableDownload`), the download continues from the bytes
+    /// already there when they are of the same version, and what arrives before a failure is kept for the next try.
     func download(file: CloudFile, to destination: URL, exportMime: String?, maxBytes: Int64?, progress: @escaping (Int64, Int64) -> Void) async throws {
         let total = file.size ?? 0
+        let resumable = ResumableDownload.isPartial(destination)
+        let start = resumable ? try await blockingIO { try ResumableDownload.prepare(destination, for: file) } : 0
         let relay: @MainActor @Sendable (Int64) -> Void = { got in progress(got, total) }
-        try await sftpTranslating { try await sftp().download(file.id, to: destination, maxBytes: maxBytes) { got in Task { @MainActor in relay(got) } } }
+        try await sftpTranslating {
+            try await sftp().download(file.id, to: destination, from: start, keepPartial: resumable, maxBytes: maxBytes) { got in Task { @MainActor in relay(got) } }
+        }
+    }
+    /// A cancelled upload's hidden partial is removed; nothing but such a partial ever is.
+    func abandonUploadSessions(urls: [URL], sessionIDs: [String]) async {
+        guard let client = try? await sftp() else { return }
+        for path in sessionIDs where (path as NSString).lastPathComponent.hasSuffix(".icloudy-part") {
+            try? await client.remove(path)
+        }
     }
     func identityChange(file: CloudFile, name: String, destination: String?) throws -> RemoteIdentityChange {
         let newID = FTPListing.join(try destination.map(sftpPath) ?? (file.id as NSString).deletingLastPathComponent, name)
@@ -226,7 +262,10 @@ extension SFTPProvider {
 @MainActor
 struct SFTPAuthentication {
     /// Connects once to prove the address and the credentials, and keeps the server's key for every later session.
-    func signInSFTP(server: String, username: String, password: String, key: SFTPKeyMaterial? = nil) async throws -> (Account, Credential) {
+    /// The key is shown to the person through `trustHostKey` before anything secret is sent; by default the login
+    /// form asks, through `LoginPrompts`.
+    func signInSFTP(server: String, username: String, password: String, key: SFTPKeyMaterial? = nil,
+                    trustHostKey: (@Sendable (LoginPrompts.HostKeyQuestion) async -> Bool)? = nil) async throws -> (Account, Credential) {
         let trimmed = server.trimmingCharacters(in: .whitespacesAndNewlines)
         let withScheme = trimmed.contains("://") ? trimmed : "sftp://" + trimmed
         guard var components = URLComponents(string: withScheme), let host = components.host, !host.isEmpty,
@@ -242,7 +281,9 @@ struct SFTPAuthentication {
         }
         guard !password.isEmpty || key != nil else { throw CloudError.message(L("Escribe la contraseña o elige una clave privada.")) }
         let privateKey = try await key?.open()
-        let transport = SSHTransport(host: host, port: port, user: username, password: password, privateKey: privateKey, expectedHostKey: nil)
+        let ask = trustHostKey ?? { question in await LoginPrompts.shared.trust(question) }
+        let transport = SSHTransport(host: host, port: port, user: username, password: password, privateKey: privateKey, expectedHostKey: nil,
+                                     approveHostKey: { blob in await ask(LoginPrompts.HostKeyQuestion(host: host, port: port, blob: blob)) })
         let client = SFTPClient(transport: transport)
         let hostKey: Data
         do {
@@ -264,10 +305,11 @@ struct SFTPAuthentication {
         }
         var account = Account(id: "sftp:" + host + ":" + String(port) + components.path + "#" + username, cloud: .sftp,
                               name: host, email: username + "@" + host, clientID: "", clientSecret: nil, serverURL: base)
-        account.options["hostKey"] = hostKey.base64EncodedString()
+        // Only the fingerprint, for showing, stays in the account; the pin itself goes to the Keychain.
         account.options["hostKeyFingerprint"] = SSHHostKey.fingerprint(hostKey)
         if let privateKey { account.options["keyFingerprint"] = privateKey.fingerprint }
         return (account, Credential(accessToken: Data("\(username):\(password)".utf8).base64EncodedString(),
-                                    refreshToken: "", expires: .distantFuture, secret: key?.encoded ?? ""))
+                                    refreshToken: "", expires: .distantFuture, secret: key?.encoded ?? "",
+                                    hostKey: hostKey.base64EncodedString()))
     }
 }

@@ -23,14 +23,15 @@ struct SavedSearch: Codable, Identifiable, Equatable {
 }
 
 @MainActor
-final class SavedSearches: ObservableObject {
-    @Published private(set) var items: [SavedSearch] = []
-    @Published private(set) var failure: String?
+@Observable
+final class SavedSearches {
+    private(set) var items: [SavedSearch] = []
+    private(set) var failure: String?
     let url: URL
 
     init(url: URL = LocalStore.directory.appendingPathComponent("saved-searches.json")) {
         self.url = url
-        do { items = try LocalStore.read([SavedSearch].self, from: url) ?? [] }
+        do { items = try LocalStore.read(StoreEnvelope<[SavedSearch]>.self, from: url)?.items ?? [] }
         catch { failure = L("No se pudieron leer las búsquedas guardadas: \(error.localizedDescription)") }
     }
 
@@ -47,7 +48,7 @@ final class SavedSearches: ObservableObject {
     func remove(_ id: SavedSearch.ID) { items.removeAll { $0.id == id }; persist() }
 
     private func persist() {
-        do { try LocalStore.save(items, to: url); failure = nil }
+        do { try LocalStore.save(StoreEnvelope(items), to: url); failure = nil }
         catch { failure = L("No se pudieron guardar las búsquedas: \(error.localizedDescription)") }
     }
 }

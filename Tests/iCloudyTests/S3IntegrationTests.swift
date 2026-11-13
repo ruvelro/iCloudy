@@ -61,9 +61,19 @@ final class S3IntegrationTests: XCTestCase {
         let afterRename = try await api.list(parent: folderID)
         let renamed = try XCTUnwrap(afterRename.first { $0.name == "renombrado.txt" })
         try await api.copy(file: renamed, to: subfolder)
-        try await api.move(file: renamed, to: subfolder)
+        // The copy now has that name in the subfolder, and S3 would replace it without a word: refused.
+        do {
+            try await api.move(file: renamed, to: subfolder)
+            XCTFail("Moving onto an existing name is refused")
+        } catch { XCTAssertEqual(error.localizedDescription, L("Ya existe un elemento con ese nombre en el destino.")) }
+        let other = try await api.createFolder(name: "otra", parent: folderID)
+        try await api.move(file: renamed, to: other)
         let inside = try await api.list(parent: subfolder)
         XCTAssertEqual(inside.map(\.name), ["renombrado.txt"])
+        let moved = try await api.list(parent: other)
+        XCTAssertEqual(moved.map(\.name), ["renombrado.txt"])
+        let afterMove = try await api.list(parent: folderID)
+        XCTAssertFalse(afterMove.contains { $0.name == "renombrado.txt" }, "A move leaves nothing behind")
         do {
             try await api.copy(file: CloudFile(id: subfolder + "renombrado.txt", name: "renombrado.txt", mime: "text/plain", size: nil,
                                                modified: nil, webURL: nil, isFolder: false), to: subfolder)

@@ -53,27 +53,23 @@ extension CloudAPI {
     /// Checks a downloaded file against the size and checksum the provider listed, in one streaming pass. On a
     /// mismatch the file is deleted, and the item is asked for again once so that a file someone changed while it
     /// travelled is reported as such instead of as corruption.
-    ///
-    /// `reconciling` is false for a download that continued a partial file: a mismatch there says the splice went
-    /// wrong, the caller fetches the file whole, and only that second copy is worth asking the provider about.
-    func verifyDownload(_ file: CloudFile, at url: URL, exported: Bool, checksum: Bool, reconciling: Bool = true) async throws -> DownloadVerification {
+    func verifyDownload(_ file: CloudFile, at url: URL, exported: Bool, checksum: Bool) async throws -> DownloadVerification {
         // Drive generates an export on the fly: there is no listed size or checksum for that rendition.
         if exported || file.isGoogleDocument { return .exported }
-        guard demo != nil || provider.canVerifyDownload(of: file) else { return .unavailable }
+        guard provider.canVerifyDownload(of: file) else { return .unavailable }
         let local = url
         let size = try await blockingIO { Int64(truncatingIfNeeded: (try FileManager.default.attributesOfItem(atPath: local.path)[.size] as? NSNumber)?.int64Value ?? 0) }
         var problem: DownloadIntegrityError?
         var verification = DownloadVerification.unavailable
         if let expected = file.size, expected != size {
             problem = .sizeMismatch(name: file.name, expected: expected, actual: size)
-        } else if checksum, let listed = demo == nil ? provider.verifiableChecksum(of: file) : file.checksum {
+        } else if checksum, let listed = provider.verifiableChecksum(of: file) {
             let algorithm = listed.algorithm
             let (digest, _) = try await blockingIO { try ContentHasher.digest(of: local, algorithm: algorithm) }
             if listed.matches(digest) { verification = .verified } else { problem = .checksumMismatch(name: file.name) }
         }
         guard let problem else { return verification }
         try? FileManager.default.removeItem(at: url)
-        guard reconciling else { throw problem }
         throw try await reconcile(problem, file: file)
     }
 
@@ -98,7 +94,6 @@ extension CloudAPI {
     }
 
     func currentMetadata(of file: CloudFile) async throws -> CloudFile? {
-        if let demo { return demo.file(file.id) }
         return try await provider.currentMetadata(of: file)
     }
 }

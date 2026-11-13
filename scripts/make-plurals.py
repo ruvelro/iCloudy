@@ -65,23 +65,18 @@ TABLE = [
      "%#@n@ already at the destination (%@).", [("n", "%lld file is", "%lld files are")]),
     ("En pausa · %lld cambios esperando", "En pausa · %#@n@", [("n", "%lld cambio esperando", "%lld cambios esperando")],
      "Paused · %#@n@", [("n", "%lld change waiting", "%lld changes waiting")]),
-    # Scheduled copies, the space analyser and the archives.
-    ("%lld nuevos", "%#@n@", [("n", "%lld nuevo", "%lld nuevos")], "%#@n@", [("n", "%lld new", "%lld new")]),
-    ("%lld actualizados", "%#@n@", [("n", "%lld actualizado", "%lld actualizados")], "%#@n@", [("n", "%lld updated", "%lld updated")]),
-    ("%lld retirados", "%#@n@", [("n", "%lld retirado", "%lld retirados")], "%#@n@", [("n", "%lld removed", "%lld removed")]),
-    ("%lld omitidos", "%#@n@", [("n", "%lld omitido", "%lld omitidos")], "%#@n@", [("n", "%lld skipped", "%lld skipped")]),
-    ("%lld archivos", "%#@n@", [("n", "%lld archivo", "%lld archivos")], "%#@n@", [("n", "%lld file", "%lld files")]),
-    ("%lld archivos extraídos en «%@».", "%#@n@ en «%@».", [("n", "%lld archivo extraído", "%lld archivos extraídos")],
-     "%#@n@ extracted into “%@”.", [("n", "%lld file", "%lld files")]),
-    ("Cada %lld horas", "Cada %#@n@", [("n", "%lld hora", "%lld horas")], "Every %#@n@", [("n", "%lld hour", "%lld hours")]),
-    ("Durante %lld días", "Durante %#@n@", [("n", "%lld día", "%lld días")], "For %#@n@", [("n", "%lld day", "%lld days")]),
-    ("%@ en %lld archivos", "%@ en %#@n@", [("n", "%lld archivo", "%lld archivos")], "%@ in %#@n@", [("n", "%lld file", "%lld files")]),
-    ("%lld carpetas · %lld archivos · %@", "%#@folders@ · %#@files@ · %@", [("folders", "%lld carpeta", "%lld carpetas"), ("files", "%lld archivo", "%lld archivos")],
-     "%#@folders@ · %#@files@ · %@", [("folders", "%lld folder", "%lld folders"), ("files", "%lld file", "%lld files")]),
-    ("%lld enlaces públicos caducan pronto", "%#@n@", [("n", "%lld enlace público caduca pronto", "%lld enlaces públicos caducan pronto")],
-     "%#@n@", [("n", "%lld public link expires soon", "%lld public links expire soon")]),
-    ("%lld enlaces públicos que revisar", "%#@n@", [("n", "%lld enlace público que revisar", "%lld enlaces públicos que revisar")],
-     "%#@n@", [("n", "%lld public link to review", "%lld public links to review")]),
+    # 0.9 — Transferencias
+    ("%lld conflictos esperan tu decisión", "%#@n@ tu decisión", [("n", "%lld conflicto espera", "%lld conflictos esperan")],
+     "%#@n@ your decision", [("n", "%lld conflict awaits", "%lld conflicts await")]),
+    ("%lld copiados", "%#@n@", [("n", "%lld copiado", "%lld copiados")], "%#@n@", [("n", "%lld copied", "%lld copied")]),
+    ("%lld pendientes o fallidos", "%#@n@", [("n", "%lld pendiente o fallido", "%lld pendientes o fallidos")],
+     "%#@n@", [("n", "%lld pending or failed", "%lld pending or failed")]),
+    ("%lld enviados a la papelera del destino", "%#@n@ a la papelera del destino", [("n", "%lld enviado", "%lld enviados")],
+     "%#@n@ to the destination's trash", [("n", "%lld sent", "%lld sent")]),
+    # 0.9 — Proveedores e integración
+    ("%lld resultados.", "%#@n@.", [("n", "%lld resultado", "%lld resultados")], "%#@n@.", [("n", "%lld result", "%lld results")]),
+    ("Enlace creado. Caduca en %lld días.", "Enlace creado. Caduca en %#@n@.", [("n", "%lld día", "%lld días")],
+     "Link created. It expires in %#@n@.", [("n", "%lld day", "%lld days")]),
 ]
 
 def entry(format_key, variables):

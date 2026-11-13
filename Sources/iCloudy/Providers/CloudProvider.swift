@@ -37,13 +37,10 @@ protocol CloudProvider: CloudSession {
     func rootID() async throws -> String
     func availableDrives() async throws -> [RemoteDrive]
     func remoteCopyStatus(_ url: URL) async throws -> RemoteCopy.State
-    func abandonUploadSessions(urls: [URL], boxSessions: [String]) async
+    func abandonUploadSessions(urls: [URL], sessionIDs: [String]) async
     var requiresVerifiedLegacyCheckpoint: Bool { get }
     func canResumeWithoutSource(_ checkpoint: UploadCheckpoint?) -> Bool
     func download(file: CloudFile, to destination: URL, exportMime: String?, maxBytes: Int64?, progress: @escaping (Int64, Int64) -> Void) async throws
-    /// True when `download` continues a partial file found at its destination, under `DownloadResume.mode`. Where
-    /// it is false the destination is always emptied first, so a provider never meets bytes it did not write.
-    var resumesDownloads: Bool { get }
     /// The item as the provider describes it now, asked for after a download fails its check. nil when the provider
     /// has no cheap way to describe a single item, and the mismatch is then reported as it is.
     func currentMetadata(of file: CloudFile) async throws -> CloudFile?
@@ -65,11 +62,6 @@ protocol CloudProvider: CloudSession {
     func verifiableChecksum(of file: CloudFile) -> ContentHash?
     /// A small picture of the item, drawn by the provider, or nil when it has none. `CloudProvider+Thumbnails.swift`.
     func thumbnail(of file: CloudFile, side: Int) async throws -> Data?
-    /// A position at "now" in the provider's feed of changes under `folder`, or nil where it has none. Defaults,
-    /// and what a change is, live in `ChangeFeed.swift`.
-    func changeCursor(for folder: String) async throws -> String?
-    /// What changed since `cursor`. Cheap by design: one request when nothing happened.
-    func changes(since cursor: String, in folder: String) async throws -> ChangeBatch
     func uploadFile(local: URL, parent: String, name: String, replacing: String?, cursor: inout UploadCheckpoint, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt
     func resumeCommittedUpload(local: URL, parent: String, name: String, replacing: String?, checkpoint: UploadCheckpoint?, save: (UploadCheckpoint) throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws -> UploadReceipt?
 }
@@ -79,7 +71,6 @@ extension CloudProvider {
         RemoteIdentityChange(oldID: file.id, newID: file.id, name: name, descendants: file.isFolder)
     }
     var requiresVerifiedLegacyCheckpoint: Bool { false }
-    var resumesDownloads: Bool { false }
     func restore(file: CloudFile) async throws { throw CloudError.message(L("\(account.cloud.title) no permite restaurar desde iCloudy.")) }
     func deletePermanently(file: CloudFile) async throws { throw CloudError.message(L("\(account.cloud.title) no permite el borrado definitivo desde iCloudy.")) }
     func emptyTrash() async throws { throw CloudError.message(L("\(account.cloud.title) no permite vaciar la papelera desde iCloudy.")) }
@@ -102,7 +93,7 @@ extension CloudProvider {
     func canVerifyDownload(of file: CloudFile) -> Bool { true }
     func downloadChecksum(of file: CloudFile) async throws -> ContentHash? { nil }
     func verifiableChecksum(of file: CloudFile) -> ContentHash? { file.checksum }
-    func abandonUploadSessions(urls: [URL], boxSessions: [String]) async {
+    func abandonUploadSessions(urls: [URL], sessionIDs: [String]) async {
         for url in urls where url.scheme == "https" {
             var request = URLRequest(url: url)
             request.httpMethod = "DELETE"

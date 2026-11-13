@@ -72,9 +72,10 @@ enum LocalCopyStatus: Equatable {
 /// Remembers which remote files also exist on this Mac. Entries are created when iCloudy itself puts a file on disk
 /// (a download, the source of an upload, or an explicitly saved preview), never by scanning the user's folders.
 @MainActor
-final class LocalCopyIndex: ObservableObject {
-    @Published private(set) var copies: [String: LocalCopy] = [:]
-    @Published private(set) var unavailable: Set<String> = []
+@Observable
+final class LocalCopyIndex {
+    private(set) var copies: [String: LocalCopy] = [:]
+    private(set) var unavailable: Set<String> = []
     let storeURL: URL
     private var verifying = false
     /// Delay before a coalesced write reaches disk. Every file of a transfer records a copy, and writing the whole
@@ -246,7 +247,7 @@ private struct Snapshot: Codable {
     }
     static func read(from url: URL) -> [String: LocalCopy] {
         // A file written before bookmarks were shared is a plain array; both shapes are accepted.
-        if let snapshot = try? LocalStore.read(Snapshot.self, from: url), !snapshot.copies.isEmpty {
+        if let snapshot = (try? LocalStore.read(StoreEnvelope<Snapshot>.self, from: url))?.items, !snapshot.copies.isEmpty {
             let restored = snapshot.copies.map { entry in
                 LocalCopy(accountID: entry.accountID, fileID: entry.fileID, name: entry.name, path: entry.path,
                           bookmark: entry.bookmark ?? entry.bookmarkID.flatMap { snapshot.bookmarks[$0] },
@@ -272,7 +273,7 @@ private struct Snapshot: Codable {
                                          remoteModified: copy.remoteModified, savedAt: copy.savedAt,
                                          origin: copy.origin.rawValue))
         }
-        StoreWriter.shared.later(snapshot, to: url)
+        StoreWriter.shared.later(StoreEnvelope(snapshot), to: url)
     }
 }
 

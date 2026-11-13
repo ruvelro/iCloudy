@@ -13,10 +13,10 @@ extension ExplorerView {
                 Label("iCloudy", systemImage: "cloud.fill")
                     .font(.system(size: 24, weight: .semibold))
                     .frame(maxWidth: .infinity, alignment: .center).padding(.top, 20)
-                Button { model.preview.close(); model.showGlobalSearch = true } label: {
+                Button { model.preview.close(); model.ui.showGlobalSearch = true } label: {
                     Label("Buscar en todas las nubes", systemImage: "magnifyingglass").frame(maxWidth: .infinity, alignment: .leading).padding(Layout.sidebarInner)
                         .contentShape(Rectangle())
-                        .sidebarRow(selected: model.showGlobalSearch)
+                        .sidebarRow(selected: model.ui.showGlobalSearch)
                 }.buttonStyle(.plain)
                 Picker("", selection: $sidebarTab) {
                     ForEach(SidebarTab.allCases) { tab in
@@ -26,6 +26,7 @@ extension ExplorerView {
                 ScrollView {
                   if sidebarTab == .clouds {
                     VStack(spacing: 5) {
+                        // ↑ and ↓ walk the clouds while one of them has the focus.
                         ForEach(model.accounts) { account in
                             // Not a Button: on macOS a button keeps the mouse from the moment it is pressed, so a drag that
                             // starts on it never reaches `onDrag`, and the clouds could not be dragged into a new order.
@@ -45,11 +46,17 @@ extension ExplorerView {
                                 }
                                 Spacer(minLength: 0)
                             }.padding(Layout.sidebarInner).contentShape(Rectangle())
-                                .sidebarRow(selected: model.selectedAccountID == account.id && !model.showGlobalSearch,
+                                .sidebarRow(selected: model.selectedAccountID == account.id && !model.ui.showGlobalSearch,
                                             tint: model.appearance(for: account).tint.color)
                                 .onTapGesture { model.select(account.id) }
+                                // Reachable with Tab and the arrows, not only with the mouse: the row takes the focus
+                                // and Return or Space opens it, as a button would.
+                                .focusable()
+                                .focused($sidebarFocus, equals: account.id)
+                                .onKeyPress(keys: [.return, .space]) { _ in model.select(account.id); return .handled }
                                 .accessibilityElement(children: .combine)
                                 .accessibilityAddTraits(model.selectedAccountID == account.id ? [.isSelected, .isButton] : .isButton)
+                                .accessibilityHint("Abre esta nube. Las flechas pasan a la siguiente.")
                                 .accessibilityAction { model.select(account.id) }
                                 // Dragging a cloud onto another puts it there, the same as with the tabs.
                                 .onDrag {
@@ -59,25 +66,24 @@ extension ExplorerView {
                                 .onDrop(of: [.text], delegate: AccountReorder(target: account.id, dragging: $draggingAccount, model: model))
                                 .contextMenu {
                                     if model.isExpired(account) {
-                                        Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.connecting)
+                                        Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.ui.connecting)
                                         Divider()
                                     }
-                                    Button("Personalizar nube…") { model.appearanceAccount = account }
+                                    Button("Personalizar nube…") { model.ui.appearanceAccount = account }
                                     Button("Actualizar espacio") { model.refreshStorage(account, force: true) }
-                                    Button("Ver qué ocupa espacio…") { model.openUsage(account: account) }
                                     if account.capabilities.links.manage {
                                         Button("Enlaces compartidos…") { model.requestLinkInventory(account) }
                                     }
                                     if model.accounts.count > 1 {
                                         Divider()
-                                        Button("Mover arriba") { withAnimation(.easeInOut(duration: 0.15)) { model.moveAccount(account, by: -1) } }
+                                        Button("Mover arriba") { withAnimation(Motion.quick) { model.moveAccount(account, by: -1) } }
                                             .disabled(!model.canMoveAccount(account, by: -1))
-                                        Button("Mover abajo") { withAnimation(.easeInOut(duration: 0.15)) { model.moveAccount(account, by: 1) } }
+                                        Button("Mover abajo") { withAnimation(Motion.quick) { model.moveAccount(account, by: 1) } }
                                             .disabled(!model.canMoveAccount(account, by: 1))
                                     }
                                     Divider()
                                     Button("Desconectar cuenta…", role: .destructive) {
-                                        disconnectTarget = account; confirmDisconnect = true
+                                        model.ui.pendingDisconnect = account
                                     }.disabled(!model.canDisconnect(account))
                                     if !model.canDisconnect(account) {
                                         Text("Pausa o termina las transferencias de esta cuenta")
@@ -91,11 +97,14 @@ extension ExplorerView {
                                 Text("Abriendo el Llavero…").font(.caption).foregroundStyle(.secondary)
                             }.padding(Layout.sidebarInner)
                         }
-                        LinkAuditNotice(model: model, auditor: model.linkAuditor)
-                        EditingSection(model: model, editing: model.editing)
-                        BackupList(model: model, backups: model.backups)
                         if !model.mirrors.mirrors.isEmpty { MirrorList(model: model, mirrors: model.mirrors) }
                         if !model.offline.pins.isEmpty || !model.offline.notices.isEmpty { OfflineList(model: model, store: model.offline) }
+                    }
+                    .onMoveCommand { direction in
+                        guard let focused = sidebarFocus, let index = model.accounts.firstIndex(where: { $0.id == focused }) else { return }
+                        let step = direction == .up ? -1 : (direction == .down ? 1 : 0)
+                        guard step != 0, model.accounts.indices.contains(index + step) else { return }
+                        sidebarFocus = model.accounts[index + step].id
                     }
                   } else {
                     FavoritesList(model: model)
@@ -106,7 +115,7 @@ extension ExplorerView {
                 // sidebar rather than as one more row of it. Configuración used to sit here too, which said the
                 // same thing twice: the toolbar carries it, and the toolbar is where it stays.
                 Divider().padding(.top, 4)
-                Button { model.showConnect = true } label: {
+                Button { model.ui.showConnect = true } label: {
                     Label("Añadir cuenta", systemImage: "plus.circle").font(.callout)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).padding(.vertical, 5)
                         .contentShape(Rectangle())
@@ -127,7 +136,7 @@ extension ExplorerView {
             .clipped().opacity(sidebarVisible ? 1 : 0)
             .accessibilityHidden(!sidebarVisible).allowsHitTesting(sidebarVisible)
             Group {
-            if model.showGlobalSearch {
+            if model.ui.showGlobalSearch {
                 GlobalSearchView(model: model, search: model.globalSearch, saved: model.savedSearches)
             } else {
             VStack(spacing: 0) {
@@ -159,6 +168,10 @@ extension ExplorerView {
                             .transition(.move(edge: .trailing))
                     }
                 }
+                if !model.editor.sessions.isEmpty {
+                    Divider()
+                    EditingBar(model: model, editor: model.editor)
+                }
                 Divider()
                 HStack {
                     Text(model.visibleFiles.count == 1 ? L("1 elemento") : L("\(model.visibleFiles.count) elementos"))
@@ -183,12 +196,16 @@ extension ExplorerView {
             // Something started moving, so show it. Closing the drawer by hand keeps it closed until the next one.
             .onChange(of: model.transfers.count) { _, count in
                 guard count > 0, !showTransfers else { return }
-                withAnimation(.easeInOut(duration: 0.18)) { showTransfers = true }
+                withAnimation(Motion.drawer) { showTransfers = true }
             }
             }
             }
             .frame(minWidth: 580, maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(nsColor: .windowBackgroundColor))
+            // The selection's details, beside the list rather than over it, as the Finder's Get Info panel is.
+            .inspector(isPresented: sheets.showInspector) {
+                InspectorView(model: model).inspectorColumnWidth(min: 220, ideal: 270, max: 380)
+            }
         }
         .background(ExplorerWindowChrome())
         .background(ExplorerWindowReader())
@@ -213,7 +230,7 @@ extension ExplorerView {
             ToolbarItemGroup(placement: .primaryAction) {
                 SettingsLink { Label("Configuración", systemImage: "gearshape") }
                     .help("Abrir Configuración (⌘,)")
-                if !model.showGlobalSearch { explorerActions }
+                if !model.ui.showGlobalSearch { explorerActions }
             }
         }
     }
@@ -230,7 +247,7 @@ extension ExplorerView {
                         } description: {
                             Text("Conecta una nube para explorar tus carpetas y transferir archivos cuando lo necesites.")
                         } actions: {
-                            Button("Conectar una cuenta") { model.showConnect = true }.buttonStyle(.borderedProminent)
+                            Button("Conectar una cuenta") { model.ui.showConnect = true }.buttonStyle(.borderedProminent)
                             Button("Explorar demo sin cuenta") { model.enableDemo() }
                         }.frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
@@ -268,7 +285,7 @@ extension ExplorerView {
                                 }
                                 Spacer()
                                 if model.isRenewing(account) { ProgressView().controlSize(.small) }
-                                else { Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.connecting) }
+                                else { Button("Volver a conectar…") { Task { await model.reconnect(account) } }.disabled(model.ui.connecting) }
                             }.padding(.horizontal, Layout.margin).padding(.vertical, 10).background(Color.orange.opacity(0.12))
                         }
                         CryptomatorBanner(model: model, pane: pane)
@@ -311,15 +328,24 @@ extension ExplorerView {
                 Button { model.back(to: max(0, model.path.count - 1)) } label: { Image(systemName: "chevron.left") }
                     .accessibilityLabel("Volver a la carpeta anterior").help("Volver a la carpeta anterior")
                     .keyboardShortcut(keys ? KeyboardShortcut(.upArrow, modifiers: .command) : nil).disabled(tab.path.isEmpty)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 5) {
-                        Crumb(title: tab.collection == .files ? L("Inicio") : tab.collection.title,
-                              symbol: tab.collection.icon, current: tab.path.isEmpty) { model.back(to: 0) }
-                        ForEach(Array(tab.path.enumerated()), id: \.element.id) { index, folder in
-                            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
-                            Crumb(title: folder.name, symbol: nil, current: index == tab.path.count - 1) { model.back(to: index + 1) }
-                        }
-                    }.padding(.vertical, 1)
+                if model.ui.editingPath == pane {
+                    EditablePathBar(model: model, pane: pane) { model.ui.editingPath = nil }
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 5) {
+                            Crumb(title: tab.collection == .files ? L("Inicio") : tab.collection.title,
+                                  symbol: tab.collection.icon, current: tab.path.isEmpty) { model.back(to: 0) }
+                            ForEach(Array(tab.path.enumerated()), id: \.element.id) { index, folder in
+                                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary).accessibilityHidden(true)
+                                Crumb(title: folder.name, symbol: nil, current: index == tab.path.count - 1) { model.back(to: index + 1) }
+                            }
+                        }.padding(.vertical, 1)
+                    }
+                    // The crumbs as text, to type a path over them. Only "Mis archivos" has paths to type.
+                    if tab.collection == .files, paneAccount != nil {
+                        Button { model.focusPane(pane); model.ui.editingPath = pane } label: { Image(systemName: "pencil") }
+                            .buttonStyle(.borderless).help("Escribir una ruta (⌘L)").accessibilityLabel("Escribir una ruta")
+                    }
                 }
                 ChromeField("Filtrar esta carpeta", symbol: "line.3.horizontal.decrease", text: model.search(inPane: pane)).frame(width: model.isSplit ? 150 : 210)
             }
@@ -340,7 +366,7 @@ struct AccountReorder: DropDelegate {
 
     func dropEntered(info: DropInfo) {
         guard let dragging, dragging != target else { return }
-        withAnimation(.easeInOut(duration: 0.15)) { model.moveAccount(dragging, to: target) }
+        withAnimation(Motion.quick) { model.moveAccount(dragging, to: target) }
     }
     func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
     func validateDrop(info: DropInfo) -> Bool { dragging != nil }

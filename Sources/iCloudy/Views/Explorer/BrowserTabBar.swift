@@ -85,7 +85,7 @@ private struct TabReorder: DropDelegate {
 
     func dropEntered(info: DropInfo) {
         guard let dragging, dragging != target else { return }
-        withAnimation(.easeInOut(duration: 0.15)) { model.moveTab(dragging, to: target) }
+        withAnimation(Motion.quick) { model.moveTab(dragging, to: target) }
     }
     func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
     func validateDrop(info: DropInfo) -> Bool { dragging != nil }

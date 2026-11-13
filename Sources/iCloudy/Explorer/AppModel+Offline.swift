@@ -31,10 +31,6 @@ extension AppModel {
         refresher.isOnline = { [weak self] in self?.isOnline ?? false }
         preview.model.localSource = { [weak self] file, account in self?.offlineCopy(of: file, accountID: account.id) }
         preview.model.didDownload = { [weak self] file, account, url in self?.offline.cachePreview(file, accountID: account.id, from: url) }
-        // Badges live in rows the explorer draws from the model, so the store's changes have to reach it.
-        // Throttled: a folder refresh records one copy per file, and each change redraws the whole explorer.
-        offline.objectWillChange.throttle(for: .milliseconds(250), scheduler: RunLoop.main, latest: true)
-            .sink { [weak self] _ in self?.subsystemsChanged() }.store(in: &refresher.subscriptions)
         // On launch, once the accounts are read from the Keychain; and whenever the network comes back.
         accountsLoaded.first()
             .sink { [weak self] _ in self?.offlineRefresher.refresh() }.store(in: &refresher.subscriptions)
@@ -74,13 +70,11 @@ extension AppModel {
 
     /// The badge of a file of the selected account, or nil when it is not kept offline.
     func offlineStatus(_ file: CloudFile) -> OfflineStatus? {
-        _ = subsystems
         guard let account else { return nil }
         return offline.status(for: file, accountID: account.id)
     }
     /// The same, for a tab that need not be the focused one.
     func offlineStatus(_ file: CloudFile, in tab: BrowserState) -> OfflineStatus? {
-        _ = subsystems
         guard let id = tab.accountID else { return nil }
         return offline.status(for: file, accountID: id)
     }

@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import QuickLookUI
 import AVKit
+import UniformTypeIdentifiers
 
 @MainActor
 final class PreviewWindow: NSObject, NSWindowDelegate {
@@ -13,6 +14,8 @@ final class PreviewWindow: NSObject, NSWindowDelegate {
     var openBrowser: ((CloudFile) -> Void)?
     /// Reports a copy the user chose to keep, so the explorer can mark that file as present on this Mac.
     var didSaveCopy: ((CloudFile, Account, URL) -> Void)?
+    /// «Abrir con…»: the explorer opens its own watched copy in the app, the system's choice when the URL is nil.
+    var openWith: ((CloudFile, Account, URL?) -> Void)?
 
     override init() {
         super.init()
@@ -27,6 +30,8 @@ final class PreviewWindow: NSObject, NSWindowDelegate {
             let panel = PreviewPanel(contentRect: NSRect(x: 0, y: 0, width: 780, height: 600), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
             panel.isReleasedWhenClosed = false
             panel.minSize = NSSize(width: 480, height: 350)
+            // Quick Look's panel goes full screen; so does this one.
+            panel.collectionBehavior.insert(.fullScreenPrimary)
             panel.delegate = self; panel.center(); window = panel
         }
         window?.title = L("Vista previa · \(file.name)")
@@ -40,6 +45,13 @@ final class PreviewWindow: NSObject, NSWindowDelegate {
         window?.orderOut(nil)
     }
     func windowWillClose(_ notification: Notification) { close() }
+    func toggleFullScreen() { window?.toggleFullScreen(nil) }
+
+    /// The share sheet for the downloaded copy, anchored to the button that asked for it.
+    func share(from view: NSView) {
+        guard let url = model.localURL else { return }
+        NSSharingServicePicker(items: [url]).show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
+    }
     func saveCopy() async {
         guard let source = model.localURL, let file = model.file, let window else { return }
         let panel = NSSavePanel()
@@ -152,6 +164,9 @@ private struct PreviewContent: View {
                     Text(model.account?.email ?? "").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
+                if model.phase == .ready, let file = model.file, let account = model.account {
+                    PreviewTools(model: model, owner: owner, file: file, account: account)
+                }
                 if model.phase == .ready { Button("Guardar copia…") { Task { await owner.saveCopy() } } }
                 Button(model.phase == .loading ? "Cancelar" : "Cerrar") { owner.close() }.keyboardShortcut(.cancelAction)
             }.padding(14)
@@ -182,6 +197,9 @@ private struct PreviewContent: View {
                         }
                     } else if let url = model.localURL, case .media = model.kind {
                         MediaPreview(url: url).id(url)
+                    } else if let url = model.localURL, case .image = model.kind, let image = NSImage(contentsOf: url) {
+                        // Pictures get a viewer of their own, with the zoom and the rotation QLPreviewView keeps to itself.
+                        ZoomableImage(image: image).id(url)
                     } else if let url = model.localURL { NativePreview(url: url, owner: owner).id(url) }
                 case .unsupported:
                     unavailable(L("Vista previa no disponible"), message: L("Se admiten PDF, imágenes, texto y código, audio y vídeo (MP4, MOV, MP3, M4A, WAV…), documentos de Office e iWork, y Google Docs, Sheets y Slides exportados a PDF. Otros formatos se descargan o se abren en el navegador."))
@@ -205,5 +223,108 @@ private struct PreviewContent: View {
                 if file.webURL != nil { Button("Abrir en navegador") { owner.openBrowser?(file) } }
             }
         }
+    }
+}
+
+/// The buttons Quick Look has and the preview lacked: full screen, share, and open with another app.
+private struct PreviewTools: View {
+    @ObservedObject var model: PreviewModel
+    let owner: PreviewWindow
+    let file: CloudFile
+    let account: Account
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Menu {
+                Button("Aplicación predeterminada") { owner.openWith?(file, account, nil) }
+                Divider()
+                ForEach(Self.applications(for: file), id: \.self) { app in
+                    Button(FileManager.default.displayName(atPath: app.path)) { owner.openWith?(file, account, app) }
+                }
+            } label: { Label("Abrir con", systemImage: "arrow.up.forward.app") }
+                .fixedSize().help("Abre una copia en otra aplicación y sube los cambios que guardes")
+            ShareButton(owner: owner)
+                .frame(width: 28, height: 22)
+                .help("Compartir").accessibilityLabel("Compartir")
+            Button { owner.toggleFullScreen() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                .help("Pantalla completa (⌃⌘F)").accessibilityLabel("Pantalla completa")
+                .keyboardShortcut("f", modifiers: [.command, .control])
+        }
+    }
+
+    static func applications(for file: CloudFile) -> [URL] {
+        let ext = (file.name as NSString).pathExtension
+        guard let type = UTType(filenameExtension: ext) else { return [] }
+        return NSWorkspace.shared.urlsForApplications(toOpen: type)
+    }
+}
+
+/// An AppKit button, because the sharing picker needs a view to hang from.
+private struct ShareButton: NSViewRepresentable {
+    let owner: PreviewWindow
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton(image: NSImage(systemSymbolName: "square.and.arrow.up", accessibilityDescription: L("Compartir")) ?? NSImage(),
+                              target: context.coordinator, action: #selector(Coordinator.share(_:)))
+        button.bezelStyle = .texturedRounded
+        return button
+    }
+    func updateNSView(_ view: NSButton, context: Context) { context.coordinator.owner = owner }
+    func makeCoordinator() -> Coordinator { Coordinator(owner: owner) }
+    @MainActor final class Coordinator: NSObject {
+        var owner: PreviewWindow
+        init(owner: PreviewWindow) { self.owner = owner }
+        @objc func share(_ sender: NSButton) { owner.share(from: sender) }
+    }
+}
+
+/// A picture that can be zoomed and turned: ⌘+ and ⌘- zoom, ⌘0 fits it, the arrows turn it.
+struct ZoomableImage: View {
+    let image: NSImage
+    @State private var scale: CGFloat = 1
+    @State private var turns = 0
+    static let steps: [CGFloat] = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8]
+
+    var body: some View {
+        GeometryReader { geometry in
+            let fitted = Self.fitted(image.size, turns: turns, in: geometry.size)
+            ScrollView([.horizontal, .vertical]) {
+                Image(nsImage: image).resizable().interpolation(.high)
+                    .frame(width: fitted.width * scale, height: fitted.height * scale)
+                    .rotationEffect(.degrees(Double(turns) * 90))
+                    .frame(width: max(geometry.size.width, (turns.isMultiple(of: 2) ? fitted.width : fitted.height) * scale),
+                           height: max(geometry.size.height, (turns.isMultiple(of: 2) ? fitted.height : fitted.width) * scale))
+            }
+            .accessibilityElement().accessibilityLabel("Imagen").accessibilityValue(L("Zoom \(Int(scale * 100)) %"))
+        }
+        .overlay(alignment: .bottom) {
+            HStack(spacing: 4) {
+                Button { scale = Self.step(scale, by: -1) } label: { Image(systemName: "minus.magnifyingglass") }
+                    .keyboardShortcut("-", modifiers: .command).help("Reducir (⌘-)").accessibilityLabel("Reducir")
+                Button { scale = 1 } label: { Text("\(Int(scale * 100)) %").monospacedDigit().frame(minWidth: 44) }
+                    .keyboardShortcut("0", modifiers: .command).help("Ajustar a la ventana (⌘0)")
+                Button { scale = Self.step(scale, by: 1) } label: { Image(systemName: "plus.magnifyingglass") }
+                    .keyboardShortcut("+", modifiers: .command).help("Ampliar (⌘+)").accessibilityLabel("Ampliar")
+                Divider().frame(height: 14)
+                Button { turns = (turns + 3) % 4 } label: { Image(systemName: "rotate.left") }
+                    .help("Girar a la izquierda").accessibilityLabel("Girar a la izquierda")
+                Button { turns = (turns + 1) % 4 } label: { Image(systemName: "rotate.right") }
+                    .help("Girar a la derecha").accessibilityLabel("Girar a la derecha")
+            }
+            .buttonStyle(.borderless).padding(.horizontal, 10).padding(.vertical, 6)
+            .background(.regularMaterial, in: Capsule()).padding(10)
+        }
+    }
+
+    /// The next zoom step up or down from `scale`.
+    static func step(_ scale: CGFloat, by direction: Int) -> CGFloat {
+        direction > 0 ? (steps.first { $0 > scale + 0.001 } ?? steps.last!) : (steps.last { $0 < scale - 0.001 } ?? steps.first!)
+    }
+
+    /// The size that fits the picture, turned, inside the window at 100 %. Never larger than the picture itself.
+    static func fitted(_ size: CGSize, turns: Int, in box: CGSize) -> CGSize {
+        guard size.width > 0, size.height > 0, box.width > 0, box.height > 0 else { return size }
+        let turned = turns.isMultiple(of: 2) ? size : CGSize(width: size.height, height: size.width)
+        let ratio = min(1, box.width / turned.width, box.height / turned.height)
+        return CGSize(width: size.width * ratio, height: size.height * ratio)
     }
 }

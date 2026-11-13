@@ -44,7 +44,7 @@ extension ExplorerView {
     }
 
     var paneMoveTitle: String {
-        guard let request = model.pendingPaneMove else { return "" }
+        guard let request = model.ui.pendingPaneMove else { return "" }
         let target = model.accountTitle(request.target)
         return request.files.count == 1 ? L("¿Mover «\(request.files[0].name)» a \(target)?") : L("¿Mover \(request.files.count) elementos a \(target)?")
     }

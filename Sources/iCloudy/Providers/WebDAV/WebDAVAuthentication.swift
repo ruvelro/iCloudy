@@ -6,13 +6,21 @@ struct WebDAVAuthentication {
 
     /// `existing` are the accounts already connected: signing in again to one of them has to land on its id, whatever
     /// rule produced that id when it was created, so the Keychain entry and everything keyed by it carry over.
-    func signInWebDAV(server: String, username: String, password: String, existing: [Account] = []) async throws -> (Account, Credential) {
+    /// With `.bearer`, `password` is the access token and the user name only labels the account. With `.basic`, a
+    /// server that answers with a Digest challenge is answered in Digest, and the account remembers it.
+    func signInWebDAV(server: String, username: String, password: String, auth: WebDAVAuth = .basic, existing: [Account] = []) async throws -> (Account, Credential) {
         let trimmed = server.trimmingCharacters(in: .whitespacesAndNewlines)
         guard var components = URLComponents(string: trimmed.contains("://") ? trimmed : "https://" + trimmed),
               let host = components.host, !host.isEmpty, ["http", "https"].contains(components.scheme ?? "") else {
             throw CloudError.message(L("Escribe una dirección de servidor válida, por ejemplo https://nube.ejemplo.com/remote.php/dav/files/ana"))
         }
-        let (username, password) = LoginAddress.credentials(embeddedIn: &components, username: username, password: password)
+        var (username, password) = LoginAddress.credentials(embeddedIn: &components, username: username, password: password)
+        if auth == .bearer {
+            password = password.trimmingCharacters(in: .whitespacesAndNewlines)
+            if password.lowercased().hasPrefix("bearer ") { password = String(password.dropFirst(7)) }
+            guard !password.isEmpty else { throw CloudError.message(L("Pega el token de acceso del servidor.")) }
+            if username.isEmpty { username = "token" }
+        }
         guard !username.isEmpty, !password.isEmpty else { throw CloudError.message(L("Introduce el usuario y la contraseña del servidor.")) }
         // A Basic password travels in every single request. macOS blocks plain HTTP to anything but the local
         // network, and over the internet it would be handing the password to whoever is listening.
@@ -23,14 +31,22 @@ struct WebDAVAuthentication {
         if components.path.hasSuffix("/") { components.path = String(components.path.dropLast()) }
         guard let base = components.url else { throw CloudError.message(L("Escribe una dirección de servidor válida, por ejemplo https://nube.ejemplo.com/remote.php/dav/files/ana")) }
 
-        let secret = Data("\(username):\(password)".utf8).base64EncodedString()
+        let secret = auth == .bearer ? password : Data("\(username):\(password)".utf8).base64EncodedString()
         var probe = URLRequest(url: base)
         probe.httpMethod = "PROPFIND"
         probe.setValue("0", forHTTPHeaderField: "Depth")
-        probe.setValue("Basic " + secret, forHTTPHeaderField: "Authorization")
+        probe.setValue(auth == .bearer ? "Bearer " + secret : "Basic " + secret, forHTTPHeaderField: "Authorization")
         probe.setValue("application/xml; charset=utf-8", forHTTPHeaderField: "Content-Type")
         probe.httpBody = Data("<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>".utf8)
-        let (data, response) = try await session.data(for: probe, delegate: RedirectGuard.shared)
+        var (data, response) = try await session.data(for: probe, delegate: RedirectGuard.shared)
+        // A server that only speaks Digest refuses Basic with its challenge, which the same user and password answer.
+        var usedAuth = auth
+        if auth != .bearer, let http = response as? HTTPURLResponse, http.statusCode == 401, let challenge = HTTPDigest.challenge(in: http) {
+            probe.setValue(HTTPDigest.authorization(challenge: challenge, user: username, password: password, method: "PROPFIND", url: base, count: 1),
+                           forHTTPHeaderField: "Authorization")
+            (data, response) = try await session.data(for: probe, delegate: RedirectGuard.shared)
+            usedAuth = .digest
+        }
         guard let http = response as? HTTPURLResponse else { throw CloudError.message(L("Respuesta HTTP no válida.")) }
         switch http.statusCode {
         case 401, 403:
@@ -44,10 +60,12 @@ struct WebDAVAuthentication {
         }
         let id = WebDAVOrigin(components).map { WebDAVOrigin.accountID($0, username: username, among: existing) }
             ?? WebDAVOrigin.legacyID(host: host, path: components.path, username: username)
-        let account = Account(id: id, cloud: .webdav,
+        var account = Account(id: id, cloud: .webdav,
                               name: host, email: username + "@" + host, clientID: "", clientSecret: nil,
                               serverURL: base.absoluteString)
-        // Basic credentials never expire on their own; only the server can revoke them.
+        if usedAuth != .basic { account.options[WebDAVAuth.option] = usedAuth.rawValue }
+        // Basic credentials never expire on their own; only the server can revoke them. A token does, but nothing
+        // here can renew it, so it is kept until the server refuses it.
         return (account, Credential(accessToken: secret, refreshToken: "", expires: .distantFuture))
     }
 }

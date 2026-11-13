@@ -11,14 +11,12 @@ struct CompareRootView: View {
             Picker("Herramienta", selection: $center.mode) {
                 Text("Comparar carpetas").tag(CompareCenter.Mode.compare)
                 Text("Buscar duplicados").tag(CompareCenter.Mode.duplicates)
-                Text("Espacio").tag(CompareCenter.Mode.usage)
             }
-            .pickerStyle(.segmented).labelsHidden().frame(width: 480)
+            .pickerStyle(.segmented).labelsHidden().frame(width: 380)
             .padding(.top, 14).padding(.bottom, 4)
             switch center.mode {
             case .compare: CompareView(center: center, model: model)
             case .duplicates: DuplicatesView(center: center, model: model)
-            case .usage: UsageView(center: center, model: model)
             }
         }
         .frame(minWidth: 860, minHeight: 560)

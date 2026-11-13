@@ -9,8 +9,10 @@ struct SettingsView: View {
             TransferSettings(model: model).tabItem { Label("Transferencias", systemImage: "arrow.up.arrow.down") }
             StorageSettings(model: model).tabItem { Label("Almacenamiento", systemImage: "internaldrive") }
             OfflineSettingsView(model: model, store: model.offline).tabItem { Label("Sin conexión", systemImage: "arrow.down.circle") }
+            SpotlightSettings(model: model).tabItem { Label("Spotlight", systemImage: "magnifyingglass") }
             DiagnosticsSettings(model: model).tabItem { Label("Diagnóstico", systemImage: "stethoscope") }
-            CryptomatorSettings(model: model, vaults: model.cryptomator).tabItem { Label("Seguridad", systemImage: "lock.shield") }
+            CryptomatorSettings(model: model, vaults: model.cryptomator).tabItem { Label("Cifrado", systemImage: "lock.shield") }
+            UpdateSettings(checker: .shared).tabItem { Label("Actualizaciones", systemImage: "arrow.down.app") }
         }.frame(width: 540, height: 430)
     }
 }
@@ -25,6 +27,7 @@ private struct GeneralSettings: View {
     @AppStorage(Prefs.finderIntegration) private var finderIntegration = false
     @AppStorage(Prefs.thumbnails) private var thumbnails = true
     @AppStorage(Prefs.dockIcon) private var dockIcon = true
+    @AppStorage(ExternalEditor.autoUploadKey) private var autoUploadEdits = false
     @State private var openAtLogin = LoginItem.isEnabled
     @State private var loginProblem: String?
 
@@ -55,6 +58,11 @@ private struct GeneralSettings: View {
                     .onChange(of: menuBar) { DockIcon.apply() }
                 Toggle("Seguir la selección con la vista previa abierta", isOn: $previewFollows)
                 Text("Con esto activado, recorrer la lista con la vista previa abierta descarga cada archivo por el que pasas, tras una pausa corta.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Section {
+                Toggle("Subir solos los cambios de lo abierto con otra aplicación", isOn: $autoUploadEdits)
+                Text("«Abrir con» edita una copia privada. Con esto activado, cada vez que la guardes se sube a su carpeta; si no, iCloudy pregunta. Si el archivo cambió en la nube mientras tanto, se conservan las dos versiones.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Section {

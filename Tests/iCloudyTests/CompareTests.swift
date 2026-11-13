@@ -362,6 +362,28 @@ final class CompareTests: XCTestCase {
         XCTAssertEqual(after.wasted, 100)
     }
 
+    func testMarkingTheMacCopiesKeepsEveryFileInACloud() {
+        let md5 = ContentHash(algorithm: .md5, value: "aa")
+        let drive = candidate("Fotos/a.jpg", checksum: md5)
+        let mac = candidate("Escritorio/a.jpg", root: 1, local: true), macAgain = candidate("Descargas/a.jpg", root: 1, local: true)
+        // Only on this Mac: nothing here is in a cloud, however many copies there are.
+        let lone1 = candidate("x.bin", root: 1, size: 7, local: true), lone2 = candidate("y.bin", root: 1, size: 7, local: true)
+        // A volume account hashes on disk too, but it is not a cloud.
+        let volume = DuplicateCandidate(id: "2|v", rootIndex: 2, entry: entry("v.bin", size: 9), parent: nil, path: "v.bin", hashesLocally: true)
+        let macOfVolume = candidate("v.bin", root: 1, size: 9, local: true)
+        // Same name and size in a cloud without a checksum: possible, never marked.
+        let unconfirmedCloud = candidate("z.bin", size: 11), unconfirmedMac = candidate("z.bin", root: 1, size: 11, local: true)
+        let report = DuplicateGrouping.group([drive, mac, macAgain, lone1, lone2, volume, macOfVolume, unconfirmedCloud, unconfirmedMac],
+                                             digests: [mac.id: [.md5: "aa"], macAgain.id: [.md5: "aa"],
+                                                       lone1.id: [.sha256: "11"], lone2.id: [.sha256: "11"],
+                                                       volume.id: [.sha256: "22"], macOfVolume.id: [.sha256: "22"]])
+        XCTAssertEqual(report.groups.filter(\.isConfirmed).count, 3, "The cloud, the Mac-only and the volume groups")
+        XCTAssertEqual(report.groups.filter { !$0.isConfirmed }.count, 1)
+        let marked = DuplicateGrouping.macCopiesSelection(report.groups)
+        XCTAssertEqual(marked, [mac.id, macAgain.id], "Every Mac copy of a file the cloud holds, and nothing else")
+        XCTAssertTrue(DuplicateGrouping.leavesACopy(marked, in: report.groups), "The cloud copy is never marked")
+    }
+
     func testTheScannerFindsMacDuplicatesOnceEvenThroughOverlappingFolders() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("dupes-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

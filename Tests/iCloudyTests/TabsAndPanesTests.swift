@@ -373,18 +373,18 @@ final class TabsAndPanesTests: XCTestCase {
         model.workspace.current.files = [file]
         model.selectedIDs = ["f"]
         model.sendSelectionToOtherPane(move: true)
-        let request = model.pendingPaneMove
+        let request = model.ui.pendingPaneMove
         XCTAssertEqual(request?.files.map(\.id), ["f"])
         XCTAssertEqual(request?.source.id, left.id)
         XCTAssertEqual(request?.target.id, right.id)
         XCTAssertEqual(request?.parent, "x", "Al otro panel: su carpeta, no la de este")
         XCTAssertEqual(request?.destinationPath.map(\.id), ["x"])
         XCTAssertTrue(model.queue.items.allSatisfy { $0.file?.id != "f" }, "Nada se pone en cola antes de confirmar")
-        model.pendingPaneMove = nil
+        model.ui.pendingPaneMove = nil
         model.selectedIDs = []
         model.sendSelectionToOtherPane(move: false)
         XCTAssertEqual(model.error, L("Selecciona lo que quieras copiar o mover al otro panel."))
-        XCTAssertNil(model.pendingPaneMove)
+        XCTAssertNil(model.ui.pendingPaneMove)
     }
 
     func testDroppingOnTheOtherPane() {
@@ -407,7 +407,7 @@ final class TabsAndPanesTests: XCTestCase {
         XCTAssertFalse(model.dropOnPane("icloudy-pane:otro", pane: 1, modifiers: .command), "Un arrastre que no es este no hace nada")
         XCTAssertFalse(model.dropOnPane(token, pane: 0, modifiers: .command), "Soltar en el mismo panel no hace nada")
         XCTAssertTrue(model.dropOnPane(token, pane: 1, modifiers: .command))
-        XCTAssertEqual(model.pendingPaneMove?.target.id, right.id)
+        XCTAssertEqual(model.ui.pendingPaneMove?.target.id, right.id)
         XCTAssertNil(model.paneTransfers.drag, "Cada arrastre se usa una vez")
         XCTAssertFalse(model.dropOnPane(token, pane: 1, modifiers: .command))
     }
@@ -431,28 +431,16 @@ final class TabsAndPanesTests: XCTestCase {
                       "Una carpeta vacía copiada no tiene archivos que verificar")
     }
 
-    func testAMoveWhoseCopyCouldNotBeVerifiedKeepsTheOriginal() throws {
-        let (model, left, right) = splitModel()
+    func testAMoveWhoseCopyCouldNotBeVerifiedKeepsTheOriginal() {
+        let (model, left, _) = splitModel()
         let file = CloudFile(id: "f", name: "a.txt", mime: "text/plain", size: 1, modified: nil, webURL: nil, isFolder: false)
-        var job = copyJob { $0.unverifiedFiles = 1; $0.removesSource = true }
-        job.accountID = left.id; job.targetAccountID = right.id; job.file = file
-        try model.queue.add([job])
+        let job = copyJob { $0.unverifiedFiles = 1 }
+        model.paneTransfers.pending[job.id] = PaneTransfers.Pending(sourceAccountID: left.id, file: file, targetTitle: "Destino")
         model.finishPaneMove(job)
-        XCTAssertEqual(model.queue.items.first { $0.id == job.id }?.removesSource, false, "El trabajo deja de ser un movimiento")
-        XCTAssertEqual(model.error, L("«a.txt» se ha copiado a \(model.accountTitle(right)), pero no todo pudo verificarse o algo se omitió. El original se queda donde estaba."))
+        XCTAssertNil(model.paneTransfers.pending[job.id])
+        XCTAssertEqual(model.error, L("«a.txt» se ha copiado a Destino, pero no todo pudo verificarse o algo se omitió. El original se queda donde estaba."))
         model.error = nil
         model.finishPaneMove(copyJob { _ in })
         XCTAssertNil(model.error, "Un trabajo que no es de un movimiento no toca nada")
-    }
-
-    /// The promise to remove the original used to live in memory: quitting before the copy ended turned the move
-    /// into a copy without a word.
-    func testAMoveIsStillAMoveAfterTheQueueIsReadBack() throws {
-        var job = copyJob { $0.removesSource = true; $0.state = .paused }
-        job.file = CloudFile(id: "f", name: "a.txt", mime: "text/plain", size: 1, modified: nil, webURL: nil, isFolder: false)
-        let back = try JSONDecoder().decode([Transfer].self, from: JSONEncoder().encode([job]))
-        XCTAssertEqual(back.first?.removesSource, true)
-        let legacy = #"{"accountID":"a","direction":"transfer","localURL":"file:///tmp/"}"#
-        XCTAssertFalse(try JSONDecoder().decode(Transfer.self, from: Data(legacy.utf8)).removesSource)
     }
 }

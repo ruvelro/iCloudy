@@ -145,7 +145,7 @@ extension S3Provider {
                 }
             } else {
                 // A session for another object: abandon it rather than mix two uploads.
-                await abandonUploadSessions(urls: [], boxSessions: [raw])
+                await abandonUploadSessions(urls: [], sessionIDs: [raw])
                 cursor.sessionID = nil
             }
         }
@@ -162,53 +162,31 @@ extension S3Provider {
         let secure = try location().isSecure
         var opaque = false
         progress(cursor.offset, total)
-        // Parts are independent requests, so several travel at once. They are confirmed in order: the checkpoint
-        // only ever holds an unbroken run of parts, which is what a resume can build on.
-        let width = Self.partsAtOnce(partSize: partSize)
-        let stamp = cursor.sourceStamp
         while cursor.offset < total {
-            try stamp?.validate(local)
+            try cursor.sourceStamp?.validate(local)
             try Task.checkCancellation()
-            var window: [(number: Int, offset: Int64, length: Int64)] = []
-            var next = cursor.offset
-            while window.count < width, next < total {
-                let length = min(partSize, total - next)
-                window.append((cursor.parts.count + window.count + 1, next, length))
-                next += length
+            let number = cursor.parts.count + 1
+            let offset = cursor.offset, length = min(partSize, total - offset)
+            let (chunk, md5) = try await blockingIO { try Self.readPart(local, offset: offset, length: length) }
+            try cursor.sourceStamp?.validate(local)
+            var call = S3Call(method: "PUT", bucket: target.bucket, key: target.key,
+                              query: [("partNumber", String(number)), ("uploadId", upload.uploadID)])
+            call.body = chunk
+            call.headers["Content-MD5"] = md5.base64EncodedString()
+            // Over TLS the channel protects the body and Content-MD5 checks it; hashing 8 MiB twice buys nothing.
+            // Over plain HTTP the signature is all there is, so it covers the bytes.
+            if secure { call.payloadHash = S3Signer.unsignedPayload }
+            let (_, response) = try await s3(call) { sent in progress(offset + min(sent, length), total) }
+            guard let etag = S3XML.etag(response.value(forHTTPHeaderField: "ETag")) else {
+                throw CloudError.message(L("El servidor no confirmó una de las partes de la subida."))
             }
-            let tracker = PartProgress(base: cursor.offset, total: total, report: progress)
-            let outcomes = await withTaskGroup(of: (Int, Result<SentPart, Error>).self) { group in
-                for part in window {
-                    let number = part.number, offset = part.offset, length = part.length
-                    group.addTask {
-                        do {
-                            return (number, .success(try await self.sendPart(number, offset: offset, length: length, local: local, target: target,
-                                                                             uploadID: upload.uploadID, secure: secure, stamp: stamp, tracker: tracker)))
-                        } catch { return (number, .failure(error)) }
-                    }
-                }
-                var collected: [Int: Result<SentPart, Error>] = [:]
-                for await (number, outcome) in group { collected[number] = outcome }
-                return collected
-            }
-            // What arrived in order is kept even when a later part of the window failed; the failure then ends the
-            // upload, and the next attempt starts after the last part confirmed here.
-            var failure: Error?
-            for part in window {
-                switch outcomes[part.number] {
-                case .success(let sent)?:
-                    let record = S3PartRecord(etag: sent.etag, md5: sent.md5)
-                    if sent.opaque { opaque = true }
-                    else if !record.verified { failure = mismatch(name) }
-                    if failure == nil { cursor.parts.append(record.raw); cursor.offset += part.length }
-                case .failure(let error)?: failure = error
-                case nil: failure = CancellationError()
-                }
-                if failure != nil { break }
-            }
+            let record = S3PartRecord(etag: etag, md5: S3Signer.hex(md5))
+            if Self.encrypted(response) || !Self.isPlainMD5(etag) { opaque = true }
+            else if !record.verified { throw mismatch(name) }
+            cursor.parts.append(record.raw)
+            cursor.offset += length
             try save(cursor)
             progress(cursor.offset, total)
-            if let failure { throw failure }
         }
         let records = cursor.parts.compactMap(S3PartRecord.init)
         var complete = S3Call(method: "POST", bucket: target.bucket, key: target.key, query: [("uploadId", upload.uploadID)])
@@ -228,42 +206,6 @@ extension S3Provider {
         }
         guard etag.lowercased() == expected else { throw mismatch(name) }
         return UploadReceipt(remoteID: target.id, verification: .verified)
-    }
-
-    struct SentPart: Sendable { let etag: String; let md5: String; let opaque: Bool }
-
-    /// How many parts of one upload travel at once. Each one is held in memory while it is sent, and a very large
-    /// object has very large parts, so the count shrinks as they grow: never more than 64 MiB in flight.
-    nonisolated static func partsAtOnce(partSize: Int64) -> Int {
-        Int(min(4, max(1, (64 * 1024 * 1024) / max(1, partSize))))
-    }
-
-    /// What the parts of one window have sent between them, reported as one figure.
-    @MainActor final class PartProgress {
-        private var moved: [Int: Int64] = [:]
-        private let base: Int64, total: Int64
-        private let report: (Int64, Int64) -> Void
-        init(base: Int64, total: Int64, report: @escaping (Int64, Int64) -> Void) { self.base = base; self.total = total; self.report = report }
-        func sent(_ bytes: Int64, part: Int) { moved[part] = bytes; report(base + moved.values.reduce(0, +), total) }
-    }
-
-    /// Reads one part from disk and PUTs it, with its MD5 for the server to check.
-    private func sendPart(_ number: Int, offset: Int64, length: Int64, local: URL, target: S3Path, uploadID: String, secure: Bool,
-                          stamp: UploadSourceStamp?, tracker: PartProgress) async throws -> SentPart {
-        let (chunk, md5) = try await blockingIO { try Self.readPart(local, offset: offset, length: length) }
-        try stamp?.validate(local)
-        var call = S3Call(method: "PUT", bucket: target.bucket, key: target.key,
-                          query: [("partNumber", String(number)), ("uploadId", uploadID)])
-        call.body = chunk
-        call.headers["Content-MD5"] = md5.base64EncodedString()
-        // Over TLS the channel protects the body and Content-MD5 checks it; hashing 8 MiB twice buys nothing.
-        // Over plain HTTP the signature is all there is, so it covers the bytes.
-        if secure { call.payloadHash = S3Signer.unsignedPayload }
-        let (_, response) = try await s3(call) { sent in tracker.sent(min(sent, length), part: number) }
-        guard let etag = S3XML.etag(response.value(forHTTPHeaderField: "ETag")) else {
-            throw CloudError.message(L("El servidor no confirmó una de las partes de la subida."))
-        }
-        return SentPart(etag: etag, md5: S3Signer.hex(md5), opaque: Self.encrypted(response) || !Self.isPlainMD5(etag))
     }
 
     /// Asks the server which parts it already holds and keeps the run of them that still matches the file: the
@@ -328,61 +270,31 @@ extension S3Provider {
             throw CloudError.message(L("La vista previa supera el límite de descarga autorizado."))
         }
         let total = file.size ?? 0
-        // Inside the queue the destination is the job's partial file and what a cut left there is continued: the
-        // ETag of the first piece travels on the file, and If-Match refuses the rest if the object was replaced.
-        let keeps = DownloadResume.mode != .none
-        let staging = keeps ? destination : FileManager.default.temporaryDirectory.appendingPathComponent("icloudy-s3-" + UUID().uuidString)
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent("icloudy-s3-" + UUID().uuidString)
+        guard FileManager.default.createFile(atPath: staging.path, contents: nil) else {
+            throw CloudError.message(L("No se pudo preparar la descarga."))
+        }
+        defer { try? FileManager.default.removeItem(at: staging) }
         var written: Int64 = 0
         var pinned: String?
-        if keeps, total > downloadPiece, let etag = DownloadResume.validator(of: staging),
-           let size = (try? staging.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size > 0, Int64(size) < total {
-            written = Int64(size); pinned = etag
-        } else {
-            try? FileManager.default.removeItem(at: staging)
-            guard FileManager.default.createFile(atPath: staging.path, contents: nil) else {
-                throw CloudError.message(L("No se pudo preparar la descarga."))
-            }
-        }
-        var continuing = written > 0
-        if continuing { Diagnostics.downloadResumed(account, from: written) }
-        defer { if !keeps { try? FileManager.default.removeItem(at: staging) } }
         repeat {
             let range: ClosedRange<Int64>? = total > downloadPiece ? written...(min(written + downloadPiece, total) - 1) : nil
             let base = written
-            let piece: URL, response: HTTPURLResponse
-            do {
-                (piece, response) = try await fetch(path, range: range, ifMatch: pinned, maxBytes: maxBytes.map { $0 - base }) { got, _ in
-                    progress(base + got, total)
-                }
-            } catch where continuing && !(error is CancellationError) && !(error is URLError) {
-                // The first piece after picking a partial file up was refused: the object is not the one those
-                // bytes came from. They are dropped and the download starts again, once.
-                continuing = false; written = 0; pinned = nil
-                let stale = staging
-                try await blockingIO { try FileHandle(forWritingTo: stale).truncate(atOffset: 0) }
-                DownloadResume.setValidator(nil, on: staging)
-                continue
+            let (piece, response) = try await fetch(path, range: range, ifMatch: pinned, maxBytes: maxBytes.map { $0 - base }) { got, _ in
+                progress(base + got, total)
             }
-            continuing = false
             defer { try? FileManager.default.removeItem(at: piece) }
             if Self.encrypted(response) { opaqueChecksums.insert(file.id) } else { opaqueChecksums.remove(file.id) }
-            if pinned == nil {
-                pinned = S3XML.etag(response.value(forHTTPHeaderField: "ETag"))
-                if keeps { DownloadResume.setValidator(pinned, on: staging) }
-            }
-            let target = staging, whole = response.statusCode == 200
-            let appended = try await blockingIO {
-                // A server that ignores Range answers 200 with the whole object, which is then all there is to it.
-                if whole { try FileHandle(forWritingTo: target).truncate(atOffset: 0) }
-                return try Self.append(piece, to: target)
-            }
-            if whole { written = appended; break }
+            pinned = pinned ?? S3XML.etag(response.value(forHTTPHeaderField: "ETag"))
+            let target = staging
+            let appended = try await blockingIO { try Self.append(piece, to: target) }
+            // A server that ignores Range answers 200 with the whole object, which is then all there is to it.
+            if response.statusCode == 200 { written = appended; break }
             guard appended > 0 else { throw CloudError.message(L("El servidor devolvió un avance no válido.")) }
             written += appended
             try Task.checkCancellation()
         } while written < total
         progress(written, max(total, written))
-        if keeps { DownloadResume.setValidator(nil, on: staging); return }
         let ready = staging
         try await blockingIO { try FileManager.default.moveItem(at: ready, to: destination) }
     }
@@ -480,7 +392,7 @@ extension S3Provider {
             complete.errorsInBody = true
             _ = try await s3(complete)
         } catch {
-            await abandonUploadSessions(urls: [], boxSessions: [S3UploadSession(uploadID: uploadID, objectID: target.id).raw])
+            await abandonUploadSessions(urls: [], sessionIDs: [S3UploadSession(uploadID: uploadID, objectID: target.id).raw])
             throw error
         }
     }

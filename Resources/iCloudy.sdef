@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+<!-- A minimal scripting dictionary: list the accounts, show a place, search. It only reads and shows; nothing here
+     deletes, moves or uploads. The commands are in Integration/AppleScript.swift. -->
+<dictionary title="iCloudy Terminology">
+    <suite name="iCloudy Suite" code="ICLD" description="Commands to browse your clouds in iCloudy.">
+        <command name="list accounts" code="ICLDlsac" description="The connected accounts, as «name: identifier» lines.">
+            <cocoa class="ICListAccountsCommand"/>
+            <result type="text" list="yes" description="One line per account."/>
+        </command>
+        <command name="show" code="ICLDshow" description="Shows a folder, or the folder of a file with the file selected, written as «account:/path».">
+            <cocoa class="ICShowCommand"/>
+            <direct-parameter type="text" description="The place, for example «Dropbox:/Fotos/2024»."/>
+        </command>
+        <command name="search for" code="ICLDsrch" description="Searches every connected account (or one) and returns what it found.">
+            <cocoa class="ICSearchCommand"/>
+            <direct-parameter type="text" description="The text to look for."/>
+            <parameter name="in account" code="acct" type="text" optional="yes" description="Only this account.">
+                <cocoa key="account"/>
+            </parameter>
+            <result type="text" list="yes" description="«account: path» of each item found."/>
+        </command>
+    </suite>
+</dictionary>

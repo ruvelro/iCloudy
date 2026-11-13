@@ -6,9 +6,10 @@ import UniformTypeIdentifiers
 /// Observes the queue directly: progress ticks re-render this panel only, not the whole explorer.
 struct TransferPanel: View {
     let model: AppModel
-    @ObservedObject var queue: TransferQueue
+    @Bindable var queue: TransferQueue
     @ObservedObject var history: TransferHistory
     @State private var showHistory = false
+    @Environment(\.openWindow) private var openWindow
     /// The drawer is built when it opens and thrown away when it closes, so this always starts on what is moving.
     @State private var tab = TransferTab.active
     @State private var errorFilter = TransferErrorFilter.all
@@ -29,7 +30,12 @@ struct TransferPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Transferencias").font(.headline)
+            HStack {
+                Text("Transferencias").font(.headline)
+                Spacer()
+                Button { openWindow(id: "jobs") } label: { Image(systemName: "tray.full") }
+                    .buttonStyle(.borderless).help("Trabajos guardados").accessibilityLabel("Trabajos guardados")
+            }
             RemoteCopyRows(copies: model.remoteCopies)
             Picker("", selection: $tab) {
                 ForEach(TransferTab.allCases) { Text($0.title).tag($0) }
@@ -42,6 +48,8 @@ struct TransferPanel: View {
                 Label(hold.detail(window: queue.policy.window), systemImage: hold.symbol)
                     .font(.caption2).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
             }
+            if tab == .active, queue.speed.samples.count > 1, queue.speed.peak > 0 { SpeedChart(speed: queue.speed) }
+            if tab == .history, !history.entries.isEmpty { DailyBytesChart(days: history.bytesPerDay(), height: 56) }
             content.frame(maxHeight: .infinity)
             if let message = queue.persistenceError ?? (tab == .history ? history.persistenceError : nil) {
                 HStack(alignment: .top) {

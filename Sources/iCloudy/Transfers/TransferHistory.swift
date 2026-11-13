@@ -25,8 +25,9 @@ struct HistoryEntry: Identifiable, Codable {
         name = transfer.name; accountID = transfer.accountID; targetAccountID = transfer.targetAccountID; direction = transfer.direction
         destination = transfer.destination; parent = transfer.parent
         if transfer.direction == .download {
-            localURL = transfer.localURL.appendingPathComponent(transfer.names["."] ?? FileNames.safe(transfer.name))
-            bookmark = transfer.bookmark
+            // A mirror that downloads into its own folder has no item of its own inside it.
+            localURL = transfer.options?.contentsOnly == true ? transfer.localURL : transfer.localURL.appendingPathComponent(transfer.names["."] ?? FileNames.safe(transfer.name))
+            bookmark = transfer.options?.contentsOnly == true ? nil : transfer.bookmark
         } else { localURL = nil; bookmark = nil }
         bytes = max(transfer.bytes, transfer.total); self.finishedAt = finishedAt; summary = transfer.detail
     }
@@ -62,7 +63,7 @@ final class TransferHistory: ObservableObject {
     init(storeURL: URL = LocalStore.directory.appendingPathComponent("history.json")) {
         self.storeURL = storeURL
         limit = max(20, Prefs.int(Prefs.historyLimit, default: 200))
-        do { entries = try LocalStore.read([HistoryEntry].self, from: storeURL) ?? [] }
+        do { entries = try LocalStore.read(StoreEnvelope<[HistoryEntry]>.self, from: storeURL)?.items ?? [] }
         catch { persistenceError = L("No se pudo leer el historial: \(error.localizedDescription)") }
     }
     func record(_ transfer: Transfer) {
@@ -80,7 +81,7 @@ final class TransferHistory: ObservableObject {
     /// Written off the main thread; a failure is reported when it happens.
     private func persist() {
         persistenceError = nil
-        StoreWriter.shared.later(entries, to: storeURL) { [weak self] error in
+        StoreWriter.shared.later(StoreEnvelope(entries), to: storeURL) { [weak self] error in
             self?.persistenceError = L("No se pudo guardar el historial: \(error.localizedDescription)")
         }
     }

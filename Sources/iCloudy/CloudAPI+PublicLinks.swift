@@ -4,22 +4,18 @@ import Foundation
 /// request goes out, so no provider ever receives a setting it would silently drop.
 extension CloudAPI {
     func publicLinks(for file: CloudFile) async throws -> [PublicLink] {
-        guard demo == nil else { throw CloudError.message(L("La demo no gestiona enlaces públicos.")) }
         return try await provider.publicLinks(for: file)
     }
     func createPublicLink(for file: CloudFile, options: PublicLinkOptions) async throws -> PublicLink {
-        guard demo == nil else { throw CloudError.message(L("La demo no gestiona enlaces públicos.")) }
         if let reason = account.capabilities.links.refusal(of: options, for: file, cloud: account.cloud) { throw CloudError.message(reason) }
         if let reason = account.limitation(.publicLink, for: [file]) { throw CloudError.message(reason) }
         return try await provider.createPublicLink(for: file, options: options)
     }
     func revokePublicLink(_ link: PublicLink) async throws {
-        guard demo == nil else { throw CloudError.message(L("La demo no gestiona enlaces públicos.")) }
         guard link.canRevoke else { throw CloudError.message(L("Este enlace viene de una carpeta superior. Revócalo en esa carpeta.")) }
         try await provider.revokePublicLink(link)
     }
     func allPublicLinks() async throws -> [PublicLink] {
-        guard demo == nil else { throw CloudError.message(L("La demo no gestiona enlaces públicos.")) }
         guard account.capabilities.links.inventory else { throw CloudError.message(PublicLinkNotes.noInventory(account.cloud)) }
         return try await provider.allPublicLinks()
     }
