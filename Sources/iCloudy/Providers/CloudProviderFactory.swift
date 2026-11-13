@@ -17,6 +17,7 @@ enum CloudProviderFactory {
         case .pcloud: return PCloudProvider(account: account, session: session, tokenProvider: tokenProvider, credentials: credentials)
         case .s3: return S3Provider(account: account, session: session, tokenProvider: tokenProvider, credentials: credentials)
         case .azure: return AzureProvider(account: account, session: session, tokenProvider: tokenProvider, credentials: credentials)
+        case .telegram: return TelegramProvider(account: account, session: session, tokenProvider: tokenProvider, credentials: credentials)
         }
     }
 }

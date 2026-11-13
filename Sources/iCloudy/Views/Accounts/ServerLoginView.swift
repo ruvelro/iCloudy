@@ -48,14 +48,16 @@ struct ServerLoginView: View {
 
     /// The service chosen under «Más servidores», when it is one for this protocol.
     private var preset: ServerPreset? { model.ui.serverPreset.flatMap { $0.cloud == cloud && $0.s3Service == nil ? $0 : nil } }
-    /// WebDAV and FTP need a full server address; Mega has only one, and a preset knows it already.
-    private var needsServer: Bool { cloud != .mega && preset == nil }
+    /// WebDAV and FTP need a full server address; Mega has only one, Telegram's is always api.telegram.org, and a
+    /// preset knows it already.
+    private var needsServer: Bool { ![.mega, .telegram].contains(cloud) && preset == nil }
     static func symbol(for cloud: Cloud) -> String {
         switch cloud {
         case .webdav: return "server.rack"
         case .mega: return "lock.icloud"
         case .sftp: return "lock.rectangle.stack"
         case .s3: return "cylinder.split.1x2"
+        case .telegram: return "paperplane"
         default: return "arrow.up.arrow.down.square"
         }
     }
@@ -67,9 +69,37 @@ struct ServerLoginView: View {
         switch cloud {
         case .webdav: return L("Para Nextcloud, ownCloud, Synology, otros NAS y cualquier servidor WebDAV. La dirección es la ruta WebDAV completa.")
         case .mega: return L("Tu contraseña no sale de este Mac: se usa para derivar las claves con las que Mega cifra los nombres y el contenido.")
+        case .telegram: return L("Un canal privado tuyo hace de disco, y un bot tuyo escribe en él. iCloudy guarda el árbol de carpetas en un mensaje fijado del propio canal.")
         case .sftp: return L("Para servidores SSH y NAS con SFTP, en el puerto 22 salvo que indiques otro. Todo va cifrado. Al conectar verás la huella de la clave del servidor para confirmarla; se guarda en el Llavero y se comprueba en cada sesión, y si cambia, iCloudy lo dirá antes de enviar nada.")
         default: return L("Para servidores FTP propios y NAS. iCloudy usa siempre modo pasivo. Sin FTPS, la contraseña y los archivos viajan sin cifrar.")
         }
+    }
+    /// What the two fields are called. They hold a user and a password almost everywhere; in Telegram they hold
+    /// the channel and the bot's token, which is a password in every way that matters.
+    private var userLabel: LocalizedStringKey {
+        if usesToken { return "Usuario (opcional, solo para reconocer la cuenta)" }
+        if cloud == .telegram { return "Identificador del canal, por ejemplo -1001234567890" }
+        return needsServer || preset != nil ? "Usuario" : "Correo de la cuenta"
+    }
+    private var secretLabel: LocalizedStringKey {
+        if usesToken { return "Token de acceso" }
+        if cloud == .telegram { return "Token del bot" }
+        if cloud == .sftp { return keyText == nil ? "Contraseña" : "Contraseña (si el servidor la pide además)" }
+        return needsServer ? "Contraseña o contraseña de aplicación" : "Contraseña"
+    }
+    private var hint: LocalizedStringKey {
+        if cloud == .telegram {
+            return "Crea el bot con @BotFather, añádelo a tu canal como administrador con permiso para publicar, y pega aquí el token que te dé. El token es la llave del canal: guárdalo también fuera de iCloudy."
+        }
+        return needsServer
+            ? "Si tu servidor usa verificación en dos pasos, crea una contraseña de aplicación en su configuración."
+            : "Si la cuenta tiene verificación en dos pasos, iCloudy te pedirá el código después de comprobar la contraseña."
+    }
+    /// Why this provider carries the experimental label, in its own words.
+    private var experimentalNote: LocalizedStringKey {
+        cloud == .telegram
+            ? "Telegram no ofrece esto como almacenamiento, y sus condiciones permiten cerrar cuentas y borrar canales por acumulación abusiva. Un bot además solo puede descargar 19 MB de una vez, así que todo se trocea. No guardes aquí lo único que tengas de algo."
+            : "Mega no publica su API ni se compromete a mantenerla. Puede dejar de funcionar sin aviso."
     }
     private var address: String {
         if let preset { return preset.address(user: username, values: presetValues) ?? "" }
@@ -95,9 +125,10 @@ struct ServerLoginView: View {
         default: server = stored
         }
     }
-    /// The user name an account was connected with. Mega keeps it as the e-mail; the self-hosted ones put it after
-    /// the "#" of their identifier and before the "@" of the label.
+    /// The user name an account was connected with. Mega keeps it as the e-mail, Telegram the channel it browses,
+    /// and the self-hosted ones put it after the "#" of their identifier and before the "@" of the label.
     static func storedUser(of account: Account) -> String {
+        if account.cloud == .telegram { return account.options["chat"] ?? "" }
         if account.cloud == .mega { return account.email }
         if let marker = account.id.lastIndex(of: "#") { return String(account.id[account.id.index(after: marker)...]) }
         return account.email.split(separator: "@").dropLast().joined(separator: "@")
@@ -145,7 +176,7 @@ struct ServerLoginView: View {
                 Text(explanation).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             if cloud.isExperimental {
-                Label("Mega no publica su API ni se compromete a mantenerla. Puede dejar de funcionar sin aviso.", systemImage: "flask")
+                Label(experimentalNote, systemImage: "flask")
                     .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
             }
             if cloud == .ftp {
@@ -169,9 +200,9 @@ struct ServerLoginView: View {
                     .onAppear(perform: prefillForReconnect)
                 Button("Usar usuario y contraseña") { manualNextcloud = true }.buttonStyle(.link).font(.caption)
             } else {
-            TextField(usesToken ? "Usuario (opcional, solo para reconocer la cuenta)" : needsServer || preset != nil ? "Usuario" : "Correo de la cuenta", text: $username).textFieldStyle(.roundedBorder)
+            TextField(userLabel, text: $username).textFieldStyle(.roundedBorder)
                 .onAppear(perform: prefillForReconnect)
-            SecureField(usesToken ? "Token de acceso" : cloud == .sftp ? (keyText == nil ? "Contraseña" : "Contraseña (si el servidor la pide además)") : needsServer ? "Contraseña o contraseña de aplicación" : "Contraseña", text: $password).textFieldStyle(.roundedBorder)
+            SecureField(secretLabel, text: $password).textFieldStyle(.roundedBorder)
             if cloud == .sftp {
                 HStack {
                     Button(keyText == nil ? "Usar una clave privada…" : "Cambiar de clave…") { pickKey() }
@@ -186,9 +217,7 @@ struct ServerLoginView: View {
                         .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Text(needsServer
-                 ? "Si tu servidor usa verificación en dos pasos, crea una contraseña de aplicación en su configuración."
-                 : "Si la cuenta tiene verificación en dos pasos, iCloudy te pedirá el código después de comprobar la contraseña.")
+            Text(hint)
                 .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             if cloud == .webdav, !usesBrowserLogin {

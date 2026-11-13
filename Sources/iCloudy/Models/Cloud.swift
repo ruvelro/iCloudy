@@ -5,6 +5,7 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
     case pcloud
     case s3
     case azure
+    case telegram
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -21,6 +22,7 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
         case .pcloud: return L("pCloud")
         case .s3: return L("S3")
         case .azure: return L("Azure Blob")
+        case .telegram: return L("Telegram")
         }
     }
     var tokenURL: String { OAuthProviderSettings.settings(for: self)?.tokenEndpoint ?? "" }
@@ -40,7 +42,7 @@ enum Cloud: String, Codable, CaseIterable, Identifiable {
         case .dropbox: return "" // Dropbox addresses the root as an empty path
         case .box: return "0"
         case .pcloud: return "d0" // folders are "d" plus their folderid, and the top one is folder 0
-        case .s3, .azure: return "root"
+        case .s3, .azure, .telegram: return "root"
         }
     }
     var capabilities: CloudCapabilities {
@@ -225,6 +227,16 @@ struct CloudCapabilities {
             return CloudCapabilities(recents: false, sharedWithMe: false, quota: false,
                                      reversibleTrash: false, linksFolders: false, temporaryLinks: true, chunkedUploads: true,
                                      signIn: .password)
+        case .telegram:
+            // The tree is an index iCloudy keeps itself, pinned in the channel, so search, renaming, moving and
+            // copying are local and instant, and copying moves no bytes at all. A channel is nobody's timeline, so
+            // there is no "recent" and no "shared with me"; a private one has no public address; and Telegram
+            // publishes no quota for what a channel holds. The bin stops listing an item and never deletes a
+            // message, so it is reversible from the Telegram app but not listed here. One job at a time: a bot may
+            // post twenty messages a minute to a chat, and every change rewrites the one pinned index.
+            // The Bot API is documented; it is experimental because Telegram does not offer this as storage.
+            return CloudCapabilities(recents: false, sharedWithMe: false, publicLinks: false, quota: false,
+                                     sessionLimit: 1, signIn: .password, isExperimental: true)
         }
     }
 }

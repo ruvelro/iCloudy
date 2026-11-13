@@ -42,8 +42,8 @@ final class CapabilityTableTests: XCTestCase {
     func testFactsThatUsedToLiveOutsideTheTable() {
         XCTAssertEqual(Cloud.allCases.filter { $0.capabilities.signIn == .web }, [.o2])
         XCTAssertEqual(Set(Cloud.allCases.filter(\.needsKeepAlive)), [.o2])
-        XCTAssertEqual(Set(Cloud.allCases.filter(\.isExperimental)), [.mega, .o2])
-        XCTAssertEqual(Set(Cloud.allCases.filter { $0.capabilities.sessionLimit == 1 }), [.ftp, .sftp, .mega, .o2])
+        XCTAssertEqual(Set(Cloud.allCases.filter(\.isExperimental)), [.mega, .o2, .telegram])
+        XCTAssertEqual(Set(Cloud.allCases.filter { $0.capabilities.sessionLimit == 1 }), [.ftp, .sftp, .mega, .o2, .telegram])
         XCTAssertEqual(Set(Cloud.allCases.filter { $0.capabilities.undoesTrash }), [.google, .box, .pcloud, .mega])
         XCTAssertEqual(Cloud.allCases.filter { $0.capabilities.asyncCopy }, [.microsoft])
         XCTAssertEqual(Cloud.allCases.filter { $0.capabilities.temporaryLinks }, [.s3, .azure])
