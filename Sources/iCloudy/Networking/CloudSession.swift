@@ -307,7 +307,13 @@ class CloudSession {
         let parts = path.split(separator: "/").dropLast()
         return parts.isEmpty ? "" : "/" + parts.joined(separator: "/")
     }
-    func downloadHTTP(_ initialRequest: URLRequest, to destination: URL, maxBytes: Int64?, progress: @escaping (Int64, Int64) -> Void) async throws {
+    /// `resuming` is the item being downloaded, when its bytes are the item's own (not an export). Into a partial the
+    /// queue keeps between attempts (`ResumableDownload`), the download then continues from what is already there.
+    func downloadHTTP(_ initialRequest: URLRequest, to destination: URL, maxBytes: Int64?, resuming file: CloudFile? = nil,
+                      progress: @escaping (Int64, Int64) -> Void) async throws {
+        if let file, ResumableDownload.isPartial(destination) {
+            return try await continueHTTP(initialRequest, into: destination, of: file, maxBytes: maxBytes, progress: progress)
+        }
         let delegate = DownloadProgress(maxBytes: maxBytes) { bytes, total in Task { @MainActor in progress(bytes, total) } }
         var request = initialRequest
         Diagnostics.stamp(&request, account: account)
@@ -345,5 +351,72 @@ class CloudSession {
         // moveItem refuses to overwrite an existing destination.
         let downloaded = temporary
         try await blockingIO { try FileManager.default.moveItem(at: downloaded, to: destination) }
+    }
+
+    /// A download written to the queue's partial as it arrives, so a cut leaves behind everything that came before
+    /// it, and asked for with `Range` when the partial already holds the start of this same version.
+    ///
+    /// `ResumableDownload.prepare` decides whether those bytes count: only when the partial is stamped with the id,
+    /// size and date the listing gives now. Where the provider lists a checksum, the check at the end catches a file
+    /// that changed after it was listed; where it lists none (WebDAV), the listed date goes in `If-Range`, so a
+    /// server holding another version answers with the whole file instead of its tail.
+    private func continueHTTP(_ initialRequest: URLRequest, into destination: URL, of file: CloudFile, maxBytes: Int64?,
+                              progress: @escaping (Int64, Int64) -> Void) async throws {
+        var request = initialRequest
+        Diagnostics.stamp(&request, account: account)
+        // Read here, inside the job that asked for the download; nil outside the queue.
+        let throttle = TaskThrottle(TransferThrottle.active?.download)
+        var answered = false, startedOver = false
+        while true {
+            try Task.checkCancellation()
+            var offset = try await blockingIO { try ResumableDownload.prepare(destination, for: file) }
+            if startedOver, offset > 0 {
+                try await blockingIO { try FileHandle(forWritingTo: destination).truncate(atOffset: 0) }
+                offset = 0
+            }
+            var attempt = request
+            if offset > 0 {
+                attempt.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
+                if file.checksum == nil, let modified = file.modified { attempt.setValue(Self.httpDate(modified), forHTTPHeaderField: "If-Range") }
+            }
+            let transfer = StreamedDownload(destination: destination, offset: offset, maxBytes: maxBytes, throttle: throttle) { bytes, total in
+                Task { @MainActor in progress(bytes, total) }
+            }
+            let outcome: StreamedDownload.Outcome
+            do { outcome = try await transfer.run(attempt, session: session) }
+            catch is DownloadResumeRefused where !startedOver {
+                // The server sent a range that does not continue the file. Once is enough to start clean.
+                startedOver = true
+                continue
+            }
+            let status = outcome.response.statusCode
+            if status == 401, !answered, let url = request.url {
+                // Same policy as the plain download: answer the challenge or renew once, then call it revoked.
+                answered = true
+                if let header = try await answer(outcome.response, method: request.httpMethod ?? "GET", url: url) {
+                    request.setValue(header, forHTTPHeaderField: "Authorization"); continue
+                }
+                if tokenProvider == nil {
+                    request.setValue(account.cloud.authorizationScheme + " " + (try await token(force: true)), forHTTPHeaderField: "Authorization"); continue
+                }
+            }
+            if status == 401, tokenProvider == nil { expireSession(); throw CloudError.sessionExpired(nil) }
+            if status == 416, offset > 0, !startedOver {
+                // What is on disk is as long as the file, or longer: it is not a prefix of what the server has now.
+                startedOver = true
+                continue
+            }
+            // The error body never reached the file. A bounded prefix keeps the provider's message.
+            try HTTP.validate(outcome.response, data: outcome.errorBody)
+            return
+        }
+    }
+
+    /// RFC 9110's date, which is what `If-Range` and a server's `Last-Modified` are written in.
+    nonisolated static func httpDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
+        return formatter.string(from: date)
     }
 }

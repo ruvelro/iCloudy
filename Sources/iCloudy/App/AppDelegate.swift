@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let services = ServicesProvider()
     /// Clicking the Dock icon with no window open must bring the explorer back, not just activate a headless process.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { true }
+    func applicationDidBecomeActive(_ notification: Notification) { AppModel.shared?.appBecameActive() }
+    func applicationDidResignActive(_ notification: Notification) { AppModel.shared?.appResignedActive() }
     /// `icloudy://` links arrive as a Get URL Apple Event. Handling it here, before SwiftUI sees it, keeps a link from
     /// opening a second window, and a link that launches the app waits for the accounts like any other request.
     func applicationWillFinishLaunching(_ notification: Notification) {

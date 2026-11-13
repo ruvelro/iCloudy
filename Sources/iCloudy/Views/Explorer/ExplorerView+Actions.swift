@@ -151,11 +151,14 @@ extension ExplorerView {
                 Button("Mantener una copia en una carpeta del Mac…") { Task { await model.pickDownloadMirror(for: file) } }
             }
             Button("Descargar carpeta…") { Task { await model.save(file) } }
+            Button("Descargar como ZIP…") { Task { await model.saveCompressed([file]) } }
             Button("Comparar con…") { model.openComparator(with: file) }
             Button("Buscar duplicados aquí…") { model.openDuplicateFinder(in: file) }
+            Button("Analizar espacio aquí…") { model.openUsage(in: file) }
             CryptomatorFolderActions(model: model, folder: file)
         } else if !file.isGoogleDocument {
             Button("Descargar…") { Task { await model.save(file) } }
+            if AppModel.isZip(file) { Button("Descargar y descomprimir…") { Task { await model.saveExtracted(file) } } }
             openWithMenu(file)
         }
         if file.webURL != nil { Button("Abrir en navegador") { model.openBrowser(file) } }
@@ -176,6 +179,9 @@ extension ExplorerView {
         offlineActions(file)
         // Offered for every file; where the provider keeps no history its help says why instead of hiding the action.
         if !file.isFolder {
+            if let account = model.account, account.cloud == .sftp, !model.inEncryptedVault {
+                Button("Permisos…") { model.ui.permissionsRequest = PermissionsRequest(file: file, account: account) }
+            }
             Button("Versiones…") { model.requestVersions(file) }
                 .disabled(model.versionsLimitation(file) != nil)
                 .help(model.versionsLimitation(file) ?? "")

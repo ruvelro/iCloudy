@@ -59,6 +59,12 @@ struct Transfer: Identifiable, Codable {
     /// The last run stopped because a partly uploaded file is no longer the file it started from. Retrying cannot
     /// help, so the panel offers to start that upload from zero instead.
     var needsRestart = false
+    /// A cross-cloud move: once this copy has arrived whole and verified, the original goes to its account's bin.
+    /// It is kept with the job, so a move interrupted by quitting is still a move when the copy is resumed. Cleared
+    /// when the original has been dealt with, whichever way that went.
+    var removesSource = false
+    /// What happens to the bytes of this job once it completes, when it is one half of a compressed transfer.
+    var archive: ArchiveStep?
     /// Conflict policy, filters and the rest a mirror or a saved job asked for; nil for an ordinary transfer. In a
     /// transfer "this side" is the source.
     var options: TransferOptions?
@@ -104,7 +110,7 @@ extension Transfer {
         case id, batchID, name, destination, accountID, direction, localURL, bookmark, parent, file, exportMime, exportExtension
         case state, detail, bytes, total, bytesPerSecond, attempts, batchChoice, completedPaths, folders, uncertainFolders, names, replacements, uploads
         case verifiedFiles, unverifiedFiles, exportedFiles, downloads, targetAccountID, mirrorEntries, report, planned
-        case hold, needsRestart, options
+        case hold, needsRestart, options, removesSource, archive
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -149,6 +155,8 @@ extension Transfer {
         report = (try? values.decodeIfPresent([String: FileRecord].self, forKey: .report)) ?? [:]
         planned = try values.decodeIfPresent(Bool.self, forKey: .planned) ?? false
         needsRestart = try values.decodeIfPresent(Bool.self, forKey: .needsRestart) ?? false
+        removesSource = (try? values.decodeIfPresent(Bool.self, forKey: .removesSource)) ?? false
+        archive = try? values.decodeIfPresent(ArchiveStep.self, forKey: .archive)
         // Options a newer version wrote are dropped rather than costing the queue: the job then asks.
         options = (try? values.decodeIfPresent(TransferOptions.self, forKey: .options)) ?? nil
     }

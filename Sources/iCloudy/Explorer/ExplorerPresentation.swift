@@ -35,6 +35,10 @@ final class ExplorerPresentation {
 
     // MARK: Sheets
 
+    /// The item of an SFTP account whose permissions are on screen.
+    var permissionsRequest: PermissionsRequest?
+    /// The review of public links worth a second look.
+    var showLinkReview = false
     /// The item whose sharing sheet is open.
     var sharing: SharingRequest?
     /// The item whose public links sheet is open, and the account whose list of every link is open.

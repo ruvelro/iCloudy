@@ -94,7 +94,7 @@ struct TransferCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             header
-            Text(transfer.destination).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
+            Text(transfer.removesSource ? L("Mover a \(transfer.destination)") : transfer.destination).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
             HStack(spacing: 5) {
                 Text(transfer.status).foregroundStyle(transfer.failed ? .red : .secondary).lineLimit(2)
                 Spacer(minLength: 0)

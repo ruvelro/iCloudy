@@ -466,7 +466,8 @@ final class TransferWalker {
             else { try edit(coalesce: true) { $0.record(key, .exported, reason: L("Guardado como enlace .webloc al documento de Google"), counted: false) } }
             advance(file.size ?? 0)
             // Only real content counts as a local copy: a .webloc is a link and an export is a different document.
-            if !file.isGoogleDocument, !exporting {
+            // Nor is a download on its way into an archive, or out of one: its staging folder is about to go.
+            if !file.isGoogleDocument, !exporting, current.archive == nil {
                 queue.didStoreLocalCopy?(LocalCopy(accountID: current.accountID, fileID: file.id, name: file.name, path: target.path,
                                                    bookmark: current.bookmark, size: file.size ?? 0,
                                                    remoteModified: file.modified, savedAt: Date(), origin: .download))

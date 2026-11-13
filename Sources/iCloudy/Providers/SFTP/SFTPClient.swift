@@ -232,6 +232,12 @@ actor SFTPClient {
             try await self.status(try await self.request(Packet.mkdir) { $0.string(path); $0.uint32(0) })
         } }
     }
+    /// SETSTAT with the permissions attribute alone: the size, the owner and the dates are left as they are.
+    func setPermissions(_ path: String, mode: UInt32) async throws {
+        try await exclusive { try await self.withSession {
+            try await self.status(try await self.request(Packet.setstat) { $0.string(path); $0.uint32(0x4); $0.uint32(mode & 0o7777) })
+        } }
+    }
     func remove(_ path: String) async throws {
         try await exclusive { try await self.withSession { try await self.status(try await self.request(Packet.remove) { $0.string(path) }) } }
     }

@@ -369,6 +369,19 @@ final class TransferQueue {
               let api = try? lookup(transfer.targetAccountID ?? transfer.accountID) else { return }
         Task { await api.abandonUploadSessions(urls: urls, sessionIDs: sessionIDs) }
     }
+    /// The original of a cross-cloud move has been dealt with: removed, or left where it was with an explanation.
+    /// Either way the job stops being a move, so the next launch does not act on it again.
+    func settleMove(_ id: UUID) {
+        guard let index = index(id), items[index].removesSource else { return }
+        items[index].removesSource = false
+        do { try persist() } catch { persistenceError = error.localizedDescription }
+    }
+    /// The archive step of a job has run: it stops carrying it.
+    func settleArchive(_ id: UUID) {
+        guard let index = index(id), items[index].archive != nil else { return }
+        items[index].archive = nil
+        do { try persist() } catch { persistenceError = error.localizedDescription }
+    }
     /// True for jobs that can be re-prioritised: waiting or paused. Running jobs and finished ones keep their place.
     func isMovable(_ transfer: Transfer) -> Bool { [.queued, .paused].contains(transfer.state) && tasks[transfer.id] == nil }
     /// Same semantics as SwiftUI's `onMove`: `destination` is an index in the list before removal.
